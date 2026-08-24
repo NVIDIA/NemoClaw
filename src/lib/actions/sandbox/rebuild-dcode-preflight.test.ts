@@ -28,25 +28,28 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       "thread-opt-in",
       "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
     ],
-  ] as const)("resolves durable DCode mode: %s (#6478)", (_label, recorded, requested, expected, error) => {
-    const config = resolveRebuildDurableConfig(
-      "alpha",
-      {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        nemoclawVersion: "0.1.0",
-        ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
-      },
-      null,
-      undefined,
-      undefined,
-      false,
-      requested,
-    );
+  ] as const)(
+    "resolves durable DCode mode: %s (#6478)",
+    (_label, recorded, requested, expected, error) => {
+      const config = resolveRebuildDurableConfig(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          nemoclawVersion: "0.1.0",
+          ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
+        },
+        null,
+        undefined,
+        undefined,
+        false,
+        requested,
+      );
 
-    expect(config.dcodeAutoApprovalMode).toBe(expected);
-    expect(config.dcodeAutoApprovalModeError).toBe(error);
-  });
+      expect(config.dcodeAutoApprovalMode).toBe(expected);
+      expect(config.dcodeAutoApprovalModeError).toBe(error);
+    },
+  );
 
   it("rejects a DCode auto-approval override for unsupported agents before mutation (#6478)", async () => {
     const harness = createRebuildFlowHarness({
@@ -124,7 +127,10 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recorded DCode auto-approval state is invalid");
 
-    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    expect(harness.registryUpdateSpy).toHaveBeenCalledOnce();
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      policyAuthority: "nemoclaw-managed",
+    });
     expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
     expectNoDcodeMutation(harness);
   });

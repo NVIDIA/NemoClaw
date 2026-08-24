@@ -15,10 +15,7 @@ import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
-import {
-  excludePolicyPresetsByName,
-  type RebuildBackupManifest,
-} from "./rebuild-backup-phase";
+import { excludePolicyPresetsByName, type RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -66,6 +63,7 @@ export interface RebuildRecreatePhaseInput {
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  validatePolicyAuthority: () => Promise<void>;
   onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
@@ -101,6 +99,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
     relockShieldsIfNeeded,
+    validatePolicyAuthority,
     onCreated,
     log,
     bail,
@@ -159,6 +158,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return bail("Authoritative rebuild journal authority changed before sandbox recreation.");
   }
 
+  await validatePolicyAuthority();
   onboardSession.updateSession((s: Session) => {
     Object.assign(
       s,
@@ -167,6 +167,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
+        policyAuthority: sb.policyAuthority ?? null,
         observabilityEnabled: recreateOptions.observabilityEnabled,
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
@@ -210,6 +211,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     // bindings. Do not ask inner onboarding to resolve their stale preset names
     // as built-ins while the generated definitions are intentionally absent.
     s.policyPresets = recreatePolicyPresets;
+    s.policyAuthority = sb.policyAuthority ?? null;
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
     s.provider = resumeConfig.provider;
@@ -248,6 +250,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // and durable retry state instead of terminating the outer transaction.
   let onboardFailed = false;
   let onboardExitCode = 1;
+  let onboardError: unknown;
   const savedExit = process.exit;
   process.exit = ((code) => {
     onboardFailed = true;
@@ -288,7 +291,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
-      ...(Array.isArray(recreatePolicyPresets) ? { rebuildPolicyPresets: recreatePolicyPresets } : {}),
+      ...(Array.isArray(recreatePolicyPresets)
+        ? { rebuildPolicyPresets: recreatePolicyPresets }
+        : {}),
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
         ? { rebuildPreservedEnv: backupManifest.preservedEnv }
         : {}),
@@ -297,6 +302,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log("onboard() returned successfully");
   } catch (error) {
     onboardFailed = true;
+    onboardError = error;
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "";
     if (name !== "RebuildOnboardExit") log(`onboard() threw: ${message}`);
@@ -313,8 +319,14 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
   }
 
-  if (!onboardFailed) onCreated();
+  if (!onboardFailed) {
+    await validatePolicyAuthority();
+    onCreated();
+    await validatePolicyAuthority();
+  }
   if (onboardFailed) {
+    await validatePolicyAuthority();
+    if (rebuildOnboardDependencies.isPolicyAuthorityRefusalError(onboardError)) throw onboardError;
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
     } catch {
@@ -368,12 +380,25 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return false;
   }
 
-  if (recoveryRecreate) shields.clearShieldsState(sandboxName);
+  if (
+    recoveryRecreate &&
+    !(
+      rebuildShieldsWindow.policyAuthority === "externally-managed" &&
+      rebuildShieldsWindow.wasLocked
+    )
+  ) {
+    await validatePolicyAuthority();
+    shields.clearShieldsState(sandboxName);
+    await validatePolicyAuthority();
+  }
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {
+    await validatePolicyAuthority();
     registry.updateSandbox(sandboxName, preservedRegistryFields);
+    await validatePolicyAuthority();
   }
+  await validatePolicyAuthority();
   return true;
 }

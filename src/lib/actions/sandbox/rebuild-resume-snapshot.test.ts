@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
+import * as policyAuthority from "../../adapters/openshell/policy-authority";
 import * as resolve from "../../adapters/openshell/resolve";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentDefs from "../../agent/defs";
@@ -151,8 +152,17 @@ describe("rebuild resume snapshot repair", () => {
         dashboardPort: 18789,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
+        policyAuthority: "nemoclaw-managed",
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
+      vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+        authority: "nemoclaw-managed",
+        effectivePolicy: {},
+      }),
+      vi.spyOn(policyAuthority, "inspectGlobalPolicyAuthority").mockReturnValue({
+        authority: "nemoclaw-managed",
+        effectivePolicy: {},
+      }),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
       vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
         ok: true,

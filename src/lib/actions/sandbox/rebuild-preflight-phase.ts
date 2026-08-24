@@ -53,6 +53,15 @@ import {
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  qualifyRebuildPolicyAuthority,
+  type RebuildPolicyAuthorityReceipt,
+} from "./policy-authority/rebuild";
+
+export {
+  isPolicyAuthorityRefusalError,
+  revalidateRebuildPolicyAuthority,
+} from "./policy-authority/rebuild";
+import {
   type RebuildSandboxExecutionOptions,
   validatePreparedRecoveryManifest,
 } from "./rebuild-prepared-recovery";
@@ -73,6 +82,7 @@ export interface RebuildPreflightPhaseResult {
   recoveryManifest: RebuildManifest | null;
   dcodePreflight: DcodeRebuildOrchestrator;
   preparedImage: PreparedRebuildImage | null;
+  policyAuthorityReceipt: RebuildPolicyAuthorityReceipt;
   routePreflightReceipt: RebuildRoutePreflightReceipt;
   releaseOnboardLock: () => void;
   log: RebuildLog;
@@ -157,7 +167,6 @@ export async function runRebuildPreflightPhase(
     );
     return null;
   }
-  const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
@@ -167,6 +176,7 @@ export async function runRebuildPreflightPhase(
     allowLegacyManagedImageRecovery,
     bail,
   );
+  const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
@@ -223,6 +233,23 @@ export async function runRebuildPreflightPhase(
     confirmedEntrySnapshot,
     versionCheck,
   );
+  let policyAuthorityReceipt: RebuildPolicyAuthorityReceipt;
+  try {
+    policyAuthorityReceipt = await qualifyRebuildPolicyAuthority({
+      sandboxName,
+      sandboxEntry: expectedSandboxEntry,
+      manifest: recoveryManifest,
+      requestedObservabilityEnabled,
+    });
+  } catch (error) {
+    printRebuildPreflightFailure(
+      `policy authority could not be qualified: ${error instanceof Error ? error.message : String(error)}`,
+      "Confirm the recorded OpenShell gateway policy source and every required network-policy entry before retrying.",
+      "Policy authority preflight failed.",
+      bail,
+    );
+    return null;
+  }
   const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
     entry: expectedSandboxEntry,
@@ -324,6 +351,7 @@ export async function runRebuildPreflightPhase(
         liveState,
         recoveryManifest,
         dcodePreflight,
+        policyAuthorityReceipt,
         releaseOnboardLock,
         log,
         bail,

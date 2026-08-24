@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 
 const phaseMocks = vi.hoisted(() => ({
   openRecreateJournal: vi.fn(),
@@ -12,6 +13,7 @@ const phaseMocks = vi.hoisted(() => ({
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runShields: vi.fn(),
+  revalidateAuthority: vi.fn(),
 }));
 
 const gatewayAuthority = {
@@ -25,6 +27,15 @@ const gatewayAuthority = {
   requiredCapabilities: [],
 } as const;
 
+const policyAuthorityReceipt = {
+  authority: "nemoclaw-managed",
+  gatewayName: "nemoclaw",
+  managedMcpPolicies: [],
+  operation: "rebuild sandbox 'alpha'",
+  requiredPolicies: [],
+  sandboxName: "alpha",
+} as const;
+
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
@@ -36,6 +47,12 @@ vi.mock("./rebuild-backup-phase", () => ({
 
 vi.mock("./rebuild-preflight-phase", () => ({
   finalizePreparedRebuildImageMessagingPlan: vi.fn(),
+  isPolicyAuthorityRefusalError: (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "NEMOCLAW_POLICY_AUTHORITY_REFUSAL",
+  revalidateRebuildPolicyAuthority: phaseMocks.revalidateAuthority,
   runHermesCronRestoreBackupPreflight: () => ({ plan: null }),
   runRebuildPreflightPhase: phaseMocks.runPreflight,
 }));
@@ -70,6 +87,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    phaseMocks.revalidateAuthority.mockResolvedValue(undefined);
     phaseMocks.recoverCronRestore.mockReturnValue("dispatch-reactivated");
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha", customPolicies: [] },
@@ -104,6 +122,7 @@ describe("Hermes accepted replacement recovery", () => {
         revalidateBeforeDelete: vi.fn(async () => true),
       },
       preparedImage: null,
+      policyAuthorityReceipt,
       routePreflightReceipt: {},
       releaseOnboardLock,
       log,
@@ -173,6 +192,26 @@ describe("Hermes accepted replacement recovery", () => {
       "  Hermes cron restore gate cleared; the independent operator drain remains active.",
     );
     expect(completeAcceptedTarget).toHaveBeenCalledOnce();
+  });
+
+  it("preserves authority refusal after accepted replacement recovery (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    let recoveryCompleted = false;
+    phaseMocks.recoverCronRestore.mockImplementation(() => {
+      recoveryCompleted = true;
+      return "dispatch-reactivated";
+    });
+    phaseMocks.revalidateAuthority.mockImplementation(() =>
+      recoveryCompleted ? Promise.reject(refusal) : Promise.resolve(),
+    );
+
+    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toBe(refusal);
+
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "already holds the replacement",
+    );
   });
 
   it("retains the replacement journal when cron validation fails (#7806)", async () => {

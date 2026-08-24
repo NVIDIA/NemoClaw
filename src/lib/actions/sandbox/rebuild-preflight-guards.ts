@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import {
   detectOpenShellStateRpcPreflightIssue,
   printOpenShellStateRpcIssue,
@@ -405,7 +407,9 @@ export function assertRebuildEntryUnchanged(
   bail: RebuildBail,
 ): void {
   const lockedEntry = registry.getSandbox(sandboxName);
-  if (lockedEntry && JSON.stringify(lockedEntry) === confirmedEntrySnapshot) return;
+  const confirmedEntry = JSON.parse(confirmedEntrySnapshot) as RebuildSandboxEntry;
+  const lockedSnapshot = lockedEntry ? JSON.parse(JSON.stringify(lockedEntry)) : null;
+  if (isDeepStrictEqual(lockedSnapshot, confirmedEntry)) return;
   printRebuildPreflightFailure(
     "the sandbox configuration changed while rebuild confirmation was pending.",
     "Review the current sandbox state and rerun rebuild.",

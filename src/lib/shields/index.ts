@@ -4047,6 +4047,40 @@ function lockAgentConfig(
   });
 }
 
+/** Rebind a replacement sandbox's config lock without changing its external policy. */
+function rebindReplacementConfigLock(sandboxName: string, allowLegacyHermesProtocol = false): void {
+  validateName(sandboxName, "sandbox name");
+  return withShieldsTransitionLock(sandboxName, "rebind replacement config lock", () => {
+    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+    const protocol = requireHermesShieldsProtocol(sandboxName, target, allowLegacyHermesProtocol);
+    const relock = relockAndReconfirm(() =>
+      lockAgentConfigWithoutHostLock(
+        sandboxName,
+        target,
+        false,
+        allowLegacyHermesProtocol,
+        protocol,
+      ),
+    );
+    if (!relock.ok || !relock.lastResult) {
+      throw new Error(
+        relock.error ?? "Replacement config lock did not re-confirm after the settle window",
+      );
+    }
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      shieldsPolicySnapshotPath: null,
+      shieldsManagedMcpPolicyKeys: [],
+      chattrApplied: relock.lastResult.chattrApplied,
+      fileHashes: relock.lastResult.fileHashes,
+    });
+  });
+}
+
 type ShieldsDownRollbackOutcome =
   | "mutable_default_restored"
   | "lockdown_restored"
@@ -6265,6 +6299,7 @@ export {
   MAX_TIMEOUT_SECONDS,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
+  rebindReplacementConfigLock,
   repairMutableConfigPerms,
   resolvePersistedAutoRestoreTarget,
   restoreLockedStateDirStartupAccess,

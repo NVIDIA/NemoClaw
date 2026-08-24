@@ -6,8 +6,13 @@ import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
 } from "./backup-shields-window";
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
+import * as shields from "../../shields";
 
-export type RebuildShieldsWindow = BackupShieldsWindow;
+export type RebuildShieldsWindow = BackupShieldsWindow & {
+  policyAuthority?: SandboxPolicyAuthority;
+  sourceDeleted?: boolean;
+};
 
 function rebuildShieldsWindowOptions(sandboxName: string, cliName: string) {
   return {
@@ -30,8 +35,42 @@ function rebuildShieldsWindowOptions(sandboxName: string, cliName: string) {
 export function openRebuildShieldsWindow(
   sandboxName: string,
   cliName: string,
+  policyAuthority: SandboxPolicyAuthority = "nemoclaw-managed",
 ): RebuildShieldsWindow | null {
-  return openBackupShieldsWindow(sandboxName, rebuildShieldsWindowOptions(sandboxName, cliName));
+  if (policyAuthority === "externally-managed") {
+    return {
+      policyAuthority,
+      relocked: false,
+      sourceDeleted: false,
+      wasLocked: !shields.isShieldsDown(sandboxName),
+    };
+  }
+  const window = openBackupShieldsWindow(
+    sandboxName,
+    rebuildShieldsWindowOptions(sandboxName, cliName),
+  );
+  return window ? { ...window, policyAuthority, sourceDeleted: false } : null;
+}
+
+export function openAbsentRebuildShieldsWindow(
+  sandboxName: string,
+  policyAuthority: SandboxPolicyAuthority,
+): { staleSandboxWasLocked: boolean; window: RebuildShieldsWindow } {
+  const wasLocked = !shields.isShieldsDown(sandboxName);
+  if (policyAuthority === "externally-managed") {
+    return {
+      staleSandboxWasLocked: false,
+      window: { policyAuthority, relocked: false, sourceDeleted: true, wasLocked },
+    };
+  }
+  return {
+    staleSandboxWasLocked: wasLocked,
+    window: { policyAuthority, relocked: false, sourceDeleted: true, wasLocked: false },
+  };
+}
+
+export function markRebuildShieldsSourceDeleted(window: RebuildShieldsWindow): void {
+  window.sourceDeleted = true;
 }
 
 export function printRebuildShieldsRecovery(
@@ -40,6 +79,10 @@ export function printRebuildShieldsRecovery(
   cliName: string,
 ): void {
   if (!window.wasLocked) return;
+  if (window.policyAuthority === "externally-managed") {
+    console.error("    4. Retry the rebuild to rebind the retained config lockdown.");
+    return;
+  }
   console.error(`    4. Restore shields lockdown:`);
   console.error(`       ${cliName} ${sandboxName} shields up`);
 }
@@ -50,6 +93,29 @@ export function relockRebuildShieldsWindow(
   sandboxStillExists: boolean,
   cliName: string,
 ): boolean {
+  if (window.policyAuthority === "externally-managed") {
+    if (window.relocked) return true;
+    if (!window.wasLocked || window.sourceDeleted !== true) {
+      window.relocked = true;
+      return true;
+    }
+    if (!sandboxStillExists) {
+      console.error(
+        `  Cannot rebind the retained config lockdown because sandbox '${sandboxName}' is absent.`,
+      );
+      return false;
+    }
+    try {
+      shields.rebindReplacementConfigLock(sandboxName, true);
+      window.relocked = true;
+      return true;
+    } catch (error) {
+      console.error(
+        `  Failed to rebind the retained config lockdown: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }
   return relockBackupShieldsWindow(
     sandboxName,
     window,

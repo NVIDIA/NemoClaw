@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
+import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -54,6 +55,7 @@ export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
   options: { sandboxAbsent?: boolean } = {},
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<McpBridgeEntry[]> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
@@ -72,6 +74,7 @@ async function getCompleteMcpRebuildEntries(
       entriesRequiringExternalCleanup,
     );
   }
+  await validatePolicyAuthority?.();
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, options);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const incompleteAdd = entries.find((entry) => entry.addState);
@@ -116,9 +119,14 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
-  const entries = await getCompleteMcpRebuildEntries(sandboxName);
+  const entries = await getCompleteMcpRebuildEntries(
+    sandboxName,
+    undefined,
+    validatePolicyAuthority,
+  );
   if (entries.length === 0) {
     return {
       entries: [],
@@ -140,6 +148,7 @@ export async function prepareMcpBridgesForRebuild(
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
+      await validatePolicyAuthority?.();
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
@@ -148,12 +157,16 @@ export async function prepareMcpBridgesForRebuild(
       // MCP teardown. Keep exact generated-policy ownership in that preserved
       // row while removing only the live policy; inner onboarding excludes the
       // generated name and post-rebuild restoration reuses this ownership.
-      removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
-      removedPolicies.push(entry);
+      if (sandbox.policyAuthority !== "externally-managed") {
+        await validatePolicyAuthority?.();
+        removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
+        removedPolicies.push(entry);
+      }
     }
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
+      await validatePolicyAuthority?.();
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
       const detachOutcome = detachProvider(sandboxName, entry);
       if (detachOutcome === "unknown") {
@@ -168,10 +181,12 @@ export async function prepareMcpBridgesForRebuild(
       detached.push(entry);
     }
   } catch (error) {
+    if (isPolicyAuthorityRefusalError(error)) throw error;
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
     if (removedPolicies.length > 0) {
       try {
+        await validatePolicyAuthority?.();
         await restoreExistingMcpBridgeRuntime(sandboxName, removedPolicies, {
           lifecyclePhase: "teardown-rollback",
         });
@@ -183,9 +198,16 @@ export async function prepareMcpBridgesForRebuild(
       }
     }
     if (!runtimeRestored) {
-      rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
-      );
+      try {
+        await validatePolicyAuthority?.();
+        rollbackFailures.push(
+          ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
+        );
+      } catch (rollbackError) {
+        rollbackFailures.push(
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        );
+      }
     }
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
@@ -205,6 +227,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);
@@ -218,6 +241,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   let runtimeRestored = false;
   if (entries.length > 0) {
     try {
+      await validatePolicyAuthority?.();
       await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
         lifecyclePhase: "teardown-rollback",
       });
@@ -227,6 +251,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
     }
   }
   if (!runtimeRestored) {
+    await validatePolicyAuthority?.();
     failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
   }
   if (failures.length > 0) {
@@ -237,6 +262,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
@@ -245,6 +271,9 @@ export async function restoreMcpBridgesAfterRebuild(
   );
   // Persist the recovery contract before touching the gateway. If refresh
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
+  await validatePolicyAuthority?.();
   setBridgeState(sandboxName, bridges);
+  await validatePolicyAuthority?.();
   await restoreExistingMcpBridgeRuntime(sandboxName, entries);
+  await validatePolicyAuthority?.();
 }

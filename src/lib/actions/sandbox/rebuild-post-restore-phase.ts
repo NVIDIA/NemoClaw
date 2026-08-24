@@ -3,6 +3,10 @@
 
 import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
+import {
+  isPolicyAuthorityRefusalError,
+  type SandboxPolicyAuthority,
+} from "../../adapters/openshell/policy-authority";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
@@ -85,6 +89,8 @@ export interface RebuildPostRestorePhaseInput {
   backupWasForceSkipped: boolean;
   failedPresets: string[];
   finalBuiltinPresets: string[];
+  policyAuthority: SandboxPolicyAuthority;
+  validatePolicyAuthority: () => Promise<void>;
   failedPresetRemovals: string[];
   policyPresetReconciliationVerified: boolean;
   staleRecovery: boolean;
@@ -188,6 +194,8 @@ export async function runRebuildPostRestorePhase(
     backupWasForceSkipped,
     failedPresets,
     finalBuiltinPresets,
+    policyAuthority,
+    validatePolicyAuthority,
     failedPresetRemovals,
     policyPresetReconciliationVerified,
     staleRecovery,
@@ -224,6 +232,7 @@ export async function runRebuildPostRestorePhase(
     bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
     return;
   }
+  await validatePolicyAuthority();
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
@@ -243,6 +252,7 @@ export async function runRebuildPostRestorePhase(
       OPENCLAW_DOCTOR_TIMEOUT_MS,
       { allowLocalDockerFallback: false },
     );
+    await validatePolicyAuthority();
     log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
     if (doctorResult === null) {
       console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
@@ -258,12 +268,20 @@ export async function runRebuildPostRestorePhase(
     }
     console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
 
+    await validatePolicyAuthority();
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
+    await validatePolicyAuthority();
 
-    await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+    await reapplyMessagingManifestAfterOpenClawDoctor(
+      sandboxName,
+      messagingPlan,
+      log,
+      validatePolicyAuthority,
+    );
 
+    await validatePolicyAuthority();
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
     try {
@@ -274,6 +292,7 @@ export async function runRebuildPostRestorePhase(
         `  ${YW}\u26a0${R} Mutable config permission repair errored: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    await validatePolicyAuthority();
     if (permRepair === null) {
       // The thrown error was reported above.
     } else if (!permRepair.applied) {
@@ -298,19 +317,38 @@ export async function runRebuildPostRestorePhase(
   // Restart before restoring MCP. The Hermes MCP transaction performs an
   // acknowledged reload of its own; restarting afterwards would replace the
   // only runtime whose managed MCP configuration was proven to have loaded.
+  await validatePolicyAuthority();
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  await validatePolicyAuthority();
+  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+    sandboxName,
+    mcpEntries,
+    validatePolicyAuthority,
+  ));
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
-    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+    const refreshedMutableConfigHash = refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+      sandboxName,
+      () => undefined,
+    );
+    const verifiedMutableConfigHash =
+      refreshedMutableConfigHash &&
+      verifyFinalMutableOpenClawConfigHash(sandboxName, () => undefined);
+    await validatePolicyAuthority();
+    if (!refreshedMutableConfigHash) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
+    } else {
+      log("Mutable OpenClaw config hash refreshed after post-restore config writes");
+    }
+    if (refreshedMutableConfigHash && !verifiedMutableConfigHash) {
       finalMutableConfigHashUnverified = true;
+    } else if (verifiedMutableConfigHash) {
+      log("Final mutable OpenClaw config hash verified after post-restore finalization");
     }
   }
   const hermesGatewayVerification = hermesCronRestoreIdentity
@@ -328,6 +366,7 @@ export async function runRebuildPostRestorePhase(
         ),
         replacementIdentity: undefined,
       };
+  await validatePolicyAuthority();
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   if (hermesCronRestoreIdentity) {
@@ -358,12 +397,15 @@ export async function runRebuildPostRestorePhase(
     }
     let completedIdentity: HermesCronRestoreIdentity;
     try {
+      await validatePolicyAuthority();
       completedIdentity = completeHermesCronRestoreAfterGatewayReplacement(
         sandboxName,
         hermesCronRestoreIdentity,
         replacementIdentity,
       );
+      await validatePolicyAuthority();
     } catch (error) {
+      if (isPolicyAuthorityRefusalError(error)) throw error;
       const errorDetail = error instanceof Error ? error.message : String(error);
       if (isHermesCronRestoreDrainMarkerRollbackFailure(error)) {
         return bailAfterHermesCronRestoreFailure(
@@ -391,21 +433,28 @@ export async function runRebuildPostRestorePhase(
   } else if (hermesGatewayRestoreState === "recovered") {
     console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }
-  const { policies: restoredBuiltinPresets, policyPresetsFinalized } =
-    resolveRestoredPolicyRegistryState(
-      {
-        policyPresetsFinalized: sb.policyPresetsFinalized,
-      },
-      finalBuiltinPresets,
-      failedPresets,
-      policyPresetReconciliationVerified,
-    );
+  const externallyManagedPolicy = policyAuthority === "externally-managed";
+  const { policies: restoredBuiltinPresets, policyPresetsFinalized } = externallyManagedPolicy
+    ? { policies: [], policyPresetsFinalized: undefined }
+    : resolveRestoredPolicyRegistryState(
+        {
+          policyPresetsFinalized: sb.policyPresetsFinalized,
+        },
+        finalBuiltinPresets,
+        failedPresets,
+        policyPresetReconciliationVerified,
+      );
+  await validatePolicyAuthority();
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
     policies: restoredBuiltinPresets,
-    policyTier: normalizePolicyTierName(sb.policyTier),
+    policyTier: externallyManagedPolicy ? null : normalizePolicyTierName(sb.policyTier),
     policyPresetsFinalized,
+    ...(externallyManagedPolicy
+      ? { baselineExclusions: [], customPolicies: [], policyAuthority }
+      : {}),
   });
+  await validatePolicyAuthority();
   log(
     `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredBuiltinPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
   );
@@ -414,18 +463,34 @@ export async function runRebuildPostRestorePhase(
     bail("Failed to re-apply shields lockdown.");
     return;
   }
-  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, messagingPlan)) {
+  await validatePolicyAuthority();
+  const messagingForwardNotes: string[] = [];
+  if (
+    !ensureMessagingHostForwardAfterRebuild(sandboxName, messagingPlan, (message) =>
+      messagingForwardNotes.push(message),
+    )
+  ) {
     messagingHostForwardUnverified = true;
   }
+  await validatePolicyAuthority();
+  for (const message of messagingForwardNotes) console.log(message);
+  let finalMutableConfigHashVerified = false;
   if (
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log)
+    !(finalMutableConfigHashVerified = verifyFinalMutableOpenClawConfigHash(
+      sandboxName,
+      () => undefined,
+    ))
   ) {
     finalMutableConfigHashUnverified = true;
   }
 
+  await validatePolicyAuthority();
+  if (finalMutableConfigHashVerified) {
+    log("Final mutable OpenClaw config hash verified after post-restore finalization");
+  }
   console.log("");
   const postRestoreComplete = postRestoreCompleted({
     hermesGatewayRestoreUnverified,

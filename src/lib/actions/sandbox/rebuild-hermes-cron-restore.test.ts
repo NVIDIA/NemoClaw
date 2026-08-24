@@ -257,7 +257,12 @@ describe("Hermes cron rebuild restore contract", () => {
     const leadingHyphenToken = "-restore-token";
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => ({
       status: 0,
-      stdout: receipt(argv.includes("validate") ? "validate" : "begin", 41, 902, leadingHyphenToken),
+      stdout: receipt(
+        argv.includes("validate") ? "validate" : "begin",
+        41,
+        902,
+        leadingHyphenToken,
+      ),
       stderr: "",
     }));
 
@@ -269,21 +274,21 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("keeps dispatch drained when state restore is incomplete", () => {
+  it("keeps dispatch drained when state restore is incomplete", async () => {
     processMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
       stdout: receipt("begin"),
       stderr: "",
     });
 
-    expect(() =>
-      runHermesCronRestoreTransaction("alpha", () => ({ restoreSucceeded: false })),
-    ).toThrow("state restore was incomplete");
+    await expect(
+      runHermesCronRestoreTransaction("alpha", async () => ({ restoreSucceeded: false })),
+    ).rejects.toThrow("state restore was incomplete");
     expect(processMocks.dockerSpawnSync).toHaveBeenCalledOnce();
     expect(processMocks.privilegedSandboxExecArgv.mock.calls[0]?.[1]).toContain("begin");
   });
 
-  it("keeps dispatch held after restore validation until gateway replacement (#8472)", () => {
+  it("keeps dispatch held after restore validation until gateway replacement (#8472)", async () => {
     const events: string[] = [];
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
       const action = argv.includes("validate") ? "validate" : "begin";
@@ -291,9 +296,9 @@ describe("Hermes cron rebuild restore contract", () => {
       return { status: 0, stdout: receipt(action), stderr: "" };
     });
 
-    const transaction = runHermesCronRestoreTransaction(
+    const transaction = await runHermesCronRestoreTransaction(
       "alpha",
-      () => {
+      async () => {
         events.push("restore");
         return { restoreSucceeded: true, restored: "state" };
       },
@@ -493,29 +498,29 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it.each([
-    "gate-prepared",
-    "not-required",
-  ] as const)("returns the %s pre-repair disposition", (disposition) => {
-    processMocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      stdout: preparationReceipt(disposition),
-      stderr: "",
-    });
+  it.each(["gate-prepared", "not-required"] as const)(
+    "returns the %s pre-repair disposition",
+    (disposition) => {
+      processMocks.dockerSpawnSync.mockReturnValue({
+        status: 0,
+        stdout: preparationReceipt(disposition),
+        stderr: "",
+      });
 
-    expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
-    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
-      "alpha",
-      [
-        "/opt/hermes/.venv/bin/python",
-        "-I",
-        "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-        "prepare-recover",
-      ],
-      false,
-      true,
-    );
-  });
+      expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
+      expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+        "alpha",
+        [
+          "/opt/hermes/.venv/bin/python",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+          "prepare-recover",
+        ],
+        false,
+        true,
+      );
+    },
+  );
 
   it("rejects an inconsistent pre-repair receipt", () => {
     processMocks.dockerSpawnSync.mockReturnValue({

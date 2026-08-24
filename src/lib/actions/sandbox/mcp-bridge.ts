@@ -148,27 +148,31 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForRebuildLifecycle(sandboxName);
+  return prepareMcpBridgesForRebuildLifecycle(sandboxName, validatePolicyAuthority);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(
     sandboxName,
     entries,
     scrubbedAdapterEntries,
+    validatePolicyAuthority,
   );
 }
 
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  validatePolicyAuthority?: () => Promise<void>,
 ): Promise<void> {
-  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries);
+  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, validatePolicyAuthority);
 }
 
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {

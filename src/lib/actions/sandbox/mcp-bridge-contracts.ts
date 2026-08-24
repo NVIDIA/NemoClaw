@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentMcpAdapter } from "../../agent/defs";
+import type { AgentMcpAdapter } from "../../agent/definition-types";
+
+export { isAgentMcpAdapter } from "../../agent/definition-types";
 
 export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
 export type McpBridgeErrorReasonCode = "rejected" | "unresolved";
@@ -92,8 +94,4 @@ export interface McpBridgeStatus {
   addState?: "prepared" | "preflighted";
   addedAt?: string;
   updatedAt?: string;
-}
-
-export function isAgentMcpAdapter(value: unknown): value is AgentMcpAdapter {
-  return value === "mcporter" || value === "hermes-config" || value === "deepagents-config";
 }

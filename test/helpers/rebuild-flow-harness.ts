@@ -45,6 +45,7 @@ export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const policyAuthority = requireDist("../../adapters/openshell/policy-authority.js");
 export const policies = requireDist("../../policy/index.js");
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
@@ -64,6 +65,7 @@ export const registry = requireDist("../../state/registry.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
+export const sandboxRecreateProbe = requireDist("../../onboard/sandbox-recreate-probe.js");
 export const sandboxSession = requireDist("../../state/sandbox-session.js");
 export const sandboxState = requireDist("../../state/sandbox.js");
 export const sandboxVersion = requireDist("../../sandbox/version.js");

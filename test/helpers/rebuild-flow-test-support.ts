@@ -4,6 +4,7 @@
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
+import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
 import type {
   finalizePreparedRebuildImageMessagingPlan,
   RebuildImagePreflightResult,
@@ -74,6 +75,7 @@ export type RebuildFlowOverrides = {
   agentPolicyAdditionsContent?: string;
   preflightWithProductionBaselineResolver?: boolean;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
   revalidateRebuildRouteBeforeDelete?: (
     receipt: Record<string, unknown>,
   ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
@@ -144,9 +146,12 @@ export type RebuildFlowHarness = {
   ensureTargetGatewaySpy: MockInstance;
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   hydrateCredentialEnvSpy: MockInstance;
+  inspectGlobalPolicyAuthoritySpy: MockInstance;
+  inspectSandboxPolicyAuthoritySpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
+  openRebuildShieldsWindowSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;

@@ -44,6 +44,7 @@ function getMessagingForwardHealth(sandboxName: string, port: number): true | fa
 export function ensureMessagingHostForwardAfterRebuild(
   sandboxName: string,
   plan: SandboxMessagingPlan | null | undefined,
+  note: (message: string) => void = console.log,
 ): boolean {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
@@ -67,6 +68,6 @@ export function ensureMessagingHostForwardAfterRebuild(
         port,
         label,
       ),
-    note: console.log,
+    note,
   });
 }

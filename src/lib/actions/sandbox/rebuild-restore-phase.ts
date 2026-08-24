@@ -4,6 +4,10 @@
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import {
+  isPolicyAuthorityRefusalError,
+  type SandboxPolicyAuthority,
+} from "../../adapters/openshell/policy-authority";
+import {
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
   OBSERVABILITY_POLICY_BINDING,
 } from "../../onboard/observability-policy-presets";
@@ -25,6 +29,8 @@ export interface RebuildRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   policyPresets: string[];
   customPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
+  policyAuthority: SandboxPolicyAuthority;
+  validatePolicyAuthority: () => Promise<void>;
   reconcileManagedDcodeObservability: boolean;
   log: RebuildLog;
 }
@@ -64,24 +70,44 @@ function finalRestoredPresetState(
   };
 }
 
-function reconcileFinalManagedObservability(
+async function runPolicyAuthorityBoundOperation<T>(
+  validatePolicyAuthority: () => Promise<void>,
+  operation: () => T,
+): Promise<T> {
+  await validatePolicyAuthority();
+  try {
+    return operation();
+  } finally {
+    await validatePolicyAuthority();
+  }
+}
+
+async function reconcileFinalManagedObservability(
   sandboxName: string,
   targetManagedObservability: boolean,
   restoredBuiltinPresets: readonly string[],
   restoredCustomPresets: readonly string[],
   failedBuiltinPresets: readonly string[],
   successfulCustomObservabilityContents: readonly string[],
+  validatePolicyAuthority: () => Promise<void>,
   log: RebuildLog,
-): Pick<
-  RebuildRestorePhaseResult,
-  | "finalPresets"
-  | "finalBuiltinPresets"
-  | "failedPresetRemovals"
-  | "policyPresetReconciliationVerified"
+): Promise<
+  Pick<
+    RebuildRestorePhaseResult,
+    | "finalPresets"
+    | "finalBuiltinPresets"
+    | "failedPresetRemovals"
+    | "policyPresetReconciliationVerified"
+  >
 > {
-  const customObservabilityStates = successfulCustomObservabilityContents.map((content) =>
-    OBSERVABILITY_POLICY_BINDING.inspectContent(sandboxName, content, policies),
-  );
+  const customObservabilityStates: Array<"match" | "absent" | "drift" | null> = [];
+  for (const content of successfulCustomObservabilityContents) {
+    customObservabilityStates.push(
+      await runPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+        OBSERVABILITY_POLICY_BINDING.inspectContent(sandboxName, content, policies),
+      ),
+    );
+  }
   const customObservabilityExpected = successfulCustomObservabilityContents.length > 0;
   const customObservabilityVerified = customObservabilityStates.includes("match");
   if (!targetManagedObservability && customObservabilityVerified) {
@@ -92,7 +118,9 @@ function reconcileFinalManagedObservability(
     };
   }
 
-  const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(sandboxName, policies);
+  const loadedBinding = await runPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+    OBSERVABILITY_POLICY_BINDING.load(sandboxName, policies),
+  );
   const builtinContent = loadedBinding.content;
   if (!builtinContent) {
     log("Could not load managed observability preset content after rebuild restore");
@@ -115,14 +143,11 @@ function reconcileFinalManagedObservability(
   let liveAfter = liveBefore;
   if (!targetManagedObservability && liveBefore === "match") {
     log(`Removing unexpected live preset: ${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}`);
-    const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
-      sandboxName,
-      builtinContent,
-      policies,
-      {
+    const removal = await runPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+      OBSERVABILITY_POLICY_BINDING.removeExact(sandboxName, builtinContent, policies, {
         knownBefore: liveBefore,
         removeOptions: { nonFatal: true },
-      },
+      }),
     );
     if (removal.reportedSuccess !== true) {
       failedPresetRemovals.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
@@ -179,7 +204,9 @@ function reconcileFinalManagedObservability(
  * Boundary coverage: rebuild-flow.test.ts exercises full/partial state restore,
  * stale recovery, successful presets, and incomplete preset recovery reporting.
  */
-export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
+export async function runRebuildRestorePhase(
+  input: RebuildRestorePhaseInput,
+): Promise<RebuildRestorePhaseResult> {
   const {
     sandboxName,
     targetAgentType,
@@ -187,9 +214,12 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     backupManifest,
     policyPresets,
     customPolicies,
+    policyAuthority,
+    validatePolicyAuthority,
     reconcileManagedDcodeObservability,
     log,
   } = input;
+  await validatePolicyAuthority();
   let restoreSucceeded = true;
   if (backupManifest) {
     console.log("");
@@ -206,6 +236,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
       },
     );
+    await validatePolicyAuthority();
     log(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
@@ -221,6 +252,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         dashboardTarget.agentName === "hermes"
           ? sandboxConfig.restoreHermesDashboardConfig(sandboxName, dashboardTarget)
           : "failed";
+      await validatePolicyAuthority();
       log(`Hermes dashboard state after restore: ${dashboardSeed}`);
       if (dashboardSeed === "failed") {
         restoreSucceeded = false;
@@ -246,6 +278,20 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     }
   }
 
+  await validatePolicyAuthority();
+
+  if (policyAuthority === "externally-managed") {
+    return {
+      restoreSucceeded,
+      restoredPresets: [],
+      failedPresets: [],
+      finalPresets: [],
+      finalBuiltinPresets: [],
+      failedPresetRemovals: [],
+      policyPresetReconciliationVerified: true,
+    };
+  }
+
   const restoredBuiltinPresets: string[] = [];
   const restoredCustomPresets: string[] = [];
   const failedPresets: string[] = [];
@@ -264,7 +310,9 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     for (const presetName of builtinPolicyPresets) {
       try {
         log(`Applying preset: ${presetName}`);
-        const applied = policies.applyPreset(sandboxName, presetName);
+        const applied = await runPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.applyPreset(sandboxName, presetName),
+        );
         if (applied) {
           restoredBuiltinPresets.push(presetName);
         } else {
@@ -272,6 +320,8 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
           failedPresets.push(presetName);
         }
       } catch (error) {
+        if (isPolicyAuthorityRefusalError(error)) throw error;
+        await validatePolicyAuthority();
         const message = error instanceof Error ? error.message : String(error);
         log(`Failed to apply preset '${presetName}': ${message}`);
         failedBuiltinPresets.push(presetName);
@@ -284,12 +334,14 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         const trustedPrivatePinCapability = entry.trustedPrivatePins
           ? replayTrustedPrivatePolicyPinCapability(entry.content, entry.trustedPrivatePins)
           : undefined;
-        const applied = policies.applyPresetContent(sandboxName, entry.name, entry.content, {
-          custom: {
-            sourcePath: entry.sourcePath,
-            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
-          },
-        });
+        const applied = await runPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.applyPresetContent(sandboxName, entry.name, entry.content, {
+            custom: {
+              sourcePath: entry.sourcePath,
+              ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
+            },
+          }),
+        );
         if (applied) {
           restoredCustomPresets.push(entry.name);
           if (
@@ -302,6 +354,8 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
           failedPresets.push(entry.name);
         }
       } catch (error) {
+        if (isPolicyAuthorityRefusalError(error)) throw error;
+        await validatePolicyAuthority();
         const message = error instanceof Error ? error.message : String(error);
         log(`Failed to apply custom preset '${entry.name}': ${message}`);
         failedPresets.push(entry.name);
@@ -322,13 +376,14 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
 
   const restoredPresets = uniquePresetNames([...restoredBuiltinPresets, ...restoredCustomPresets]);
   const finalPolicyState = reconcileManagedDcodeObservability
-    ? reconcileFinalManagedObservability(
+    ? await reconcileFinalManagedObservability(
         sandboxName,
         targetManagedObservability,
         restoredBuiltinPresets,
         restoredCustomPresets,
         failedBuiltinPresets,
         successfulCustomObservabilityContents,
+        validatePolicyAuthority,
         log,
       )
     : {
@@ -337,5 +392,6 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         failedPresetRemovals: [],
         policyPresetReconciliationVerified: true,
       };
+  await validatePolicyAuthority();
   return { restoreSucceeded, restoredPresets, failedPresets, ...finalPolicyState };
 }

@@ -43,6 +43,8 @@ import {
 } from "./rebuild-preflight-guards";
 import {
   finalizePreparedRebuildImageMessagingPlan,
+  isPolicyAuthorityRefusalError,
+  revalidateRebuildPolicyAuthority,
   runHermesCronRestoreBackupPreflight,
   runRebuildPreflightPhase,
 } from "./rebuild-preflight-phase";
@@ -98,30 +100,31 @@ export async function rebuildSandbox(
       sessionFile: onboardSession.SESSION_FILE,
       stateDir: path.dirname(onboardSession.SESSION_FILE),
     },
-    () => withMcpLifecycleLock(sandboxName, async () => {
-    assertSandboxRebuildCommandAvailable(sandboxName);
-    const scopedEnvKeys = [
-      BRAVE_API_KEY_ENV,
-      TAVILY_API_KEY_ENV,
-      MESSAGING_SETUP_APPLIER_ENV_KEY,
-      "OPENSHELL_GATEWAY",
-      DOCKER_GPU_PATCH_NETWORK_ENV,
-      ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-      ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
-    ];
-    const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
-    try {
-      await rebuildSandboxUnlocked(sandboxName, options, opts);
-    } finally {
-      for (const key of scopedEnvKeys) delete process.env[key];
-      Object.assign(
-        process.env,
-        Object.fromEntries(
-          savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
-        ),
-      );
-    }
-    }),
+    () =>
+      withMcpLifecycleLock(sandboxName, async () => {
+        assertSandboxRebuildCommandAvailable(sandboxName);
+        const scopedEnvKeys = [
+          BRAVE_API_KEY_ENV,
+          TAVILY_API_KEY_ENV,
+          MESSAGING_SETUP_APPLIER_ENV_KEY,
+          "OPENSHELL_GATEWAY",
+          DOCKER_GPU_PATCH_NETWORK_ENV,
+          ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+          ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
+        ];
+        const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
+        try {
+          await rebuildSandboxUnlocked(sandboxName, options, opts);
+        } finally {
+          for (const key of scopedEnvKeys) delete process.env[key];
+          Object.assign(
+            process.env,
+            Object.fromEntries(
+              savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
+            ),
+          );
+        }
+      }),
     { loadRegistry, withLifecycleLock: withMcpLifecycleLock },
   );
 }
@@ -146,6 +149,7 @@ async function rebuildSandboxUnlocked(
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
     preparedImage: initiallyPreparedImage,
+    policyAuthorityReceipt,
     routePreflightReceipt,
     releaseOnboardLock,
     log,
@@ -171,6 +175,12 @@ async function rebuildSandboxUnlocked(
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
     if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
+    try {
+      await revalidateRebuildPolicyAuthority(policyAuthorityReceipt);
+    } catch (error) {
+      bail(error instanceof Error ? error.message : String(error));
+      return;
+    }
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(loadRegistry()))
       : liveState.staleRegistrySnapshot;
@@ -184,6 +194,7 @@ async function rebuildSandboxUnlocked(
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
       recoveryRecreate,
+      policyAuthorityReceipt.authority,
       releaseOnboardLock,
       bail,
     );
@@ -191,6 +202,7 @@ async function rebuildSandboxUnlocked(
     const {
       window: rebuildShieldsWindow,
       staleSandboxWasLocked,
+      markSourceDeleted: markRebuildShieldsSourceDeleted,
       relock: relockShieldsIfNeeded,
     } = shieldsPhase;
     let sandboxStillExists = true;
@@ -320,6 +332,21 @@ async function rebuildSandboxUnlocked(
       });
       recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
 
+      const validatePolicyAuthority = async () => {
+        try {
+          await revalidateRebuildPolicyAuthority(policyAuthorityReceipt);
+          return { ok: true as const };
+        } catch (error) {
+          return {
+            ok: false as const,
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      };
+      const requireValidPolicyAuthority = async (): Promise<void> => {
+        await revalidateRebuildPolicyAuthority(policyAuthorityReceipt);
+      };
+
       // An earlier run of this rebuild already registered and proved the
       // replacement. Retire its journal and stop before the destroy phase so a
       // restart converges to that sandbox instead of deleting it.
@@ -329,7 +356,9 @@ async function rebuildSandboxUnlocked(
         // Hermes target before retiring the replacement journal.
         if (rebuildAgent === "hermes") {
           try {
+            await requireValidPolicyAuthority();
             const outcome = recoverHermesCronRestore(sandboxName);
+            await requireValidPolicyAuthority();
             if (outcome === "unsupported") {
               console.error("");
               console.error(
@@ -347,6 +376,7 @@ async function rebuildSandboxUnlocked(
             }
             log(`Hermes cron restore recovery for accepted replacement: ${outcome}`);
           } catch (error) {
+            if (isPolicyAuthorityRefusalError(error)) throw error;
             console.error("");
             console.error(
               `  Hermes cron restore could not validate and release the accepted replacement: ${rebuildFailureDetail(error)}`,
@@ -358,7 +388,9 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
+        await requireValidPolicyAuthority();
         recreateJournal.completeAcceptedTarget();
+        await requireValidPolicyAuthority();
         log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
         console.log(
           `  Sandbox '${sandboxName}' already holds the replacement from the interrupted rebuild.`,
@@ -379,7 +411,11 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
+        validateBeforeMcpPreparation: validatePolicyAuthority,
+        validateMcpPolicyAuthorityReceipt: requireValidPolicyAuthority,
         validateAfterMcpPreparation: async () => {
+          const policyAuthority = await validatePolicyAuthority();
+          if (!policyAuthority.ok) return policyAuthority;
           const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
           if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
             return {
@@ -411,6 +447,8 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        validateBeforeDeleteCommit: validatePolicyAuthority,
+        validateAfterDeleteConfirmation: validatePolicyAuthority,
         validateAtDeleteEdge: () =>
           revalidateManagedWorkloadRebuildBeforeDelete(
             sandboxName,
@@ -418,12 +456,14 @@ async function rebuildSandboxUnlocked(
           ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
+          markRebuildShieldsSourceDeleted();
         },
         onDeleteStateAmbiguous: () => {
           sandboxExistenceAmbiguous = true;
         },
       });
       if (!mcpPreparation) return;
+      await requireValidPolicyAuthority();
       registryRollback.recordRemoval(mcpPreparation.removalReceipt);
 
       const restoreDcodeGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
@@ -453,6 +493,7 @@ async function rebuildSandboxUnlocked(
           mcpEntries: mcpPreparation.entries,
           rebuildShieldsWindow,
           relockShieldsIfNeeded,
+          validatePolicyAuthority: requireValidPolicyAuthority,
           onCreated: () => {
             sandboxStillExists = true;
           },
@@ -506,14 +547,16 @@ async function rebuildSandboxUnlocked(
           backupManifest: backup.backupManifest,
           policyPresets: targetPolicyPresets,
           customPolicies: customPoliciesWithRegistryPinAuthority,
+          policyAuthority: policyAuthorityReceipt.authority,
+          validatePolicyAuthority: requireValidPolicyAuthority,
           reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
           log,
         });
       let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
       const restored = hermesCronRestorePlan?.requiresDispatchGate
-        ? (() => {
+        ? await (async () => {
             try {
-              const transaction = runHermesCronRestoreTransaction(
+              const transaction = await runHermesCronRestoreTransaction(
                 sandboxName,
                 restore,
                 (state, identity) => {
@@ -536,7 +579,7 @@ async function rebuildSandboxUnlocked(
               return bail("Hermes cron restore validation failed; dispatch was not re-enabled.");
             }
           })()
-        : restore();
+        : await restore();
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
@@ -551,6 +594,8 @@ async function rebuildSandboxUnlocked(
         finalBuiltinPresets: restored.finalBuiltinPresets,
         failedPresetRemovals: restored.failedPresetRemovals,
         policyPresetReconciliationVerified: restored.policyPresetReconciliationVerified,
+        policyAuthority: policyAuthorityReceipt.authority,
+        validatePolicyAuthority: requireValidPolicyAuthority,
         staleRecovery,
         recoveryRecreate,
         preparedBackupRecovery,

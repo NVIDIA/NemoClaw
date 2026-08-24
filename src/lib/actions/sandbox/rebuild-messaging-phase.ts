@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import { RD as _RD, D, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
@@ -75,6 +76,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  beforeSuccess?: () => Promise<void>,
 ): Promise<void> {
   if (!plan || plan.agent !== "openclaw") {
     log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
@@ -87,6 +89,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
       runOpenshell: runMessagingOpenshell,
       runHook: (request) => hookOutputsFromBuildSteps(plan, request),
     });
+    await beforeSuccess?.();
     log(
       `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
     );
@@ -94,6 +97,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
       console.log(`  ${G}\u2713${R} Messaging manifest config reapplied`);
     }
   } catch (error) {
+    if (isPolicyAuthorityRefusalError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     log(`Messaging manifest reapply failed: ${message}`);
     console.log(`  ${D}Messaging manifest config reapply skipped (${message})${R}`);

@@ -116,6 +116,10 @@ export interface AgentInference {
 export type AgentMcpSupport = "bridge" | "disabled";
 export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 
+export function isAgentMcpAdapter(value: unknown): value is AgentMcpAdapter {
+  return value === "mcporter" || value === "hermes-config" || value === "deepagents-config";
+}
+
 export interface AgentMcpCapability {
   support: AgentMcpSupport;
   adapter?: AgentMcpAdapter;

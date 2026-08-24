@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   isShieldsDown: vi.fn(),
+  openAbsentRebuildShieldsWindow: vi.fn(),
   openRebuildShieldsWindow: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("../../shields", () => ({
 }));
 
 vi.mock("./rebuild-shields", () => ({
+  openAbsentRebuildShieldsWindow: mocks.openAbsentRebuildShieldsWindow,
   openRebuildShieldsWindow: mocks.openRebuildShieldsWindow,
 }));
 
@@ -31,18 +33,35 @@ describe("rebuild Shields window selection", () => {
       rebuildShieldsWindow: window,
       staleSandboxWasLocked: false,
     });
-    expect(mocks.openRebuildShieldsWindow).toHaveBeenCalledWith("alpha", "nemoclaw");
+    expect(mocks.openRebuildShieldsWindow).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      "nemoclaw-managed",
+    );
     expect(mocks.isShieldsDown).not.toHaveBeenCalled();
   });
 
   it("records Shields up for a stale sandbox without applying Shields down", () => {
-    mocks.isShieldsDown.mockReturnValue(false);
+    mocks.openAbsentRebuildShieldsWindow.mockReturnValue({
+      staleSandboxWasLocked: true,
+      window: {
+        policyAuthority: "nemoclaw-managed",
+        relocked: false,
+        sourceDeleted: true,
+        wasLocked: false,
+      },
+    });
 
     expect(openRebuildShieldsWindowForState("alpha", true)).toEqual({
-      rebuildShieldsWindow: { relocked: false, wasLocked: false },
+      rebuildShieldsWindow: {
+        policyAuthority: "nemoclaw-managed",
+        relocked: false,
+        sourceDeleted: true,
+        wasLocked: false,
+      },
       staleSandboxWasLocked: true,
     });
-    expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha");
+    expect(mocks.openAbsentRebuildShieldsWindow).toHaveBeenCalledWith("alpha", "nemoclaw-managed");
     expect(mocks.openRebuildShieldsWindow).not.toHaveBeenCalled();
   });
 });

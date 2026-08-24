@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as shields from "../../shields";
@@ -117,6 +118,8 @@ describe("rebuild post-restore phase", () => {
       backupWasForceSkipped: false,
       failedPresets: [],
       finalBuiltinPresets: [],
+      policyAuthority: "nemoclaw-managed" as const,
+      validatePolicyAuthority: vi.fn(async () => undefined),
       failedPresetRemovals: [],
       policyPresetReconciliationVerified: true,
       staleRecovery: false,
@@ -151,6 +154,32 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
+  it("keeps external rebuild policy authority without NemoClaw preset attribution (#9833)", async () => {
+    const args = {
+      ...input(),
+      policyAuthority: "externally-managed" as const,
+      finalBuiltinPresets: ["npm"],
+      sandboxEntry: {
+        baselineExclusions: [{ key: "openclaw_docs" }],
+        customPolicies: [{ name: "custom-api", content: "network_policies: {}" }],
+        policies: ["npm"],
+        policyTier: "restricted",
+      } as never,
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(registry.updateSandbox).toHaveBeenCalledWith("alpha", {
+      agentVersion: null,
+      baselineExclusions: [],
+      customPolicies: [],
+      policies: [],
+      policyAuthority: "externally-managed",
+      policyPresetsFinalized: undefined,
+      policyTier: null,
+    });
+  });
+
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue(null);
     const args = input();
@@ -168,6 +197,44 @@ describe("rebuild post-restore phase", () => {
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair completion was not verified");
+    expect(output).not.toContain("rebuilt successfully");
+  });
+
+  it("withholds doctor success when policy authority changes during repair (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    const args = input();
+    vi.mocked(args.validatePolicyAuthority)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(refusal);
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toBe(refusal);
+
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).not.toContain("Post-upgrade structure check passed");
+    expect(output).not.toContain("rebuilt successfully");
+  });
+
+  it("withholds forward and rebuild success when policy authority changes during forwarding (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    let authorityChanged = false;
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
+      (_sandboxName, _plan, note) => {
+        authorityChanged = true;
+        note?.("Messaging forward ready");
+        return true;
+      },
+    );
+    const args = input();
+    vi.mocked(args.validatePolicyAuthority).mockImplementation(() =>
+      authorityChanged ? Promise.reject(refusal) : Promise.resolve(),
+    );
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toBe(refusal);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).not.toContain("Messaging forward ready");
     expect(output).not.toContain("rebuilt successfully");
   });
 
@@ -198,17 +265,11 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(
-      sessionModels.reconcileStalePinnedSessionModelsAfterRebuild,
-    ).not.toHaveBeenCalled();
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
     expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -446,6 +507,36 @@ describe("rebuild post-restore phase", () => {
     expect(output).toContain("replacement cron tree is invalid");
     expect(output).toContain("Backup is preserved at: /tmp/alpha-backup");
     expect(output).toContain("nemoclaw alpha recover");
+  });
+
+  it("preserves policy refusal after Hermes cron release without publishing success (#9833)", async () => {
+    agentName = "hermes";
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    let cronReleased = false;
+    vi.mocked(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).mockImplementation(() => {
+      cronReleased = true;
+      return { pid: 77, start_time: 903, drain_token: "restore-token" };
+    });
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+    vi.mocked(args.validatePolicyAuthority).mockImplementation(() =>
+      cronReleased ? Promise.reject(refusal) : Promise.resolve(),
+    );
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toBe(refusal);
+
+    expect(args.bail).not.toHaveBeenCalled();
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).not.toContain("Hermes gateway restarted and verified");
+    expect(output).not.toContain("rebuilt successfully");
   });
 
   it("reports preserved recovery authority when release marker rollback fails (#8472)", async () => {

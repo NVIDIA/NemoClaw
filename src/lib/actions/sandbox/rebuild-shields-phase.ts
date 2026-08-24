@@ -2,13 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { openRebuildShieldsWindowForState } from "./rebuild-flow-helpers";
-import { type RebuildShieldsWindow, relockRebuildShieldsWindow } from "./rebuild-shields";
+import {
+  markRebuildShieldsSourceDeleted,
+  type RebuildShieldsWindow,
+  relockRebuildShieldsWindow,
+} from "./rebuild-shields";
 
 export interface RebuildShieldsPhaseResult {
   window: RebuildShieldsWindow;
   staleSandboxWasLocked: boolean;
+  markSourceDeleted: () => void;
   relock: (sandboxStillExists: boolean) => boolean;
 }
 
@@ -19,6 +25,7 @@ export interface RebuildShieldsPhaseResult {
 export function runRebuildShieldsPhase(
   sandboxName: string,
   recoveryRecreate: boolean,
+  policyAuthority: SandboxPolicyAuthority,
   releaseOnboardLock: () => void,
   bail: RebuildBail,
 ): RebuildShieldsPhaseResult | null {
@@ -28,6 +35,7 @@ export function runRebuildShieldsPhase(
     ({ rebuildShieldsWindow: window, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
       sandboxName,
       recoveryRecreate,
+      policyAuthority,
     ));
   } catch (error) {
     process.removeListener("exit", releaseOnboardLock);
@@ -43,6 +51,7 @@ export function runRebuildShieldsPhase(
   return {
     window,
     staleSandboxWasLocked,
+    markSourceDeleted: () => markRebuildShieldsSourceDeleted(window),
     relock: (sandboxStillExists: boolean) =>
       relockRebuildShieldsWindow(sandboxName, window, sandboxStillExists, CLI_NAME),
   };

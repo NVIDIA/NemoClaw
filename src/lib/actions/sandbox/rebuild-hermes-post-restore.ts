@@ -695,14 +695,14 @@ export function recoverHermesCronRestore(sandboxName: string): HermesCronRestore
   throw new Error("Hermes cron recover returned an invalid disposition");
 }
 
-export function runHermesCronRestoreTransaction<T extends { restoreSucceeded: boolean }>(
+export async function runHermesCronRestoreTransaction<T extends { restoreSucceeded: boolean }>(
   sandboxName: string,
-  restore: () => T,
+  restore: () => Promise<T>,
   onGateTransition: (state: "acquired", identity: HermesCronRestoreIdentity) => void = () => {},
-): PendingHermesCronRestore<T> {
+): Promise<PendingHermesCronRestore<T>> {
   const identity = beginHermesCronRestore(sandboxName);
   onGateTransition("acquired", identity);
-  const result = restore();
+  const result = await restore();
   if (!result.restoreSucceeded) {
     throw new HermesCronRestoreIncompleteError();
   }

@@ -183,7 +183,8 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
         originalEntry, // Messaging config hydration.
         originalEntry, // Messaging-conflict gateway lookup (#5954).
         originalEntry, // Final pre-backup target verification.
-        driftedEntry, // Registry reread at the destructive boundary.
+        driftedEntry, // Policy-authority reread at the destructive boundary.
+        driftedEntry, // Exact target reread at the destructive boundary.
       ],
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
     });

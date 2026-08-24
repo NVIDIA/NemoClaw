@@ -71,6 +71,7 @@ describe("rebuild web-search policy normalization", () => {
       sandboxEntry: {
         name: "alpha",
         agent: "openclaw",
+        policyAuthority: "nemoclaw-managed",
         policies: ["tavily"],
         customPolicies: [{ name: "tavily", content: "allow: []" }],
         policyPresetsFinalized: true,
@@ -93,6 +94,44 @@ describe("rebuild web-search policy normalization", () => {
     expect(result?.sessionPolicyPresets).toEqual([]);
     expect(result?.backupWasForceSkipped).toBe(false);
   });
+
+  it.each([
+    ["absent", undefined],
+    ["null", null],
+  ] as const)(
+    "does not infer managed preset carry-forward when policy authority is %s (#9833)",
+    (_label, policyAuthority) => {
+      const result = runRebuildBackupPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          policyAuthority: policyAuthority as never,
+          policies: ["github"],
+          policyPresetsFinalized: true,
+          policyTier: "personal",
+          observabilityEnabled: true,
+        },
+        staleRecovery: false,
+        preparedRecoveryManifest: {
+          policyPresets: ["npm"],
+        } as never,
+        messagingPlan: {
+          channels: [{ channelId: "slack", disabled: false }],
+          disabledChannels: [],
+        } as never,
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        relockShieldsIfNeeded: () => true,
+      });
+
+      expect(result?.policyPresets).toEqual([]);
+      expect(result?.sessionPolicyPresets).toBeNull();
+    },
+  );
 
   it("records when --force skips a total backup failure", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

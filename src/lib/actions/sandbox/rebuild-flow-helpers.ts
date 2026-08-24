@@ -6,6 +6,7 @@ import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { loadAgent } from "../../agent/defs";
 import {
   bindLocalAgentBaseImageHandoffToResolution,
@@ -49,7 +50,11 @@ import {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
-import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
+import {
+  openAbsentRebuildShieldsWindow,
+  openRebuildShieldsWindow,
+  type RebuildShieldsWindow,
+} from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
@@ -266,16 +271,18 @@ export async function resolveRebuildLiveState(
 export function openRebuildShieldsWindowForState(
   sandboxName: string,
   recoveryRecreate: boolean,
+  policyAuthority: SandboxPolicyAuthority = "nemoclaw-managed",
 ): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
   if (recoveryRecreate) {
+    const absent = openAbsentRebuildShieldsWindow(sandboxName, policyAuthority);
     return {
-      staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
-      rebuildShieldsWindow: { relocked: false, wasLocked: false },
+      staleSandboxWasLocked: absent.staleSandboxWasLocked,
+      rebuildShieldsWindow: absent.window,
     };
   }
   return {
     staleSandboxWasLocked: false,
-    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME),
+    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME, policyAuthority),
   };
 }
 

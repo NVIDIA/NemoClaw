@@ -230,6 +230,7 @@ describe("rebuildSandbox flow: recovery", () => {
   function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
     const restarted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes(probes),
+      sandboxEntry: { policyAuthority: "nemoclaw-managed" },
     });
     restarted.session.checkpoint = checkpoint;
     restarted.runOpenshellSpy.mockClear();
@@ -494,6 +495,7 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
+      expect.any(Function),
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -540,7 +542,11 @@ describe("rebuildSandbox flow: recovery", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith("alpha", plan);
+    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      plan,
+      expect.any(Function),
+    );
     expect(
       harness.ensureMessagingHostForwardAfterRebuildSpy.mock.invocationCallOrder[0],
     ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);

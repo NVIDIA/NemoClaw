@@ -21,14 +21,16 @@ const BUILTIN_OBSERVABILITY_CONTENT =
 
 type StandardRestoreOptions = Omit<
   Parameters<typeof runRebuildRestorePhase>[0],
-  "targetAgentType" | "targetImageIsCustom"
+  "policyAuthority" | "targetAgentType" | "targetImageIsCustom" | "validatePolicyAuthority"
 >;
 
 function runStandardRebuildRestorePhase(options: StandardRestoreOptions) {
   return runRebuildRestorePhase({
     ...options,
+    policyAuthority: "nemoclaw-managed",
     targetAgentType: "openclaw",
     targetImageIsCustom: false,
+    validatePolicyAuthority: vi.fn(async () => undefined),
   });
 }
 
@@ -44,7 +46,7 @@ describe("rebuild policy restore fidelity", () => {
     vi.restoreAllMocks();
   });
 
-  it("migrates restored legacy Hermes dashboard state into its profile", () => {
+  it("migrates restored legacy Hermes dashboard state into its profile", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
       success: true,
@@ -67,13 +69,15 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValue("converged");
     const log = vi.fn();
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
       backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
       policyPresets: [],
       customPolicies: [],
+      policyAuthority: "nemoclaw-managed",
+      validatePolicyAuthority: vi.fn(async () => undefined),
       reconcileManagedDcodeObservability: false,
       log,
     });
@@ -83,7 +87,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.restoreSucceeded).toBe(true);
   });
 
-  it("reports a failed Hermes dashboard migration as an incomplete restore", () => {
+  it("reports a failed Hermes dashboard migration as an incomplete restore", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
@@ -103,13 +107,15 @@ describe("rebuild policy restore fidelity", () => {
     });
     vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig").mockReturnValue("failed");
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
       backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
       policyPresets: [],
       customPolicies: [],
+      policyAuthority: "nemoclaw-managed",
+      validatePolicyAuthority: vi.fn(async () => undefined),
       reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
@@ -120,7 +126,7 @@ describe("rebuild policy restore fidelity", () => {
     );
   });
 
-  it("reports an unresolved Hermes target as an incomplete restore", () => {
+  it("reports an unresolved Hermes target as an incomplete restore", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
@@ -140,13 +146,15 @@ describe("rebuild policy restore fidelity", () => {
     });
     const seedDashboard = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
       backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
       policyPresets: [],
       customPolicies: [],
+      policyAuthority: "nemoclaw-managed",
+      validatePolicyAuthority: vi.fn(async () => undefined),
       reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
@@ -158,7 +166,7 @@ describe("rebuild policy restore fidelity", () => {
     );
   });
 
-  it("surfaces a fresh OpenClaw plugin registry precondition failure", () => {
+  it("surfaces a fresh OpenClaw plugin registry precondition failure", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.fn();
@@ -171,7 +179,7 @@ describe("rebuild policy restore fidelity", () => {
       error: "could not read fresh OpenClaw plugin install registry",
     });
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
       policyPresets: [],
@@ -189,7 +197,7 @@ describe("rebuild policy restore fidelity", () => {
     );
   });
 
-  it("replays custom web-policy names from exact content instead of same-name built-ins", () => {
+  it("replays custom web-policy names from exact content instead of same-name built-ins", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const parsePresetPolicyKeys = vi.spyOn(policies, "parsePresetPolicyKeys");
@@ -209,7 +217,7 @@ describe("rebuild policy restore fidelity", () => {
       content: `network_policies:\n  ${name}-custom:\n    name: ${name}-custom\n`,
       sourcePath: `/tmp/${name}.yaml`,
     }));
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: {
         agentType: "openclaw",
@@ -245,7 +253,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(parsePresetPolicyKeys).not.toHaveBeenCalled();
   });
 
-  it("replays captured registry custom policies during stale recovery without a backup", () => {
+  it("replays captured registry custom policies during stale recovery without a backup", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(sandboxState, "restoreSandboxState").mockReturnValue({
       success: true,
@@ -268,7 +276,7 @@ describe("rebuild policy restore fidelity", () => {
         },
       },
     ];
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -294,7 +302,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.finalPresets).toEqual(["custom-egress"]);
   });
 
-  it("leaves generated MCP policy replay exclusively to MCP restoration", () => {
+  it("leaves generated MCP policy replay exclusively to MCP restoration", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
     const genuineCustomPolicy = {
@@ -308,7 +316,7 @@ describe("rebuild policy restore fidelity", () => {
         "network_policies:\n  mcp-bridge-search:\n    endpoints:\n      - host: mcp.example.com\n        allowed_ips: [203.0.113.10]\n",
       sourcePath: MCP_BRIDGE_POLICY_SOURCE,
     };
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -328,7 +336,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.failedPresets).toEqual([]);
   });
 
-  it("removes an observability preset introduced while rebuilding a restricted sandbox", () => {
+  it("removes an observability preset introduced while rebuilding a restricted sandbox", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
@@ -337,7 +345,7 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm"],
@@ -354,7 +362,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("retains an observed exact built-in when post-removal verification is unavailable", () => {
+  it("retains an observed exact built-in when post-removal verification is unavailable", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
     vi.spyOn(policies, "getPresetContentGatewayState")
@@ -362,7 +370,7 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce(null);
     vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm"],
@@ -375,7 +383,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(false);
   });
 
-  it("accounts for known failed additions without treating a narrower live set as unverified", () => {
+  it("accounts for known failed additions without treating a narrower live set as unverified", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset")
@@ -392,7 +400,7 @@ describe("rebuild policy restore fidelity", () => {
         throw new Error("apply failed");
       });
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm", "bad", "throw"],
@@ -408,12 +416,12 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("keeps reconciliation unverified when a reported successful addition is missing live", () => {
+  it("keeps reconciliation unverified when a reported successful addition is missing live", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
@@ -428,13 +436,13 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(false);
   });
 
-  it("retains target built-in attribution when exact post-apply verification is unavailable", () => {
+  it("retains target built-in attribution when exact post-apply verification is unavailable", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
     vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue(null);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
@@ -447,10 +455,10 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(false);
   });
 
-  it("does not remove or persist DCode base-policy keys detected as broad presets", () => {
+  it("does not remove or persist DCode base-policy keys detected as broad presets", async () => {
     const removePreset = vi.spyOn(policies, "removePreset");
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -465,7 +473,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("leaves a same-name custom observability policy outside built-in narrowing", () => {
+  it("leaves a same-name custom observability policy outside built-in narrowing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
     const removePreset = vi.spyOn(policies, "removePreset");
@@ -475,7 +483,7 @@ describe("rebuild policy restore fidelity", () => {
       sourcePath: "/tmp/operator-collector.yaml",
     };
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -495,7 +503,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("leaves a differently named custom policy owning observability egress outside built-in narrowing", () => {
+  it("leaves a differently named custom policy owning observability egress outside built-in narrowing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
     const exactState = vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
@@ -507,7 +515,7 @@ describe("rebuild policy restore fidelity", () => {
       sourcePath: "/tmp/corp-otel.yaml",
     };
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -528,7 +536,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("removes an exact inner built-in behind a same-name custom with a different key", () => {
+  it("removes an exact inner built-in behind a same-name custom with a different key", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const customPolicy = {
       name: "observability-otlp-local",
@@ -541,7 +549,7 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
@@ -557,7 +565,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("removes an exact inner built-in when overlapping custom replay fails", () => {
+  it("removes an exact inner built-in when overlapping custom replay fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const customPolicy = {
       name: "corp-otel",
@@ -570,7 +578,7 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -587,7 +595,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
 
-  it("leaves drift untouched and unverified when successful custom ownership is not exact", () => {
+  it("leaves drift untouched and unverified when successful custom ownership is not exact", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const customPolicy = {
       name: "corp-otel",
@@ -598,7 +606,7 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
     const removePreset = vi.spyOn(policies, "removePreset");
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
@@ -612,7 +620,7 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.policyPresetReconciliationVerified).toBe(false);
   });
 
-  it("retains separate built-in attribution when same-name custom removal is unverified", () => {
+  it("retains separate built-in attribution when same-name custom removal is unverified", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const customPolicy = {
       name: "observability-otlp-local",
@@ -625,7 +633,7 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce(null);
     vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runStandardRebuildRestorePhase({
+    const result = await runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
@@ -659,6 +667,37 @@ describe("rebuild policy restore fidelity", () => {
       resolveRestoredPolicyRegistryState({ policyPresetsFinalized: true }, [], ["tavily"])
         .policyPresetsFinalized,
     ).toBeUndefined();
+  });
+
+  it("does not replay or remove policy under external rebuild authority (#9833)", async () => {
+    const applyPreset = vi.spyOn(policies, "applyPreset");
+    const applyPresetContent = vi.spyOn(policies, "applyPresetContent");
+    const removePreset = vi.spyOn(policies, "removePreset");
+
+    const result = await runRebuildRestorePhase({
+      sandboxName: "alpha",
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
+      backupManifest: null,
+      policyPresets: ["npm", "observability-otlp-local"],
+      customPolicies: [
+        {
+          name: "custom-api",
+          content: "network_policies:\n  custom-api: {}\n",
+          sourcePath: "/tmp/custom-api.yaml",
+        },
+      ],
+      policyAuthority: "externally-managed",
+      validatePolicyAuthority: vi.fn(async () => undefined),
+      reconcileManagedDcodeObservability: true,
+      log: vi.fn(),
+    });
+
+    expect(applyPreset).not.toHaveBeenCalled();
+    expect(applyPresetContent).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+    expect(result.finalBuiltinPresets).toEqual([]);
+    expect(result.finalPresets).toEqual([]);
   });
 
   it("retains the force-skipped backup warning in the successful final summary", () => {

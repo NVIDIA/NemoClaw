@@ -27,6 +27,7 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  policyAuthority,
   policies,
   processRecovery,
   purgeRebuildModule,
@@ -43,6 +44,7 @@ import {
   registryPersistence,
   resolve,
   sandboxList,
+  sandboxRecreateProbe,
   sandboxSession,
   sandboxState,
   sandboxVersion,
@@ -253,6 +255,27 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
+  const recordedPolicyAuthority = (
+    currentSandboxEntry as typeof currentSandboxEntry & { policyAuthority?: unknown }
+  ).policyAuthority;
+  const policyAuthorityInspection =
+    overrides.policyAuthorityInspection ??
+    ({
+      authority:
+        recordedPolicyAuthority === "externally-managed"
+          ? "externally-managed"
+          : "nemoclaw-managed",
+      effectivePolicy: {},
+    } as const);
+  const inspectGlobalPolicyAuthoritySpy = vi
+    .spyOn(policyAuthority, "inspectGlobalPolicyAuthority")
+    .mockReturnValue(policyAuthorityInspection);
+  const inspectSandboxPolicyAuthoritySpy = vi
+    .spyOn(policyAuthority, "inspectSandboxPolicyAuthority")
+    .mockReturnValue(policyAuthorityInspection);
+  vi.spyOn(sandboxRecreateProbe, "observeSandboxPresenceOnGateway").mockReturnValue(
+    overrides.staleRecovery || overrides.sandboxListOutput === "" ? "missing" : "present",
+  );
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   vi.spyOn(registry, "getSandbox").mockImplementation(readCurrentSandboxEntry);
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
@@ -392,7 +415,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
     );
   });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
+  const openRebuildShieldsWindowSpy = vi
+    .spyOn(rebuildShields, "openRebuildShieldsWindow")
+    .mockReturnValue(rebuildShieldsWindow);
   const relockSpy = vi
     .spyOn(rebuildShields, "relockRebuildShieldsWindow")
     .mockImplementation((...args: unknown[]) => {
@@ -670,9 +695,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ensureTargetGatewaySpy,
     ensureValidatedBraveSearchCredentialSpy,
     hydrateCredentialEnvSpy,
+    inspectGlobalPolicyAuthoritySpy,
+    inspectSandboxPolicyAuthoritySpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,
     onboardSpy,
+    openRebuildShieldsWindowSpy,
     registryUpdateSpy,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),

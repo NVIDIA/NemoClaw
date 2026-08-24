@@ -52,9 +52,7 @@ export function excludePolicyPresetsByName(
   excludedNames: readonly (string | undefined)[],
 ): string[] {
   const excluded = new Set(
-    excludedNames.filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    ),
+    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
   );
   return presets.filter((name) => !excluded.has(name));
 }
@@ -213,35 +211,48 @@ export function runRebuildBackupPhase(
   const backupWasForceSkipped =
     input.force === true && !input.staleRecovery && backupManifest === null;
 
-  const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)
-    ? input.sandboxEntry.policies.filter(
-        (value: unknown): value is string => typeof value === "string",
+  const carriesManagedPolicyPresets = input.sandboxEntry.policyAuthority === "nemoclaw-managed";
+  const registryPolicyPresets = carriesManagedPolicyPresets
+    ? Array.isArray(input.sandboxEntry.policies)
+      ? input.sandboxEntry.policies.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : []
+    : [];
+  const disabledChannels = carriesManagedPolicyPresets
+    ? [...(input.messagingPlan?.disabledChannels ?? [])]
+    : [];
+  const enabledChannelIds = carriesManagedPolicyPresets
+    ? (input.messagingPlan?.channels ?? [])
+        .filter((channel) => !channel.disabled)
+        .map((channel) => channel.channelId)
+    : [];
+  const mergedPolicyPresets = carriesManagedPolicyPresets
+    ? mergeRebuildMessagingPolicyPresets(
+        backupManifest?.policyPresets,
+        registryPolicyPresets,
+        enabledChannelIds,
+        disabledChannels,
       )
     : [];
-  const disabledChannels = [...(input.messagingPlan?.disabledChannels ?? [])];
-  const enabledChannelIds = (input.messagingPlan?.channels ?? [])
-    .filter((channel) => !channel.disabled)
-    .map((channel) => channel.channelId);
-  const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
-    backupManifest?.policyPresets,
-    registryPolicyPresets,
-    enabledChannelIds,
-    disabledChannels,
-  );
-  const policyPresets = normalizeRebuildTargetPolicyPresets(
-    mergedPolicyPresets,
-    input.sandboxEntry,
-    input.webSearchConfig,
-  );
-  const sessionPolicyPresets = resolveRecreatePolicyPresets(
-    policyPresets,
-    input.sandboxEntry.policyPresetsFinalized === true,
-    // Rebuild now replays exact custom policy content after recreate, so the
-    // built-in selection can independently preserve an intentional empty set.
-    false,
-    {},
-    true,
-  ).policyPresets;
+  const policyPresets = carriesManagedPolicyPresets
+    ? normalizeRebuildTargetPolicyPresets(
+        mergedPolicyPresets,
+        input.sandboxEntry,
+        input.webSearchConfig,
+      )
+    : [];
+  const sessionPolicyPresets = carriesManagedPolicyPresets
+    ? resolveRecreatePolicyPresets(
+        policyPresets,
+        input.sandboxEntry.policyPresetsFinalized === true,
+        // Rebuild now replays exact custom policy content after recreate, so the
+        // built-in selection can independently preserve an intentional empty set.
+        false,
+        {},
+        true,
+      ).policyPresets
+    : null;
 
   return { backupManifest, backupWasForceSkipped, policyPresets, sessionPolicyPresets };
 }

@@ -54,9 +54,12 @@ describe("rebuildSandbox flow: target credentials", () => {
             search: {
               server: "search",
               agent: "openclaw",
+              adapter: "mcporter",
               url: "https://mcp.example.com/mcp",
               env: ["TAVILY_API_KEY"],
-              policyName: "alpha-mcp-search",
+              providerName: "nemoclaw-mcp-alpha-search",
+              providerId: "provider-search",
+              policyName: "mcp-bridge-search",
               addedAt: "2026-07-03T00:00:00.000Z",
             },
           },
