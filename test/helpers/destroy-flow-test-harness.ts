@@ -92,7 +92,12 @@ type DestroyHarnessOptions = {
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
+  mcpPolicyAuthorityAfterDeleteError?: string;
   mcpServers?: string[];
+  policyAuthority?: "nemoclaw-managed" | "externally-managed";
+  policyAuthorityAfterDelete?: "nemoclaw-managed" | "externally-managed";
+  policyAuthorityDuringMcpFinalization?: "nemoclaw-managed" | "externally-managed";
+  revalidateMcpPolicyAuthority?: () => void | Promise<void>;
   openshellDriver?: string;
   portableCommandError?: string;
   portableDestroyAuthority?: boolean;
@@ -289,7 +294,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     detected: true,
     sessions: [{ pid: 1 }],
   });
-  vi.spyOn(registry, "getSandbox").mockReturnValue(
+  let policyAuthority = options.policyAuthority;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() =>
     options.registryEntryPresent === false
       ? null
       : {
@@ -306,6 +312,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
             ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
             : {}),
           ...(options.workload ? { workload: options.workload } : {}),
+          ...(policyAuthority ? { policyAuthority } : {}),
           ...(options.mcpServers?.length
             ? {
                 mcp: {
@@ -419,6 +426,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         };
       case "sandbox:delete":
         events.push("delete");
+        if (options.policyAuthorityAfterDelete) {
+          policyAuthority = options.policyAuthorityAfterDelete;
+        }
         return {
           status: options.deleteStatus ?? 0,
           stdout: options.deleteOutput ?? "",
@@ -554,13 +564,34 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const { McpBridgeError } = mcpBridge as any;
   const prepareMcpBridgesForDestroySpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForDestroy")
-    .mockImplementation(async () => {
+    .mockImplementation(async (...args: unknown[]) => {
+      const validateContaining = args[1] as (() => Promise<void>) | undefined;
       events.push("mcp-prepare");
       if (options.prepareMcpBridgeError !== undefined) {
         throw new McpBridgeError(options.prepareMcpBridgeError);
       }
       gatewayPinsAtMcpPrepare.push(process.env.OPENSHELL_GATEWAY);
-      return mcpPreparation;
+      return {
+        ...mcpPreparation,
+        ...(options.revalidateMcpPolicyAuthority || validateContaining
+          ? {
+              revalidateBeforeDelete: async () => {
+                await validateContaining?.();
+                if (options.revalidateMcpPolicyAuthority) {
+                  events.push("mcp-revalidate");
+                  await options.revalidateMcpPolicyAuthority();
+                }
+              },
+              revalidateAfterDelete: async () => {
+                await validateContaining?.();
+                if (options.mcpPolicyAuthorityAfterDeleteError) {
+                  throw new Error(options.mcpPolicyAuthorityAfterDeleteError);
+                }
+              },
+              revalidateBeforeSuccess: async () => validateContaining?.(),
+            }
+          : {}),
+      };
     });
   const prepareMcpBridgesForAbsentSandboxDestroySpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxDestroy")
@@ -581,6 +612,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .mockImplementation(() => {
       if (options.finalizeMcpBridgeError !== undefined) {
         return Promise.reject(new McpBridgeError(options.finalizeMcpBridgeError));
+      }
+      if (options.policyAuthorityDuringMcpFinalization) {
+        policyAuthority = options.policyAuthorityDuringMcpFinalization;
       }
       return options.finalizeMcpError
         ? Promise.reject(new Error(options.finalizeMcpError))

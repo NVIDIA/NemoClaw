@@ -1,0 +1,453 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+const harness = vi.hoisted(() => {
+  const originalHome = process.env.HOME;
+  const stateHome = `/tmp/nemoclaw-mcp-teardown-authority-${process.pid}`;
+  process.env.HOME = stateHome;
+  return {
+    actions: [] as string[],
+    adapterRegistered: true,
+    appliedPolicyContents: [] as string[],
+    authority: "nemoclaw-managed" as "nemoclaw-managed" | "externally-managed",
+    detachOutcomes: [] as Array<"detached" | "unknown">,
+    originalHome,
+    policyRemoved: false,
+    preflightAuthority: vi.fn(),
+    providerAttached: true,
+    stateHome,
+  };
+});
+
+vi.mock("../../../policy", () => ({
+  applyPresetContent: vi.fn((_sandboxName: string, _policyName: string, content: string) => {
+    harness.actions.push("policy:restore");
+    harness.appliedPolicyContents.push(content);
+    harness.policyRemoved = false;
+    return true;
+  }),
+  getLiveSandboxPolicyEntryDigest: vi.fn(() => (harness.policyRemoved ? null : "present")),
+  getPresetContentGatewayState: vi.fn(() => (harness.policyRemoved ? "absent" : "match")),
+  removePreset: vi.fn(() => {
+    harness.actions.push("policy:remove");
+    harness.policyRemoved = true;
+    return true;
+  }),
+}));
+
+vi.mock("./preflight", () => ({
+  preflightSandboxPolicyAuthority: harness.preflightAuthority,
+}));
+
+vi.mock("../mcp-bridge-adapter-teardown", () => ({
+  rollbackScrubbedMcpAdapters: vi.fn(() => {
+    harness.actions.push("adapter:rollback");
+    harness.adapterRegistered = true;
+    return [];
+  }),
+  scrubManagedMcpAdapterOrThrow: vi.fn(() => {
+    harness.actions.push("adapter:scrub");
+    harness.adapterRegistered = false;
+  }),
+}));
+
+vi.mock("../mcp-bridge-adapters", () => ({
+  registerAgentAdapter: vi.fn(() => {
+    harness.actions.push("adapter:rollback");
+    harness.adapterRegistered = true;
+  }),
+}));
+
+vi.mock("../mcp-bridge-provider", () => ({
+  assertMcpProviderRecoverable: vi.fn(() => ({ exists: true })),
+  assertNoAttachedProviderCredentialCollisions: vi.fn(),
+  assertNoProviderCredentialCollisions: vi.fn(),
+  assertNoRegisteredProviderCredentialCollisions: vi.fn(),
+  attachProvider: vi.fn(() => {
+    harness.actions.push("provider:attach");
+    harness.providerAttached = true;
+  }),
+  deleteProvider: vi.fn(),
+  detachMissingProviderReference: vi.fn(),
+  detachProvider: vi.fn(() => {
+    const outcome = harness.detachOutcomes.shift() ?? "detached";
+    harness.actions.push("provider:detach");
+    harness.providerAttached = outcome === "detached" ? false : harness.providerAttached;
+    return outcome;
+  }),
+  inspectMcpProvider: vi.fn(() => ({
+    credentialKeys: ["MCP_TOKEN"],
+    exists: true,
+    id: "11111111-2222-4333-8444-555555555555",
+    resourceVersion: "1",
+    type: "nemoclaw-mcp-v1",
+  })),
+  ensureMcpBridgeProviderProfile: vi.fn(),
+  observeMcpCredentialRevision: vi.fn(),
+  preflightMcpEntryTargets: vi.fn(
+    async (entries: Array<{ server: string }>) =>
+      new Map(entries.map((entry) => [entry.server, { addresses: ["8.8.8.8"] }])),
+  ),
+  providerMatchesManagedCredential: vi.fn(() => true),
+  refreshMcpProviderEnvironment: vi.fn(),
+  upsertMcpProvider: vi.fn(),
+  waitForAttachedMcpCredential: vi.fn(),
+  waitForDetachedMcpCredential: vi.fn(),
+}));
+
+vi.mock("../mcp-bridge-runtime-capabilities", () => ({
+  assertMcpAdapterConfigMutationsAllowed: vi.fn(),
+  assertMcpAdapterMutationRuntimeCapabilities: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
+}));
+
+vi.mock("../mcp-bridge-state", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../mcp-bridge-state")>()),
+  ensureSandboxGatewaySelected: vi.fn(async () => undefined),
+}));
+
+import * as registry from "../../../state/registry";
+import {
+  prepareMcpBridgesForDestroy,
+  restoreMcpBridgesAfterDestroyAbort,
+} from "../mcp-bridge-destroy";
+import {
+  assertMcpProviderRecoverable,
+  ensureMcpBridgeProviderProfile,
+  preflightMcpEntryTargets,
+  refreshMcpProviderEnvironment,
+} from "../mcp-bridge-provider";
+import { McpPolicyAuthorityRefusalError } from "../mcp-bridge-policy";
+import { buildMcpBridgePolicyYaml } from "../mcp-bridge-policy-render";
+import { prepareMcpBridgesForRebuild } from "../mcp-bridge-rebuild";
+
+const bridgeEntry = {
+  server: "example",
+  agent: "openclaw",
+  adapter: "mcporter" as const,
+  url: "https://mcp.example.test/mcp",
+  env: ["MCP_TOKEN"],
+  providerName: "alpha-mcp-example",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-example",
+  addedAt: "2026-08-20T00:00:00.000Z",
+};
+
+function registerSandbox(authority: "nemoclaw-managed" | "externally-managed"): void {
+  registry.registerSandbox({
+    name: "alpha",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    policyAuthority: authority,
+    mcp: { bridges: { example: bridgeEntry } },
+  });
+  authority === "nemoclaw-managed" &&
+    registry.addCustomPolicy("alpha", {
+      name: bridgeEntry.policyName,
+      content: buildMcpBridgePolicyYaml(
+        bridgeEntry.server,
+        bridgeEntry.url,
+        bridgeEntry.adapter,
+        { addresses: ["8.8.8.8"] },
+        bridgeEntry.providerName,
+      ),
+      sourcePath: "generated:nemoclaw-mcp-bridge",
+    });
+}
+
+beforeEach(() => {
+  fs.rmSync(harness.stateHome, { recursive: true, force: true });
+  harness.actions.length = 0;
+  harness.adapterRegistered = true;
+  harness.appliedPolicyContents.length = 0;
+  harness.authority = "nemoclaw-managed";
+  harness.detachOutcomes.length = 0;
+  harness.policyRemoved = false;
+  harness.providerAttached = true;
+  vi.mocked(ensureMcpBridgeProviderProfile).mockClear();
+  vi.mocked(preflightMcpEntryTargets).mockClear();
+  vi.mocked(refreshMcpProviderEnvironment).mockClear();
+  harness.preflightAuthority.mockReset();
+  harness.preflightAuthority.mockImplementation(() => harness.authority);
+});
+
+afterAll(() => {
+  fs.rmSync(harness.stateHome, { recursive: true, force: true });
+  process.env.HOME = harness.originalHome;
+});
+
+describe("MCP teardown policy authority", () => {
+  it.each([
+    ["destroy", prepareMcpBridgesForDestroy, 4],
+    ["rebuild", prepareMcpBridgesForRebuild, 3],
+  ] as const)(
+    "preserves externally managed policy during %s preparation (#9833)",
+    async (_operation, prepare, expectedAuthorityChecks) => {
+      harness.authority = "externally-managed";
+      registerSandbox("externally-managed");
+
+      await prepare("alpha");
+
+      expect(harness.actions).toEqual(["adapter:scrub", "provider:detach"]);
+      expect(registry.getCustomPolicies("alpha")).toEqual([]);
+      expect(harness.preflightAuthority).toHaveBeenCalledTimes(expectedAuthorityChecks);
+    },
+  );
+
+  it.each(["nemoclaw-managed", "externally-managed"] as const)(
+    "retains prepared destroy retry state after a containing refusal under %s authority (#9833)",
+    async (authority) => {
+      harness.authority = authority;
+      registerSandbox(authority);
+      const preparation = await prepareMcpBridgesForDestroy("alpha");
+      const authorityChecksAfterPrepare = harness.preflightAuthority.mock.calls.length;
+      harness.actions.length = 0;
+      const validateContainingReceipt = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(
+          new McpPolicyAuthorityRefusalError("destroy policy authority changed"),
+        );
+
+      await expect(
+        restoreMcpBridgesAfterDestroyAbort("alpha", preparation, validateContainingReceipt),
+      ).rejects.toBeInstanceOf(McpPolicyAuthorityRefusalError);
+
+      expect(harness.actions).toEqual(["provider:attach", "adapter:rollback"]);
+      expect(harness.actions).not.toContain("policy:restore");
+      expect(harness.adapterRegistered).toBe(true);
+      expect(harness.providerAttached).toBe(true);
+      expect(harness.preflightAuthority).toHaveBeenCalledTimes(authorityChecksAfterPrepare);
+      expect(registry.getSandbox("alpha")?.mcp).toEqual(
+        expect.objectContaining({
+          bridges: { example: bridgeEntry },
+          destroyPreparedAt: expect.any(String),
+        }),
+      );
+    },
+  );
+
+  it("requalifies exact current MCP requirements before retrying a prepared destroy (#9833)", async () => {
+    harness.authority = "externally-managed";
+    registerSandbox("externally-managed");
+    await prepareMcpBridgesForDestroy("alpha");
+    const preparationActions = [...harness.actions];
+    vi.mocked(preflightMcpEntryTargets).mockResolvedValueOnce(
+      new Map([[bridgeEntry.server, { addresses: ["9.9.9.9"] }]]),
+    );
+    harness.preflightAuthority.mockImplementationOnce(
+      (options: { requiredPolicyContents: readonly string[] }) => {
+        expect(options.requiredPolicyContents.join("\n")).toContain("9.9.9.9");
+        throw new Error("current MCP policy no longer satisfies the prepared destroy");
+      },
+    );
+
+    await expect(prepareMcpBridgesForDestroy("alpha")).rejects.toBeInstanceOf(
+      McpPolicyAuthorityRefusalError,
+    );
+
+    expect(harness.actions).toEqual(preparationActions);
+    expect(preflightMcpEntryTargets).toHaveBeenCalledTimes(2);
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
+  });
+
+  it("uses the retained destroy receipt after deletion without reading live policy (#9833)", async () => {
+    harness.authority = "externally-managed";
+    registerSandbox("externally-managed");
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+    const liveAuthorityChecks = harness.preflightAuthority.mock.calls.length;
+    const current = registry.getSandbox("alpha");
+    const getSandbox = vi
+      .spyOn(registry, "getSandbox")
+      .mockReturnValue(current ? { ...current, policyAuthority: "nemoclaw-managed" } : null);
+
+    await expect(preparation.revalidateAfterDelete?.()).rejects.toBeInstanceOf(
+      McpPolicyAuthorityRefusalError,
+    );
+
+    expect(harness.preflightAuthority).toHaveBeenCalledTimes(liveAuthorityChecks);
+    getSandbox.mockRestore();
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
+  });
+
+  it("retains the prepared destroy marker when authority refusal compensation fails (#9833)", async () => {
+    harness.authority = "externally-managed";
+    registerSandbox("externally-managed");
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+    vi.mocked(assertMcpProviderRecoverable).mockImplementationOnce(() => {
+      throw new Error("provider recovery failed");
+    });
+
+    await expect(
+      restoreMcpBridgesAfterDestroyAbort("alpha", preparation, async () => {
+        throw new McpPolicyAuthorityRefusalError("destroy policy authority changed");
+      }),
+    ).rejects.toBeInstanceOf(McpPolicyAuthorityRefusalError);
+
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
+    expect(registry.getSandbox("alpha")?.mcp?.bridges.example).toEqual(bridgeEntry);
+  });
+
+  it("continues non-policy compensation after containing authority drifts (#9833)", async () => {
+    registerSandbox("nemoclaw-managed");
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+    harness.actions.length = 0;
+    const validateContainingReceipt = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(
+        new McpPolicyAuthorityRefusalError(
+          "containing policy authority changed during compensation",
+        ),
+      );
+
+    await expect(
+      restoreMcpBridgesAfterDestroyAbort("alpha", preparation, validateContainingReceipt),
+    ).rejects.toBeInstanceOf(McpPolicyAuthorityRefusalError);
+
+    expect(harness.actions).toEqual(["policy:restore", "provider:attach", "adapter:rollback"]);
+    expect(ensureMcpBridgeProviderProfile).toHaveBeenCalledOnce();
+    expect(refreshMcpProviderEnvironment).toHaveBeenCalledOnce();
+    expect(validateContainingReceipt).toHaveBeenCalledTimes(5);
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
+  });
+
+  it.each([
+    ["destroy", prepareMcpBridgesForDestroy],
+    ["rebuild", prepareMcpBridgesForRebuild],
+  ] as const)(
+    "compensates %s after authority drift follows the first owned mutation (#9833)",
+    async (_operation, prepare) => {
+      registerSandbox("nemoclaw-managed");
+      const validateContainingReceipt = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(async () => {
+          harness.authority = "externally-managed";
+          throw new Error("policy authority changed after adapter cleanup");
+        });
+
+      await expect(prepare("alpha", validateContainingReceipt)).rejects.toBeInstanceOf(
+        McpPolicyAuthorityRefusalError,
+      );
+
+      expect(harness.actions).toEqual(["adapter:scrub", "provider:attach", "adapter:rollback"]);
+      expect(harness.actions).not.toContain("policy:restore");
+      expect(validateContainingReceipt).toHaveBeenCalledTimes(3);
+      expect(harness.adapterRegistered).toBe(true);
+      expect(harness.providerAttached).toBe(true);
+      expect(registry.getSandbox("alpha")?.mcp?.bridges.example).toEqual(
+        expect.objectContaining(bridgeEntry),
+      );
+    },
+  );
+
+  it.each([
+    ["destroy", prepareMcpBridgesForDestroy],
+    ["rebuild", prepareMcpBridgesForRebuild],
+  ] as const)(
+    "restores the managed generated policy when %s provider detach cannot be proved (#9833)",
+    async (_operation, prepare) => {
+      harness.detachOutcomes.push("unknown");
+      registerSandbox("nemoclaw-managed");
+
+      await expect(prepare("alpha")).rejects.toThrow("Could not prove provider detach");
+
+      const policyRemoval = harness.actions.indexOf("policy:remove");
+      const firstPolicyRestore = harness.actions.indexOf("policy:restore");
+      const providerAttach = harness.actions.indexOf("provider:attach");
+      const finalPolicyRestore = harness.actions.lastIndexOf("policy:restore");
+      const adapterRollback = harness.actions.indexOf("adapter:rollback");
+      expect(policyRemoval).toBeGreaterThanOrEqual(0);
+      expect(firstPolicyRestore).toBeGreaterThan(policyRemoval);
+      expect(providerAttach).toBeGreaterThan(firstPolicyRestore);
+      expect(finalPolicyRestore).toBeGreaterThan(providerAttach);
+      expect(adapterRollback).toBeGreaterThan(finalPolicyRestore);
+      expect(harness.appliedPolicyContents.at(-1)).toContain("credential_binding:");
+      expect(harness.policyRemoved).toBe(false);
+      expect(registry.getCustomPolicies("alpha")).toEqual([
+        expect.objectContaining({
+          name: bridgeEntry.policyName,
+          sourcePath: "generated:nemoclaw-mcp-bridge",
+        }),
+      ]);
+      expect(harness.adapterRegistered).toBe(true);
+      expect(harness.providerAttached).toBe(true);
+    },
+  );
+
+  it.each([
+    ["destroy", prepareMcpBridgesForDestroy],
+    ["rebuild", prepareMcpBridgesForRebuild],
+  ] as const)(
+    "restores MCP runtime after %s detach failure without consulting a stale containing receipt (#9833)",
+    async (_operation, prepare) => {
+      harness.authority = "externally-managed";
+      harness.detachOutcomes.push("unknown");
+      registerSandbox("externally-managed");
+      const validateContainingReceipt = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error("containing policy authority changed"));
+
+      await expect(prepare("alpha", validateContainingReceipt)).rejects.toThrow(
+        "Could not prove provider detach",
+      );
+
+      expect(validateContainingReceipt).toHaveBeenCalledTimes(3);
+      expect(harness.actions).toEqual([
+        "adapter:scrub",
+        "provider:detach",
+        "provider:attach",
+        "adapter:rollback",
+      ]);
+      expect(harness.adapterRegistered).toBe(true);
+      expect(harness.providerAttached).toBe(true);
+    },
+  );
+
+  it("reports both authority refusal and snapshot drift during destroy-abort recovery (#9833)", async () => {
+    harness.authority = "externally-managed";
+    registerSandbox("externally-managed");
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+    const preparedMcp = registry.getSandbox("alpha")?.mcp;
+    registry.updateSandbox("alpha", {
+      mcp: {
+        ...preparedMcp,
+        bridges: {
+          example: { ...bridgeEntry, url: "https://changed.example.test/mcp" },
+        },
+      },
+    });
+
+    let refusal: unknown;
+    try {
+      await restoreMcpBridgesAfterDestroyAbort("alpha", preparation, async () => {
+        throw new McpPolicyAuthorityRefusalError("destroy policy authority changed");
+      });
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(McpPolicyAuthorityRefusalError);
+    expect(refusal).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("destroy policy authority changed"),
+        cause: expect.any(AggregateError),
+      }),
+    );
+    expect((refusal as Error).message).toContain("snapshot validation also failed");
+    expect((refusal as Error).message).toContain("changed");
+    expect(harness.actions).toEqual(["adapter:scrub", "provider:detach"]);
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
+  });
+});

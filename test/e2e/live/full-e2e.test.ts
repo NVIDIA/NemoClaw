@@ -495,6 +495,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       });
   const installCompletedAtMs = Date.now();
   expect(install.exitCode, resultText(install)).toBe(0);
+  await host.resolveOpenShellCommandPath({
+    artifactName: "phase-2-resolve-openshell-command",
+    env: env(),
+    redactionValues,
+    timeoutMs: 60_000,
+  });
   await (coldOnboard
     ? assertColdOnboardPerformance({
         apiKey: hosted.apiKey,

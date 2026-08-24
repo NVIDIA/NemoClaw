@@ -1082,7 +1082,10 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Function),
+    );
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
@@ -1319,6 +1322,70 @@ describe("destroySandbox flow", () => {
     await harness.destroySandbox("alpha", { yes: true });
 
     expectMcpFinalizeAfterDelete(harness);
+  });
+
+  it("restores MCP state and withholds delete when policy authority drifts after preparation (#9833)", async () => {
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      revalidateMcpPolicyAuthority: async () => {
+        throw new Error("current MCP policy requirements changed");
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toContain("mcp-revalidate");
+    expect(harness.events).toContain("mcp-restore");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+      "current MCP policy requirements changed",
+    );
+  });
+
+  it("finishes exact MCP cleanup but withholds success after a final authority refusal (#9833)", async () => {
+    const harness = createDestroyHarness({
+      mcpPolicyAuthorityAfterDeleteError: "first retained authority refusal",
+      mcpServers: ["github"],
+      policyAuthority: "externally-managed",
+      policyAuthorityDuringMcpFinalization: "nemoclaw-managed",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toContain("delete");
+    expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain(
+      "Sandbox destroyed",
+    );
+    expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+      "first retained authority refusal",
+    );
+    expect(
+      harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n"),
+    ).not.toContain("policy authority changed during destroy");
+  });
+
+  it("withholds success when policy authority drifts during MCP finalization (#9833)", async () => {
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      policyAuthority: "externally-managed",
+      policyAuthorityDuringMcpFinalization: "nemoclaw-managed",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toContain("delete");
+    expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain(
+      "Sandbox destroyed",
+    );
+    expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+      "policy authority changed during destroy",
+    );
   });
 
   it("restores MCP runtime state when sandbox delete fails", async () => {

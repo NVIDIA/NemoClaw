@@ -40,6 +40,10 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
+vi.mock("../src/lib/actions/sandbox/policy-authority/preflight", () => ({
+  preflightSandboxPolicyAuthority: vi.fn(() => "nemoclaw-managed"),
+}));
+
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN;

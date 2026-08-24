@@ -10,7 +10,14 @@ import {
   cloneMcpBridgeEntry,
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy-preflight";
-import { assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
+import {
+  assertGeneratedPolicyExactReadOnly,
+  buildRequiredMcpBridgePolicy,
+  type McpPolicyAuthorityReceipt,
+  qualifyMcpPolicyAuthorityReceipt,
+  revalidateContainingMcpPolicyAuthority,
+  revalidateMcpPolicyAuthorityReceipt,
+} from "./mcp-bridge-policy";
 import {
   assertNoProviderCredentialCollisions,
   preflightMcpEntryTargets,
@@ -140,27 +147,32 @@ async function inspectReadOnlyRecoveryState(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   adapter: AgentMcpAdapter,
+  authority: McpPolicyAuthorityReceipt["authority"],
+  retainedTargets?: ReadonlyMap<string, McpBridgeTargetValidation>,
 ): Promise<ReadOnlyValidationSnapshot> {
-  const resolvedTargets = await preflightMcpEntryTargets(entries);
+  const resolvedTargets = retainedTargets ?? (await preflightMcpEntryTargets(entries));
   // This may start or recover the sandbox's recorded host gateway and select
   // it in CLI context. It does not mutate MCP ownership or sandbox contents;
   // the provider, policy, and target checks below remain inspection-only.
-  if (entries.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  if (!retainedTargets && entries.length > 0) await ensureSandboxGatewaySelected(sandboxName);
 
   const policyByServer = new Map<string, string>();
   const providerByServer = new Map<string, string>();
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const policy = assertGeneratedPolicyExactReadOnly(
-      sandboxName,
-      entry,
-      adapter,
-      target ?? {
-        addresses: [],
-      },
-    );
-    policyByServer.set(entry.server, policyFingerprint(policy));
+    const validatedTarget = target ?? { addresses: [] };
+    if (authority === "externally-managed") {
+      policyByServer.set(entry.server, buildRequiredMcpBridgePolicy(entry, validatedTarget));
+    } else {
+      const policy = assertGeneratedPolicyExactReadOnly(
+        sandboxName,
+        entry,
+        adapter,
+        validatedTarget,
+      );
+      policyByServer.set(entry.server, policyFingerprint(policy));
+    }
     const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
@@ -220,20 +232,34 @@ async function revalidateBeforeDelete(
   expectedAgentName: string,
   expectedAdapter: AgentMcpAdapter,
   expectedValidation: ReadOnlyValidationSnapshot,
+  policyAuthorityReceipt: McpPolicyAuthorityReceipt,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  assertDeleteEdgeUnchanged(
-    sandboxName,
-    expectedEntries,
-    expectedGatewayName,
-    expectedAgentName,
-    expectedAdapter,
+  const assertCurrentState = () =>
+    assertDeleteEdgeUnchanged(
+      sandboxName,
+      expectedEntries,
+      expectedGatewayName,
+      expectedAgentName,
+      expectedAdapter,
+    );
+  await revalidateMcpPolicyAuthorityReceipt(
+    policyAuthorityReceipt,
+    validateContainingPolicyReceipt,
+    assertCurrentState,
   );
   const currentValidation = await inspectReadOnlyRecoveryState(
     sandboxName,
     expectedEntries,
     expectedAdapter,
+    policyAuthorityReceipt.authority,
   );
   assertValidationSnapshotCurrent(expectedEntries, expectedValidation, currentValidation);
+  await revalidateMcpPolicyAuthorityReceipt(
+    policyAuthorityReceipt,
+    validateContainingPolicyReceipt,
+    assertCurrentState,
+  );
 }
 
 /**
@@ -246,13 +272,51 @@ async function revalidateBeforeDelete(
  */
 export async function prepareMcpBridgesForExecUnavailableRebuild(
   sandboxName: string,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<ExecUnavailableMcpRebuildPreparation> {
   const { entries, gatewayName, agentName, adapter } = snapshotCompleteEntries(sandboxName);
   const expectedEntries = entries.map(cloneMcpBridgeEntry);
+  if (expectedEntries.length === 0) {
+    return {
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      revalidateBeforeDelete: async () => {
+        await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter);
+      },
+      assertDeleteEdgeUnchanged: () =>
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
+    };
+  }
+  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+  const resolvedTargets = await preflightMcpEntryTargets(expectedEntries);
+  await ensureSandboxGatewaySelected(sandboxName);
+  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+  const policyAuthorityReceipt = qualifyMcpPolicyAuthorityReceipt({
+    operation: `preserve MCP bridges during host-side rebuild recovery for sandbox '${sandboxName}'`,
+    requiredPolicyContents: expectedEntries.map((entry) => {
+      const target = resolvedTargets.get(entry.server);
+      if (!target) {
+        throw new McpBridgeError(
+          `MCP server '${entry.server}' has no validated address pins. Refusing host-side rebuild recovery.`,
+        );
+      }
+      return buildRequiredMcpBridgePolicy(entry, target);
+    }),
+    sandboxName,
+  });
   const expectedValidation = await inspectReadOnlyRecoveryState(
     sandboxName,
     expectedEntries,
     adapter,
+    policyAuthorityReceipt.authority,
+    resolvedTargets,
+  );
+  await revalidateMcpPolicyAuthorityReceipt(
+    policyAuthorityReceipt,
+    validateContainingPolicyReceipt,
+    () => assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
   );
   return {
     entries: entries.map(cloneMcpBridgeEntry),
@@ -266,6 +330,8 @@ export async function prepareMcpBridgesForExecUnavailableRebuild(
         agentName,
         adapter,
         expectedValidation,
+        policyAuthorityReceipt,
+        validateContainingPolicyReceipt,
       ),
     assertDeleteEdgeUnchanged: () =>
       assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),

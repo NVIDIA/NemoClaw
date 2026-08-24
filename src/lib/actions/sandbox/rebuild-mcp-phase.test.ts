@@ -365,4 +365,26 @@ describe("MCP rebuild policy authority forwarding", () => {
     expect(relock).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
   });
+
+  it("forwards and preserves policy authority during host-side recovery (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("external MCP requirement changed");
+    const validateContainingPolicyReceipt = vi.fn(async () => undefined);
+    mocks.executeSandboxExecCommand.mockReturnValue(null);
+    mocks.prepareExecUnavailable.mockRejectedValueOnce(refusal);
+    const relock = vi.fn(() => true);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      prepareMcpForRebuild("alpha", false, true, relock, bail, validateContainingPolicyReceipt),
+    ).rejects.toBe(refusal);
+
+    expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith(
+      "alpha",
+      validateContainingPolicyReceipt,
+    );
+    expect(relock).not.toHaveBeenCalled();
+    expect(bail).not.toHaveBeenCalled();
+  });
 });

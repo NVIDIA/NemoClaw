@@ -475,6 +475,24 @@ function requestSandboxDestroyExit(exitCode: number): never {
   throw new SandboxDestroyExitRequest(exitCode);
 }
 
+function bindMcpDestroyPolicyAuthority(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry | null,
+): (() => Promise<void>) | undefined {
+  if (!sandbox || Object.keys(sandbox.mcp?.bridges ?? {}).length === 0) return undefined;
+  let authority = sandbox.policyAuthority;
+  return async () => {
+    const current = registry.getSandbox(sandboxName);
+    if (!current) {
+      throw new Error(`sandbox '${sandboxName}' is no longer registered`);
+    }
+    if (authority === undefined) authority = current.policyAuthority;
+    else if (current.policyAuthority !== authority) {
+      throw new Error(`sandbox '${sandboxName}' policy authority changed during destroy`);
+    }
+  };
+}
+
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
@@ -583,6 +601,10 @@ async function destroySandboxUnlocked(
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  const validateMcpPolicyAuthorityReceipt = bindMcpDestroyPolicyAuthority(
+    sandboxName,
+    sandboxConfirmedAbsent ? null : sandbox,
+  );
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
   if (portableContainerAuthority) {
@@ -626,6 +648,7 @@ async function destroySandboxUnlocked(
       expectedContainerIdentity: initialIdentity?.identity,
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+      ...(validateMcpPolicyAuthorityReceipt ? { validateMcpPolicyAuthorityReceipt } : {}),
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();

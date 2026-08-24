@@ -8,7 +8,7 @@
  * and mutation, and the server can merge against state NemoClaw did not approve.
  * A nonzero mutation result is ambiguous and always fails closed; NemoClaw never
  * infers success from a later resource-version increase.
- * Randomized provider names, the MCP lifecycle lock, and mandatory
+ * Stable collision-resistant provider names, the MCP lifecycle lock, and mandatory
  * postinspection of immutable identity, credential shape, and resource version
  * constrain this TOCTOU boundary. Remove the compensation when OpenShell
  * exposes caller-supplied provider CAS or immutable provider IDs as mutation
@@ -207,8 +207,8 @@ export function upsertMcpProvider(
   // compare-and-swap; v0.0.99 uses the version read inside the server but its
   // update CLI exposes no caller-supplied expected version. whyNotSourceFix:
   // NemoClaw cannot bind its preinspection to the upstream atomic mutation, so
-  // it uses randomized names, a lifecycle mutex, and immutable-ID/resource-version
-  // reinspection.
+  // it uses stable collision-resistant names, a lifecycle mutex, and
+  // immutable-ID/resource-version reinspection.
   // regressionTest: mcp-provider-ownership.test.ts simulates a concurrent
   // resource-version writer and requires the ambiguous update to fail closed.
   // removalCondition: use native immutable provider IDs or caller-supplied CAS

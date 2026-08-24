@@ -3,27 +3,31 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
+  reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",
     (host) => {
-      expect(COMPATIBLE_ENDPOINT_GATEWAY_PORTS.every((port) =>
+      expect(
+        COMPATIBLE_ENDPOINT_GATEWAY_PORTS.every((port) =>
           Object.is(
             gatewayReachableCompatibleEndpointUrl(
               "compatible-endpoint",
               `http://${host}:${port}/v1/`,
             ),
             `http://host.openshell.internal:${port}/v1`,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
     },
   );
 
@@ -74,11 +78,14 @@ describe("compatible endpoint gateway routing", () => {
       "not a URL",
     ];
 
-    expect(unchanged.every((endpointUrl) =>
+    expect(
+      unchanged.every((endpointUrl) =>
         Object.is(
           gatewayReachableCompatibleEndpointUrl("compatible-endpoint", endpointUrl),
           endpointUrl,
-        ))).toBe(true);
+        ),
+      ),
+    ).toBe(true);
     expect(
       gatewayReachableCompatibleEndpointUrl(
         "compatible-anthropic-endpoint",
@@ -87,5 +94,82 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://localhost:8000/v1");
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", null)).toBeNull();
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", undefined)).toBeUndefined();
+  });
+});
+
+describe("recovered provider reuse and the openai provider profile (#9895)", () => {
+  const REGISTERED_URL = "http://host.openshell.internal:8000/v1";
+
+  function createRunOpenshell(profileStatus: number) {
+    const commands: string[] = [];
+    const runOpenshell = vi.fn((args: string[]) => {
+      commands.push(args.join(" "));
+      return {
+        status: args[1] === "profile" ? profileStatus : 0,
+        stdout: "",
+        stderr: "import refused",
+      };
+    });
+    return { commands, runOpenshell };
+  }
+
+  const reuseArgs = {
+    provider: "compatible-endpoint",
+    providerType: "openai",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    endpointUrl: REGISTERED_URL,
+    gatewayEndpointUrl: REGISTERED_URL,
+  };
+
+  it("declares the openai profile for an unchanged gateway route that performs no upsert", () => {
+    const { commands, runOpenshell } = createRunOpenshell(0);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+
+    expect(
+      reuseRegisteredProviderWithGatewayEndpoint({ ...reuseArgs, runOpenshell, upsertProvider }),
+    ).toEqual({ ok: true });
+
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(commands).toEqual([
+      "provider get compatible-endpoint",
+      expect.stringMatching(
+        /^provider profile import --file .*\/provider-profiles\/openai\.yaml$/u,
+      ),
+    ]);
+  });
+
+  it("reports a failed profile import instead of reusing the recovered provider", () => {
+    const { runOpenshell } = createRunOpenshell(1);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+
+    const result = reuseRegisteredProviderWithGatewayEndpoint({
+      ...reuseArgs,
+      runOpenshell,
+      upsertProvider,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(1);
+    expect(result.message).toContain(
+      "could not import the checked-in 'openai' inference provider profile",
+    );
+    expect(result.message).not.toContain("import refused");
+    expect(upsertProvider).not.toHaveBeenCalled();
+  });
+
+  it("leaves a non-openai recovered provider untouched", () => {
+    const { commands, runOpenshell } = createRunOpenshell(1);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+
+    expect(
+      reuseRegisteredProviderWithGatewayEndpoint({
+        ...reuseArgs,
+        providerType: "anthropic",
+        runOpenshell,
+        upsertProvider,
+      }),
+    ).toEqual({ ok: true });
+
+    expect(commands).toEqual(["provider get compatible-endpoint"]);
   });
 });

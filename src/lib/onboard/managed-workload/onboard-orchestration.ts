@@ -124,6 +124,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly computePlan: OpenShellComputePlan;
   readonly managedWorkloadRebuild: ManagedWorkloadRebuildHandoff | null;
   readonly tempManagedRuntime: boolean;
+  readonly stockManagedRuntime: boolean;
   readonly tempManagedRuntimeCatalog: string | null;
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
@@ -219,8 +220,9 @@ export function createManagedWorkloadOnboardRuntime(
   const discoveredRuntimeCapabilities = resolveSandboxWorkloadRuntimeCapabilities(
     input.computePlan,
   );
+  const strictManagedRuntime = input.tempManagedRuntime || input.managedWorkloadRebuild !== null;
   const runtimeCapabilities =
-    input.tempManagedRuntime || input.managedWorkloadRebuild !== null
+    strictManagedRuntime || input.stockManagedRuntime
       ? discoveredRuntimeCapabilities
       : {
           ...discoveredRuntimeCapabilities,

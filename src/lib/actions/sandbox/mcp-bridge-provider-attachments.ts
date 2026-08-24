@@ -117,11 +117,15 @@ function isRetryableSandboxMutationConflict(status: number | null, output: strin
   );
 }
 
-export function detachProvider(
+export async function detachProvider(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { allowLegacyGeneric?: boolean; bestEffort?: boolean } = {},
-): ProviderDetachOutcome {
+  options: {
+    allowLegacyGeneric?: boolean;
+    bestEffort?: boolean;
+    prepareMutation?: () => void | Promise<void>;
+  } = {},
+): Promise<ProviderDetachOutcome> {
   if (!entry.providerName) return "absent";
   assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -156,6 +160,7 @@ export function detachProvider(
         `Provider attachment '${entry.providerName}' does not match MCP server '${entry.server}'. Expected stable provider ID '${entry.providerId}', found '${before.attachment.providerId ?? "missing"}', with credential keys '${before.attachment.credentialKeys.join(", ") || "none"}'.`,
       );
     }
+    await options.prepareMutation?.();
     const result = runOpenshellProviderCommand(
       ["sandbox", "provider", "detach", sandboxName, entry.providerName],
       {
