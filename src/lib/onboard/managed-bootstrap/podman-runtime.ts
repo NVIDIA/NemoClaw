@@ -1192,13 +1192,12 @@ function readStandaloneGatewayLaunch(
   });
 }
 
-function waitForProcessSuspension(snapshot: PodmanGatewayWatcherSnapshot): boolean {
+function waitForProcessExit(snapshot: PodmanGatewayWatcherSnapshot): boolean {
   for (let attempt = 0; attempt < 300; attempt += 1) {
-    if (processInstanceSuspended(snapshot)) return true;
-    if (!processInstanceAlive(snapshot)) return false;
+    if (!processInstanceAlive(snapshot)) return true;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  return processInstanceSuspended(snapshot);
+  return !processInstanceAlive(snapshot);
 }
 
 function listenerPids(port: number): readonly number[] {
@@ -1377,10 +1376,12 @@ function createProductionWatcherController(
           "Managed bootstrap Podman standalone gateway identity changed before stop.",
         );
       }
-      process.kill(snapshot.pid, "SIGSTOP");
-      if (!waitForProcessSuspension(snapshot)) {
-        if (processInstanceAlive(snapshot)) process.kill(snapshot.pid, "SIGCONT");
-        throw new Error("Managed bootstrap Podman standalone gateway did not suspend.");
+      process.kill(snapshot.pid, "SIGTERM");
+      if (waitForProcessExit(snapshot)) return;
+      if (!processInstanceAlive(snapshot)) return;
+      process.kill(snapshot.pid, "SIGKILL");
+      if (!waitForProcessExit(snapshot)) {
+        throw new Error("Managed bootstrap Podman standalone gateway did not stop.");
       }
     },
     resumeSameOwner(snapshot) {
@@ -2104,6 +2105,19 @@ export function createPodmanManagedBootstrapAdapter(
         watcherLease: current.watcherLease,
       });
       current.watcherLease.resumeAndProve();
+      const runCaptureOpenshell = options.runCaptureOpenshell;
+      if (!runCaptureOpenshell) {
+        throw new Error("Managed bootstrap Podman requires OpenShell observation authority.");
+      }
+      observePodmanBootstrapReplacementReady({
+        engine: options.engine,
+        runtimeId: current.prepared.replacementRuntimeId,
+        sandboxName: input.handle.sandbox.sandboxName,
+        sandboxId: input.handle.sandbox.sandboxId,
+        gatewayName: gatewayAuthority.gatewayName,
+        runCaptureOpenshell,
+        ...(options.sleep ? { sleep: options.sleep } : {}),
+      });
       transactions.delete(input.handle.bootstrapIdentity);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,

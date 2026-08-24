@@ -194,7 +194,7 @@ async function gatewayRuntimeId(
   gateway: GatewayClient,
 ): Promise<string> {
   const runtime = await gateway.resolveHostRuntime();
-  return runtime ? `${runtime.kind}:${runtime.id}` : "";
+  return runtime?.kind === "container" ? `${runtime.kind}:${runtime.id}` : (runtime?.kind ?? "");
 }
 
 async function stopGatewayRuntime(
