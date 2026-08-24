@@ -118,6 +118,11 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
+import {
+  ensureOpenAiInferenceProviderProfile,
+  type InferenceProviderProfileDeps,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "./inference-providers/provider-profile";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -281,6 +286,24 @@ export function bindGatewayUpsertProvider(
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
     upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
+}
+
+export function bindOpenAiProviderProfile(
+  upsertProvider: CommonDeps["upsertProvider"],
+  runOpenshell: InferenceProviderProfileDeps["runOpenshell"],
+  error: CommonDeps["error"],
+  exitProcess: CommonDeps["exitProcess"],
+): CommonDeps["upsertProvider"] {
+  return (name, type, ...rest) => {
+    if (type === OPENAI_GATEWAY_PROVIDER_TYPE) {
+      ensureOpenAiInferenceProviderProfile({
+        runOpenshell,
+        log: error,
+        exit: exitProcess,
+      });
+    }
+    return upsertProvider(name, type, ...rest);
+  };
 }
 
 export function selectGatewayForFollowupOrExit(
@@ -638,12 +661,29 @@ export function createSetupInference(
         };
 
         const defaultUpsertProvider = bindGatewayUpsertProvider(deps.upsertProvider, gatewayName);
+        const providerExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
+          ? (code: number): never => {
+              throw new HostLocalInferenceBranchExit(code);
+            }
+          : deps.exitProcess;
+        const providerError: CommonDeps["error"] = hostLocalSelection
+          ? (message: string) => {
+              hostLocalProviderErrors.push(message);
+            }
+          : deps.error;
+        const profiledUpsertProvider = bindOpenAiProviderProfile(
+          (...args) => {
+            const selectedUpsertProvider =
+              hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
+            return selectedUpsertProvider(...args);
+          },
+          runGatewayOpenshell,
+          providerError,
+          providerExitProcess,
+        );
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
-          upsertProvider: (...args: Parameters<CommonDeps["upsertProvider"]>) => {
-            const exactUpsertProvider = hostLocalGatewayMutation?.upsertProvider;
-            return (exactUpsertProvider ?? defaultUpsertProvider)(...args);
-          },
+          upsertProvider: profiledUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);
@@ -663,16 +703,8 @@ export function createSetupInference(
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
           },
-          exitProcess: hostLocalSelection
-            ? (code: number): never => {
-                throw new HostLocalInferenceBranchExit(code);
-              }
-            : deps.exitProcess,
-          error: hostLocalSelection
-            ? (message: string) => {
-                hostLocalProviderErrors.push(message);
-              }
-            : deps.error,
+          exitProcess: providerExitProcess,
+          error: providerError,
           log: deps.log,
         } satisfies CommonDeps;
 
