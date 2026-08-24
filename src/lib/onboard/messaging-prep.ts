@@ -102,7 +102,12 @@ export function prepareCreateSandboxMessaging(
         retainWhileDisabled: staticProviderType !== null,
       };
     })
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
+    .filter(
+      ({ envKey, retainWhileDisabled }) =>
+        !enabledEnvKeys ||
+        enabledEnvKeys.has(envKey) ||
+        (retainWhileDisabled && disabledEnvKeys.has(envKey)),
+    );
   const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
@@ -196,8 +201,11 @@ export function prepareCreateSandboxMessaging(
       retainWhileDisabled,
     } of messagingCredentialDefs) {
       const channel = input.getMessagingChannelForEnvKey(envKey);
-      if (!channel || !input.enabledChannels.includes(channel)) continue;
+      if (!channel) continue;
       const channelDisabled = disabledChannelNames.has(channel);
+      if (!input.enabledChannels.includes(channel) && !(channelDisabled && retainWhileDisabled)) {
+        continue;
+      }
       if (channelDisabled && !retainWhileDisabled) continue;
       // Disabled definitions are intentionally absent from messagingTokenDefs,
       // so even a still-readable source token cannot recreate their provider.
