@@ -49,6 +49,33 @@ import type {
 export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
 export const STATION_PAIR_OPTIONAL_ORCHESTRATION = "vllm.station-pair-optional/v1";
 export const DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION = 0.9;
+export const NEMOCLAW_VLLM_GPU_DEVICE_ENV = "NEMOCLAW_VLLM_GPU_DEVICE" as const;
+
+const GPU_INDEX_PATTERN = /^\d+$/;
+const GPU_UUID_PATTERN = /^GPU-[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}$/;
+
+export function normalizeVllmGpuDevice(value: string): string {
+  const candidate = value.trim();
+  if (GPU_INDEX_PATTERN.test(candidate)) {
+    const index = Number(candidate);
+    if (Number.isSafeInteger(index)) return String(index);
+  }
+  if (GPU_UUID_PATTERN.test(candidate)) {
+    return `GPU-${candidate.slice("GPU-".length).toLowerCase()}`;
+  }
+  throw new Error(
+    "vLLM GPU device must be a non-negative GPU index or full GPU UUID reported by nvidia-smi",
+  );
+}
+
+export function parseVllmGpuDevice(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return normalizeVllmGpuDevice(value);
+  } catch {
+    return null;
+  }
+}
 
 export interface VllmServingCatalogIdentity {
   readonly catalogDigest: string;

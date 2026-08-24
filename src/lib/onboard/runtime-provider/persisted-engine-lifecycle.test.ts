@@ -1377,12 +1377,13 @@ describe("persisted engine lifecycle", () => {
     await expect(
       executePersistedEngineLifecycle(runtime.input, (scope) => {
         scope.captureExact("source", (runtimeId) => ({
-          args: ["rm", "other-runtime", "--authorized-id", runtimeId],
-          targetIndex: 1,
+          args: ["container", "cp", `${runtimeId}:/run/nemoclaw/other`, "/tmp/receipt"],
+          targetIndex: 2,
+          targetPath: "/run/nemoclaw/receipt",
         }));
         return { resultSha256: RESULT_SHA256, value: undefined };
       }),
-    ).rejects.toThrow("target must be its persisted runtime ID");
+    ).rejects.toThrow("another persisted runtime target");
     expect(capture).not.toHaveBeenCalled();
   });
 

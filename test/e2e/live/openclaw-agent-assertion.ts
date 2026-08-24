@@ -208,7 +208,8 @@ If progressive tool disclosure is active, you may use tool_search, tool_describe
 Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
 Set web_fetch maxChars to no more than 8000.
 Only after web_fetch returns a numeric NVDA price with its source date or timestamp, reply with one JSON object and no Markdown.
-Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the source's ISO 8601 date or timestamp.`;
+Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the quote's own market or update timestamp converted to ISO 8601.
+For a Unix-epoch quote field such as regularMarketTime, convert that field to ISO 8601. Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(
   host: HostCliClient,

@@ -46,3 +46,8 @@ export function dashboardRemoteBindConnectStarted(
           output.includes(`sandbox ${sandboxName}`))))
   );
 }
+
+export function dashboardForwardIsRunning(forwardLine: string): boolean {
+  const columns = stripAnsi(forwardLine).trim().split(/\s+/u);
+  return columns.length === 5 && columns[4] === "running";
+}

@@ -64,6 +64,22 @@ describe("managed vLLM resume checkpoint persistence", () => {
     expect(session.normalizeSession(malformed as never)).toBeNull();
   });
 
+  it("persists a vLLM GPU UUID and keeps sessions without the new field compatible", () => {
+    const uuid = "GPU-69adb14e-820e-bfb4-0993-171e73f68504";
+    session.saveSession(session.createSession({ vllmGpuDevice: uuid }));
+
+    expect(requireLoadedSession().vllmGpuDevice).toBe(uuid);
+    expect(session.summarizeForDebug()?.vllmGpuDevice).toBe(uuid);
+
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.vllmGpuDevice;
+    expect(session.normalizeSession(legacy as never)?.vllmGpuDevice).toBeNull();
+
+    const malformed = session.createSession() as unknown as Record<string, unknown>;
+    malformed.vllmGpuDevice = "nvidia.com/gpu=0";
+    expect(session.normalizeSession(malformed as never)).toBeNull();
+  });
+
   it("refuses to checkpoint outside provider selection", () => {
     session.saveSession(session.createSession());
     expect(() => session.checkpointVllmInstallModel("example/model")).toThrow(
