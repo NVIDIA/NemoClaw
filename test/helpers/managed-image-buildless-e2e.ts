@@ -478,11 +478,22 @@ runner.runCapture = (command) => {
     .mockOnboardRunCapture(command);
   return mocked === null ? "" : mocked;
 };
-runner.runCaptureEx = (command) => ({
-  status: 0,
-  stdout: runner.runCapture(command),
-  stderr: "",
-});
+runner.runCaptureEx = (command) => {
+  const normalized = normalize(command);
+  const sandboxPolicy = {
+    scope: "sandbox",
+    sandbox: sandboxName,
+    status: "effective",
+    policy_source: "sandbox",
+    policy: {},
+  };
+  const stdout = normalized.includes("policy list") && normalized.includes("--global")
+    ? ""
+    : normalized.includes("policy get")
+      ? JSON.stringify(sandboxPolicy)
+      : runner.runCapture(command);
+  return { status: 0, stdout, stderr: "", exitCode: 0, timedOut: false };
+};
 
 const registry = require(${source("src/lib/state/registry.ts")});
 const sourceEntry = recreate ? {
@@ -493,6 +504,7 @@ const sourceEntry = recreate ? {
   imageTag: catalogTemplate.hermes.reference,
   model,
   provider,
+  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
   workload: {
     schemaVersion: 1,
