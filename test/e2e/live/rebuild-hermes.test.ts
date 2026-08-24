@@ -1225,6 +1225,19 @@ test(STALE_BASE_REBUILD
     /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
   );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
+  const rebuiltProviderAttachments = await host.command(
+    activeOpenshellBin,
+    ["sandbox", "provider", "list", "-g", "nemoclaw", SANDBOX_NAME],
+    {
+      artifactName: "phase-6-post-rebuild-provider-attachments",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(rebuiltProviderAttachments, "list rebuilt Hermes provider attachments");
+  const rebuiltProviderNames = resultText(rebuiltProviderAttachments).split(/\s+/u);
+  expect(rebuiltProviderNames).toContain(`${SANDBOX_NAME}-discord-bridge`);
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
   const rebuildBackupPath = backupPathText
