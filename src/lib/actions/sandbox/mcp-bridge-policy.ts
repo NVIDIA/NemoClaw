@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { diagnosticPreview } from "../../name-validation";
 import * as policies from "../../policy";
@@ -19,6 +20,7 @@ import {
   isAgentMcpAdapter,
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
+  type McpBridgeErrorReasonCode,
 } from "./mcp-bridge-contracts";
 import {
   buildMcpBridgeCapabilityPolicyYaml,
@@ -26,9 +28,10 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
 } from "./mcp-bridge-policy-render";
+import { preflightSandboxPolicyAuthority } from "./policy-authority/preflight";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 
-export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
+export { isAgentMcpAdapter, MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
@@ -54,6 +57,140 @@ export interface ManagedMcpPolicyOmission {
 export interface ProvableManagedMcpPolicies {
   policies: ExactManagedMcpPolicy[];
   omissions: ManagedMcpPolicyOmission[];
+}
+
+export class McpPolicyAuthorityRefusalError extends McpBridgeError {
+  readonly code = "NEMOCLAW_POLICY_AUTHORITY_REFUSAL";
+
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      readonly exitCode?: number;
+      readonly reasonCode?: McpBridgeErrorReasonCode;
+    } = {},
+  ) {
+    super(message, options.exitCode, options.reasonCode, options);
+    this.name = "McpPolicyAuthorityRefusalError";
+  }
+}
+
+export interface McpPolicyAuthorityReceipt {
+  readonly authority: SandboxPolicyAuthority;
+  readonly operation: string;
+  readonly requiredPolicyContents: readonly string[];
+  readonly sandboxName: string;
+}
+
+export function preflightMcpPolicyAuthority(options: {
+  readonly externalPolicy: "verify" | "refuse";
+  readonly operation: string;
+  readonly requiredPolicyContents?: readonly string[];
+  readonly sandboxName: string;
+}): SandboxPolicyAuthority {
+  try {
+    return preflightSandboxPolicyAuthority(options);
+  } catch (error) {
+    throw new McpPolicyAuthorityRefusalError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/** Retain the exact policy requirements and authority that qualified an MCP operation. */
+export function qualifyMcpPolicyAuthorityReceipt(options: {
+  readonly operation: string;
+  readonly requiredPolicyContents: readonly string[];
+  readonly sandboxName: string;
+}): McpPolicyAuthorityReceipt {
+  const requiredPolicyContents = [...options.requiredPolicyContents];
+  const authority = preflightMcpPolicyAuthority({
+    externalPolicy: "verify",
+    operation: options.operation,
+    requiredPolicyContents,
+    sandboxName: options.sandboxName,
+  });
+  return { ...options, authority, requiredPolicyContents };
+}
+
+/** MCP rollback callers use this type to stop mutations after an enclosing authority refusal. */
+export async function revalidateContainingMcpPolicyAuthority(
+  validateContainingReceipt?: () => Promise<void>,
+): Promise<void> {
+  try {
+    await validateContainingReceipt?.();
+  } catch (error) {
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    throw new McpPolicyAuthorityRefusalError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/** Recheck an MCP receipt and its containing lifecycle receipt before one mutation. */
+export async function revalidateMcpPolicyAuthorityReceipt(
+  receipt: McpPolicyAuthorityReceipt,
+  validateContainingReceipt?: () => Promise<void>,
+  assertCurrentState?: () => void,
+): Promise<void> {
+  try {
+    await revalidateContainingMcpPolicyAuthority(validateContainingReceipt);
+    const authority = preflightMcpPolicyAuthority({
+      externalPolicy: "verify",
+      operation: receipt.operation,
+      requiredPolicyContents: receipt.requiredPolicyContents,
+      sandboxName: receipt.sandboxName,
+    });
+    if (authority !== receipt.authority) {
+      throw new Error(`Policy authority changed while attempting to ${receipt.operation}.`);
+    }
+    assertCurrentState?.();
+  } catch (error) {
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    throw new McpPolicyAuthorityRefusalError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/** Recheck the durable portion of an MCP receipt after its live sandbox was deleted. */
+export async function revalidateDeletedMcpPolicyAuthorityReceipt(
+  receipt: McpPolicyAuthorityReceipt,
+  validateContainingReceipt?: () => Promise<void>,
+  assertCurrentState?: () => void,
+): Promise<void> {
+  try {
+    await revalidateContainingMcpPolicyAuthority(validateContainingReceipt);
+    const current = registry.getSandbox(receipt.sandboxName);
+    if (!current) {
+      throw new Error(
+        `Policy authority could not be revalidated after ${receipt.operation}: the sandbox is no longer registered.`,
+      );
+    }
+    if (current.policyAuthority !== receipt.authority) {
+      throw new Error(`Policy authority changed while attempting to ${receipt.operation}.`);
+    }
+    assertCurrentState?.();
+  } catch (error) {
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    throw new McpPolicyAuthorityRefusalError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+export function buildRequiredMcpBridgePolicy(
+  entry: McpBridgeEntry,
+  target: McpBridgeTargetValidation,
+): string {
+  assertMcpBridgePolicyTarget(entry, target);
+  const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
+  return buildMcpBridgePolicyYaml(
+    entry.server,
+    entry.url,
+    adapter,
+    target,
+    entry.providerName ?? "",
+  );
 }
 
 type ManagedMcpPolicyInspectionDeps = {
@@ -522,10 +659,10 @@ export function hasManagedMcpPolicyClaims(
   return (
     Boolean(
       sandbox.mcp &&
-        (Object.keys(sandbox.mcp.bridges).length > 0 ||
-          (sandbox.mcp.managedServerNames?.length ?? 0) > 0 ||
-          sandbox.mcp.destroyPreparedAt ||
-          sandbox.mcp.destroyPendingAt),
+      (Object.keys(sandbox.mcp.bridges).length > 0 ||
+        (sandbox.mcp.managedServerNames?.length ?? 0) > 0 ||
+        sandbox.mcp.destroyPreparedAt ||
+        sandbox.mcp.destroyPendingAt),
     ) ||
     (sandbox.customPolicies ?? []).some((policy) => policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE)
   );
@@ -545,10 +682,22 @@ function withoutPendingContent(
   return { ...confirmed, content };
 }
 
+type GeneratedPolicyMutationAuthorityCheck = () => void;
+
+function assertGeneratedPolicyMutationAuthority(sandboxName: string, operation: string): void {
+  preflightMcpPolicyAuthority({
+    externalPolicy: "refuse",
+    operation,
+    sandboxName,
+  });
+}
+
 function persistGeneratedPolicyRegistration(
   sandboxName: string,
   policy: registry.CustomPolicyEntry,
+  beforePersist?: GeneratedPolicyMutationAuthorityCheck,
 ): void {
+  beforePersist?.();
   if (!registry.addCustomPolicy(sandboxName, policy)) {
     throw new McpBridgeError(
       `Could not persist ownership for generated MCP policy '${policy.name}'.`,
@@ -565,6 +714,7 @@ function persistGeneratedPolicyRegistration(
 function reconcileGeneratedPolicyRegistration(
   sandboxName: string,
   policy: registry.CustomPolicyEntry,
+  beforePersist?: GeneratedPolicyMutationAuthorityCheck,
 ): GeneratedPolicyRegistrationState {
   const pendingContent = policy.pendingContent;
   if (pendingContent === undefined) {
@@ -581,7 +731,7 @@ function reconcileGeneratedPolicyRegistration(
   const pendingState = policies.getPresetContentGatewayState(sandboxName, pendingContent);
   if (pendingState === "match") {
     const confirmedPolicy = withoutPendingContent(policy, pendingContent);
-    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy);
+    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy, beforePersist);
     return { policy: confirmedPolicy, state: "match", confirmed: true };
   }
 
@@ -594,7 +744,7 @@ function reconcileGeneratedPolicyRegistration(
   const confirmedState = policies.getPresetContentGatewayState(sandboxName, policy.content);
   if (confirmedState === "match" || (confirmedState === "absent" && pendingState === "absent")) {
     const confirmedPolicy = withoutPendingContent(policy);
-    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy);
+    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy, beforePersist);
     return { policy: confirmedPolicy, state: confirmedState, confirmed: true };
   }
   return { policy, state: confirmedState === null ? null : "drift", confirmed: false };
@@ -606,6 +756,12 @@ export function applyGeneratedPolicy(
   target: McpBridgeTargetValidation,
   options: { bindCredential?: boolean } = {},
 ): void {
+  const recheckAuthority = () =>
+    assertGeneratedPolicyMutationAuthority(
+      sandboxName,
+      `apply generated MCP policy '${entry.policyName}'`,
+    );
+  recheckAuthority();
   const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   if (resolvedAddresses.length === 0) {
     throw new McpBridgeError(
@@ -616,13 +772,7 @@ export function applyGeneratedPolicy(
   const content =
     options.bindCredential === false
       ? buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target)
-      : buildMcpBridgePolicyYaml(
-          entry.server,
-          entry.url,
-          adapter,
-          target,
-          entry.providerName ?? "",
-        );
+      : buildRequiredMcpBridgePolicy(entry, target);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const sameNamePolicy = registry
     .getCustomPolicies(sandboxName)
@@ -637,7 +787,11 @@ export function applyGeneratedPolicy(
   let previousPolicyConfirmed = false;
   let ownsExistingPolicyKey = false;
   if (registeredPolicy) {
-    const reconciled = reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy);
+    const reconciled = reconcileGeneratedPolicyRegistration(
+      sandboxName,
+      registeredPolicy,
+      recheckAuthority,
+    );
     previousPolicy = reconciled.policy;
     previousPolicyConfirmed = reconciled.confirmed;
     const previousState = reconciled.state;
@@ -671,7 +825,7 @@ export function applyGeneratedPolicy(
     reservation = previousPolicy;
   } else if (previousPolicy) {
     reservation = { ...withoutPendingContent(previousPolicy), pendingContent: content };
-    persistGeneratedPolicyRegistration(sandboxName, reservation);
+    persistGeneratedPolicyRegistration(sandboxName, reservation, recheckAuthority);
   } else {
     reservation = {
       name: entry.policyName,
@@ -679,11 +833,12 @@ export function applyGeneratedPolicy(
       pendingContent: content,
       sourcePath: MCP_BRIDGE_POLICY_SOURCE,
     };
-    persistGeneratedPolicyRegistration(sandboxName, reservation);
+    persistGeneratedPolicyRegistration(sandboxName, reservation, recheckAuthority);
   }
   // `custom` denotes user-supplied preset content and intentionally rejects
   // `allowed_ips`. This content is generated from validated MCP inputs and the
   // ownership reservation above; `skipRegistryUpdate` avoids a second write.
+  recheckAuthority();
   const ok = policies.applyPresetContent(sandboxName, entry.policyName, content, {
     expectedExistingNetworkPolicyContent:
       ownsExistingPolicyKey && previousPolicy ? previousPolicy.content : null,
@@ -695,7 +850,11 @@ export function applyGeneratedPolicy(
   // Confirm that the effective policy still contains our exact generated entry.
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (ok !== false && activeState === "match") {
-    persistGeneratedPolicyRegistration(sandboxName, withoutPendingContent(reservation, content));
+    persistGeneratedPolicyRegistration(
+      sandboxName,
+      withoutPendingContent(reservation, content),
+      recheckAuthority,
+    );
     return;
   }
 
@@ -705,9 +864,14 @@ export function applyGeneratedPolicy(
       previousPolicy.content,
     );
     if (previousState === "match" || (previousState === "absent" && activeState === "absent")) {
-      persistGeneratedPolicyRegistration(sandboxName, withoutPendingContent(previousPolicy));
+      persistGeneratedPolicyRegistration(
+        sandboxName,
+        withoutPendingContent(previousPolicy),
+        recheckAuthority,
+      );
     }
   } else if (activeState === "absent") {
+    recheckAuthority();
     registry.removeCustomPolicyByName(sandboxName, entry.policyName);
   }
   const detail =
@@ -780,10 +944,16 @@ export function assertGeneratedPolicyMutationSafe(
   sandboxName: string,
   entry: McpBridgeEntry,
 ): void {
+  const recheckAuthority = () =>
+    assertGeneratedPolicyMutationAuthority(
+      sandboxName,
+      `inspect generated MCP policy '${entry.policyName}' before mutation`,
+    );
+  recheckAuthority();
   const registeredPolicy = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   const owned = registeredPolicy !== undefined;
   const reconciled = registeredPolicy
-    ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
+    ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy, recheckAuthority)
     : undefined;
   const state = reconciled?.state ?? getUnownedGeneratedPolicyState(sandboxName, entry);
   if (state === "absent") return;
@@ -888,11 +1058,17 @@ export function assertGeneratedPolicyExactReadOnly(
   return { ...registeredPolicy };
 }
 
-export function removeGeneratedPolicy(
+function removeGeneratedPolicyStrict(
   sandboxName: string,
   entry: McpBridgeEntry,
   options: { bestEffort?: boolean; preserveRegistryOwnership?: boolean } = {},
 ): void {
+  const recheckAuthority = () =>
+    assertGeneratedPolicyMutationAuthority(
+      sandboxName,
+      `remove generated MCP policy '${entry.policyName}'`,
+    );
+  recheckAuthority();
   const policyName = entry.policyName;
   const registeredPolicy = registry
     .getCustomPolicies(sandboxName)
@@ -900,7 +1076,7 @@ export function removeGeneratedPolicy(
   const ownsRegistration = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
   const reconciled =
     registeredPolicy && ownsRegistration
-      ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
+      ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy, recheckAuthority)
       : undefined;
   const effectiveRegistration = reconciled?.policy ?? registeredPolicy;
   const content = effectiveRegistration?.content;
@@ -911,6 +1087,7 @@ export function removeGeneratedPolicy(
       : getUnownedGeneratedPolicyState(sandboxName, entry));
   if (gatewayState === "absent") {
     if (ownsRegistration && !options.preserveRegistryOwnership) {
+      recheckAuthority();
       registry.removeCustomPolicyByName(sandboxName, policyName);
     }
     return;
@@ -921,6 +1098,7 @@ export function removeGeneratedPolicy(
       `Generated MCP policy '${policyName}' is unowned, unreachable, or no longer matches its registered content. Refusing to delete same-key policy state.`,
     );
   }
+  recheckAuthority();
   const ok = policies.removePreset(sandboxName, policyName, {
     nonFatal: true,
     // Keep ownership durable across a crash or superseded OpenShell revision.
@@ -938,6 +1116,7 @@ export function removeGeneratedPolicy(
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (activeState === "absent") {
     if (!options.preserveRegistryOwnership) {
+      recheckAuthority();
       registry.removeCustomPolicyByName(sandboxName, policyName);
     }
     return;
@@ -945,11 +1124,25 @@ export function removeGeneratedPolicy(
   // Keep (or defensively restore) the last reconciled ownership record when
   // exact post-state is not proven.
   if (ownsRegistration && effectiveRegistration) {
-    persistGeneratedPolicyRegistration(sandboxName, effectiveRegistration);
+    persistGeneratedPolicyRegistration(sandboxName, effectiveRegistration, recheckAuthority);
   }
   if (options.bestEffort) return;
   const detail = ok ? `effective state: ${activeState}` : "the removal command failed";
   throw new McpBridgeError(`Failed to remove generated MCP policy '${policyName}' (${detail}).`);
+}
+
+export function removeGeneratedPolicy(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  options: { bestEffort?: boolean; preserveRegistryOwnership?: boolean } = {},
+): void {
+  try {
+    removeGeneratedPolicyStrict(sandboxName, entry, options);
+  } catch (error) {
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    if (options.bestEffort && error instanceof McpBridgeError) return;
+    throw error;
+  }
 }
 
 export function getRegisteredGeneratedPolicy(

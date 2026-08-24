@@ -35,14 +35,16 @@ export function scrubManagedMcpAdapterOrThrow(
   }
 }
 
-/** Restore scrubbed adapter entries without hiding failures from provider rollback. */
-export function rollbackScrubbedMcpAdapters(
+/** Restore scrubbed adapters, but do not classify an authority refusal as a mutation failure. */
+export async function rollbackScrubbedMcpAdapters(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
-): string[] {
+  validateBeforeMutation?: () => Promise<void>,
+): Promise<string[]> {
   const failures: string[] = [];
   for (const entry of entries) {
+    await validateBeforeMutation?.();
     try {
       registerAgentAdapter(
         sandboxName,

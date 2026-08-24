@@ -459,6 +459,63 @@ describe("rebuild destroy phase", () => {
     );
   });
 
+  it("withholds delete when read-only MCP state drifts during final policy validation (#9833)", async () => {
+    const revalidateBeforeDelete = vi.fn().mockResolvedValue(undefined);
+    const assertDeleteEdgeUnchanged = vi
+      .fn()
+      .mockReturnValueOnce(undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("MCP bridge definitions changed");
+      });
+    const validateBeforeDeleteCommit = vi.fn().mockResolvedValue({ ok: true as const });
+    const detachedProviderEntries = [{ providerName: "nemoclaw-mcp-alpha-github" }];
+    const scrubbedAdapterEntries = [{ server: "github" }];
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries,
+      scrubbedAdapterEntries,
+      revalidateBeforeDelete,
+      assertDeleteEdgeUnchanged,
+    });
+    const recreateJournal = stubRecreateJournal();
+    const relockShieldsIfNeeded = vi.fn(() => true);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        force: true,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        validateBeforeDeleteCommit,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow(
+      "Failed to revalidate read-only MCP recovery before sandbox deletion: MCP bridge definitions changed",
+    );
+
+    expect(validateBeforeDeleteCommit).toHaveBeenCalledTimes(2);
+    expect(assertDeleteEdgeUnchanged).toHaveBeenCalledTimes(2);
+    expect(validateBeforeDeleteCommit.mock.invocationCallOrder[1]).toBeLessThan(
+      assertDeleteEdgeUnchanged.mock.invocationCallOrder[1]!,
+    );
+    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      detachedProviderEntries,
+      scrubbedAdapterEntries,
+      undefined,
+    );
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expectNoSandboxDelete(mocks.runOpenshell);
+  });
+
   it("converges as deleted when a nonzero delete is followed by exact NotFound (#7062)", async () => {
     mocks.getSandbox.mockReturnValueOnce({
       name: "alpha",
@@ -756,7 +813,7 @@ describe("rebuild destroy phase", () => {
     });
 
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
-    expect(assertDeleteEdgeUnchanged).toHaveBeenCalledOnce();
+    expect(assertDeleteEdgeUnchanged).toHaveBeenCalledTimes(2);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).toHaveBeenCalledWith("nim-alpha");
     expect(assertDeleteEdgeUnchanged.mock.invocationCallOrder[0]).toBeLessThan(

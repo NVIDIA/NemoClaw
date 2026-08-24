@@ -56,8 +56,11 @@ export async function prepareMcpForRebuild(
   if (force && !staleRecovery && !canExecuteMcpPreparation(sandboxName)) {
     console.error(`  ${YW}⚠${R} MCP transport probe failed; --force using host-side MCP recovery`);
     try {
-      return await prepareMcpBridgesForExecUnavailableRebuild(sandboxName);
+      return await (validateContainingPolicyReceipt
+        ? prepareMcpBridgesForExecUnavailableRebuild(sandboxName, validateContainingPolicyReceipt)
+        : prepareMcpBridgesForExecUnavailableRebuild(sandboxName));
     } catch (error) {
+      if (isPolicyAuthorityRefusalError(error)) throw error;
       relockShieldsIfNeeded(true);
       bail(
         `Failed to preserve MCP bridges before rebuild (--force host-side recovery): ${error instanceof Error ? error.message : String(error)}`,

@@ -152,13 +152,17 @@ export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
     "alpha",
     expect.objectContaining({ entries: [{ server: "github" }] }),
+    expect.any(Function),
   );
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
 }
 
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
-  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith(
+    "alpha",
+    expect.any(Function),
+  );
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
     (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
@@ -184,6 +188,7 @@ export function expectMcpRestoreAfterDeleteFailure(harness: DestroyHarness): voi
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
     "alpha",
     expect.objectContaining({ entries: [{ server: "github" }] }),
+    expect.any(Function),
   );
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();

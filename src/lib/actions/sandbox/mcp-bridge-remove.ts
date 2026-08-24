@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -12,12 +14,19 @@ import {
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
-import { assertGeneratedPolicyMutationSafe, removeGeneratedPolicy } from "./mcp-bridge-policy";
+import {
+  buildRequiredMcpBridgePolicy,
+  McpPolicyAuthorityRefusalError,
+  qualifyMcpPolicyAuthorityReceipt,
+  removeGeneratedPolicy,
+  revalidateMcpPolicyAuthorityReceipt,
+} from "./mcp-bridge-policy";
 import {
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
   inspectMcpProvider,
+  preflightMcpEntryTargets,
   providerMatchesManagedCredential,
   providerShapeDetail,
   waitForDetachedMcpCredential,
@@ -39,6 +48,56 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+
+const MCP_REMOVE_AUTHORITY_PROBE_POLICY = "network_policies: {}\n";
+
+function rethrowMcpPolicyAuthorityRefusal(error: unknown): void {
+  if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+}
+
+function assertMcpRemoveSnapshotCurrent(
+  sandboxName: string,
+  expectedBridges: Readonly<Record<string, McpBridgeEntry>>,
+): void {
+  const currentBridges = bridgeState(getSandboxOrThrow(sandboxName));
+  if (!isDeepStrictEqual(currentBridges, expectedBridges)) {
+    throw new McpBridgeError(
+      `MCP bridge definitions changed while server removal was in progress on sandbox '${sandboxName}'. The current manifest was preserved; retry removal against the current definition.`,
+    );
+  }
+}
+
+async function buildRequiredMcpRemovePolicy(entry: McpBridgeEntry): Promise<string> {
+  const resolvedTargets = await preflightMcpEntryTargets([entry]);
+  const target = resolvedTargets.get(entry.server);
+  if (!target) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has no validated address pins. Refusing server removal.`,
+    );
+  }
+  return buildRequiredMcpBridgePolicy(entry, target);
+}
+
+async function qualifyMcpRemovePolicyAuthority(sandboxName: string, entry: McpBridgeEntry) {
+  const operation = `remove MCP server '${entry.server}'`;
+  // The empty requirement authorizes no network capability. It lets legacy
+  // managed entries qualify authority without reconstructing policy they will
+  // only remove. External authority must pass the exact derived requirement
+  // below before any lifecycle effect.
+  let receipt = qualifyMcpPolicyAuthorityReceipt({
+    operation,
+    requiredPolicyContents: [MCP_REMOVE_AUTHORITY_PROBE_POLICY],
+    sandboxName,
+  });
+  if (receipt.authority === "externally-managed") {
+    receipt = qualifyMcpPolicyAuthorityReceipt({
+      operation,
+      requiredPolicyContents: [await buildRequiredMcpRemovePolicy(entry)],
+      sandboxName,
+    });
+  }
+  return receipt;
+}
 
 function requiresProviderDetachBeforeAdapterCleanup(entry: McpBridgeEntry): boolean {
   assertPersistedAuthenticatedBridgeEntry(entry);
@@ -186,12 +245,26 @@ async function removeMcpBridgeUnlocked(
     console.log(`  No MCP server '${server}' is registered on sandbox '${sandboxName}'.`);
     return "noMatchingEntry";
   }
+  const bridgeSnapshot = structuredClone(currentBridges);
+  const remainingBridgeSnapshot = structuredClone(currentBridges);
+  delete remainingBridgeSnapshot[server];
+  const policyAuthorityReceipt = await qualifyMcpRemovePolicyAuthority(sandboxName, entry);
+  const revalidateBeforeMutation = () =>
+    revalidateMcpPolicyAuthorityReceipt(policyAuthorityReceipt, undefined, () =>
+      assertMcpRemoveSnapshotCurrent(sandboxName, bridgeSnapshot),
+    );
+  const revalidateBeforeSuccess = () =>
+    revalidateMcpPolicyAuthorityReceipt(policyAuthorityReceipt, undefined, () =>
+      assertMcpRemoveSnapshotCurrent(sandboxName, remainingBridgeSnapshot),
+    );
   if (entry.addState === "prepared") {
     // `prepared` is persisted before gateway selection and is advanced only
     // after adapter/provider/policy absence has been proven. It therefore owns
     // no external resources and can be cancelled without touching same-name
     // state another workflow may own.
+    await revalidateBeforeMutation();
     removeBridgeEntry(sandboxName, server);
+    await revalidateBeforeSuccess();
     console.log(`  Cancelled incomplete MCP add for '${server}' on sandbox '${sandboxName}'.`);
     return "cancelledPreparedAdd";
   }
@@ -209,8 +282,8 @@ async function removeMcpBridgeUnlocked(
   // performs its host-side shields preflight here, before any provider, policy,
   // attachment, or adapter side effect.
   assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+  await revalidateBeforeMutation();
   await ensureSandboxGatewaySelected(sandboxName);
-  assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
   let providerOwnershipProved = !entry.providerName;
   let providerWasMissing = false;
@@ -268,9 +341,11 @@ async function removeMcpBridgeUnlocked(
     detachBeforeAdapterCleanup
   ) {
     try {
+      await revalidateBeforeMutation();
       detachMissingProviderReference(sandboxName, entry);
       missingProviderReferenceDetached = true;
     } catch (error) {
+      rethrowMcpPolicyAuthorityRefusal(error);
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);
       failures.push(detail);
@@ -284,7 +359,10 @@ async function removeMcpBridgeUnlocked(
         ? missingProviderReferenceDetached
           ? "detached"
           : "unknown"
-        : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+        : await detachProvider(sandboxName, entry, {
+            allowLegacyGeneric: true,
+            prepareMutation: revalidateBeforeMutation,
+          });
       providerDetachedBeforeAdapterCleanup = detachOutcome !== "unknown";
       if (!providerDetachedBeforeAdapterCleanup) {
         throw new McpBridgeError(
@@ -292,6 +370,7 @@ async function removeMcpBridgeUnlocked(
         );
       }
     } catch (error) {
+      rethrowMcpPolicyAuthorityRefusal(error);
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);
       failures.push(detail);
@@ -311,6 +390,7 @@ async function removeMcpBridgeUnlocked(
       // retains its helper/lifecycle validation; Deep Agents intentionally
       // skips only the marker that an older image cannot expose.
       assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+      await revalidateBeforeMutation();
       const adapterRemoval = unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
@@ -336,43 +416,51 @@ async function removeMcpBridgeUnlocked(
         });
       }
     } catch (error) {
+      rethrowMcpPolicyAuthorityRefusal(error);
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);
       adapterCleanupProved = false;
       failures.push(detail);
     }
   }
-  let policyCleanupProved = false;
+  let policyCleanupProved = policyAuthorityReceipt.authority === "externally-managed";
   if (adapterCleanupProved) {
-    try {
-      removeGeneratedPolicy(sandboxName, entry);
-      policyCleanupProved = true;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (!options.force) throw new McpBridgeError(detail);
-      failures.push(detail);
+    if (policyAuthorityReceipt.authority !== "externally-managed") {
+      try {
+        // This is the only cleanup step that mutates live policy. An authority
+        // refusal stops cleanup and preserves the bridge manifest for retry.
+        await revalidateBeforeMutation();
+        removeGeneratedPolicy(sandboxName, entry);
+        policyCleanupProved = true;
+      } catch (error) {
+        rethrowMcpPolicyAuthorityRefusal(error);
+        const detail = error instanceof Error ? error.message : String(error);
+        if (!options.force) throw new McpBridgeError(detail);
+        failures.push(detail);
+      }
     }
   }
-  let reservationCleanupProved = !entry.providerName && adapterCleanupProved && policyCleanupProved;
-  if (
-    adapterCleanupProved &&
-    policyCleanupProved &&
-    providerOwnershipProved &&
-    entry.providerName
-  ) {
+  let reservationCleanupProved = !entry.providerName && adapterCleanupProved;
+  if (adapterCleanupProved && providerOwnershipProved && entry.providerName) {
     try {
       // OpenShell main cannot list a sandbox whose spec references a missing
       // provider. Remove that dangling name directly before using the normal
       // table-backed detach path for a provider that still exists.
       let detachOutcome;
       if (providerWasMissing) {
-        detachOutcome = missingProviderReferenceDetached
-          ? "detached"
-          : detachMissingProviderReference(sandboxName, entry);
+        if (missingProviderReferenceDetached) {
+          detachOutcome = "detached";
+        } else {
+          await revalidateBeforeMutation();
+          detachOutcome = detachMissingProviderReference(sandboxName, entry);
+        }
       } else {
         detachOutcome = providerDetachedBeforeAdapterCleanup
           ? "detached"
-          : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+          : await detachProvider(sandboxName, entry, {
+              allowLegacyGeneric: true,
+              prepareMutation: revalidateBeforeMutation,
+            });
       }
       if (detachOutcome !== "unknown") {
         // A missing provider has no credential left to revoke. Its stock CLI
@@ -385,6 +473,7 @@ async function removeMcpBridgeUnlocked(
         reservationCleanupProved = true;
       }
     } catch (error) {
+      rethrowMcpPolicyAuthorityRefusal(error);
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);
       failures.push(detail);
@@ -410,11 +499,13 @@ async function removeMcpBridgeUnlocked(
         allowMissing: false,
         force: options.force,
       });
+      await revalidateBeforeMutation();
       deleteProvider(entry, {
         allowLegacyGeneric: true,
         allowMissing: options.force === true || entry.addState === "preflighted",
       });
     } catch (error) {
+      rethrowMcpPolicyAuthorityRefusal(error);
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);
       failures.push(detail);
@@ -422,16 +513,25 @@ async function removeMcpBridgeUnlocked(
   }
   if (failures.length > 0) {
     console.warn(`  MCP force cleanup warnings:\n${failures.join("\n")}`);
+  }
+  if (!policyCleanupProved && (failures.length === 0 || options.allowResidual)) {
+    throw new McpBridgeError(
+      `Generated MCP policy cleanup for '${entry.policyName}' is incomplete. The bridge manifest was preserved so cleanup can be retried.`,
+    );
+  }
+  if (failures.length > 0) {
     if (!options.allowResidual) {
       throw new McpBridgeError(
-        `MCP force cleanup left residual resources for '${server}'. The registry entry was preserved so cleanup can be retried.`,
+        `MCP force cleanup left residual resources for '${server}'. The bridge manifest was preserved so cleanup can be retried.`,
       );
     }
     // allowResidual: the caller accepted leftover resources. This is NOT a proven
     // recovery — residual state remains — so the destroy marker must be preserved.
     return "residualPreserved";
   }
+  await revalidateBeforeMutation();
   removeBridgeEntry(sandboxName, server);
+  await revalidateBeforeSuccess();
   console.log(`  Removed MCP server '${server}' from sandbox '${sandboxName}'.`);
   return "removedTarget";
 }

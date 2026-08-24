@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   assertAdapterConfigMutationsAllowed: vi.fn(),
   assertAdapterTeardownRuntimeCapabilities: vi.fn(),
   assertDestroyNotPending: vi.fn(),
+  assertDestroySnapshotCurrent: vi.fn(),
   assertGeneratedPolicyMutationSafe: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
   assertProviderRecoverable: vi.fn(),
@@ -33,16 +34,36 @@ vi.mock("./mcp-bridge-adapter-teardown", () => ({
 }));
 
 vi.mock("./mcp-bridge-destroy", () => ({
+  assertMcpDestroySnapshotCurrent: mocks.assertDestroySnapshotCurrent,
   cloneMcpBridgeEntry: (entry: McpBridgeEntry) => structuredClone(entry),
   discardSafeIncompleteMcpAdds: mocks.discardSafeIncompleteAdds,
   inspectExactMcpDestroyProvider: mocks.inspectExactDestroyProvider,
 }));
 
-vi.mock("./mcp-bridge-policy", () => ({
-  assertGeneratedPolicyMutationSafe: mocks.assertGeneratedPolicyMutationSafe,
-  assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
-  removeGeneratedPolicy: mocks.removeGeneratedPolicy,
-}));
+vi.mock("./mcp-bridge-policy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./mcp-bridge-policy")>();
+  return {
+    assertGeneratedPolicyMutationSafe: mocks.assertGeneratedPolicyMutationSafe,
+    assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
+    buildRequiredMcpBridgePolicy: vi.fn(() => "required policy"),
+    McpPolicyAuthorityRefusalError: actual.McpPolicyAuthorityRefusalError,
+    qualifyMcpPolicyAuthorityReceipt: (options: {
+      operation: string;
+      requiredPolicyContents: readonly string[];
+      sandboxName: string;
+    }) => ({ ...options, authority: "externally-managed" as const }),
+    removeGeneratedPolicy: mocks.removeGeneratedPolicy,
+    revalidateContainingMcpPolicyAuthority: actual.revalidateContainingMcpPolicyAuthority,
+    revalidateMcpPolicyAuthorityReceipt: async (
+      _receipt: unknown,
+      validateContainingReceipt?: () => Promise<void>,
+      assertCurrentState?: () => void,
+    ) => {
+      await actual.revalidateContainingMcpPolicyAuthority(validateContainingReceipt);
+      assertCurrentState?.();
+    },
+  };
+});
 
 vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: mocks.assertProviderRecoverable,
@@ -72,6 +93,7 @@ vi.mock("./mcp-bridge-state", () => ({
 
 const { prepareMcpBridgesForRebuild, restoreMcpBridgesAfterRebuild } =
   await import("./mcp-bridge-rebuild");
+const { McpPolicyAuthorityRefusalError } = await import("./mcp-bridge-policy");
 
 const entry: McpBridgeEntry = {
   server: "github",
@@ -99,7 +121,11 @@ describe("MCP rebuild policy authority", () => {
     mocks.bridgeState.mockImplementation((current: SandboxEntry) => current.mcp?.bridges ?? {});
     mocks.discardSafeIncompleteAdds.mockResolvedValue(sandbox);
     mocks.detachProvider.mockReturnValue("detached");
+    mocks.preflightEntryTargets.mockResolvedValue(
+      new Map([[entry.server, { addresses: ["8.8.8.8"] }]]),
+    );
     mocks.rollbackScrubbedAdapters.mockReturnValue([]);
+    mocks.assertDestroySnapshotCurrent.mockReturnValue(sandbox);
   });
 
   it("preserves externally managed policy while preparing adapter and provider state (#9833)", async () => {
@@ -123,15 +149,18 @@ describe("MCP rebuild policy authority", () => {
     );
   });
 
-  it("preserves the authority refusal before MCP teardown mutation (#9833)", async () => {
+  it("reports a containing authority refusal before MCP teardown mutation (#9833)", async () => {
     const refusal = new PolicyAuthorityRefusalError("policy authority changed");
     const validatePolicyAuthority = vi
       .fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(refusal);
 
-    await expect(prepareMcpBridgesForRebuild("alpha", validatePolicyAuthority)).rejects.toBe(
-      refusal,
+    await expect(prepareMcpBridgesForRebuild("alpha", validatePolicyAuthority)).rejects.toEqual(
+      expect.objectContaining({
+        message: refusal.message,
+        name: McpPolicyAuthorityRefusalError.name,
+      }),
     );
 
     expect(mocks.scrubAdapter).not.toHaveBeenCalled();
@@ -148,7 +177,12 @@ describe("MCP rebuild policy authority", () => {
 
     await expect(
       restoreMcpBridgesAfterRebuild("alpha", [entry], validatePolicyAuthority),
-    ).rejects.toBe(refusal);
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: refusal.message,
+        name: McpPolicyAuthorityRefusalError.name,
+      }),
+    );
 
     expect(mocks.setBridgeState).toHaveBeenCalledOnce();
     expect(mocks.restoreRuntime).not.toHaveBeenCalled();

@@ -180,6 +180,7 @@ replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
 replace(adapters, "registerAgentAdapter", () => {});
 replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => { admittedTarget = target; });
+replace(policy, "preflightMcpPolicyAuthority", () => "nemoclaw-managed");
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
