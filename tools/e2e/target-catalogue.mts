@@ -1189,7 +1189,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e",
     },
   }),
-  target("pi-agent-qualification-amd64", {
+  dockerOnlyTarget("pi-agent-qualification-amd64", {
     targetId: "pi-agent-qualification",
     displayName: "Pi: qualifies managed runtime on Linux AMD64",
     agentRuntime: "pi",
@@ -1223,7 +1223,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  target("pi-agent-qualification-arm64", {
+  dockerOnlyTarget("pi-agent-qualification-arm64", {
     targetId: "pi-agent-qualification",
     displayName: "Pi: qualifies managed runtime on Linux ARM64",
     agentRuntime: "pi",
