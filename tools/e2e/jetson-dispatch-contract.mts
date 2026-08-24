@@ -168,7 +168,7 @@ export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchReques
   };
 }
 
-function expectedJobId(request: JetsonDispatchRequest): string {
+export function jetsonDispatchJobId(request: JetsonDispatchRequest): string {
   const managedImageRevision =
     request.schemaVersion === 2 ? `:${request.managedImageRevision}` : "";
   return createHash("sha256")
@@ -226,7 +226,7 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
     status.schemaVersion !== request.schemaVersion ||
     typeof status.jobId !== "string" ||
     !JOB_ID_PATTERN.test(status.jobId) ||
-    status.jobId !== expectedJobId(request)
+    status.jobId !== jetsonDispatchJobId(request)
   ) {
     throw new Error("Jetson dispatch status does not match its request and job ID");
   }
@@ -332,7 +332,7 @@ export function parseJetsonDispatchStatusResponse(
   const response = record(value, "Jetson dispatcher response");
   requireFields(response, "Jetson dispatcher response", ["job"]);
   const status = parseJetsonDispatchStatus(response.job);
-  if (expectedRequest !== undefined && status.jobId !== expectedJobId(expectedRequest)) {
+  if (expectedRequest !== undefined && status.jobId !== jetsonDispatchJobId(expectedRequest)) {
     throw new Error("Jetson dispatcher response does not match the submitted request");
   }
   return status;
