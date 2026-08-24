@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { loadAgent } from "../../../src/lib/agent/defs";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -80,7 +81,6 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 // local NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
 // Literal interactive issue #3025 reproduction paths (`hermes rebuild`, modal
 // prompt, and `Y` confirmation) remain outside this Vitest migration.
-const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
@@ -277,13 +277,12 @@ function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
 function fail(message: string): never {
   throw new Error(message);
 }
+
 function expectedHermesVersion(): string {
-  const manifest = fs.readFileSync(HERMES_MANIFEST, "utf8");
-  const match = manifest.match(/^expected_version:\s*"?([^"\n]+)"?/m);
-  expect(match?.[1], `Could not parse expected Hermes version from ${HERMES_MANIFEST}`).toEqual(
-    expect.any(String),
+  return (
+    loadAgent("hermes").expectedVersion ??
+    fail("Hermes manifest must declare expected_version for live rebuild coverage")
   );
-  return match![1].trim();
 }
 
 async function bestEffortPrecleanHermesResources(
