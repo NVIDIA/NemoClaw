@@ -343,7 +343,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       );
     });
 
-    it("observes pairing-only state while one canonical scope upgrade awaits approval (#9817)", () => {
+    it("observes the exact canonical scope upgrade awaiting approval (#9817)", () => {
       writePairingOnlyState();
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
         "canonical-cli-write": {
@@ -360,7 +360,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       });
 
       expect(observeOrdinarySettlement()).toEqual({
-        state: "pairing-only",
+        state: "scope-upgrade-pending",
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(observeRepairSettlement()).toEqual({

@@ -13,7 +13,7 @@ import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const OBSERVATION_TIMEOUT_MS = 3_000;
+export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
@@ -29,7 +29,7 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
 
 export type OpenClawPairingSettlementObservation = {
-  readonly state: "pairing-only" | "settled";
+  readonly state: "pairing-only" | "scope-upgrade-pending" | "settled";
   readonly deviceIdentitySha256: string;
 };
 
@@ -122,7 +122,11 @@ function parseOpenClawPairingSettlementRecord(output: string): Record<string, un
   if (
     !hasExactKeys(record, ["deviceIdentitySha256", "state"]) ||
     typeof record.deviceIdentitySha256 !== "string" ||
-    !SHA256_RE.test(record.deviceIdentitySha256)
+    !SHA256_RE.test(record.deviceIdentitySha256) ||
+    (record.state !== "pairing-only" &&
+      record.state !== "scope-upgrade-pending" &&
+      record.state !== "pairing-pending" &&
+      record.state !== "settled")
   ) {
     return null;
   }
@@ -197,6 +201,7 @@ PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
+ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
 REQUIRE_REPAIR_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
 STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
@@ -583,7 +588,7 @@ try:
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     ${
       mode !== "qualification"
-        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': 'settled' if settled else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
+        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': ('settled' if settled else ('scope-upgrade-pending' if ORDINARY_SETTLEMENT and pending else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'))),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
         : "if not settled:\n        reject()"
     }
 
@@ -672,7 +677,7 @@ function runOpenClawPairingObservation(
       encoding: "utf8",
       maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
       stdio: ["pipe", "pipe", "ignore"],
-      timeout: OBSERVATION_TIMEOUT_MS,
+      timeout: OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
     },
   );
   if (result.error || result.signal || result.status !== 0) {

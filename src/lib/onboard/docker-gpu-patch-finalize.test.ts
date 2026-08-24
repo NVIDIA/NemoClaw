@@ -163,7 +163,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
   });
 
   it.each(["Error", "Deleting"])(
-    "accepts %s only when the stopped replacement is the sole labeled container (#9962)",
+    "accepts %s for the exact stopped replacement despite stale legacy name metadata (#9962)",
     (phase) => {
     const replacementContainerId = "a".repeat(64);
     const events: string[] = [];
@@ -175,7 +175,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       events.push("remove backup");
       return { status: 0 };
     });
-    const dockerRun = vi.fn(() => {
+    const dockerRun = vi.fn((_args: readonly string[]) => {
       events.push("confirm exact replacement");
       return { status: 0, stdout: `${replacementContainerId}\n` };
     });
@@ -184,15 +184,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
       return { status: 0 };
     });
     const runOpenshell = vi.fn(() => {
-      events.push("observe error");
-      return { status: 0, stdout: `alpha  2026-08-23 01:40:35  ${phase}\n` };
+      events.push("observe retiring phase");
+      return { status: 0, stdout: `restored-name  2026-08-23 01:40:35  ${phase}\n` };
     });
 
     const outcome = finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId: replacementContainerId },
         supervisorReady: true,
-        sandboxName: "alpha",
+        sandboxName: "restored-name",
         lifecycleReleaseTimeoutSecs: 60,
       },
       { dockerStop, dockerRm, dockerRun, dockerStart, runOpenshell, sleep: vi.fn() },
@@ -206,17 +206,26 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(events).toEqual([
       "stop replacement",
       "remove backup",
-      "observe error",
+      "observe retiring phase",
       "confirm exact replacement",
       "start replacement",
     ]);
     expect(dockerRun).toHaveBeenCalledWith(
-      expect.arrayContaining([
+      [
+        "ps",
+        "-a",
         "--no-trunc",
+        "--filter",
+        `id=${replacementContainerId}`,
+        "--filter",
         "label=openshell.ai/managed-by=openshell",
-        "label=openshell.ai/sandbox-name=alpha",
-      ]),
-      expect.objectContaining({ ignoreError: true }),
+        "--format",
+        "{{.ID}}",
+      ],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(dockerRun.mock.calls[0]?.[0]).not.toContain(
+      "label=openshell.ai/sandbox-name=restored-name",
     );
     },
   );
@@ -277,7 +286,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       { status: 0, stdout: `${"a".repeat(64)}\n${"b".repeat(64)}\n` },
     ],
     ["a truncated replacement ID", { status: 0, stdout: `${"a".repeat(12)}\n` }],
-  ])("does not accept Error with %s (#9962)", (_case, dockerResult) => {
+  ])("does not accept Error when exact replacement corroboration returns %s (#9962)", (_case, dockerResult) => {
     const replacementContainerId = "a".repeat(64);
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
