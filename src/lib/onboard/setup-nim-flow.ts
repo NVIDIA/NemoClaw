@@ -261,6 +261,26 @@ function requireSelectedProvider(
   return selected;
 }
 
+function routeUnreachableInteractiveWindowsOllama(
+  selected: ProviderMenuChoice,
+  options: readonly ProviderMenuChoice[],
+  input: {
+    selectedFromInteractiveMenu: boolean;
+    isWindowsHostOllama: boolean;
+    windowsOllamaReachable: boolean;
+  },
+): ProviderMenuChoice {
+  if (
+    !input.selectedFromInteractiveMenu ||
+    selected.key !== "ollama" ||
+    !input.isWindowsHostOllama ||
+    input.windowsOllamaReachable
+  ) {
+    return selected;
+  }
+  return options.find((option) => option.key === "start-windows-ollama") ?? selected;
+}
+
 function assertVllmGpuProviderSelection(
   selected: ProviderMenuChoice,
   recoveredFromSandbox: boolean,
@@ -919,6 +939,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+            windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
@@ -954,6 +975,11 @@ export function createSetupNim(
         }
 
         selected = requireSelectedProvider(selected, deps);
+        selected = routeUnreachableInteractiveWindowsOllama(selected, options, {
+          selectedFromInteractiveMenu,
+          isWindowsHostOllama,
+          windowsOllamaReachable,
+        });
         assertVllmGpuProviderSelection(selected, recoveredFromSandbox, deps);
         if (selected.key !== "hermesProvider") {
           hermesAuthMethod = null;
