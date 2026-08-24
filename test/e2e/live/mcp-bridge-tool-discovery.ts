@@ -36,11 +36,28 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
 export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
-  // Status/readiness checks can hit the configured endpoint without speaking
-  // MCP. Those probes must not suppress the one bounded runtime restart: only
-  // fixture-visible MCP protocol traffic proves that the agent attempted
-  // discovery and produced a product failure worth preserving as-is.
-  return !requestsSinceAttempt.some((request) => request.rpcMethod !== undefined);
+  // The public tunnel uses one unauthenticated HEAD request to prove that the
+  // MCP endpoint is reachable. Every other fixture-visible request, including
+  // malformed JSON without an rpcMethod, is a terminal product observation.
+  return requestsSinceAttempt.every(
+    (request) =>
+      request.method === "HEAD" &&
+      request.path === "/mcp" &&
+      request.auth === "" &&
+      request.body === "" &&
+      request.sessionId === "" &&
+      request.protocolVersion === "" &&
+      request.rpcMethod === undefined &&
+      request.rpcId === undefined &&
+      request.responseStatus === 405 &&
+      request.responseHasResult === undefined &&
+      request.negotiatedSessionId === undefined &&
+      request.negotiatedProtocolVersion === undefined &&
+      request.legacySessionId === undefined &&
+      request.negotiatedLegacySessionId === undefined &&
+      request.legacyPhase === undefined &&
+      request.legacyResponseSequence === undefined,
+  );
 }
 
 type McpToolDiscoveryStatusJson = {
