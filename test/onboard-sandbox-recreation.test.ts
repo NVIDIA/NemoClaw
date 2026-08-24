@@ -57,7 +57,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -129,7 +129,7 @@ const { EventEmitter } = require("node:events");
 const commands = []; let registeredSandbox = null;
 const sourceSandbox = {
   name: "my-assistant",
-  gpuEnabled: false,
+  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
   openshellDriver: "docker",
   imageTag: "openshell/sandbox-from:source",
   workload: {
@@ -300,7 +300,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -457,7 +457,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -593,7 +593,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -748,7 +748,7 @@ runner.runCapture = (command) => {
 // customisation rather than reverting to the tier defaults.
 registry.getSandbox = () => ({
   name: "my-assistant",
-  gpuEnabled: false,
+  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
   policies: ["npm"],
   policyTier: "balanced",
 });
@@ -886,7 +886,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -1031,7 +1031,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1167,7 +1167,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1444,7 +1444,7 @@ const { createSandbox } = require(${onboardPath});
     const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
       (command: string) => command.includes("-g nemoclaw"),
     );
-    assert.equal(ownerScopedObservations.length, 4);
+    assert.equal(ownerScopedObservations.length, 6);
     assert.ok(
       ownerScopedObservations.every(
         (command: string) =>
