@@ -224,10 +224,30 @@ function selectionFromReusablePlan<Agent>(
   };
 }
 
+function hasReusableLegacyHermesDiscordProvider<Agent>(
+  selection: SandboxMessagingSelection,
+  providerMatches: SandboxMessagingDeps<Agent>["providerMatchesGatewayCredential"] | undefined,
+): boolean {
+  if (selection.plan?.agent !== "hermes" || !providerMatches) return false;
+  const bindings = selection.plan.credentialBindings.filter(
+    (binding) => binding.channelId === "discord",
+  );
+  return (
+    bindings.length > 0 &&
+    bindings.every((binding) =>
+      providerMatches(binding.providerName, "generic", binding.providerEnvKey),
+    )
+  );
+}
+
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "note" | "writePlanToEnv"
+  > &
+    Partial<Pick<SandboxMessagingDeps<Agent>, "providerMatchesGatewayCredential">>,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -240,6 +260,12 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
       agent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
     ),
   );
+  if (
+    unconfiguredChannels.has("discord") &&
+    hasReusableLegacyHermesDiscordProvider(selection, deps.providerMatchesGatewayCredential)
+  ) {
+    unconfiguredChannels.delete("discord");
+  }
   if (unconfiguredChannels.size === 0) return selection;
   deps.note(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,

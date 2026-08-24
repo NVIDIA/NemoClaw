@@ -213,7 +213,10 @@ export function prepareCreateSandboxMessaging(
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
       const providerReusable = providerType
-        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        ? input.providerMatchesGatewayCredential(name, providerType, envKey) ||
+          (input.agentName?.trim().toLowerCase() === "hermes" &&
+            channel === "discord" &&
+            input.providerMatchesGatewayCredential(name, "generic", envKey))
         : requiresExactOpenClawProviderBinding
           ? input.providerMatchesGatewayCredential(name, "generic", envKey)
           : input.providerExistsInGateway(name);

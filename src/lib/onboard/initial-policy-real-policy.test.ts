@@ -310,7 +310,11 @@ describe("initial sandbox policy real preset merge", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       [],
-      { agentName: "openclaw", additionalPresets: ["discord"] },
+      {
+        agentName: "openclaw",
+        sandboxName: "oc-discord",
+        additionalPresets: ["discord"],
+      },
     );
     const policy = readPreparedPolicy(prepared);
 
