@@ -192,27 +192,6 @@ export function validateSandboxCreateIntentBindings(
   });
 }
 
-function resolveProviderChannelMap(
-  requests: readonly SandboxCreateMessagingProviderRequest[],
-): Map<string, string> {
-  const providerChannels = new Map<string, string>();
-  for (const { channel, name } of requests) {
-    if (channel) providerChannels.set(name, channel);
-  }
-  return providerChannels;
-}
-
-function filterDisabledMessagingProviders(
-  providerNames: string[],
-  providerChannels: ReadonlyMap<string, string>,
-  disabledChannelNames: ReadonlySet<string>,
-): string[] {
-  return providerNames.filter((providerName) => {
-    const channel = providerChannels.get(providerName);
-    return !channel || !disabledChannelNames.has(channel);
-  });
-}
-
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
@@ -226,14 +205,10 @@ export function materializeSandboxCreatePlan({
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
-  const disabledChannelNames = new Set(intent.disabledChannelNames);
-  const activeMessagingChannels = intent.policy.activeMessagingChannels.filter(
-    (channel) => !disabledChannelNames.has(channel),
-  );
   const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
-    activeMessagingChannels,
+    [...intent.policy.activeMessagingChannels],
     {
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
@@ -269,20 +244,15 @@ export function materializeSandboxCreatePlan({
   ];
 
   runProviderPreDeleteCleanup();
-  const providerChannels = resolveProviderChannelMap(intent.messagingProviderRequests);
-  const messagingProviders = filterDisabledMessagingProviders(
-    [
-      ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
-          replaceExisting: true,
-          allowedSandboxes: [intent.sandboxName],
-        }),
-        ...intent.reusableMessagingProviders,
-      ]),
-    ],
-    providerChannels,
-    disabledChannelNames,
-  );
+  const messagingProviders = [
+    ...new Set([
+      ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+        replaceExisting: true,
+        allowedSandboxes: [intent.sandboxName],
+      }),
+      ...intent.reusableMessagingProviders,
+    ]),
+  ];
   const createProviders = new Set<string>();
   if (intent.inferenceProvider) createProviders.add(intent.inferenceProvider);
   for (const provider of messagingProviders) createProviders.add(provider);
@@ -295,7 +265,7 @@ export function materializeSandboxCreatePlan({
   }
 
   return {
-    activeMessagingChannels,
+    activeMessagingChannels: [...intent.activeMessagingChannels],
     initialSandboxPolicy,
     policyTier: intent.policy.options.policyTier,
     createArgs,

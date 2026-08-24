@@ -11,12 +11,25 @@ network_policies:
     endpoints:
       - host: slack.com
         port: 443
+        path: "/**"
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      - host: slack.com
+        port: 443
+        path: "/api/apps.connections.open"
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-app"
+        rules:
+          - allow: { method: POST, path: "/api/apps.connections.open" }
       - host: api.slack.com
         port: 443
         protocol: rest

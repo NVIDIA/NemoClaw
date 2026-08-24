@@ -6,6 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import YAML from "yaml";
+
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -691,6 +694,61 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
+}
+
+export async function bindRestRewriteProvider(
+  host: HostCliClient,
+  api: FakeDockerApi,
+  providerName: string,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  const current = await runHost(host, "openshell", ["policy", "get", "--full", SANDBOX_NAME], {
+    artifactName: `read-${api.kind}-rest-policy`,
+    env,
+    redactionValues,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(current, `read ${api.kind} fake REST policy`);
+
+  const policy = parseOpenShellPolicy(resultText(current)).policy;
+  const endpoint = Object.values(policy.network_policies ?? {})
+    .flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+      const endpoints = (entry as { endpoints?: unknown }).endpoints;
+      return Array.isArray(endpoints) ? endpoints : [];
+    })
+    .find(
+      (candidate): candidate is Record<string, unknown> =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        !Array.isArray(candidate) &&
+        (candidate as Record<string, unknown>).host === "host.openshell.internal" &&
+        (candidate as Record<string, unknown>).port === Number(api.port) &&
+        (candidate as Record<string, unknown>).protocol === "rest",
+    );
+  if (!endpoint) throw new Error(`fake ${api.kind} REST endpoint is missing from live policy`);
+  endpoint.credential_binding = { provider: providerName };
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-${api.kind}-policy-`));
+  const policyFile = path.join(directory, "policy.yaml");
+  try {
+    fs.writeFileSync(policyFile, YAML.stringify(policy), { mode: 0o600 });
+    const updated = await runHost(
+      host,
+      "openshell",
+      ["policy", "set", "--policy", policyFile, "--wait", SANDBOX_NAME],
+      {
+        artifactName: `bind-${api.kind}-rest-policy-${path.basename(providerName)}`,
+        env,
+        redactionValues,
+        timeoutMs: 120_000,
+      },
+    );
+    expectExitZero(updated, `bind ${api.kind} fake REST policy to ${providerName}`);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 export async function applyWebSocketRewritePolicy(

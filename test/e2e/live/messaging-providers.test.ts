@@ -18,6 +18,7 @@ import {
   accountString,
   applyRestRewritePolicy,
   applyWebSocketRewritePolicy,
+  bindRestRewriteProvider,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -831,6 +832,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     });
     await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
+    await bindRestRewriteProvider(
+      host,
+      fakeSlack,
+      `${SANDBOX_NAME}-slack-bridge`,
+      state.env,
+      redactionValues,
+    );
 
     const slackAuth = await runSlackApiRequest(
       sandbox,
@@ -880,6 +888,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `M-S15c: unset-var failed closed before upstream exposure (${slackUnset.slice(0, 200)})`,
     );
 
+    await bindRestRewriteProvider(
+      host,
+      fakeSlack,
+      `${SANDBOX_NAME}-slack-app`,
+      state.env,
+      redactionValues,
+    );
     const slackApp = await runSlackApiRequest(
       sandbox,
       fakeSlack.port,
@@ -901,6 +916,14 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
         slackAppCapture.bodyMatchesExpected === true &&
         slackAppCapture.tokenLooksPlaceholder !== true,
       "M-S16a: fake Slack saw host-side app token in header/body",
+    );
+
+    await bindRestRewriteProvider(
+      host,
+      fakeSlack,
+      `${SANDBOX_NAME}-slack-bridge`,
+      state.env,
+      redactionValues,
     );
 
     const allowedSlackUser = state.slackIds

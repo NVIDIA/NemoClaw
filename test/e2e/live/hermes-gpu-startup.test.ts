@@ -27,7 +27,6 @@ import {
 import {
   assertHermesGpuStartupProof,
   HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
-  HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
 const GATEWAY_CLEANUP_MODULE = path.join(REPO_ROOT, "dist/lib/actions/sandbox/destroy-gateway.js");
@@ -62,6 +61,10 @@ const GPU_ROUTE_CONTROL =
     : GPU_ROUTE === "compatibility-fallback"
       ? "fallback"
       : undefined;
+const GPU_STARTUP_EXPECTS_SECURE_STOP = GPU_STARTUP_SCENARIO === "fallback";
+const GPU_STARTUP_OUTCOME = GPU_STARTUP_EXPECTS_SECURE_STOP
+  ? "stops before an unsafe compatibility retry"
+  : "reaches stable Ready state";
 validateSandboxName(SANDBOX_NAME);
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -299,15 +302,15 @@ done`;
 }
 
 test(
-  `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
+  `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route ${GPU_STARTUP_OUTCOME}`,
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "prepare clean Hermes GPU runner",
-        "install Hermes sandbox on selected GPU route",
-        "validate GPU startup and supervisor proof",
-        "exercise authenticated GPU inference route",
+        "exercise selected GPU route",
+        "validate selected GPU route outcome",
+        "validate selected GPU inference boundary",
         "remove Hermes GPU resources",
       ],
     },
@@ -423,7 +426,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "create real native state while dropping GPU attachment, reject exactly the first post-create nvidia-smi proof, then delegate compatibility retry",
+          "create real native state without GPU attachment and reject exactly the first post-create nvidia-smi proof",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -444,7 +447,7 @@ test(
       [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
       [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
     });
-    progress.phase("install Hermes sandbox on selected GPU route");
+    progress.phase("exercise selected GPU route");
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-2-install-hermes-gpu-startup",
       cwd: REPO_ROOT,
@@ -456,107 +459,149 @@ test(
     await (install.exitCode !== 0
       ? captureFailedGpuContainer(host, gpuDiagnosticsDir)
       : Promise.resolve());
-    expect(install.exitCode, resultText(install)).toBe(0);
+    expect(install.exitCode === 0, resultText(install)).toBe(!GPU_STARTUP_EXPECTS_SECURE_STOP);
 
     const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
       const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
       await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
-      expect(fallbackEvents).toEqual([
+      expect(fallbackEvents.slice(0, 2)).toEqual([
         HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
         HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
-        HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
       ]);
+      expect(fallbackEvents).not.toContain(
+        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+      );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
-      expect(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
-          resultText(install).includes(fragment))).toBe(true);
+      expect(resultText(install)).toContain(
+        "Operator-authorized GPU fallback stopped before compatibility retry.",
+      );
+      expect(resultText(install)).toContain(
+        "Cleanup could not be proven safe: managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
+      );
     };
     await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
-    progress.phase("validate GPU startup and supervisor proof");
-    const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
-      artifactName: "phase-3-nemoclaw-status",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    });
-    expect(status.exitCode, resultText(status)).toBe(0);
+    const completeSecureStop = async () => {
+      progress.phase("validate selected GPU route outcome");
+      expect(resultText(install)).toContain(
+        `Managed bootstrap retained exact owner-cleanup authority for sandbox '${SANDBOX_NAME}'.`,
+      );
 
-    await assertHermesGpuStartupProof({
-      env: commandEnv(),
-      gpuRoute: GPU_ROUTE,
-      host,
-      install,
-      sandbox,
-      sandboxName: SANDBOX_NAME,
-      status,
-    });
+      progress.phase("validate selected GPU inference boundary");
+      const inferencePosts = fake
+        .requests()
+        .filter(
+          (request) =>
+            request.method === "POST" &&
+            ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
+              request.path,
+            ),
+        );
+      expect(inferencePosts).toEqual([]);
 
-    progress.phase("exercise authenticated GPU inference route");
-    const inference = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model: FAKE_MODEL,
-            messages: [{ role: "user", content: "reply with OK" }],
-            max_tokens: 8,
-          },
-        )}'`,
-      ),
-      {
-        artifactName: "phase-5-authenticated-inference-post",
+      progress.phase("remove Hermes GPU resources");
+      await cleanupHermes(host, sandbox, "phase-4-clean-teardown");
+      cleanTeardownVerified = true;
+      await artifacts.target.complete({
+        id: "hermes-gpu-startup",
+        gpuRoute: GPU_ROUTE,
+        scenario: GPU_STARTUP_SCENARIO,
+        assertions: {
+          exactOwnerCleanupRequired: true,
+          unsafeCompatibilityRetryBlocked: true,
+          cleanTeardownVerified,
+        },
+      });
+    };
+
+    const completeReadyRoute = async () => {
+      progress.phase("validate selected GPU route outcome");
+      const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
+        artifactName: "phase-3-nemoclaw-status",
         env: commandEnv(),
-        timeoutMs: 90_000,
-      },
-    );
-    expect(inference.exitCode, resultText(inference)).toBe(0);
+        timeoutMs: 60_000,
+      });
+      expect(status.exitCode, resultText(status)).toBe(0);
 
-    const fakeRequests = fake.requests();
-    const inferencePosts = fakeRequests.filter(
-      (request) =>
-        request.method === "POST" &&
-        ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
-          request.path,
+      await assertHermesGpuStartupProof({
+        env: commandEnv(),
+        gpuRoute: GPU_ROUTE,
+        host,
+        install,
+        sandbox,
+        sandboxName: SANDBOX_NAME,
+        status,
+      });
+
+      progress.phase("validate selected GPU inference boundary");
+      const inference = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(
+          `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+            {
+              model: FAKE_MODEL,
+              messages: [{ role: "user", content: "reply with OK" }],
+              max_tokens: 8,
+            },
+          )}'`,
         ),
-    );
-    expect(
-      inferencePosts.length,
-      `expected authenticated fake inference POST, got ${JSON.stringify(fakeRequests)}`,
-    ).toBeGreaterThan(0);
-    expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
-    expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
-    expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
-      [],
-    );
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
+        {
+          artifactName: "phase-5-authenticated-inference-post",
+          env: commandEnv(),
+          timeoutMs: 90_000,
+        },
+      );
+      expect(inference.exitCode, resultText(inference)).toBe(0);
 
-    progress.phase("remove Hermes GPU resources");
-    await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
-    cleanTeardownVerified = true;
+      const fakeRequests = fake.requests();
+      const inferencePosts = fakeRequests.filter(
+        (request) =>
+          request.method === "POST" &&
+          ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
+            request.path,
+          ),
+      );
+      expect(
+        inferencePosts.length,
+        `expected authenticated fake inference POST, got ${JSON.stringify(fakeRequests)}`,
+      ).toBeGreaterThan(0);
+      expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
+      expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
+      expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
+        [],
+      );
+      expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
+      expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
-    await artifacts.target.complete({
-      id: "hermes-gpu-startup",
-      gpuRoute: GPU_ROUTE,
-      scenario: GPU_STARTUP_SCENARIO,
-      assertions: {
-        selectedGpuRouteVerified: true,
-        ...(GPU_ROUTE === "compatibility-fallback"
-          ? { automaticCompatibilityFallbackVerified: true }
-          : GPU_ROUTE === "native-success"
-            ? { nativeGpuRouteVerified: true }
-            : { compatibilityOnlyRouteVerified: true }),
-        openshellReady: true,
-        sandboxCudaVerified: true,
-        managedWorkloadAuthorityVerified: true,
-        extraPlaceholderCommandRoundTripValid: true,
-        stableSingleContainer: true,
-        startupConfigHashesValid: true,
-        supervisorTopologyValid: true,
-        authenticatedInferenceRequestVerified: true,
-        placeholderTokensAbsentFromInference: true,
-        cleanTeardownVerified,
-      },
-    });
+      progress.phase("remove Hermes GPU resources");
+      await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
+      cleanTeardownVerified = true;
+
+      await artifacts.target.complete({
+        id: "hermes-gpu-startup",
+        gpuRoute: GPU_ROUTE,
+        scenario: GPU_STARTUP_SCENARIO,
+        assertions: {
+          selectedGpuRouteVerified: true,
+          ...(GPU_ROUTE === "compatibility-fallback"
+            ? { automaticCompatibilityFallbackVerified: true }
+            : GPU_ROUTE === "native-success"
+              ? { nativeGpuRouteVerified: true }
+              : { compatibilityOnlyRouteVerified: true }),
+          openshellReady: true,
+          sandboxCudaVerified: true,
+          managedWorkloadAuthorityVerified: true,
+          extraPlaceholderCommandRoundTripValid: true,
+          stableSingleContainer: true,
+          startupConfigHashesValid: true,
+          supervisorTopologyValid: true,
+          authenticatedInferenceRequestVerified: true,
+          placeholderTokensAbsentFromInference: true,
+          cleanTeardownVerified,
+        },
+      });
+    };
+
+    await (GPU_STARTUP_EXPECTS_SECURE_STOP ? completeSecureStop() : completeReadyRoute());
   },
 );

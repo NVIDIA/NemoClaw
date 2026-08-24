@@ -28,6 +28,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   inferenceProvider?: string | null;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
+  disabledChannelNames?: readonly string[];
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
   sandboxGpuConfig: SandboxGpuCreateConfig;
@@ -70,11 +71,17 @@ export function createSandboxCreateIntentResolver<
   async function prepareMessagingCapabilities(
     input: Pick<
       CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
-      "sandboxName" | "enabledChannels" | "webSearchConfig" | "agent" | "reuseRegisteredCredentials"
+      | "sandboxName"
+      | "enabledChannels"
+      | "disabledChannelNames"
+      | "webSearchConfig"
+      | "agent"
+      | "reuseRegisteredCredentials"
     >,
     expectedIntent?: SandboxCreateIntent,
     credentialRegistration = false,
   ) {
+    const disabledChannelNames = input.disabledChannelNames;
     const preflightDeps = expectedIntent
       ? {
           ...deps.messagingPreflightDeps,
@@ -87,7 +94,12 @@ export function createSandboxCreateIntentResolver<
             readMessagingPlanFromEnv: () => null,
             registerExtraPlaceholderProviders: () => [],
           }
-        : deps.messagingPreflightDeps;
+        : disabledChannelNames
+          ? {
+              ...deps.messagingPreflightDeps,
+              resolveDisabledChannels: () => [...disabledChannelNames],
+            }
+          : deps.messagingPreflightDeps;
     const result = await prepareSandboxMessagingPreflight(
       {
         channels: deps.channels,
