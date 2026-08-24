@@ -165,6 +165,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
       managed_image_revision:
         "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+      managed_image_receipt:
+        "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
       target_id: "${{ matrix.target_id }}",
@@ -213,6 +215,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
     managed_image_revision: "string",
+    managed_image_receipt: "string",
     credential_boundary: "string",
     catalogue_id: "string",
     target_id: "string",
@@ -282,6 +285,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_JOB: "1",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",

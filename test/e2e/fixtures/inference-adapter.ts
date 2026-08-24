@@ -96,7 +96,9 @@ export function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
 
 export function requirePublicNvidiaInferenceKey(value: string): string {
   if (!value.startsWith("nvapi-")) {
-    throw new Error(`${HOSTED_INFERENCE_SECRET} must start with nvapi- for public NVIDIA mode`);
+    throw new Error(
+      `${PUBLIC_NVIDIA_CREDENTIAL_ENV} must start with nvapi- for public NVIDIA mode`,
+    );
   }
   return value;
 }

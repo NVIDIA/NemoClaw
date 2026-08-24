@@ -7,11 +7,11 @@ import {
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   parseManagedImageContractV1,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
 
 const EXACT_MAIN_OVERLAY_KEYS = new Set([
   "PATH",
@@ -56,7 +56,6 @@ export function assertMcpBridgeManagedImageReceipt(options: {
 }): void {
   const environment = options.environment ?? process.env;
   const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
-  const selectedReceipt = environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim();
   const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   if (!selectedRevision && !exactCandidateCatalog) return;
 
@@ -77,51 +76,12 @@ export function assertMcpBridgeManagedImageReceipt(options: {
   let expectedReference: string;
   let expectedCohort: string;
   if (selectedRevision) {
-    if (!selectedReceipt || Buffer.byteLength(selectedReceipt, "utf8") > 8 * 1024) {
-      throw new Error("managed-image MCP qualification requires the selected cohort receipt");
-    }
-    let receipt: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(selectedReceipt) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-      receipt = parsed as Record<string, unknown>;
-    } catch {
-      throw new Error("managed-image MCP qualification cohort receipt is invalid");
-    }
-    const runId = receipt.runId;
-    const runAttempt = receipt.runAttempt;
-    const images = receipt.images;
-    const cohort = receipt.cohort;
-    if (
-      JSON.stringify(Object.keys(receipt).sort()) !==
-        JSON.stringify(["cohort", "images", "kind", "revision", "runAttempt", "runId"]) ||
-      receipt.kind !== "nemoclaw-managed-image-cohort-receipt-v1" ||
-      receipt.revision !== expectedRevision ||
-      !Number.isSafeInteger(runId) ||
-      Number(runId) < 1 ||
-      !Number.isSafeInteger(runAttempt) ||
-      Number(runAttempt) < 1 ||
-      cohort !== `ghrun-${String(runId)}-${String(runAttempt)}` ||
-      !images ||
-      typeof images !== "object" ||
-      Array.isArray(images) ||
-      JSON.stringify(Object.keys(images).sort()) !==
-        JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
-    ) {
-      throw new Error("managed-image MCP qualification cohort receipt is invalid");
-    }
-    const agentImages = (images as Record<string, unknown>)[options.expectedAgent];
-    if (
-      !agentImages ||
-      typeof agentImages !== "object" ||
-      Array.isArray(agentImages) ||
-      JSON.stringify(Object.keys(agentImages).sort()) !==
-        JSON.stringify([...MANAGED_IMAGE_PLATFORMS].sort())
-    ) {
-      throw new Error("managed-image MCP qualification cohort receipt is invalid");
-    }
-    expectedReference = (agentImages as Record<string, unknown>)[expectedPlatform] as string;
-    expectedCohort = cohort;
+    assertManagedImageReceiptMatchesSelectedCohort({
+      environment,
+      expectedAgent: options.expectedAgent,
+      workload: options.workload,
+    });
+    return;
   } else {
     let catalog: Record<string, unknown>;
     try {

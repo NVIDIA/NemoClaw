@@ -126,7 +126,7 @@ describe("MCP bridge onboarding environment", () => {
         expectedAgent: "langchain-deepagents-code",
         workload: selectedWorkload("langchain-deepagents-code", { kind: "dockerfile" }),
       }),
-    ).toThrow("must use the exact agent image from the selected cohort receipt");
+    ).toThrow("must use the exact agent image from the selected cohort");
   });
 
   it("rejects a managed image from a different candidate revision", () => {
@@ -138,7 +138,7 @@ describe("MCP bridge onboarding environment", () => {
           sourceRevision: "b".repeat(40),
         }),
       }),
-    ).toThrow("must use the exact agent image from the selected cohort receipt");
+    ).toThrow("must use the exact agent image from the selected cohort");
   });
 
   it("activates the exact managed runtime when the qualification catalog is present", () => {
@@ -219,7 +219,7 @@ describe("MCP bridge onboarding environment", () => {
         expectedAgent: "langchain-deepagents-code",
         workload: selectedWorkload("openclaw"),
       }),
-    ).toThrow("must use the exact agent image from the selected cohort receipt");
+    ).toThrow("must use the exact agent image from the selected cohort");
   });
 
   it("rejects a different publication cohort with the selected revision", () => {
@@ -231,7 +231,7 @@ describe("MCP bridge onboarding environment", () => {
           sourceCohort: "ghrun-999-1",
         }),
       }),
-    ).toThrow("must use the exact agent image from the selected cohort receipt");
+    ).toThrow("must use the exact agent image from the selected cohort");
   });
 
   it("passes only exact-main OpenShell overrides after fixed onboarding values", () => {

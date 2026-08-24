@@ -791,6 +791,8 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
 
 const MANAGED_IMAGE_REVISION_EXPRESSION =
   "${{ needs.base-image-publication.outputs.managed_image_revision }}";
+const MANAGED_IMAGE_RECEIPT_EXPRESSION =
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 
 /** Require publication success and one exact cohort revision for every stock onboarding job. */
 export function validateStockOnboardingPublicationBoundary(
@@ -805,6 +807,9 @@ export function validateStockOnboardingPublicationBoundary(
     if (job.env?.E2E_MANAGED_IMAGE_REVISION !== MANAGED_IMAGE_REVISION_EXPRESSION) {
       errors.push(`${jobName} must receive the selected managed-image cohort revision`);
     }
+    if (job.env?.E2E_MANAGED_IMAGE_COHORT_RECEIPT !== MANAGED_IMAGE_RECEIPT_EXPRESSION) {
+      errors.push(`${jobName} must receive the complete selected managed-image cohort receipt`);
+    }
   }
   for (const jobName of STOCK_ONBOARDING_CATALOGUE_JOBS) {
     const job = workflow.jobs[jobName] ?? {};
@@ -813,6 +818,9 @@ export function validateStockOnboardingPublicationBoundary(
     }
     if (job.with?.managed_image_revision !== MANAGED_IMAGE_REVISION_EXPRESSION) {
       errors.push(`${jobName} must pass the selected managed-image cohort revision`);
+    }
+    if (job.with?.managed_image_receipt !== MANAGED_IMAGE_RECEIPT_EXPRESSION) {
+      errors.push(`${jobName} must pass the complete selected managed-image cohort receipt`);
     }
   }
   return errors;

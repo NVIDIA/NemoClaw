@@ -23,6 +23,8 @@ import {
 
 const SANDBOX_NAME = "managed-only-stock";
 const REVISION = "d".repeat(40);
+const COHORT = "ghrun-32707920950-1";
+const REFERENCE = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`;
 const temporaryHomes: string[] = [];
 
 afterEach(() => {
@@ -33,21 +35,48 @@ afterEach(() => {
 
 function managedReceipt(sourceRevision = REVISION): Record<string, unknown> {
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
-  const reference = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`;
   return {
     schemaVersion: 1,
     kind: "managed-image",
-    reference,
+    reference: REFERENCE,
     platform: "linux/amd64",
     release: "v0.0.100",
     sourceRevision,
-    sourceCohort: "ghrun-32707920950-1",
+    sourceCohort: COHORT,
     capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
     startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     encodedProfile,
     startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
     credentialProxyReplayRequired: false,
     shared: true,
+  };
+}
+
+function selectedEnvironment(home: string): NodeJS.ProcessEnv {
+  return {
+    E2E_MANAGED_IMAGE_REVISION: REVISION,
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: JSON.stringify({
+      kind: "nemoclaw-managed-image-cohort-receipt-v1",
+      cohort: COHORT,
+      revision: REVISION,
+      runAttempt: 1,
+      runId: 32707920950,
+      images: {
+        openclaw: {
+          "linux/amd64": REFERENCE,
+          "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"b".repeat(64)}`,
+        },
+        hermes: {
+          "linux/amd64": `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`,
+          "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"d".repeat(64)}`,
+        },
+        "langchain-deepagents-code": {
+          "linux/amd64": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"e".repeat(64)}`,
+          "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"f".repeat(64)}`,
+        },
+      },
+    }),
+    HOME: home,
   };
 }
 
@@ -80,7 +109,7 @@ describe("stock E2E managed-image receipt assertion", () => {
 
     expect(
       assertStockManagedImageReceipt({
-        environment: { E2E_MANAGED_IMAGE_REVISION: REVISION, HOME: home },
+        environment: selectedEnvironment(home),
         expectedAgent: "openclaw",
         sandboxName: SANDBOX_NAME,
       }),
@@ -112,6 +141,64 @@ describe("stock E2E managed-image receipt assertion", () => {
         sandboxName: SANDBOX_NAME,
       }),
     ).toThrow("does not match the selected cohort");
+  });
+
+  it("rejects the selected revision with another publication cohort", () => {
+    const home = writeRegistry({ ...managedReceipt(), sourceCohort: "ghrun-999-1" });
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment: selectedEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("exact agent image from the selected cohort");
+  });
+
+  it("rejects the selected revision with another immutable image reference", () => {
+    const home = writeRegistry({
+      ...managedReceipt(),
+      reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"9".repeat(64)}`,
+    });
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment: selectedEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("exact agent image from the selected cohort");
+  });
+
+  it("rejects a cohort receipt that maps the stock agent to another repository", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = selectedEnvironment(home);
+    const receipt = JSON.parse(environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT!) as {
+      images: Record<string, Record<string, string>>;
+    };
+    receipt.images.openclaw["linux/amd64"] =
+      `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`;
+    environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT = JSON.stringify(receipt);
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("exact agent image from the selected cohort");
+  });
+
+  it("rejects a platform reference that differs from the durable workload", () => {
+    const home = writeRegistry({ ...managedReceipt(), platform: "linux/arm64" });
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment: selectedEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("exact agent image from the selected cohort");
   });
 
   it("rejects the stock fallback diagnostic before later probes", () => {

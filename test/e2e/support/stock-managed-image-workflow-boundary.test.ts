@@ -34,14 +34,15 @@ function workflow(): OperationsWorkflow {
 }
 
 describe("stock onboarding managed-image publication boundary", () => {
-  it("passes one selected cohort revision to every stock onboarding job", () => {
+  it("passes one selected cohort receipt to every stock onboarding job", () => {
     expect(validateStockOnboardingPublicationBoundary(workflow())).toEqual([]);
   });
 
-  it.each(STOCK_JOBS)("rejects %s without the publication dependency and revision", (jobName) => {
+  it.each(STOCK_JOBS)("rejects %s without the publication dependency and receipt", (jobName) => {
     const value = workflow();
     value.jobs[jobName].needs = [];
     delete value.jobs[jobName].env?.E2E_MANAGED_IMAGE_REVISION;
+    delete value.jobs[jobName].env?.E2E_MANAGED_IMAGE_COHORT_RECEIPT;
 
     expect(validateStockOnboardingPublicationBoundary(value)).toEqual(
       expect.arrayContaining([
@@ -49,22 +50,29 @@ describe("stock onboarding managed-image publication boundary", () => {
         expect.stringContaining(
           `${jobName} must receive the selected managed-image cohort revision`,
         ),
+        expect.stringContaining(
+          `${jobName} must receive the complete selected managed-image cohort receipt`,
+        ),
       ]),
     );
   });
 
   it.each(CATALOGUE_JOBS)(
-    "rejects %s without the publication dependency and revision input",
+    "rejects %s without the publication dependency and receipt inputs",
     (jobName) => {
       const value = workflow();
       value.jobs[jobName].needs = [];
       delete value.jobs[jobName].with?.managed_image_revision;
+      delete value.jobs[jobName].with?.managed_image_receipt;
 
       expect(validateStockOnboardingPublicationBoundary(value)).toEqual(
         expect.arrayContaining([
           expect.stringContaining(`${jobName} must depend on base-image-publication`),
           expect.stringContaining(
             `${jobName} must pass the selected managed-image cohort revision`,
+          ),
+          expect.stringContaining(
+            `${jobName} must pass the complete selected managed-image cohort receipt`,
           ),
         ]),
       );

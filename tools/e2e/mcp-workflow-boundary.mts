@@ -883,6 +883,8 @@ function validateCredentialWindowJob(
   const expectedEnv = {
     E2E_MANAGED_IMAGE_REVISION:
       "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+      "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
