@@ -139,8 +139,11 @@ workflow run ID and attempt, selectors, event, and hardware opt-in decisions.
 
 The Jetson controller writes private files under the target artifact directory:
 
-- `jetson-dispatch.json` contains the validated completed status and bounded
-  log. It excludes the base64 archive payload.
+- `jetson-dispatch.json` records the validated request and job ID after the
+  service accepts a job. It records each cancellation request and whether the
+  operator service accepted that request. A completed artifact replaces this
+  recovery state with the validated status and bounded log. The file excludes
+  the base64 archive payload.
 - `jetson-e2e-artifacts.tar.gz` contains the decoded target evidence when the
   service returns an archive.
 
@@ -148,6 +151,11 @@ The workflow uploads that directory as `e2e-jetson-nvmap-gpu`, including on job
 failure. A successful proof requires the exact candidate request, a conclusion
 of `success`, `cleanup: "succeeded"`, a device identity, and the artifact
 archive.
+
+If a workflow fails after job acceptance, inspect `jetson-dispatch.json` before
+another dispatch. If it records `cancellation-failed`, inspect the recorded job
+in the operator service. Cancel the job or confirm completion before another
+dispatch.
 
 ## Live Target
 
