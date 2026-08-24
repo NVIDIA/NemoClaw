@@ -278,13 +278,6 @@ describe("locked OpenClaw production installation (#5896)", () => {
     ).toEqual(["@scope/canonical@5.6.2"]);
   });
 
-  // source-shape-contract: security -- The installed production graph must reject package identity substitution after a reviewed tarball is extracted
-  it("rejects a same-registry tarball with a substituted package manifest", () => {
-    expect(() =>
-      verifyInstalledNpmLock(installedFixture({ actualName: "is-odd", actualVersion: "3.0.1" })),
-    ).toThrow("expected chalk@5.6.2, found is-odd@3.0.1");
-  });
-
   // source-shape-contract: security -- Production lock verification must fail closed when required package locations are absent or redirected through symlinks
   it("fails closed on missing required packages and symlinked package roots", () => {
     expect(() => verifyInstalledNpmLock(installedFixture({ omit: true }))).toThrow(

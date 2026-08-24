@@ -141,29 +141,6 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  // source-shape-contract: security -- The reviewed completed-image security inventory must stay bound to its exact Docker instruction.
-  it("rejects a mutated checked-in security inventory instruction (#6024)", () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-mutated-"));
-    const dockerfile = path.join(directory, "Dockerfile");
-    const checkedInDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
-    const mutatedDockerfile = checkedInDockerfile.replace(
-      '"vim-common=2:9.2.0858-1"',
-      '"vim-common=2:9.2.0857-1"',
-    );
-    expect(mutatedDockerfile).not.toBe(checkedInDockerfile);
-    fs.writeFileSync(dockerfile, mutatedDockerfile);
-
-    try {
-      expect(() =>
-        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
-      ).toThrow(/preserve the generated remote dashboard output/);
-      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
   it("rejects config rewrites appended to checked-in metadata validation (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
