@@ -3576,14 +3576,9 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
-Run the exact command from the warning, which has this form:
-
-```bash
-openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
-```
+Run the exact removal command from the warning, then inspect that same retained path to confirm it no longer exists.
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
-Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3612,14 +3607,9 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
-Run the exact command from the warning, which has this form:
-
-```bash
-openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
-```
+Run the exact removal command from the warning, then inspect that same retained path to confirm it no longer exists.
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
-Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 

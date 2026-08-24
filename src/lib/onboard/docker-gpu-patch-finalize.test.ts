@@ -256,6 +256,56 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("accepts a retiring Error row only when the exact replacement has the OpenShell label (#9962)", () => {
+    const result = exactDeferredCreateResult();
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      if (args[0] === "inspect") return { status: 0, stdout: "true\n" };
+      return { status: 0, stdout: `${result.newContainerId}\n` };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "restored-name",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:35  Ready\n"),
+        runOpenshell: vi.fn((args: readonly string[]) =>
+          args[1] === "list"
+            ? { status: 0, stdout: "restored-name  2026-08-23 01:40:35  Error\n" }
+            : { status: 0 },
+        ),
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: true,
+      finalHandoffAcknowledged: true,
+    });
+    expect(dockerRun.mock.calls[0]?.[0]).toEqual([
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `id=${result.newContainerId}`,
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--format",
+      "{{.ID}}",
+    ]);
+    expect(dockerRun.mock.calls[0]?.[0]).not.toContain(
+      "label=openshell.ai/sandbox-name=restored-name",
+    );
+  });
+
   it("rolls back to the backup container when supervisor reconnect failed", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));

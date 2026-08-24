@@ -281,7 +281,7 @@ export function waitForOpenShellSupervisorReconnect(
   timeoutSecs: number,
   deps: DockerGpuSupervisorReconnectDeps,
 ): boolean {
-  if (!deps.runOpenshell) return false;
+  if (!deps.runOpenshell) return true;
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
   const errorPhaseDebouncePolls =

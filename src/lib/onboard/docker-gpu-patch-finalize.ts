@@ -36,7 +36,11 @@ import {
   waitForOpenShellFinalHandoff,
   waitForOpenShellSandboxLifecycleRelease,
 } from "./docker-gpu-supervisor-reconnect";
-import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
+import {
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_MANAGED_BY_VALUE,
+  queryOpenShellDockerSandboxContainers,
+} from "./openshell-docker-sandbox-containers";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
@@ -69,7 +73,6 @@ export type DockerGpuPatchFinalizeOutcome = {
 };
 
 function isSoleLabeledReplacement(
-  sandboxName: string,
   replacementContainerId: string,
   dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
   timeoutMs: number,
@@ -77,11 +80,32 @@ function isSoleLabeledReplacement(
   const expectedContainerId = fullDockerContainerId(replacementContainerId);
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
-    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
+    const query = dockerRun(
+      [
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        `id=${expectedContainerId}`,
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--format",
+        "{{.ID}}",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.max(1, Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, Math.floor(timeoutMs))),
+      },
+    );
+    if (!hasZeroDockerExitStatus(query)) return false;
+    const containerIds = String(query.stdout ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
     return (
-      containers.ok &&
-      containers.ids.length === 1 &&
-      fullDockerContainerId(containers.ids[0]) === expectedContainerId
+      containerIds.length === 1 &&
+      fullDockerContainerId(containerIds[0]) === expectedContainerId
     );
   } catch {
     return false;
@@ -191,7 +215,6 @@ export function finalizeDockerGpuPatchBackup(
         sleep: deps.sleep,
         soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) =>
           isSoleLabeledReplacement(
-            options.sandboxName,
             options.result.newContainerId,
             resolved.dockerRun,
             remainingMs,
@@ -259,4 +282,35 @@ export function finalizeDockerGpuPatchBackup(
     resolved,
   );
   return { backupRemoved: false, ...rollback };
+}
+
+export type SupervisorReconnectOutcome =
+  | { execReady: true; backupRemoved: boolean }
+  | ({ execReady: false; error: Error } & Omit<DockerGpuPatchFinalizeOutcome, "backupRemoved">);
+
+export function reconcileSupervisorReconnect(
+  execReady: boolean,
+  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  deps: DockerGpuPatchDeps,
+): SupervisorReconnectOutcome {
+  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
+  const containerOpts = {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+  };
+  if (execReady) {
+    const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
+    return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
+  }
+  const rollback = rollbackToBackupContainer(refs, resolved);
+  return {
+    execReady: false,
+    ...rollback,
+    error: new Error(
+      rollback.rolledBack
+        ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+        : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
+    ),
+  };
 }
