@@ -15,7 +15,6 @@
     "findings",
     "terminologyReview",
     "acceptanceCoverage",
-    "securityCategories",
     "sourceOfTruthReview",
     "e2e",
     "testDepth",
@@ -94,19 +93,6 @@
           "clause": { "type": "string" },
           "status": { "enum": ["met", "partial", "missing", "unknown"] },
           "evidence": { "type": "string" }
-        },
-        "additionalProperties": false
-      }
-    },
-    "securityCategories": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["category", "verdict", "justification"],
-        "properties": {
-          "category": { "type": "string" },
-          "verdict": { "enum": ["pass", "warning", "fail"] },
-          "justification": { "type": "string" }
         },
         "additionalProperties": false
       }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
 import { reviewQualityIssues } from "../tools/pr-review-advisor/review-quality.mts";
 import {
-  parseSecurityRubric,
+  buildSystemPrompt,
   readTrustedSecurityRubric,
 } from "../tools/pr-review-advisor/trusted-guidance.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
@@ -39,8 +39,7 @@ describe("PR review advisor", () => {
     try {
       process.chdir(tmp);
       const rubric = readTrustedSecurityRubric();
-      expect(rubric).toContain("# Security Rubric");
-      expect(rubric).toContain("Category 9: System Security");
+      expect(rubric).toContain("## Category 9: System Security");
       expect(rubric).not.toContain("PR-controlled rubric");
     } finally {
       process.chdir(originalCwd);
@@ -48,39 +47,19 @@ describe("PR review advisor", () => {
     }
   });
 
-  it("rejects missing and malformed trusted security rubrics", () => {
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
-      throw new Error("missing rubric fixture");
-    });
-    expect(() => readTrustedSecurityRubric()).toThrow("Security rubric unavailable");
-    readSpy.mockRestore();
+  it("embeds the complete trusted security rubric in the model prompt", () => {
+    const rubric = readTrustedSecurityRubric();
 
-    expect(() => parseSecurityRubric("# Security Rubric\n\n## Category 1: Secrets\n")).toThrow(
-      "must define exactly 9 categories",
-    );
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace("### Expected evidence", "### Evidence"),
-      ),
-    ).toThrow("must define Meaning, Questions, and Expected evidence in order");
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace(
-          /### Meaning\n\nKeep credentials[^\n]*\n/u,
-          "### Meaning\n\n",
-        ),
-      ),
-    ).toThrow("has empty Meaning");
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace(
-          "### Meaning\n\nKeep credentials",
-          "### Questions\n\nDuplicate section.\n\n### Meaning\n\nKeep credentials",
-        ),
-      ),
-    ).toThrow("must define Meaning, Questions, and Expected evidence in order");
+    expect(buildSystemPrompt()).toContain(rubric);
   });
 
+  it("reports a missing trusted security rubric", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      throw new Error("missing rubric fixture");
+    });
+
+    expect(() => readTrustedSecurityRubric()).toThrow("Security rubric unavailable");
+  });
   it("renders summaries and sticky comments with maintainer-review framing", () => {
     const result = validResult();
     const summary = renderSummary(result);

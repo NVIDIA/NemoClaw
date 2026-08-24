@@ -25,11 +25,7 @@ import {
   type AdvisorInterest,
 } from "./specialists.mts";
 import { createTerminologyToolController } from "./terminology.mts";
-import {
-  buildSystemPrompt,
-  readParsedTrustedSecurityRubric,
-  readTrustedControlledWords,
-} from "./trusted-guidance.mts";
+import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
   buildCorrectnessTurnContext,
   buildOperationsTurnContext,
@@ -140,7 +136,7 @@ async function main(): Promise<void> {
     {
       cwd: process.cwd(),
       promptTurns: [turn],
-      systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
+      systemPrompt: buildSystemPrompt(),
       configDir,
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
       heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),
