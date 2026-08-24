@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
+import { REPOSITORY_ROOT } from "./core/repository-root";
 import { shellQuote } from "./core/shell-quote";
 import { detectDockerHost } from "./platform";
 import {
@@ -21,7 +22,7 @@ import {
 import { redact, redactError, redactFull, writeRedactedResult } from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
 
-const ROOT = path.resolve(__dirname, "..", "..");
+const ROOT = REPOSITORY_ROOT;
 const SCRIPTS = path.join(ROOT, "scripts");
 
 type RunnerOptions = SpawnSyncOptions & {

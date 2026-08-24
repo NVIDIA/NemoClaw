@@ -16,7 +16,10 @@ type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").with
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
 
-export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 30_000;
+// A contended gateway list can consume the watcher's full 10-second child
+// bound. Keep enough room for another complete observation window after the
+// first three attempts instead of racing the watcher at 30 seconds (#9817).
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
 // Keep one outer cap while reserving each bounded child's fixed budget.

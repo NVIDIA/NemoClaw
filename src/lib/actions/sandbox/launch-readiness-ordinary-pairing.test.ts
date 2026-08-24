@@ -57,21 +57,6 @@ describe("ordinary OpenClaw pairing target", () => {
     });
   });
 
-  it("uses the trusted OpenClaw version for a custom --from runtime (#10014)", () => {
-    vi.mocked(deps.getSandbox!).mockReturnValue({
-      ...openClawEntry(),
-      agentVersion: null,
-    });
-
-    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
-      gatewayName: GATEWAY_NAME,
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: FINGERPRINT,
-      stateDirectory: "/sandbox/.openclaw",
-      version: loadAgent("openclaw").expected_version,
-    });
-  });
-
   it("resolves ordinary pairing after a supported policy-skip onboarding (#9817)", () => {
     vi.mocked(deps.getSandbox!).mockReturnValue({
       ...openClawEntry(),
@@ -85,6 +70,32 @@ describe("ordinary OpenClaw pairing target", () => {
       stateDirectory: "/sandbox/.openclaw",
       version: "1.0.0",
     });
+  });
+
+  it("resolves a custom Dockerfile without inventing a managed agent version", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      agentVersion: null,
+      nemoclawVersion: null,
+      fromDockerfile: "/tmp/custom-openclaw/Dockerfile",
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: "",
+    });
+  });
+
+  it("rejects a managed workload whose agent version is missing", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      agentVersion: null,
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toBeNull();
   });
 
   it.each([

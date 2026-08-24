@@ -14,14 +14,14 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = "managed-image-protected-runtime";
 const SELECTOR =
-  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const REVIEWED_HERMES_PLATFORM_ACTION = "./.github/actions/resolve-reviewed-hermes-platform";
 const GUARDED_NVIDIA_API_KEY =
-  "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}";
+  "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}";
 
 // Keep lane-specific trust assertions explicit: the multiarch lane executes
 // candidate code directly, while this GPU lane keeps secrets in trusted code
@@ -94,8 +94,16 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const job = record(record(workflow.jobs)[JOB_ID]);
   if (Object.keys(job).length === 0) return [`workflow missing ${JOB_ID} job`];
 
-  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "managed-image-multiarch-startup"])) {
-    errors.push(`${JOB_ID} must depend on generate-matrix and managed-image-multiarch-startup`);
+  if (
+    !isDeepStrictEqual(job.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "managed-image-multiarch-startup",
+    ])
+  ) {
+    errors.push(
+      `${JOB_ID} must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup`,
+    );
   }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
@@ -160,6 +168,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireFragments(errors, guard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"push"',
     '"workflow_dispatch"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
@@ -264,14 +273,22 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   });
 
   const bases = requireStep(errors, workflowSteps, "Resolve exact amd64 runtime base images");
+  requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
+    DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
+  });
   requireFragments(errors, bases, [
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == "amd64"',
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
+    'docker buildx imagetools inspect "$DCODE_BASE_REF" --raw',
+    'dcode_digest="${DCODE_BASE_REF##*@}"',
+    'printf \'dcode=%s\\n\' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"',
   ]);
+  if (text(bases?.run).includes("langchain-deepagents-code-sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must not resolve the DCode base from a mutable alias`);
+  }
   if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
     errors.push(`${JOB_ID} must resolve Hermes from the immutable reviewed Dockerfile index`);
   }

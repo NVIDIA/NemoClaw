@@ -87,7 +87,18 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-      livePolicyYaml: "",
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          discord: {
+            endpoints: [
+              {
+                host: "discord.com",
+                credential_binding: { provider: "hermes-box-discord-bridge" },
+              },
+            ],
+          },
+        },
+      }),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -121,12 +132,39 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
+  it("omits Hermes Discord egress when no live provider binding exists", () => {
+    let stagedPolicy = "";
+    const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: "",
+      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    expect(out).toBe("/staged-hermes-permissive.yaml");
+    expect(YAML.parse(stagedPolicy).network_policies.discord).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
   it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
     const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
 
     expect(() =>
       buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-        livePolicyYaml: "",
+        livePolicyYaml: YAML.stringify({
+          network_policies: {
+            discord: {
+              endpoints: [
+                {
+                  credential_binding: { provider: "bad:provider-discord-bridge" },
+                },
+              ],
+            },
+          },
+        }),
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,

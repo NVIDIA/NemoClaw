@@ -487,8 +487,32 @@ try:
         ):
             reject()
         if ORDINARY_SETTLEMENT:
-            if request.get('deviceId') == device_id or request.get('publicKey') == device_public_key:
-                sys.exit(2)
+            # The startup watcher can publish the canonical write transition
+            # before finalization observes the pairing-only device. Admit only
+            # that exact intermediate state so the owning controller can reach
+            # its one approval pass. Its final observation still requires the
+            # settled scopes and no same-device pending request.
+            decision = approval_request_decision(request)
+            request_scopes = request.get('scopes')
+            valid_write_scopes = (
+                exact_string_set(request_scopes, ['operator.write'])
+                or exact_string_set(request_scopes, REQUEST_SCOPES)
+            )
+            if (
+                request.get('deviceId') != device_id
+                or request.get('publicKey') != device_public_key
+                or request.get('clientId') != 'cli'
+                or request.get('clientMode') != 'cli'
+                or request.get('role') != 'operator'
+                or not exact_string_set(request.get('roles'), REQUIRED_ROLES)
+                or 'requestedScopes' in request
+                or 'publicKeyPem' in request
+                or type(request.get('isRepair')) is not bool
+                or not valid_write_scopes
+                or not isinstance(decision, dict)
+                or decision.get('allowed') is not True
+            ):
+                reject()
             continue
         decision = approval_request_decision(request)
         if decision.get('reason') == 'malformed-scopes':
@@ -516,6 +540,8 @@ try:
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
+    if ORDINARY_SETTLEMENT and pending and (len(pending) != 1 or not pairing_only):
+        reject()
     if not settled and not pairing_only:
         reject()
 

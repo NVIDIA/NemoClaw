@@ -405,7 +405,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     const scope = ordinaryPairingDeps({
       now: vi.fn(() => now),
       observePairing: vi.fn(() => {
-        now = 30_001;
+        now = OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS + 1;
         return SETTLED;
       }),
     });

@@ -68,6 +68,7 @@ import {
   readGpuComputeCapabilities,
   readGpuMemoryDevices,
   resolveVllmModelRuntime,
+  selectVllmGpuDevice,
   type VllmProfile,
 } from "./vllm";
 import {
@@ -80,6 +81,7 @@ import {
   withVllmInstallTestReadiness,
 } from "./vllm-install.test-support";
 import { VLLM_MODELS } from "./vllm-models";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "./vllm-models";
 
 const READY_MODELS_RESPONSE = '{"data":[]}';
 
@@ -213,6 +215,16 @@ describe("managed vLLM GPU compute capability preflight", () => {
     expect(computeCapabilityPreflight(model!, [121, 90])).toEqual({ ok: true });
   });
 
+  it("queries compute capability for the selected GPU UUID", () => {
+    mockHostCommands({ computeCap: "9.0\n" });
+
+    expect(readGpuComputeCapabilities("GPU-69adb14e-820e-bfb4-0993-171e73f68504")).toEqual([90]);
+    expect(mocks.runCapture).toHaveBeenCalledWith(
+      expect.arrayContaining(["--id=GPU-69adb14e-820e-bfb4-0993-171e73f68504"]),
+      expect.any(Object),
+    );
+  });
+
   it("prints a capability on the scale vLLM reports (#8307)", () => {
     expect(formatComputeCapability(80)).toBe("8.0");
     expect(formatComputeCapability(89)).toBe("8.9");
@@ -278,6 +290,31 @@ describe("managed vLLM GPU memory preflight", () => {
     expect(errors).toContain("49.2 GiB of 95.6 GiB is free");
     expect(errors).toContain("free at least 22.5 GiB");
     expect(errors).toContain("then resume onboarding");
+  });
+
+  it("launches managed vLLM on the selected UUID and checks that GPU's free memory", async () => {
+    const profile = { ...detectVllmProfile({ type: "nvidia" })!, architecture: "x64" as const };
+    const uuid = "GPU-69adb14e-820e-bfb4-0993-171e73f68504";
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+    process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = uuid;
+    mockHostCommands({
+      computeCap: "9.0\n9.0\n",
+      gpuMemory:
+        `0, GPU-00000000-0000-0000-0000-000000000000, 97887, 1000\n` + `1, ${uuid}, 97887, 90000\n`,
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["--gpus", `device=${uuid}`]),
+    );
   });
 
   it.each(["--gpu-memory-utilization", "--gpu_memory_utilization"])(
@@ -386,6 +423,33 @@ describe("managed vLLM GPU memory preflight", () => {
 
     expect(profile.gpuMemoryUtilization).toBe(0.75);
     expect(gpuMemoryPreflight(model, profile, devices)).toEqual({ ok: true });
+  });
+
+  it("checks memory on the UUID selected for managed vLLM", () => {
+    const detected = detectVllmProfile({ type: "nvidia" })!;
+    const model = VLLM_MODELS.find((entry) => entry.envValue === "muse-glimmer-30b")!;
+    const resolved = resolveVllmModelRuntime(detected, model, "x64");
+    const profile = selectVllmGpuDevice(
+      resolved.profile,
+      "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+    );
+
+    expect(
+      gpuMemoryPreflight(model, profile, [
+        {
+          index: 0,
+          uuid: "GPU-00000000-0000-0000-0000-000000000000",
+          totalBytes: 96n,
+          freeBytes: 1n,
+        },
+        {
+          index: 1,
+          uuid: "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+          totalBytes: 96n,
+          freeBytes: 80n,
+        },
+      ]),
+    ).toEqual({ ok: true });
   });
 
   it("fails closed when Docker's selected GPU is absent from telemetry", () => {

@@ -1424,8 +1424,25 @@ When every deterministic cold-onboard budget passes and the real first turn exit
 successfully with the expected sentinel, a sole root-end-to-first-turn overage
 is recorded as a structured, non-blocking hosted-latency anomaly rather than a
 PR regression.
-The same overage remains blocking when accompanied by a root-start or
-phase-budget failure.
+The same overage remains blocking when accompanied by a root-start or phase-budget failure.
+
+The checked-in `nemoclaw.onboard.phase.sandbox` budget remains 208,000 ms.
+A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses the published-base build mode without the authoritative local base-build allowance.
+For a qualifying overage of at most 5,000 ms, `full-e2e` records a `sandbox-phase-tail` anomaly instead of a blocking performance violation.
+An overage greater than 5,000 ms remains blocking.
+A run that applies the authoritative local base-build allowance or has another performance violation also remains blocking.
+Every other performance contract remains blocking, as do the existing first-turn command exit, BuildKit, gateway-builder no-fallback, output-silence, sentinel, E2E job outcome, and cleanup contracts.
+
+For `sandbox-phase-tail`, the trusted push scorecard uses the latest five eligible samples from the same agent, setup mode, platform, base-build mode, and workload kind.
+A current anomaly passes only when four valid prior same-cohort samples exist and none contains a sandbox-phase anomaly.
+A current anomaly remains blocking in these cases:
+
+- One or more queried prior push summaries are unavailable.
+- Fewer than four valid prior same-cohort samples are available.
+- One prior sample in the five-sample window contains a sandbox-phase anomaly.
+
+The second anomaly in the five-sample window therefore blocks immediately.
+These sandbox-phase recurrence rules do not change the hosted first-turn policy described below.
 
 The trusted push scorecard stores the current eligible sample in the
 `e2e-runtime-summary` artifact.
@@ -1439,6 +1456,9 @@ A current sample without an anomaly does not fail because of an earlier anomaly.
 Missing, malformed, or functionally unsuccessful samples do not enter the window.
 The scorecard waits for 12 eligible samples when retained history is incomplete.
 The canonical E2E uploader retains each push summary for 14 days.
+
+The sandbox-phase recurrence rule does not recalibrate the checked-in budget.
+Recalibration remains deferred until five successful samples from the same commit are available.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to

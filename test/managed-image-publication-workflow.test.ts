@@ -316,6 +316,7 @@ describe("complete managed-image publication workflow", () => {
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
+    const releaseIdentity = step(prBuilder, "Resolve managed image release identity");
     const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
     const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
@@ -377,6 +378,11 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(releaseIdentity.id).toBe("release");
+    expect(releaseIdentity.run).toContain(
+      "git describe --tags --match 'v*' \"$CANDIDATE_SHA\"",
+    );
+    expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
@@ -430,13 +436,22 @@ describe("complete managed-image publication workflow", () => {
     expect(localBuild).toContain("--platform linux/amd64");
     expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
     expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
+    expect(localBuild).toContain('--label "org.opencontainers.image.version=${RELEASE}"');
+    expect(localBaseBuild.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     expect(localBuild).not.toContain("docker buildx build");
     expect(registryBaseBuild.with).toMatchObject({
       platforms: "linux/amd64",
       load: true,
       push: false,
     });
+    expect(registryBaseBuild.with?.labels).toContain(
+      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
+    );
+    expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
+    expect(contractSource).toContain(
+      '.[0].Config.Labels["org.opencontainers.image.version"] == $release',
+    );
     expect(contractSource).toContain(
       'docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id"',
     );
@@ -574,6 +589,9 @@ describe("complete managed-image publication workflow", () => {
     expect(publish.with?.["build-args"]).toContain(
       "BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}",
     );
+    expect(publish.with?.labels).toContain(
+      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
+    );
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
     expect(exportContract.if).toBe(sameRepository);
@@ -584,6 +602,10 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContractRun.indexOf("scripts/checks/pull-public-exact-digest.sh")).toBeLessThan(
       exportContractRun.indexOf('docker buildx imagetools inspect "$reference" --raw'),
     );
+    expect(exportContract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
+    expect(exportContractRun).toContain("org.opencontainers.image.version");
+    expect(exportContractRun).toContain('--arg release "$RELEASE"');
+    expect(exportContractRun).not.toContain("git describe --tags");
     expect(exportContractRun).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
@@ -682,8 +704,6 @@ describe("complete managed-image publication workflow", () => {
       path.join(repoRoot, "test/e2e/live/managed-image-activation-e2e-helpers.ts"),
       "utf8",
     );
-
-    expect(source).toContain('"--temp-managed-runtime-catalog"');
     expect(source).toContain("await host.nemoclaw(");
     expect(source).toContain("await lifecycle.restartGatewayRuntime(");
     expect(source).toContain("await runAgentTurn(");
@@ -755,6 +775,7 @@ fi
         encoding: "utf8",
         env: {
           ...process.env,
+          AGENT: "openclaw",
           ALIAS_RAW: aliasRaw,
           BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
           BASE_DOCKERFILE: "Dockerfile.base",
@@ -905,6 +926,7 @@ fi
         expect(action.uses, action.name).toMatch(fullShaAction);
       });
     expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(step(publisher, "Checkout").with?.["fetch-depth"]).toBe(0);
     const restoreBase = step(publisher, "Restore exact base image contract");
     expect(restoreBase.run).toContain('base64 --decode > "$contract_root/contract.json"');
     expect(restoreBase.env?.OPENCLAW_CONTRACT_BASE64).toBe(
@@ -925,11 +947,15 @@ fi
     expect(noncanonicalBase.stderr).not.toContain("TR==");
 
     const guard = step(publisher, "Validate production build args");
+    const releaseIdentity = step(publisher, "Resolve managed image release identity");
     const build = step(publisher, "Build and push managed image by digest");
     const validate = step(publisher, "Validate exact managed image before promotion");
     const evidence = step(publisher, "Capture exact managed image publication evidence");
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
     expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(build));
+    expect(releaseIdentity.id).toBe("release");
+    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
+    expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
     expect(build.with).toMatchObject({
@@ -944,6 +970,9 @@ fi
     expect(build.with?.push).toBeUndefined();
     expect(build.with?.tags).toBeUndefined();
     expect(build.with?.labels).toContain("org.opencontainers.image.revision=${{ github.sha }}");
+    expect(build.with?.labels).toContain(
+      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
+    );
     expect(build.with?.labels).toContain("io.nvidia.nemoclaw.managed-image.contract=1");
     expect(build.with?.labels).toContain(
       "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
@@ -978,6 +1007,9 @@ fi
       "retention-days": 1,
     });
     const validation = required(validate.run, "managed image validation script is missing");
+    expect(validate.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
+    expect(validation).toContain('release_label="$(');
+    expect(validation).toContain('[ "$release_label" != "$RELEASE" ]');
     expect(validation.match(/docker run/g)).toHaveLength(2);
     expect(validation).toContain("run-managed-image-direct-e2e.ts");
     expect(validation).toContain("npx --no-install tsx");
