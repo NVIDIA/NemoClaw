@@ -18,14 +18,15 @@ const PROVIDER_TYPE = "discord-hermes-static-v1";
 function prepareDiscord(
   token: string | null,
   providerMatchesGatewayCredential: () => boolean = () => false,
+  disabled = false,
 ) {
   const discord = listChannels().filter((channel) => channel.name === "discord");
   return prepareCreateSandboxMessaging({
     sandboxName: SANDBOX_NAME,
     agentName: "hermes",
     channels: discord,
-    enabledChannels: ["discord"],
-    disabledChannels: [],
+    enabledChannels: disabled ? [] : ["discord"],
+    disabledChannels: disabled ? ["discord"] : [],
     webSearchConfig: null,
     env: token ? { DISCORD_BOT_TOKEN: token } : {},
     getValidatedMessagingTokenByEnvKey: (_channels, envKey) =>
@@ -65,14 +66,34 @@ describe("Hermes Discord credential endpoint binding", () => {
     expect(profileYaml.endpoints).toEqual([]);
   });
 
-  it("does not reuse an untyped provider for the endpoint-bound credential", () => {
+  it.each([
+    { state: "active", disabled: false },
+    { state: "stopped", disabled: true },
+  ])("does not reuse an untyped provider for a $state channel", ({ disabled }) => {
     const providerMatches = vi.fn(() => false);
-    const result = prepareDiscord(null, providerMatches);
+    const result = prepareDiscord(null, providerMatches, disabled);
 
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
     expect(providerMatches).toHaveBeenCalledWith(PROVIDER_NAME, PROVIDER_TYPE, "DISCORD_BOT_TOKEN");
   });
+
+  it.each([null, "test-discord-token"])(
+    "retains the exact Discord provider for a stopped channel with source token %s (#9773)",
+    (token) => {
+      const providerMatches = vi.fn(() => true);
+      const result = prepareDiscord(token, providerMatches, true);
+
+      expect(result.messagingTokenDefs).toEqual([]);
+      expect(result.reusableMessagingProviders).toEqual([PROVIDER_NAME]);
+      expect(result.reusableMessagingChannels).toEqual([]);
+      expect(providerMatches).toHaveBeenCalledWith(
+        PROVIDER_NAME,
+        PROVIDER_TYPE,
+        "DISCORD_BOT_TOKEN",
+      );
+    },
+  );
 
   it("binds Discord REST and WebSocket rewrites to the sandbox provider", () => {
     const content = loadMessagingChannelPolicyPreset("discord", {

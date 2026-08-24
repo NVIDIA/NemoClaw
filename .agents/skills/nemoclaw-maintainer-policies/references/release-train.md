@@ -52,8 +52,10 @@ Before tag confirmation, show the maintainer:
 - the canonical release entry and path.
 
 The maintainer must choose to proceed, create or update a docs PR for the uncovered range, or stop.
-Record a proceed decision in the signed release brief. The release entry cannot be waived. Do not
-create a separate documentation receipt or exception record.
+Record a proceed decision in the signed release brief. A current-main plan requires the release
+entry. An accepted urgent QA qualification may use an exact historical ancestor and must bind its
+explicit release-entry exception into the signed release brief. Do not create a separate exception
+record.
 
 ## Cutoff
 
@@ -65,8 +67,9 @@ At cutoff:
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Complete [Release-Prep Docs](#release-prep-docs) for the intended release range.
-5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture the candidate
-   commit.
+5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture `origin/main`.
+   For accepted urgent QA qualification, select an exact historical ancestor with `--candidate` and
+   bind a nonblank `--exception` reason.
 6. Show the candidate's documentation coverage and required image evidence. If the maintainer
    requests documentation work, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and show the evidence for the new candidate.

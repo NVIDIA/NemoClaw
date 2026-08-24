@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -9,6 +10,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
   cleanupSandbox,
@@ -203,6 +205,7 @@ export async function applyFakePolicy(options: {
   api: FakeDockerApi;
   protocol: "rest" | "websocket";
   rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
+  providerName: string;
   env: NodeJS.ProcessEnv;
   redactions: string[];
   artifactName: string;
@@ -225,6 +228,35 @@ export async function applyFakePolicy(options: {
     timeoutMs: 120_000,
   });
   expectExitZero(result, options.artifactName);
+
+  const binding = await options.host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -eu
+policy_file="$(mktemp)"
+trap 'rm -f "$policy_file"' EXIT
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
+"$1" policy set --policy "$policy_file" --wait "$2"`,
+      `bind-fake-${options.protocol}-policy`,
+      options.host.openshellCommandPath,
+      options.sandboxName,
+      options.providerName,
+      "host.openshell.internal",
+      String(options.api.port),
+      options.protocol,
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+    ],
+    {
+      artifactName: `${options.artifactName}-credential-binding`,
+      cwd: REPO_ROOT,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(binding, `${options.artifactName} credential binding`);
 }
 
 export async function assertOpenClawStateRoot(

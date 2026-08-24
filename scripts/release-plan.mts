@@ -8,10 +8,13 @@ import process from "node:process";
 import { isCanonicalNemoClawRemote, isLocalReleaseFixtureRemote } from "./release/remote.mts";
 
 const SEMVER_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
 
 type Options = {
   version: string;
   output?: string;
+  candidate?: string;
+  exception?: string;
 };
 
 type ReleasePlan = {
@@ -21,6 +24,9 @@ type ReleasePlan = {
   nextTag: string;
   originMainCommit: string;
   originMainHeadline: string;
+  candidateCommit: string;
+  candidateSelection: "current-main" | "historical";
+  historicalCandidateException: string;
 };
 
 function run(command: string, args: string[]): string {
@@ -39,23 +45,42 @@ function run(command: string, args: string[]): string {
   }
 }
 
+function readValue(argv: string[], index: number, option: string): string {
+  const value = argv[index + 1] ?? "";
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${option} requires ${option === "--output" ? "a path" : "a value"}`);
+  }
+  return value;
+}
+
 function parseArgs(argv: string[]): Options {
   let version = "";
   let output: string | undefined;
+  let candidate: string | undefined;
+  let exception: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--version") {
-      version = argv[++index] ?? "";
+      version = readValue(argv, index, "--version");
+      index += 1;
     } else if (arg.startsWith("--version=")) {
       version = arg.slice("--version=".length);
     } else if (arg === "--output") {
-      output = argv[++index];
-      if (!output || output.startsWith("--")) {
-        throw new Error("--output requires a path");
-      }
+      output = readValue(argv, index, "--output");
+      index += 1;
     } else if (arg.startsWith("--output=")) {
       output = arg.slice("--output=".length);
-      if (!output) throw new Error("--output requires a path");
+      if (!output) throw new Error("--output requires a value");
+    } else if (arg === "--candidate") {
+      candidate = readValue(argv, index, "--candidate");
+      index += 1;
+    } else if (arg.startsWith("--candidate=")) {
+      candidate = arg.slice("--candidate=".length);
+    } else if (arg === "--exception") {
+      exception = readValue(argv, index, "--exception");
+      index += 1;
+    } else if (arg.startsWith("--exception=")) {
+      exception = arg.slice("--exception=".length);
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -66,12 +91,24 @@ function parseArgs(argv: string[]): Options {
   if (!SEMVER_TAG.test(version)) {
     throw new Error("--version must be an exact vX.Y.Z tag");
   }
-  return { version, output };
+  if (candidate !== undefined && !FULL_SHA.test(candidate)) {
+    throw new Error("--candidate must be a full lowercase 40-character Git SHA");
+  }
+  if (candidate !== undefined && !exception?.trim()) {
+    throw new Error("--exception requires a nonblank plain-language reason with --candidate");
+  }
+  if (exception !== undefined && /[\u0000-\u001f\u007f]/u.test(exception)) {
+    throw new Error("--exception must be a single-line plain-language reason");
+  }
+  if (candidate === undefined && exception !== undefined) {
+    throw new Error("--exception is only valid with a historical --candidate");
+  }
+  return { version, output, candidate, exception: exception?.trim() };
 }
 
 function printHelp(): void {
   console.log(
-    "Usage: tsx scripts/release-plan.mts --version vX.Y.Z [--output PATH]\n\nCaptures an exact release version and candidate commit from origin/main.",
+    "Usage: tsx scripts/release-plan.mts --version vX.Y.Z [--output PATH] [--candidate FULL_SHA --exception REASON]\n\nCaptures origin/main by default. A historical candidate requires an explicit exception reason.",
   );
 }
 
@@ -166,6 +203,27 @@ function main(): void {
 
   const originMainCommit = run("git", ["rev-parse", "origin/main"]).trim();
   const originMainHeadline = run("git", ["log", "--oneline", "-1", "origin/main"]).trim();
+  const candidateCommit = options.candidate
+    ? run("git", ["rev-parse", "--verify", `${options.candidate}^{commit}`]).trim()
+    : originMainCommit;
+  if (options.candidate && candidateCommit !== options.candidate) {
+    throw new Error(`Candidate does not resolve to the exact commit ${options.candidate}`);
+  }
+  if (options.candidate && candidateCommit === originMainCommit) {
+    throw new Error("--candidate identifies current origin/main; omit --candidate and --exception");
+  }
+  try {
+    run("git", ["merge-base", "--is-ancestor", previousTagCommit, candidateCommit]);
+  } catch {
+    throw new Error(`Candidate commit ${candidateCommit} does not follow previous release ${previousTag}`);
+  }
+  try {
+    run("git", ["merge-base", "--is-ancestor", candidateCommit, originMainCommit]);
+  } catch {
+    throw new Error(`Candidate commit is not reachable from origin/main: ${candidateCommit}`);
+  }
+  const candidateHeadline = run("git", ["log", "--oneline", "-1", candidateCommit]).trim();
+  const candidateSelection = options.candidate ? "historical" : "current-main";
   const output = path.resolve(
     options.output ?? path.join(repoRoot, "..", `nemoclaw-release-${options.version}`, "plan.json"),
   );
@@ -176,6 +234,9 @@ function main(): void {
     nextTag: options.version,
     originMainCommit,
     originMainHeadline,
+    candidateCommit,
+    candidateSelection,
+    historicalCandidateException: options.exception ?? "None",
   };
 
   mkdirSync(path.dirname(output), { recursive: true });
@@ -195,9 +256,11 @@ function main(): void {
   console.log(`Previous tag object: ${previousTagObject}`);
   console.log(`Previous tag commit: ${previousTagCommit}`);
   console.log(`Next tag: ${options.version}`);
-  console.log(`Candidate commit: ${originMainHeadline}`);
+  console.log(`Candidate commit: ${candidateHeadline}`);
+  console.log(`Candidate selection: ${candidateSelection}`);
+  if (options.exception) console.log(`Historical candidate exception: ${options.exception}`);
   console.log("Confirmation phrase:");
-  console.log(`CONFIRM RELEASE ${options.version} ${originMainCommit}`);
+  console.log(`CONFIRM RELEASE ${options.version} ${candidateCommit}`);
 }
 
 main();
