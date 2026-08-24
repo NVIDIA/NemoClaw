@@ -43,6 +43,9 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
   For more information, refer to [Configure Model Limits](/user-guide/deepagents/inference/manage-inference/configure-model-limits).
   Related changes: [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785) and [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867).
+- Pi remains unavailable to ordinary installations while its release candidate gains exact AMD64 and ARM64 image receipts, a protected Docker lifecycle qualification target, and candidate-scoped user documentation.
+  The qualification covers public onboarding, interactive launch, headless structured tool use, rebuild, recovery, policy and credential boundaries, and destroy without adding Pi to the supported release cohort.
+  For more information, refer to [Quickstart with Pi](/user-guide/pi/get-started/quickstart), [Run and Manage Pi](/user-guide/pi/manage-sandboxes/run-pi), and [Pi Support and Security](/user-guide/pi/reference/pi-support).
 - Ordinary Docker-driver onboarding for stock OpenClaw, Hermes, and LangChain Deep Agents Code now selects an immutable managed-image digest for the release and host architecture.
   If registry or catalog availability prevents selection, NemoClaw can build the shipped reviewed Dockerfile; invalid or inconsistent managed-image evidence stops before sandbox creation.
   Explicit `--from` Dockerfiles and Portable onboarding retain their separate paths.

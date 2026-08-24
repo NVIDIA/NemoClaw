@@ -549,6 +549,7 @@ describe("onboard host-local inference routing", () => {
         acceleration: "nvidia-gpu",
       });
       expect(harness.commands.map(({ command }) => command)).toEqual([
+        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
         "provider get -g nemoclaw ollama-local",
         "provider create -g nemoclaw --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
         `inference set -g nemoclaw --no-verify --provider ollama-local --model ${MODEL} --timeout 180`,
