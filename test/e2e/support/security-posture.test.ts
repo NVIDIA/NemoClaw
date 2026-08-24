@@ -14,6 +14,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
   parseSplitProcessSecurityReport,
   SPLIT_PROCESS_SECURITY_PROBE,
@@ -938,12 +939,18 @@ describe("security posture fixture", () => {
     );
   });
 
-  it.each(["docker", "podman"])(
-    "checks the split-process report through the selected %s provider",
-    async (providerId) => {
+  it.each([
+    { capabilityMask: OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "docker" },
+    { capabilityMask: PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "podman" },
+  ])(
+    "checks the split-process report through the selected $providerId provider",
+    async ({ capabilityMask, providerId }) => {
       vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
       vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
       const report = validReport();
+      report.supervisor.status.capBnd = capabilityMask;
+      report.supervisor.status.capEff = capabilityMask;
+      report.supervisor.status.capPrm = capabilityMask;
       const directChildSupervisor = report.childSupervisors[0]!;
       setCurrentChildSupervisors(report, [
         validNemoclawStartProcess({

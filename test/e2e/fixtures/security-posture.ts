@@ -91,6 +91,22 @@ const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
 // resulting Linux capability mask so additions and removals both require an
 // explicit security review.
 export const OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004a82c35fb";
+export const PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004002811cd";
+
+const OPENSHELL_SUPERVISOR_CAPABILITY_MASKS = Object.freeze({
+  docker: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  podman: PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+});
+
+function supervisorCapabilityMask(providerId: string): string {
+  const mask = OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
+    providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
+  ];
+  if (!mask) {
+    throw new Error(`security-posture has no reviewed capability mask for '${providerId}'`);
+  }
+  return mask;
+}
 
 export const SPLIT_PROCESS_SECURITY_PROBE = String.raw`import grp
 import json
@@ -507,7 +523,11 @@ function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
   );
 }
 
-function validateSupervisor(process: ProcessSecurityIdentity, sandboxGid: number): void {
+function validateSupervisor(
+  process: ProcessSecurityIdentity,
+  sandboxGid: number,
+  expectedCapabilityMask: string,
+): void {
   if (process.pid !== 1 || process.ppid !== 0) {
     throw new Error(
       `OpenShell supervisor expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
@@ -535,9 +555,9 @@ function validateSupervisor(process: ProcessSecurityIdentity, sandboxGid: number
     throw new Error(`OpenShell supervisor CapInh drifted to ${process.status.capInh}`);
   }
   for (const field of ["capPrm", "capEff", "capBnd"] as const) {
-    if (process.status[field] !== OPENSHELL_SUPERVISOR_CAPABILITY_MASK) {
+    if (process.status[field] !== expectedCapabilityMask) {
       throw new Error(
-        `OpenShell supervisor ${field} expected ${OPENSHELL_SUPERVISOR_CAPABILITY_MASK}, got ${process.status[field]}`,
+        `OpenShell supervisor ${field} expected ${expectedCapabilityMask}, got ${process.status[field]}`,
       );
     }
   }
@@ -640,7 +660,11 @@ function processIdentityArray(value: unknown, label: string): ProcessSecurityIde
   return value.map((entry, index) => processIdentity(entry, `${label}[${index}]`));
 }
 
-export function validateSplitProcessSecurityReport(value: unknown): SplitProcessSecurityReport {
+export function validateSplitProcessSecurityReport(
+  value: unknown,
+  expectedCapabilityMask = OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+): SplitProcessSecurityReport {
+  requireCapabilityHex(expectedCapabilityMask, "reviewed OpenShell supervisor capability mask");
   const report = requiredRecord(value, "split-process security report");
   if (report.version !== 2) throw new Error("split-process security report version must be 2");
   const observedProcEntries = requiredInteger(
@@ -667,7 +691,7 @@ export function validateSplitProcessSecurityReport(value: unknown): SplitProcess
       "split-process security report retained more child supervisors than observed processes",
     );
   }
-  validateSupervisor(supervisor, sandboxGid);
+  validateSupervisor(supervisor, sandboxGid, expectedCapabilityMask);
   for (const process of childSupervisors) {
     validateNemoclawStartProcess(process, sandboxUid, sandboxGid);
   }
@@ -700,14 +724,17 @@ export function validateSplitProcessSecurityReport(value: unknown): SplitProcess
   };
 }
 
-export function parseSplitProcessSecurityReport(output: string): SplitProcessSecurityReport {
+export function parseSplitProcessSecurityReport(
+  output: string,
+  expectedCapabilityMask = OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+): SplitProcessSecurityReport {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output.trim());
   } catch (error) {
     throw new Error("split-process security probe emitted invalid JSON", { cause: error });
   }
-  return validateSplitProcessSecurityReport(parsed);
+  return validateSplitProcessSecurityReport(parsed, expectedCapabilityMask);
 }
 
 export function securityPostureEnabled(): boolean {
@@ -791,7 +818,10 @@ export async function assertSecurityPosture(
       `OpenShell and nemoclaw-start child supervisor security posture failed: ${detail}`,
     );
   }
-  const splitProcess = parseSplitProcessSecurityReport(splitProcessProbe.stdout.toString("utf8"));
+  const splitProcess = parseSplitProcessSecurityReport(
+    splitProcessProbe.stdout.toString("utf8"),
+    supervisorCapabilityMask(initialTarget.providerId),
+  );
 
   const rcFiles = await sandbox.execShell(
     sandboxName,
