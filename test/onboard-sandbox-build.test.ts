@@ -17,7 +17,6 @@ import {
 } from "./helpers/onboard-split-context";
 
 beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
@@ -109,7 +108,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
@@ -346,7 +348,7 @@ const { createSandbox } = require(${onboardPath});
     "hermes-sandbox",
     null,
     [],
-    null,
+    ${JSON.stringify(path.join(repoRoot, "agents", "hermes", "Dockerfile"))},
     agent,
     null,
     null,
@@ -532,7 +534,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify({ commands, logs, baseResolutionCalls }));
 })().catch((error) => {
   console.error(error);
@@ -640,7 +645,10 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.com";
-  await createSandbox(null, "gpt-5.4");
+  await createSandbox(
+    null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -748,7 +756,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);

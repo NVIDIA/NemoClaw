@@ -173,7 +173,10 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.test:19000";
   process.env.NEMOCLAW_DASHBOARD_PORT = "19000";
-  const resultName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null, null, agent);
+  const resultName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null,
+    ${JSON.stringify(path.join(repoRoot, "agents", "langchain-deepagents-code", "Dockerfile"))}, agent,
+  );
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
   clearInterval(keepAlive);
 })().catch((error) => {
@@ -192,7 +195,6 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
     timeout: 15000,

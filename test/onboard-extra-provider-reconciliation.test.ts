@@ -125,8 +125,14 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxNames = [
-    await createSandbox(null, "gpt-5.4"),
-    await createSandbox(null, "gpt-5.4"),
+    await createSandbox(
+      null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
+      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ),
+    await createSandbox(
+      null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
+      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ),
   ];
   console.log(JSON.stringify({
     sandboxNames,
@@ -149,7 +155,6 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
           OPENSHELL_GATEWAY_ENDPOINT: undefined,
         },

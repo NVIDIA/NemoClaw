@@ -134,7 +134,10 @@ try {
   process.env.NEMOCLAW_HEALTH_POLL_COUNT = "1";
   Object.defineProperty(process, "platform", { value: "darwin" });
   Object.defineProperty(process, "arch", { value: "x64" });
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {
   console.error(error && error.stack ? error.stack : String(error));
@@ -158,7 +161,6 @@ try {
           env: {
             HOME: tmpDir,
             PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
           },
           timeout: 30_000,
         },

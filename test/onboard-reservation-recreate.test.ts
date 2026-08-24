@@ -133,7 +133,10 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);
@@ -145,7 +148,6 @@ const { createSandbox } = require(${onboardPath});
     const result = runOnboardProcess([scriptPath], {
       env: workspaceEnv(workspace, {
         NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       }),
       timeoutMs: 30_000,

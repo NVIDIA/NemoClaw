@@ -153,7 +153,10 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
 
   // Prove the recreated + restored sandbox is reachable through the real
   // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
@@ -190,7 +193,6 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       NEMOCLAW_SANDBOX_PREBUILD: "1",
     };
     delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -340,7 +342,10 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
   try {
-    await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+    await createSandbox(
+      null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    );
     console.log(JSON.stringify({ error: null, mutations }));
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : String(caught);
@@ -437,7 +442,10 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
-  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
+    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+  );
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
   console.error(error);
@@ -451,7 +459,6 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
     };
     delete env["NEMOCLAW_RECREATE_SANDBOX"];
     delete env["NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE"];
