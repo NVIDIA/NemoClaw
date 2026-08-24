@@ -1016,6 +1016,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     });
     await applyRestRewritePolicy(host, fakeTelegram, state.env, redactionValues);
+    await bindRestRewriteProvider(
+      host,
+      fakeTelegram,
+      `${SANDBOX_NAME}-telegram-bridge`,
+      state.env,
+      redactionValues,
+    );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(
