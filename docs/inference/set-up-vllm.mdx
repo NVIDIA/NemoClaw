@@ -139,7 +139,8 @@ Use `--vllm-gpu-device <index-or-uuid>` to select the host GPU for a managed sin
 The value must be a non-negative index or a full `GPU-...` UUID reported by `nvidia-smi`.
 This selection is independent of `--sandbox-gpu-device`, which controls direct GPU access inside the sandbox.
 NemoClaw applies the vLLM selection to Docker placement, compute-capability validation, and GPU-memory checks.
-It rejects this selector for a non-vLLM provider or a managed multi-node topology.
+It rejects this selector for an existing local vLLM provider or a managed multi-node topology.
+Only managed single-host vLLM installation accepts this selector.
 
 ```bash
 $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>

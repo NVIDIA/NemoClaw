@@ -8,12 +8,30 @@ import path from "node:path";
 import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv";
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
+import { WARMUP_TIMEOUT_MS } from "../auto-pair-warmup";
 import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
+import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../connect-autopair-budget";
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
+const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
+// Reuse one fixed pairing lifecycle across ordinary onboarding and Portable.
+// A contended gateway list can consume the watcher's complete child bound, so
+// the appearance window retains room for another observation after three
+// attempts (#9817).
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
+export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
+export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
+// Reserve every existing bounded child without allowing one stage to consume
+// the approval or final-observation window.
+export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
+  OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
+  WARMUP_TIMEOUT_MS +
+  CONNECT_AUTO_PAIR_TIMEOUT_MS +
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
@@ -55,6 +73,13 @@ export class OpenClawPairingQualificationError extends Error {
   constructor() {
     super("OpenClaw pairing qualification is unavailable.");
     this.name = "OpenClawPairingQualificationError";
+  }
+}
+
+export class OpenClawPairingObservationRetryableError extends OpenClawPairingQualificationError {
+  constructor() {
+    super();
+    this.name = "OpenClawPairingObservationRetryableError";
   }
 }
 
@@ -218,6 +243,12 @@ RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 def reject():
     sys.exit(1)
 
+def retry_observation():
+    sys.exit(${RETRYABLE_OBSERVATION_EXIT_STATUS})
+
+class StateChangedError(Exception):
+    pass
+
 try:
     policy_source = base64.b64decode(
         os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
@@ -297,7 +328,7 @@ def open_state_root():
             root_fd = next_fd
         directory_metadata(root_fd)
         if not state_root_is_current(root_fd):
-            raise OSError('state root changed')
+            raise StateChangedError('state root changed')
         return root_fd
     except Exception:
         os.close(root_fd)
@@ -318,7 +349,7 @@ def open_directory(parent_fd, name):
     directory_metadata(fd)
     if not directory_is_current(parent_fd, name, fd):
         os.close(fd)
-        raise OSError('directory changed')
+        raise StateChangedError('directory changed')
     return fd
 
 def read_entry(directory_fd, name):
@@ -348,7 +379,7 @@ def read_entry(directory_fd, name):
             current.st_mtime_ns,
             current.st_mode & 0o7777,
         ) != after:
-            raise OSError('entry changed')
+            raise StateChangedError('entry changed')
         return b''.join(chunks), after
     finally:
         os.close(fd)
@@ -369,7 +400,7 @@ def read_snapshot():
             or not directory_is_current(state_fd, 'devices', devices_fd)
             or not directory_is_current(state_fd, 'identity', identity_fd)
         ):
-            raise OSError('state root changed')
+            raise StateChangedError('state root changed')
         return {
             'directories': [directory_metadata(state_fd), directory_metadata(devices_fd), directory_metadata(identity_fd)],
             'identity': (identity_raw, identity_metadata),
@@ -451,7 +482,7 @@ try:
     first = read_snapshot()
     second = read_snapshot()
     if first != second:
-        reject()
+        retry_observation()
     identity = parse_json(first['identity'][0])
     auth = parse_json(first['auth'][0])
     paired = parse_json(first['paired'][0])
@@ -630,6 +661,8 @@ try:
         'requiredScopes': TOKEN_SCOPES,
     }
     print(MARKER + json.dumps(projection, sort_keys=True, separators=(',', ':')))
+except (FileNotFoundError, StateChangedError):
+    retry_observation()
 except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError):
     reject()
 PYQUALIFY
@@ -687,6 +720,9 @@ function runOpenClawPairingObservation(
       timeout: OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
     },
   );
+  if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
+    throw new OpenClawPairingObservationRetryableError();
+  }
   if (result.error || result.signal || result.status !== 0) {
     throw new OpenClawPairingQualificationError();
   }
