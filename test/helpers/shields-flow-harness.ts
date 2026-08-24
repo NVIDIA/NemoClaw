@@ -18,6 +18,16 @@ export const externalPolicyAuthorityInspection = {
   effectivePolicy: { version: 1, network_policies: {} },
 };
 
+export const managedPolicyMutationAuthority = {
+  authority: "nemoclaw-managed" as const,
+  authorityRecordedNow: false,
+  gatewayName: "nemoclaw",
+  inspection: {
+    authority: "nemoclaw-managed" as const,
+    effectivePolicy: { version: 1, network_policies: {} },
+  },
+};
+
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;

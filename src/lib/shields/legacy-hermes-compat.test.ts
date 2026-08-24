@@ -19,6 +19,7 @@ import {
   writeBoundForwardPolicy,
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
+import { managedPolicyMutationAuthority } from "../../../test/helpers/shields-flow-harness";
 
 import { testTimeout } from "../../../test/helpers/timeouts";
 
@@ -250,11 +251,18 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
+      vi
+        .spyOn(policy, "inspectPolicyMutationAuthority")
+        .mockReturnValue(managedPolicyMutationAuthority),
+      vi
+        .spyOn(policy, "recheckPolicyMutationAuthority")
+        .mockReturnValue(managedPolicyMutationAuthority),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),
         agent: "hermes",
         openshellDriver: "docker",
+        policyAuthority: "nemoclaw-managed",
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),

@@ -8,6 +8,7 @@ import {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
   inspectSandboxPolicyAuthority,
+  isExternalPolicyAuthorityRefusalError,
   type PolicyAuthorityCapture,
   policyAuthorityInternals,
   type SandboxPolicyAuthorityInspection,
@@ -214,6 +215,26 @@ describe("recorded policy authority", () => {
     expect(() =>
       assertRecordedPolicyAuthority("externally-managed", "unknown", "restore the snapshot"),
     ).toThrow(/observed OpenShell policy authority is unavailable or invalid/);
+  });
+
+  it("classifies an observed external authority without parsing diagnostics (#9833)", () => {
+    const externalError = errorFrom(() =>
+      assertRecordedPolicyAuthority(
+        "nemoclaw-managed",
+        "externally-managed",
+        "restore the snapshot",
+      ),
+    );
+    const managedError = errorFrom(() =>
+      assertRecordedPolicyAuthority(
+        "externally-managed",
+        "nemoclaw-managed",
+        "restore the snapshot",
+      ),
+    );
+
+    expect(isExternalPolicyAuthorityRefusalError(externalError)).toBe(true);
+    expect(isExternalPolicyAuthorityRefusalError(managedError)).toBe(false);
   });
 });
 

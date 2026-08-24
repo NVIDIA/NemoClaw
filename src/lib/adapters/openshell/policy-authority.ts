@@ -28,10 +28,12 @@ const POLICY_AUTHORITY_REFUSAL_CODE = "NEMOCLAW_POLICY_AUTHORITY_REFUSAL";
 /** A final refusal at the OpenShell policy authority boundary. */
 export class PolicyAuthorityRefusalError extends Error {
   readonly code = POLICY_AUTHORITY_REFUSAL_CODE;
+  readonly observedAuthority?: SandboxPolicyAuthority;
 
-  constructor(message: string) {
+  constructor(message: string, observedAuthority?: SandboxPolicyAuthority) {
     super(message);
     this.name = "PolicyAuthorityRefusalError";
+    this.observedAuthority = observedAuthority;
   }
 }
 
@@ -40,6 +42,15 @@ export function isPolicyAuthorityRefusalError(error: unknown): boolean {
   return (
     error instanceof PolicyAuthorityRefusalError ||
     (isObject(error) && error.code === POLICY_AUTHORITY_REFUSAL_CODE)
+  );
+}
+
+/** Recognize a refusal caused by an externally managed observed policy. */
+export function isExternalPolicyAuthorityRefusalError(error: unknown): boolean {
+  return (
+    isPolicyAuthorityRefusalError(error) &&
+    isObject(error) &&
+    error.observedAuthority === "externally-managed"
   );
 }
 
@@ -171,7 +182,9 @@ export function assertRecordedPolicyAuthority(
     assertMatchingPolicyAuthority(recorded, observed);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "policy authority is invalid";
-    throw new PolicyAuthorityRefusalError(`Refusing to ${label}: ${detail}.`);
+    const observedAuthority =
+      observed === "nemoclaw-managed" || observed === "externally-managed" ? observed : undefined;
+    throw new PolicyAuthorityRefusalError(`Refusing to ${label}: ${detail}.`, observedAuthority);
   }
 }
 

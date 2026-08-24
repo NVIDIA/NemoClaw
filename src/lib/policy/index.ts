@@ -582,6 +582,8 @@ export interface PolicyMutationAuthority {
 }
 
 export const isPolicyAuthorityRefusalError = registry.isPolicyAuthorityRefusalError;
+export const isExternalPolicyAuthorityRefusalError =
+  registry.isExternalPolicyAuthorityRefusalError;
 
 /** Inspect and, when needed, persist the authority that owns one sandbox policy. */
 export function inspectPolicyMutationAuthority(
@@ -637,8 +639,9 @@ export function inspectPolicyMutationAuthority(
         sandbox.policyAuthority === "externally-managed" ||
         inspection.authority === "externally-managed"
       ) {
-        throw new Error(
+        throw new registry.PolicyAuthorityRefusalError(
           `${policyAuthorityError(error)} Ask the external policy authority to change the required entry.`,
+          inspection.authority,
         );
       }
       throw error;
@@ -686,9 +689,10 @@ export function assertNemoClawManagedPolicy(
   operation: string,
 ): void {
   if (authority.authority === "nemoclaw-managed") return;
-  throw new Error(
+  throw new registry.PolicyAuthorityRefusalError(
     `Refusing to ${operation}: this sandbox policy is externally managed. ` +
       "Ask the external policy authority to change the required entry.",
+    authority.authority,
   );
 }
 

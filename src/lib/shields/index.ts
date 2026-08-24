@@ -43,6 +43,7 @@ const {
   resolvePermissivePolicyPath,
   assertNemoClawManagedPolicy,
   inspectPolicyMutationAuthority,
+  isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,
   recheckPolicyMutationAuthority,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
@@ -150,6 +151,41 @@ function assertShieldsPolicyMutationAuthority(
     : inspectPolicyMutationAuthority(sandboxName, operation);
   assertNemoClawManagedPolicy(authority, operation);
   return authority;
+}
+
+function externalPolicyRecoveryHandoff(sandboxName: string): string {
+  return (
+    `NemoClaw cannot restore the externally managed policy for sandbox '${sandboxName}' ` +
+    "from its saved Shields policy snapshot. Ask the external policy authority to restore " +
+    `the restrictive policy, then run \`${CLI_NAME} ${sandboxName} shields up\` to retry Shields reconciliation.`
+  );
+}
+
+function assertShieldsPolicySnapshotRestoreAuthority(
+  sandboxName: string,
+  recorded?: PolicyMutationAuthority,
+): PolicyMutationAuthority {
+  try {
+    return assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "restore the Shields policy snapshot",
+      recorded,
+    );
+  } catch (error) {
+    if (!isExternalPolicyAuthorityRefusalError(error)) throw error;
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName), { cause: error });
+  }
+}
+
+function inspectExternalPolicyRecoveryHandoff(sandboxName: string): string | null {
+  try {
+    assertShieldsPolicyMutationAuthority(sandboxName, "inspect Shields policy recovery");
+    return null;
+  } catch (error) {
+    return isExternalPolicyAuthorityRefusalError(error)
+      ? externalPolicyRecoveryHandoff(sandboxName)
+      : null;
+  }
 }
 
 const STATE_DIR = resolveShieldsStateDir();
@@ -4095,10 +4131,7 @@ function applyShieldsPolicySnapshot(
   snapshotPath: string,
   options: ShieldsPolicySnapshotRestoreOptions = {},
 ): ShieldsPolicySnapshotRestoreResult {
-  const policyAuthority = assertShieldsPolicyMutationAuthority(
-    sandboxName,
-    "restore the Shields policy snapshot",
-  );
+  const policyAuthority = assertShieldsPolicySnapshotRestoreAuthority(sandboxName);
   const buildPolicySet = options.buildPolicySet ?? buildPolicySetCommand;
   const runPolicySet = options.runPolicySet ?? run;
   const state = loadShieldsState(sandboxName);
@@ -4186,11 +4219,7 @@ function applyShieldsPolicySnapshot(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
       );
-      assertShieldsPolicyMutationAuthority(
-        sandboxName,
-        "restore the Shields policy snapshot",
-        policyAuthority,
-      );
+      assertShieldsPolicySnapshotRestoreAuthority(sandboxName, policyAuthority);
       const result = runPolicySet(
         buildPolicySet(snapshotPath, sandboxName, policyAuthority.gatewayName),
         {
@@ -4229,11 +4258,7 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "restore the Shields policy snapshot",
-      policyAuthority,
-    );
+    assertShieldsPolicySnapshotRestoreAuthority(sandboxName, policyAuthority);
     const result = runPolicySet(
       buildPolicySet(runtimePolicyPath, sandboxName, policyAuthority.gatewayName),
       {
@@ -6107,8 +6132,13 @@ function shieldsStatusWithoutHostLock(
       const elapsed = downSince ? Math.floor((Date.now() - downSince.getTime()) / 1000) : 0;
       const remaining =
         state.shieldsDownTimeout != null ? Math.max(0, state.shieldsDownTimeout - elapsed) : null;
+      const recoveryHandoff = inspectExternalPolicyRecoveryHandoff(sandboxName);
 
-      console.log(`  Shields: ${posture.statusText}`);
+      console.log(
+        recoveryHandoff
+          ? "  Shields: DOWN (RECOVERY REQUIRED — policy is externally managed)"
+          : `  Shields: ${posture.statusText}`,
+      );
       console.log(`  Since:   ${state.shieldsDownAt ?? "unknown"}`);
       if (remaining !== null) {
         const mins = Math.floor(remaining / 60);
@@ -6117,6 +6147,10 @@ function shieldsStatusWithoutHostLock(
       }
       console.log(`  Reason:  ${state.shieldsDownReason ?? "not specified"}`);
       console.log(`  Policy:  ${state.shieldsDownPolicy ?? "permissive"}`);
+      if (recoveryHandoff) {
+        console.error(`  Recovery: ${recoveryHandoff}`);
+        throw new DeferredShieldsExit("External policy restoration is required", 2);
+      }
       return;
     }
   }
