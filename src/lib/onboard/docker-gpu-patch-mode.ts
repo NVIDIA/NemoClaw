@@ -243,10 +243,12 @@ function probeDockerGpuMode(
       // An inconclusive read makes the probe terminal.
     }
   }
-  if (outcome.ok && !cleanupConfirmed) {
+  if (!cleanupConfirmed) {
     outcome = {
       ok: false,
-      error: "Docker GPU probe succeeded, but cleanup could not confirm container removal",
+      error: outcome.ok
+        ? "Docker GPU probe succeeded, but cleanup could not confirm container removal"
+        : `${outcome.error ?? "docker create failed"}; cleanup could not confirm container removal`,
     };
   }
   return { ...outcome, cleanupConfirmed };
@@ -265,7 +267,7 @@ function isMissingDockerContainer(
 }
 
 function isTransientDockerDesktopGpuProbeFailure(error: string | null): boolean {
-  return /(?:\b5\d{2}\b|internal server error|connection reset|unexpected eof|temporarily unavailable)/i.test(
+  return /(?:\b(?:http|status(?: code)?)\D{0,8}5\d{2}\b|internal server error|connection reset|unexpected eof|temporarily unavailable)/i.test(
     error || "",
   );
 }

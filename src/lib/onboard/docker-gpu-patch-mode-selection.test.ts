@@ -214,11 +214,12 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     expect(sleep).toHaveBeenCalledWith(1);
   });
 
-  it("does not retry permanent Docker Desktop WSL GPU-mode failures", () => {
-    const dockerRun = vi.fn(() => ({
-      status: 1,
-      stderr: "could not select device driver with capabilities: [[gpu]]",
-    }));
+  it.each([
+    "could not select device driver with capabilities: [[gpu]]",
+    "No such image: image-500:latest",
+    "invalid reference format for image-503",
+  ])("does not retry permanent Docker Desktop WSL GPU-mode failure: %s", (stderr) => {
+    const dockerRun = vi.fn(() => ({ status: 1, stderr }));
     const sleep = vi.fn();
 
     const selected = selectDockerGpuPatchMode(
@@ -263,7 +264,13 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     );
 
     expect(selected.mode).toBeNull();
-    expect(selected.attempts).toHaveLength(1);
+    expect(selected.attempts).toEqual([
+      expect.objectContaining({
+        ok: false,
+        error:
+          "request returned 500 Internal Server Error; cleanup could not confirm container removal",
+      }),
+    ]);
     expect(dockerRun).toHaveBeenCalledTimes(2);
     expect(dockerRun.mock.calls[1]?.[0]).toEqual([
       "container",
