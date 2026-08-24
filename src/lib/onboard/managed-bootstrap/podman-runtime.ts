@@ -1192,12 +1192,13 @@ function readStandaloneGatewayLaunch(
   });
 }
 
-function waitForProcessExit(snapshot: PodmanGatewayWatcherSnapshot): boolean {
+function waitForProcessSuspension(snapshot: PodmanGatewayWatcherSnapshot): boolean {
   for (let attempt = 0; attempt < 300; attempt += 1) {
-    if (!processInstanceAlive(snapshot)) return true;
+    if (processInstanceSuspended(snapshot)) return true;
+    if (!processInstanceAlive(snapshot)) return false;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  return !processInstanceAlive(snapshot);
+  return processInstanceSuspended(snapshot);
 }
 
 function listenerPids(port: number): readonly number[] {
@@ -1376,12 +1377,10 @@ function createProductionWatcherController(
           "Managed bootstrap Podman standalone gateway identity changed before stop.",
         );
       }
-      process.kill(snapshot.pid, "SIGTERM");
-      if (waitForProcessExit(snapshot)) return;
-      if (!processInstanceAlive(snapshot)) return;
-      process.kill(snapshot.pid, "SIGKILL");
-      if (!waitForProcessExit(snapshot)) {
-        throw new Error("Managed bootstrap Podman standalone gateway did not stop.");
+      process.kill(snapshot.pid, "SIGSTOP");
+      if (!waitForProcessSuspension(snapshot)) {
+        if (processInstanceAlive(snapshot)) process.kill(snapshot.pid, "SIGCONT");
+        throw new Error("Managed bootstrap Podman standalone gateway did not suspend.");
       }
     },
     resumeSameOwner(snapshot) {
