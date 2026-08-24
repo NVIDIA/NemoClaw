@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SECURITY_CATEGORY_COUNT = 9;
 const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const TRUSTED_SECURITY_RUBRIC_PATH = path.resolve(
@@ -30,11 +29,7 @@ const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
 
 export function parseSecurityRubric(rubric: string): { content: string; categories: string[] } {
   const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
-  if (headings.length !== SECURITY_CATEGORY_COUNT) {
-    throw new Error(
-      `Security rubric must define exactly ${SECURITY_CATEGORY_COUNT} categories; found ${headings.length}`,
-    );
-  }
+  if (headings.length === 0) throw new Error("Security rubric must define at least one category");
   const categories = headings.map((heading, index) => {
     const number = Number(heading[1]);
     const name = heading[2]?.trim() ?? "";
@@ -67,7 +62,7 @@ export function parseSecurityRubric(rubric: string): { content: string; categori
   if (new Set(categories).size !== categories.length)
     throw new Error("Security rubric category names must be unique");
   if (categories.at(-1) !== "System Security")
-    throw new Error("Security rubric category 9 must be System Security");
+    throw new Error(`Security rubric category ${categories.length} must be System Security`);
   return { content: rubric, categories };
 }
 
