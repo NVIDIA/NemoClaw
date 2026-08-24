@@ -429,22 +429,26 @@ function boundedBootstrapStartLogFailure(
   runtimeId: string,
 ): string | null {
   const file = secureTempFile(START_LOG_TEMP_PREFIX, ".log");
+  let descriptor: number | null = null;
   try {
     const copied = engine.capture(
       ["container", "cp", `${runtimeId}:${START_LOG_PATH}`, file],
       DEFAULT_COMMAND_TIMEOUT_MS,
     );
-    if (copied.status !== 0 || copied.error || !fs.existsSync(file)) return null;
-    const stat = fs.lstatSync(file);
+    if (copied.status !== 0 || copied.error) return null;
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > START_LOG_MAX_BYTES) {
       return null;
     }
     const uid = process.getuid?.();
     if (uid !== undefined && stat.uid !== uid) return null;
-    return safeBootstrapFailureLine(fs.readFileSync(file, "utf8"));
+    const output = fs.readFileSync(descriptor, "utf8");
+    return Buffer.byteLength(output) === stat.size ? safeBootstrapFailureLine(output) : null;
   } catch {
     return null;
   } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
     cleanupTempDir(file, START_LOG_TEMP_PREFIX);
   }
 }
