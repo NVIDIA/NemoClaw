@@ -199,7 +199,7 @@
         "test/managed-gateway-control.test.ts",
         "test/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/process-recovery-supervisor-relaunch.test.ts"
+        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
       ]
     },
     {
@@ -593,7 +593,7 @@
         "src/lib/onboard/local-model-profile/plan.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/install-express-prompt.test.ts",
+        "test/installer-integration/install-express-prompt.test.ts",
         "test/install-local-model-profile.test.ts"
       ]
     },

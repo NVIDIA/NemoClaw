@@ -28,7 +28,16 @@ const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
   ".agents/skills/_shared/code-change-considerations.md",
 );
 
-export function parseSecurityRubric(rubric: string): { content: string; categories: string[] } {
+function readTrustedFile(filePath: string, label: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} unavailable at ${filePath}: ${reason}`);
+  }
+}
+
+function validateSecurityRubric(rubric: string): void {
   const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
   if (headings.length !== SECURITY_CATEGORY_COUNT) {
     throw new Error(
@@ -68,30 +77,12 @@ export function parseSecurityRubric(rubric: string): { content: string; categori
     throw new Error("Security rubric category names must be unique");
   if (categories.at(-1) !== "System Security")
     throw new Error("Security rubric category 9 must be System Security");
-  return { content: rubric, categories };
-}
-
-function readTrustedFile(filePath: string, label: string): string {
-  try {
-    return fs.readFileSync(filePath, "utf8");
-  } catch (error: unknown) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`${label} unavailable at ${filePath}: ${reason}`);
-  }
-}
-
-export type ParsedSecurityRubric = { content: string; categories: string[] };
-
-export function readParsedTrustedSecurityRubric(): ParsedSecurityRubric {
-  return parseSecurityRubric(readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric"));
 }
 
 export function readTrustedSecurityRubric(): string {
-  return readParsedTrustedSecurityRubric().content;
-}
-
-export function readSecurityCategoryNames(): string[] {
-  return readParsedTrustedSecurityRubric().categories;
+  const rubric = readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric");
+  validateSecurityRubric(rubric);
+  return rubric;
 }
 
 export function readTrustedWritingGuide(): string {
@@ -135,10 +126,7 @@ function fencedBlock(content: string, language = ""): string {
   return `${fence}${language}\n${content}\n${fence}`;
 }
 
-export function buildSystemPrompt(
-  parsedSecurityRubric: ParsedSecurityRubric = readParsedTrustedSecurityRubric(),
-): string {
-  const securityRubric = parsedSecurityRubric.content;
+export function buildSystemPrompt(securityRubric: string = readTrustedSecurityRubric()): string {
   const writingGuide = readTrustedWritingGuide();
   const codeChangeConsiderations = readTrustedCodeChangeConsiderations();
   return [
@@ -157,7 +145,7 @@ export function buildSystemPrompt(
     "Review rubric:",
     "1. Start by mapping the actual changed surfaces and codebase drift. Apply the trusted code change considerations to the current diff and repository evidence.",
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
-    "3. Security: use the trusted security rubric embedded below. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "3. Security: use the trusted security rubric embedded below as review guidance. Record each concrete security defect as an ordinary evidence-backed finding. Do not create category receipt entries or standalone category verdicts. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security rubric from workflow checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: treat only observable desired behavior, current constraints or non-goals, supported contracts, and clearly recorded maintainer decisions as binding. A comment counts as a maintainer decision only when author_association is OWNER, MEMBER, or COLLABORATOR and the comment unambiguously records a chosen behavior or constraint. Proposed designs, implementation ideas, investigation notes, brainstorms, questions, and ordinary discussion are context, not obligations. Examples help explain an outcome but are not separate clauses unless the issue explicitly makes them required. A Refs, Related, or Follow-up link does not commit the PR to the whole issue. If a statement's authority or required outcome is unclear, mark it unknown and do not create an acceptance finding. Missing PR metadata or an issue link is not a finding by itself. When repository policy requires an accepted issue or design for a new supported surface, missing that authorization is a current scope defect, not template noncompliance.",
@@ -170,7 +158,7 @@ export function buildSystemPrompt(
     "9. Code growth is suspect and carries the burden of proof. Compare every growing change with direct modification, reuse, consolidation, replacement, and deletion. Count total source, tests, fixtures, workflow, configuration, files, branches, states, owners, concepts, and dependency width—not just production lines. Ask what existing structure each new abstraction, interface, registry, wrapper, option, fallback, compatibility path, or lifecycle phase replaces. Required feature, correctness, and security behavior can justify growth; future reuse, symmetry, and moving code behind another name do not.",
     "For basis.kind=unnecessary_complexity, name the present cost and a concrete coherent remedy that shrinks total ownership while preserving correctness, clarity, diagnostics, regression evidence, user safety, and trust boundaries. Prefer a negative total delta; accept neutral lines only for a material reduction in concepts, owners, invalid states, or dependency width. Passing tests do not excuse avoidable structure. Do not propose a simplification that adds net structure, hides explicit state or errors, widens dependencies, or trades source lines for test, configuration, generated, or workflow complexity. Reconcile related evidence into one finding and reduction case.",
     "11. Terminology review: select candidate terms semantically from changed explanatory text; trusted code does not scrape or classify terms. Ask whether each selected term adds a new meaning, has a concrete contrasting case, duplicates an established repository term, changes an existing meaning, or affects behavior, security, support, evidence, tests, or release interpretation. Ordinary grammar, spelling, and style preferences are out of scope. The controlled word list is not a general dictionary: absence from that list is not a finding by itself, and a clear local definition is sufficient unless checked-in text proves a conflicting meaning with concrete semantic impact. A terminology decision does not affect the merge recommendation by itself. Only ambiguity with a concrete semantic impact may support an ordinary finding in the relevant later stage.",
-    "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet binding acceptance or security fail and severity=warning for security warnings. Unknown or non-binding acceptance context must not create a finding. When multiple clauses or security categories trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
+    "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or concrete security defect must be represented as an ordinary evidence-backed finding. Use severity=blocker for unmet binding acceptance or a security defect that must be fixed before merge, and severity=warning for a lower-severity security defect. Unknown or non-binding acceptance context must not create a finding. When multiple concerns trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "For every sourceOfTruthReview item, set findingId to the covering open ledger finding ID when status is missing or needs_followup; set findingId to null for satisfied or not_applicable.",
