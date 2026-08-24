@@ -246,6 +246,26 @@ export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS`,
     );
   });
 
+  it("rejects a shadow Pi digest property outside the exported authority", () => {
+    const sources = currentSources();
+    const changedAuthority = sources.candidateAuthority
+      .replace("207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5", "f".repeat(64))
+      .concat(
+        `
+const shadow = { pi: Object.freeze([
+  "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+  "1e49356ca9a910ea52fc7a0a70164aff8b056a5530e786c8ea0e54f79858e20e",
+]) };
+`,
+      );
+
+    expect(
+      verifyPiQualificationReceipts({ ...sources, candidateAuthority: changedAuthority }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+  });
+
   it("rejects Pi receipt digests published under another candidate", () => {
     const sources = currentSources();
     expect(

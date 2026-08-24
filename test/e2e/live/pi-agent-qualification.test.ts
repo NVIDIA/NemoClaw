@@ -30,6 +30,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
+  buildPiSecurityProbe,
   derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
@@ -47,53 +48,7 @@ const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_INTERACTIVE_READY_MARKER = "to interrupt";
-const SECURITY_PROBE = String.raw`
-const fs = require("node:fs");
-const path = require("node:path");
-const credentialName = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|ACCESS_?TOKEN|REFRESH_?TOKEN|CLIENT_?SECRET|PASSWORD|CREDENTIAL)(?:$|_)/i;
-const credentialNames = Object.keys(process.env).filter((name) => credentialName.test(name));
-const stack = ["/sandbox"];
-const credentialFiles = [];
-let bytes = 0;
-let files = 0;
-while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
-  const current = stack.pop();
-  let status;
-  try {
-    status = fs.lstatSync(current);
-  } catch {
-    continue;
-  }
-  if (status.isSymbolicLink()) continue;
-  if (status.isDirectory()) {
-    try {
-      for (const entry of fs.readdirSync(current)) stack.push(path.join(current, entry));
-    } catch {}
-    continue;
-  }
-  if (!status.isFile() || status.size > 1024 * 1024) continue;
-  let descriptor;
-  try {
-    descriptor = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const openStatus = fs.fstatSync(descriptor);
-    if (!openStatus.isFile() || openStatus.size > 1024 * 1024) continue;
-    const contents = fs.readFileSync(descriptor, "utf8");
-    files += 1;
-    bytes += Buffer.byteLength(contents);
-    if (/nvapi-[A-Za-z0-9_-]{10,}/.test(contents)) credentialFiles.push(current);
-  } catch {
-    continue;
-  } finally {
-    if (descriptor !== undefined) {
-      try { fs.closeSync(descriptor); } catch {}
-    }
-  }
-}
-const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {credentialNames, credentialFiles, dockerSockets, files, bytes};
-process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(credentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
-`;
+const SECURITY_PROBE = buildPiSecurityProbe();
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
 fetch("https://example.com/").then(() => {

@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  buildPiSecurityProbe,
   derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
@@ -46,6 +52,51 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
+  it("fails closed when the credential scan reaches a file limit", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-security-probe-"));
+    try {
+      fs.writeFileSync(path.join(root, "a.txt"), "public");
+      fs.writeFileSync(path.join(root, "b.txt"), "public");
+      const result = spawnSync(
+        process.execPath,
+        ["-e", buildPiSecurityProbe({ root, maxFiles: 1, dockerSocketPaths: [] })],
+        {
+          encoding: "utf8",
+          env: {},
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ files: 1, scanComplete: false });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports credential-file absence only after a complete scan", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-security-probe-"));
+    try {
+      fs.writeFileSync(path.join(root, "public.txt"), "public");
+      const result = spawnSync(
+        process.execPath,
+        ["-e", buildPiSecurityProbe({ root, dockerSocketPaths: [] })],
+        {
+          encoding: "utf8",
+          env: {},
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        credentialFiles: [],
+        credentialNames: [],
+        scanComplete: true,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("derives source parity paths from Dockerfile inputs", () => {
     expect(
       derivePiImageSourcePaths([

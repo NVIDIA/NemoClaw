@@ -16,6 +16,67 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 type JsonRecord = Record<string, unknown>;
 
+export function buildPiSecurityProbe({
+  root = "/sandbox",
+  maxFiles = 10_000,
+  maxBytes = 32 * 1024 * 1024,
+  dockerSocketPaths = ["/var/run/docker.sock", "/run/docker.sock"],
+}: {
+  root?: string;
+  maxFiles?: number;
+  maxBytes?: number;
+  dockerSocketPaths?: readonly string[];
+} = {}): string {
+  return String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const credentialName = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|ACCESS_?TOKEN|REFRESH_?TOKEN|CLIENT_?SECRET|PASSWORD|CREDENTIAL)(?:$|_)/i;
+const credentialNames = Object.keys(process.env).filter((name) => credentialName.test(name));
+const stack = [${JSON.stringify(root)}];
+const credentialFiles = [];
+let bytes = 0;
+let files = 0;
+while (stack.length > 0 && files < ${String(maxFiles)} && bytes < ${String(maxBytes)}) {
+  const current = stack.pop();
+  let status;
+  try {
+    status = fs.lstatSync(current);
+  } catch {
+    continue;
+  }
+  if (status.isSymbolicLink()) continue;
+  if (status.isDirectory()) {
+    try {
+      for (const entry of fs.readdirSync(current)) stack.push(path.join(current, entry));
+    } catch {}
+    continue;
+  }
+  if (!status.isFile() || status.size > 1024 * 1024) continue;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const openStatus = fs.fstatSync(descriptor);
+    if (!openStatus.isFile() || openStatus.size > 1024 * 1024) continue;
+    const contents = fs.readFileSync(descriptor, "utf8");
+    files += 1;
+    bytes += Buffer.byteLength(contents);
+    if (/nvapi-[A-Za-z0-9_-]{10,}/.test(contents)) credentialFiles.push(current);
+  } catch {
+    continue;
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+  }
+}
+const scanComplete = stack.length === 0;
+const dockerSockets = ${JSON.stringify(dockerSocketPaths)}.filter((candidate) => fs.existsSync(candidate));
+const result = {credentialNames, credentialFiles, dockerSockets, files, bytes, scanComplete};
+process.stdout.write(JSON.stringify(result) + "\n");
+process.exit(scanComplete && credentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+`;
+}
+
 export interface PiReadTaskProof {
   readonly assistantText: string;
   readonly eventCount: number;
