@@ -44,19 +44,16 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 export const WARMUP_TIMEOUT_MS = 30_000;
 export const WARMUP_PROBE_TIMEOUT_S = 5;
 
-// Best-effort in-sandbox request producer. Always exits 0. Use the stored CLI
-// device credential for the direct `sessions.create` call. Shared gateway
-// overrides would authorize the owner instead of publishing the device's scope
-// request. Finalization's canonical observer owns pairing-state polling.
-// OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so force
-// device pairing only on this command.
+// Best-effort in-sandbox request producer. Always exits 0. Keep the trusted
+// gateway credential for the initial request, before a CLI device credential
+// exists. OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so
+// force device pairing only on this command. Finalization's canonical observer
+// owns pairing-state polling.
 export const WARMUP_SCRIPT = `
 ${buildTrustedProxyEnvSourceShell()}
 command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \\
-  OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \\
-  NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
+unset OPENCLAW_GATEWAY_URL NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
   NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || exit 0
 session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"

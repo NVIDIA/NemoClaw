@@ -223,7 +223,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     20_000,
   );
 
-  itWithSh("uses device auth after consuming the trusted proxy environment (#10014)", () => {
+  itWithSh("keeps trusted gateway auth for initial device pairing (#10014)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-producer-"));
     const binDir = path.join(fixtureRoot, "bin");
     const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
@@ -284,7 +284,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(sourceLog, "utf8")).toBe("consumed\n");
       expect(fs.readFileSync(callLog, "utf8")).toMatch(
-        /^url=unset\nport=unset\ntoken=unset\npassword=unset\nforce=1\nrestored=unset\nsettlement=unset\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
+        /^url=unset\nport=18789\ntoken=shared-token\npassword=shared-password\nforce=1\nrestored=unset\nsettlement=unset\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
       );
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

@@ -329,7 +329,7 @@ test("openshell-credential-generation-window", {
       "attach the MCP provider and observe its initial generation",
       "prove a retained credential generation expires",
       "rotate beyond the retained generation window",
-      "prove key removal and provider detach revoke access",
+      "prove key removal and provider teardown revoke access",
       "restart the bridge and confirm old-process fallback",
       "rebuild the sandbox and confirm credential reuse",
       "remove the MCP bridge and audit denied requests",
@@ -433,7 +433,12 @@ test("openshell-credential-generation-window", {
     timeoutMs: 60_000,
   });
   expectExitZero(status, "inspect credential-window MCP bridge");
-  const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider.name;
+  const bridgeStatus = JSON.parse(status.stdout) as {
+    policy: { name: string };
+    provider: { name: string };
+  };
+  const providerName = bridgeStatus.provider.name;
+  const policyName = bridgeStatus.policy.name;
   expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
 
   const originalRevision = await observeFreshRevision(
@@ -677,7 +682,7 @@ test("openshell-credential-generation-window", {
       placeholderAbsent: true,
     });
 
-    progress.phase("prove key removal and provider detach revoke access");
+    progress.phase("prove key removal and provider teardown revoke access");
     await updateProviderCredential(
       sandbox,
       providerName,
@@ -735,6 +740,16 @@ test("openshell-credential-generation-window", {
       credentialRewritten: true,
       placeholderAbsent: true,
     });
+
+    const removeBinding = await host.nemoclaw(
+      [SANDBOX_NAME, "policy", "remove", policyName, "--yes"],
+      {
+        artifactName: "credential-window-remove-binding-before-provider-detach",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 90_000,
+      },
+    );
+    expectExitZero(removeBinding, "remove credential-window binding");
 
     const detach = await sandbox.openshell(
       ["sandbox", "provider", "detach", SANDBOX_NAME, providerName],

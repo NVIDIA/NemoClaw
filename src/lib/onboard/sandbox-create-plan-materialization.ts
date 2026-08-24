@@ -226,10 +226,14 @@ export function materializeSandboxCreatePlan({
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
+  const disabledChannelNames = new Set(intent.disabledChannelNames);
+  const activeMessagingChannels = intent.policy.activeMessagingChannels.filter(
+    (channel) => !disabledChannelNames.has(channel),
+  );
   const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
-    [...intent.policy.activeMessagingChannels],
+    activeMessagingChannels,
     {
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
@@ -277,7 +281,7 @@ export function materializeSandboxCreatePlan({
       ]),
     ],
     providerChannels,
-    new Set(intent.disabledChannelNames),
+    disabledChannelNames,
   );
   const createProviders = new Set<string>();
   if (intent.inferenceProvider) createProviders.add(intent.inferenceProvider);
@@ -291,7 +295,7 @@ export function materializeSandboxCreatePlan({
   }
 
   return {
-    activeMessagingChannels: [...intent.activeMessagingChannels],
+    activeMessagingChannels,
     initialSandboxPolicy,
     policyTier: intent.policy.options.policyTier,
     createArgs,
