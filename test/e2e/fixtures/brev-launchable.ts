@@ -47,6 +47,7 @@ export interface BrevWorkspaceOwnership {
 export interface BrevLaunchableFixtureOptions {
   artifacts: ArtifactSink;
   host: HostCliClient;
+  ownershipFile?: string;
   pollMs?: number;
   secrets: SecretStore;
 }
@@ -69,6 +70,7 @@ export class BrevLaunchableFixture {
   private readonly artifacts: ArtifactSink;
   private readonly home: string;
   private readonly host: HostCliClient;
+  private readonly ownershipFile?: string;
   private readonly secrets: SecretStore;
   private readonly pollMs: number;
 
@@ -78,6 +80,7 @@ export class BrevLaunchableFixture {
     this.artifacts = options.artifacts;
     this.home = home;
     this.host = options.host;
+    this.ownershipFile = options.ownershipFile ?? process.env.BREV_WORKSPACE_OWNERSHIP_FILE;
     this.secrets = options.secrets;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   }
@@ -166,6 +169,7 @@ export class BrevLaunchableFixture {
     const existing = await this.workspace(name);
     if (existing) throw new Error(`Brev workspace already exists: ${name}`);
     ownership.createRequested = true;
+    this.persistOwnership(ownership);
     const create = await this.brevCommand(
       ["create", name, "--launchable", launchableId, "--detached", "--timeout", "900"],
       {
@@ -175,6 +179,7 @@ export class BrevLaunchableFixture {
     );
     expectExitZero(create, "create staging Brev workspace");
     ownership.accepted = true;
+    this.persistOwnership(ownership);
     const workspace = await this.waitForWorkspace(
       ownership,
       DEFAULT_BREV_WORKSPACE_READY_TIMEOUT_MS,
@@ -262,6 +267,7 @@ export class BrevLaunchableFixture {
       const reconciled = await this.reconcileCreatedWorkspace(ownership, deadline);
       if (!reconciled) {
         await this.recordWorkspaceAbsent(name, "");
+        this.removeOwnershipFile();
         return;
       }
     }
@@ -284,6 +290,7 @@ export class BrevLaunchableFixture {
       absent = record ? 0 : absent + 1;
       if (absent >= 2) {
         await this.recordWorkspaceAbsent(name, workspaceId ?? "");
+        this.removeOwnershipFile();
         return;
       }
       await this.brevCommand(["refresh"], {
@@ -316,6 +323,7 @@ export class BrevLaunchableFixture {
             throw new Error(`Brev workspace identity is missing during cleanup: ${name}`);
           }
           ownership.id = record.id;
+          this.persistOwnership(ownership);
           return record;
         }
         absent += 1;
@@ -340,6 +348,19 @@ export class BrevLaunchableFixture {
     throw new Error(`Brev workspace identity reconciliation did not confirm absence: ${name}`);
   }
 
+  private persistOwnership(ownership: BrevWorkspaceOwnership): void {
+    if (!this.ownershipFile) return;
+    const directory = path.dirname(this.ownershipFile);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const temporary = `${this.ownershipFile}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(ownership)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, this.ownershipFile);
+  }
+
+  private removeOwnershipFile(): void {
+    if (this.ownershipFile) fs.rmSync(this.ownershipFile, { force: true });
+  }
+
   private recordWorkspaceAbsent(name: string, id: string): Promise<string> {
     return this.artifacts.writeJson("brev-workspace-cleanup.json", {
       workspaceName: name,
@@ -360,7 +381,10 @@ export class BrevLaunchableFixture {
         if (ownership.id && record.id !== ownership.id) {
           throw new Error(`Brev workspace identity changed during readiness: ${name}`);
         }
-        ownership.id ??= record.id;
+        if (!ownership.id) {
+          ownership.id = record.id;
+          this.persistOwnership(ownership);
+        }
       }
       if (
         record?.status === "RUNNING" &&
