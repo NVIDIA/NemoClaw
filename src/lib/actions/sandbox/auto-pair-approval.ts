@@ -1252,7 +1252,10 @@ import time
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 EXPECTED_IDENTITY = os.environ.get('NEMOCLAW_EXPECTED_DEVICE_IDENTITY_SHA256', '')
 REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
-REQUEST_SCOPES = {'operator.pairing', 'operator.write'}
+REQUEST_SCOPE_SHAPES = {
+    frozenset({'operator.write'}),
+    frozenset({'operator.pairing', 'operator.write'}),
+}
 
 try:
     policy_source = base64.b64decode(
@@ -1324,9 +1327,9 @@ if (
     or request.get('roles') != ['operator']
     or not isinstance(scopes, list)
     or len(scopes) != len(set(scopes))
-    or set(scopes) != REQUEST_SCOPES
+    or frozenset(scopes) not in REQUEST_SCOPE_SHAPES
     or 'requestedScopes' in request
-    or type(request.get('isRepair')) is not bool
+    or request.get('isRepair') is not True
     or not isinstance(decision, dict)
     or decision.get('allowed') is not True
 ):
