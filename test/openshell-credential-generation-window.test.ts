@@ -104,7 +104,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain('["nemoclaw-start", "node", "-e"');
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry");
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval");
-    expect(liveTarget).toContain('["sandbox", "provider", "detach"');
+    expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "remove", SERVER_NAME, "--force"]');
     expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "restart", SERVER_NAME]');
     expect(liveTarget).toContain('[SANDBOX_NAME, "rebuild", "--yes"]');
     expect(liveTarget).toContain('!request.auth.includes("openshell:resolve:env")');

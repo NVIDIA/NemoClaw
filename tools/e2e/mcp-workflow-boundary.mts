@@ -25,6 +25,8 @@ const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
 const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
+const DOCKER_EXACT_MAIN_PROOF_EXPRESSION =
+  "${{ matrix.runtime_provider == 'docker' && '1' || '0' }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
@@ -223,8 +225,8 @@ function validateJobIdentity(
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
-      "1",
-      "mcp-bridge must enable the exact stable release proof",
+      DOCKER_EXACT_MAIN_PROOF_EXPRESSION,
+      "mcp-bridge must enable the exact stable release proof only for its Docker rows",
     );
     requireEqual(
       errors,
