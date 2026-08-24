@@ -43,3 +43,33 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
   For more information, refer to [Configure Model Limits](/user-guide/deepagents/inference/manage-inference/configure-model-limits).
   Related changes: [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785) and [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867).
+- Ordinary Docker-driver onboarding for stock OpenClaw, Hermes, and LangChain Deep Agents Code now selects an immutable managed-image digest for the release and host architecture.
+  If registry or catalog availability prevents selection, NemoClaw can build the shipped reviewed Dockerfile; invalid or inconsistent managed-image evidence stops before sandbox creation.
+  Explicit `--from` Dockerfiles and Portable onboarding retain their separate paths.
+  For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart) and [Architecture Details](/user-guide/openclaw/reference/architecture).
+  Related change: [PR #9323](https://github.com/NVIDIA/NemoClaw/pull/9323).
+- Managed single-host vLLM onboarding can select the host GPU by index or full NVIDIA GPU UUID with `--vllm-gpu-device`.
+  The selection is independent of sandbox GPU access, controls Docker placement and GPU preflight checks, and persists across resume.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related change: [PR #10025](https://github.com/NVIDIA/NemoClaw/pull/10025).
+- Static messaging credentials now use validated endpointless OpenShell provider profiles across onboarding and channel lifecycle operations.
+  Paused detailed channel status keeps its schema-version-1 `report` envelope, skips the live probe, and returns an informational success.
+  Channel start defers credential-bound policy activation until rebuild attaches the required provider; stopped Hermes Discord retains only its exact validated static provider without starting the channel or recreating credentials.
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related changes: [PR #9913](https://github.com/NVIDIA/NemoClaw/pull/9913), [PR #10021](https://github.com/NVIDIA/NemoClaw/pull/10021), [PR #10026](https://github.com/NVIDIA/NemoClaw/pull/10026), [PR #10047](https://github.com/NVIDIA/NemoClaw/pull/10047), and [PR #10052](https://github.com/NVIDIA/NemoClaw/pull/10052).
+- Deep Agents Code progressive disclosure now derives loaded MCP tools from the pinned executable catalog and rejects duplicate loaded implementations.
+  Tools discovered after startup become searchable only after the runtime loads them.
+  For more information, refer to [Configure Progressive Tool Disclosure](/user-guide/deepagents/configure-agents/progressive-tool-disclosure).
+  Related change: [PR #10031](https://github.com/NVIDIA/NemoClaw/pull/10031).
+- Portable lifecycle recovery now reports one credential-free timing line with fixed stage durations, selected actions, attempt counts, result, and failed stage.
+  OpenClaw onboarding produces a missing canonical local CLI write-scope request before final observation, while Portable settlement recognizes the same exact request when it is already pending and avoids creating a duplicate.
+  Both paths approve at most once and require strict same-device settled state before completion.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related changes: [PR #9964](https://github.com/NVIDIA/NemoClaw/pull/9964), [PR #10018](https://github.com/NVIDIA/NemoClaw/pull/10018), and [PR #10022](https://github.com/NVIDIA/NemoClaw/pull/10022).
+- The maintained `nemoclaw update` installer request and every redirect now require HTTPS.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related change: [PR #9862](https://github.com/NVIDIA/NemoClaw/pull/9862).
+- Legacy GPU sandbox recovery now corroborates final replacement handoff with the transaction-owned full container ID instead of stale sandbox-name metadata.
+  This prevents a healthy replacement from waiting through the full handoff deadline when legacy metadata differs.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+  Related change: [PR #10053](https://github.com/NVIDIA/NemoClaw/pull/10053).

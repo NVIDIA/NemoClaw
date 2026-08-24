@@ -203,7 +203,7 @@ The concrete files differ by agent because each runtime has its own plugin syste
 | OpenClaw | `nemoclaw/openclaw.plugin.json`, `nemoclaw/src/runtime-context.ts`, and the TypeScript package under `nemoclaw/src/` | Registers the `/nemoclaw` slash command, adds the NemoClaw inference provider, and injects sandbox and policy context into OpenClaw turns. |
 </AgentOnly>
 <AgentOnly variant="hermes">
-| Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/plugin/plugin.yaml`, `agents/hermes/generate-config.ts`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, installs the NemoClaw Hermes plugin, writes `/sandbox/.hermes/config.yaml` and `/sandbox/.hermes/.env`, and launches `hermes gateway run` behind the OpenShell proxy. |
+| Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/runtime-config-guard.py`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, materializes and guards managed runtime configuration during startup, and launches `hermes gateway run` behind the OpenShell proxy. |
 </AgentOnly>
 <AgentOnly variant="deepagents">
 | Deep Agents | `agents/langchain-deepagents-code/manifest.yaml`, `agents/langchain-deepagents-code/generate-config.ts`, `agents/langchain-deepagents-code/start.sh`, and the managed `dcode` launchers | Declares the terminal agent contract, writes `/sandbox/.deepagents/config.toml`, installs managed wrappers for `dcode` and `dcode -n`, and routes inference through `inference.local`. |
@@ -225,7 +225,8 @@ The context tells the agent to try allowed network and filesystem operations bef
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
 The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
 Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
-The configuration generator turns NemoClaw onboarding choices into Hermes YAML and environment files, and the Hermes plugin manifest exposes NemoClaw tools and an `on_session_start` hook.
+Managed startup materializes Hermes YAML and environment state from the recorded onboarding choices.
+The runtime configuration guard validates that state before the supervised Hermes gateway starts.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 The Deep Agents integration follows the generic agent-manifest path for terminal runtimes.
