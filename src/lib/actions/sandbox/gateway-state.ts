@@ -608,7 +608,7 @@ export function printSandboxGatewayStateHint(
       if (lookup.transportReason === "identity_mismatch") {
         writer("  This looks like gateway identity drift after restart.");
         writer(
-          "  Existing sandboxes may still be recorded locally, but the current gateway no longer trusts their prior connection state.",
+          "  Existing sandboxes may still be recorded locally, but the selected gateway identity no longer matches the identity recorded before restart.",
         );
         writer(
           `  Re-establish the ${CLI_DISPLAY_NAME} gateway runtime first. If the sandbox stays unreachable, recreate only that sandbox with \`${CLI_NAME} onboard\`.`,
