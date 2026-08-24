@@ -14,7 +14,7 @@ The test directory uses execution lanes first and behavior areas second.
 | `e2e/support/` | `e2e-support` | Deterministic tests for E2E fixtures and support code |
 | `e2e/live/` | `e2e-live` | Opt-in tests that mutate external state |
 
-Other `*.test.js` and `*.test.ts` files under `test/` belong to the `integration` project.
+Other `*.test.js` and `*.test.ts` files outside `test/e2e/` belong to the `integration` project.
 The project globs in `vitest.config.ts` must remain disjoint and exhaustive.
 
 ## Shared test code
