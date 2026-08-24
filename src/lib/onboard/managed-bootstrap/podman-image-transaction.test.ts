@@ -120,6 +120,7 @@ function preparedReplacement(
 
 interface HarnessOptions {
   readonly bootstrapLog?: string;
+  readonly bootstrapStartLog?: string;
   readonly completionAgent?: ManagedStartupAgent;
   readonly completionMissingAfterSuccessfulCopyCount?: number;
   readonly completionMode?: number;
@@ -220,7 +221,24 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   const copy = (args: readonly string[], input?: Buffer): ContainerEngineCommandResult => {
     const source = args[2] as string;
     const destination = args[3] as string;
-    return source.startsWith(`${RUNTIME_ID}:`) ? copyCompletion(destination) : stageEnvelope(input);
+    const publishStartLog = (): ContainerEngineCommandResult =>
+      options.bootstrapStartLog === undefined
+        ? result({ status: 1, stderr: "start log unavailable" })
+        : (() => {
+            fs.writeFileSync(destination, options.bootstrapStartLog, {
+              flag: "wx",
+              mode: 0o600,
+            });
+            return result();
+          })();
+    const copiedSource = new Map<string, () => ContainerEngineCommandResult>([
+      [
+        `${RUNTIME_ID}:/run/nemoclaw/managed-bootstrap-completion.json`,
+        () => copyCompletion(destination),
+      ],
+      [`${RUNTIME_ID}:/tmp/nemoclaw-start.log`, publishStartLog],
+    ]).get(source);
+    return copiedSource?.() ?? stageEnvelope(input);
   };
   const handlers: Readonly<
     Record<string, (args: readonly string[], input?: Buffer) => ContainerEngineCommandResult>
@@ -524,6 +542,26 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
       "not stably running (status exited; exit 1; oom false; bootstrap [SECURITY] Runtime state mutation startup gate failed.)",
     );
+  });
+
+  it("reports a bounded startup refusal from the protected temp-file copy fallback", () => {
+    const fake = harness("hermes", {
+      bootstrapLog: "",
+      bootstrapStartLog: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.\n",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap [SECURITY] Required entrypoint env-wrapper normalizer is missing.)",
+    );
+    expect(fake.commands).toContainEqual([
+      "container",
+      "cp",
+      `${RUNTIME_ID}:/tmp/nemoclaw-start.log`,
+      expect.any(String),
+    ]);
   });
 
   it("does not surface non-bootstrap container output in a replacement failure", () => {

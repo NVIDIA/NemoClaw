@@ -33,6 +33,9 @@ import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 export const PODMAN_BOOTSTRAP_IMAGE_TRANSACTION_SCHEMA_VERSION = 1 as const;
 
 const COMPLETION_TEMP_PREFIX = "nemoclaw-podman-bootstrap-completion";
+const START_LOG_TEMP_PREFIX = "nemoclaw-podman-bootstrap-start-log";
+const START_LOG_PATH = "/tmp/nemoclaw-start.log";
+const START_LOG_MAX_BYTES = 64 * 1024;
 const FULL_RUNTIME_ID = /^[a-f0-9]{64}$/u;
 const IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -402,6 +405,40 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
   );
 }
 
+function safeBootstrapFailureLine(output: string): string | null {
+  const allowed = output
+    .split(/\r?\n/u)
+    .filter((line) =>
+      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}|\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(line),
+    );
+  return allowed.at(-1) ?? null;
+}
+
+function boundedBootstrapStartLogFailure(
+  engine: BootstrapEngine,
+  runtimeId: string,
+): string | null {
+  const file = secureTempFile(START_LOG_TEMP_PREFIX, ".log");
+  try {
+    const copied = engine.capture(
+      ["container", "cp", `${runtimeId}:${START_LOG_PATH}`, file],
+      DEFAULT_COMMAND_TIMEOUT_MS,
+    );
+    if (copied.status !== 0 || copied.error || !fs.existsSync(file)) return null;
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > START_LOG_MAX_BYTES) {
+      return null;
+    }
+    const uid = process.getuid?.();
+    if (uid !== undefined && stat.uid !== uid) return null;
+    return safeBootstrapFailureLine(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  } finally {
+    cleanupTempDir(file, START_LOG_TEMP_PREFIX);
+  }
+}
+
 function boundedBootstrapSecurityFailure(
   engine: BootstrapEngine,
   runtimeId: string,
@@ -410,13 +447,11 @@ function boundedBootstrapSecurityFailure(
     ["container", "logs", "--tail", "80", runtimeId],
     DEFAULT_COMMAND_TIMEOUT_MS,
   );
-  if (result.status !== 0 || result.error) return null;
-  const allowed = `${result.stdout}\n${result.stderr}`
-    .split(/\r?\n/u)
-    .filter((line) =>
-      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}|\[SECURITY\] (?:Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(line),
-    );
-  return allowed.at(-1) ?? null;
+  const containerLogFailure =
+    result.status === 0 && !result.error
+      ? safeBootstrapFailureLine(`${result.stdout}\n${result.stderr}`)
+      : null;
+  return containerLogFailure ?? boundedBootstrapStartLogFailure(engine, runtimeId);
 }
 
 function inspectStable(

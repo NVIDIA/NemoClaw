@@ -175,7 +175,7 @@ class ControlError(RuntimeError):
 
 @contextmanager
 def _control_stage(stage: str) -> Iterator[None]:
-    """Attach one fixed lifecycle stage to health or supervisor loss."""
+    """Attach one fixed lifecycle stage to a managed-control failure."""
 
     if stage not in CONTROL_STAGES:
         raise AssertionError(f"unknown managed-control stage: {stage}")
@@ -183,11 +183,14 @@ def _control_stage(stage: str) -> Iterator[None]:
         yield
     except ControlError as error:
         if (
-            error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
+            error.code
+            in ("GATEWAY_FAILED", "GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
             and error.stage is None
         ):
             error.stage = stage
         raise
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ControlError("GATEWAY_FAILED", stage=stage) from error
 
 
 @dataclass(frozen=True)
@@ -2261,7 +2264,11 @@ def main(argv: list[str]) -> int:
         print(error.code, file=sys.stderr)
         if error.stage is not None:
             print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
-            if error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE"):
+            if error.code in (
+                "GATEWAY_FAILED",
+                "GATEWAY_HEALTH_TIMEOUT",
+                "SUPERVISOR_UNAVAILABLE",
+            ):
                 try:
                     diagnostics = _managed_failure_diagnostics()
                 except Exception:  # diagnostics must not hide the original failure
