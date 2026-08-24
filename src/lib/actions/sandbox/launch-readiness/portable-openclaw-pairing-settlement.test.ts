@@ -22,9 +22,10 @@ import {
 } from "../auto-pair-approval";
 import { settlePortableOpenClawPairing } from "../launch-readiness";
 import { buildTrustedProxyEnvSourceShell } from "../trusted-proxy-env";
-import type {
-  OpenClawPairingRepairObservation,
-  OpenClawPairingSettlementObservation,
+import {
+  OpenClawPairingObservationRetryableError,
+  type OpenClawPairingRepairObservation,
+  type OpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
 
 const AUTHORITY: CheckpointPortableRuntimeAuthority = {
@@ -76,12 +77,17 @@ function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairi
   }));
   const runProducer = vi.fn();
   const runApproval = vi.fn((): PortableOpenClawPairingApprovalReceipt => "approved");
+  let now = 0;
+  const sleep = vi.fn(async (milliseconds: number) => {
+    now += milliseconds;
+  });
   return {
     calls,
     observePairing,
     observeFinalPairing,
     runProducer,
     runApproval,
+    sleep,
     deps: {
       classifyPortableLifecycleReceipt: vi.fn(() => currentReceipt()),
       getSandbox: vi.fn(() => ENTRY),
@@ -91,6 +97,8 @@ function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairi
       observeOpenClawPairingSettlement: observeFinalPairing,
       runPortablePairingProducer: runProducer,
       runPortablePairingApproval: runApproval,
+      now: () => now,
+      sleep,
       withSandboxLock: vi.fn(async (_name, operation) => {
         calls.push("sandbox-lock");
         return operation();
@@ -377,10 +385,15 @@ describe("Portable OpenClaw pairing settlement", () => {
 
   it("repairs pairing-only state with one producer, one approval, and one final observation (#9207)", async () => {
     const scope = settlementDeps();
-    scope.observePairing.mockReturnValueOnce({
-      state: "pairing-only",
-      deviceIdentitySha256: "b".repeat(64),
-    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
     scope.observeFinalPairing.mockReturnValueOnce({
       state: "settled",
       deviceIdentitySha256: "b".repeat(64),
@@ -391,16 +404,80 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
     expect(scope.runProducer).toHaveBeenCalledOnce();
     expect(scope.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw", "b".repeat(64));
-    expect(scope.observePairing).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(2);
     expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the canonical Portable device to appear before producing one repair (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockImplementationOnce(() => {
+        throw new OpenClawPairingObservationRetryableError();
+      })
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValue({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.observePairing).toHaveBeenCalledTimes(3);
+    expect(scope.sleep).toHaveBeenCalledOnce();
+    expect(scope.runProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the approved Portable scopes to persist before strict settlement (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValue({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(3);
+    expect(scope.observeFinalPairing).toHaveBeenCalledTimes(2);
+    expect(scope.sleep).toHaveBeenCalledOnce();
   });
 
   it("approves one canonical pending transition without producing a second request (#9817)", async () => {
     const scope = settlementDeps();
-    scope.observePairing.mockReturnValueOnce({
-      state: "pairing-pending",
-      deviceIdentitySha256: "b".repeat(64),
-    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
     scope.observeFinalPairing.mockReturnValueOnce({
       state: "settled",
       deviceIdentitySha256: "b".repeat(64),
@@ -411,7 +488,7 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw", "b".repeat(64));
-    expect(scope.observePairing).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(2);
     expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
   });
 
@@ -436,10 +513,15 @@ describe("Portable OpenClaw pairing settlement", () => {
         }),
     );
     const scope = settlementDeps({ runPortablePairingApproval: runApproval });
-    scope.observePairing.mockReturnValueOnce({
-      state: "pairing-pending",
-      deviceIdentitySha256: fixture.identityDigest,
-    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: fixture.identityDigest,
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: fixture.identityDigest,
+      });
     scope.observeFinalPairing.mockReturnValueOnce({
       state: "settled",
       deviceIdentitySha256: fixture.identityDigest,
@@ -474,10 +556,15 @@ describe("Portable OpenClaw pairing settlement", () => {
 
   it("rejects a settled replacement identity after canonical approval (#9817)", async () => {
     const scope = settlementDeps();
-    scope.observePairing.mockReturnValueOnce({
-      state: "pairing-pending",
-      deviceIdentitySha256: "b".repeat(64),
-    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
     scope.observeFinalPairing.mockReturnValueOnce({
       state: "settled",
       deviceIdentitySha256: "d".repeat(64),
@@ -496,10 +583,15 @@ describe("Portable OpenClaw pairing settlement", () => {
     "does not retry a %s approval and reports incomplete after one re-observation (#9207)",
     async (receipt) => {
       const scope = settlementDeps();
-      scope.observePairing.mockReturnValue({
-        state: "pairing-only",
-        deviceIdentitySha256: "c".repeat(64),
-      });
+      scope.observePairing
+        .mockReturnValueOnce({
+          state: "pairing-only",
+          deviceIdentitySha256: "c".repeat(64),
+        })
+        .mockReturnValue({
+          state: "settled",
+          deviceIdentitySha256: "c".repeat(64),
+        });
       scope.observeFinalPairing.mockReturnValue({
         state: "pairing-only",
         deviceIdentitySha256: "c".repeat(64),
@@ -511,8 +603,8 @@ describe("Portable OpenClaw pairing settlement", () => {
         reason: "portable-pairing-incomplete",
       });
       expect(scope.runApproval).toHaveBeenCalledOnce();
-      expect(scope.observePairing).toHaveBeenCalledOnce();
-      expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+      expect(scope.observePairing).toHaveBeenCalledTimes(31);
+      expect(scope.observeFinalPairing).toHaveBeenCalledTimes(30);
     },
   );
 
