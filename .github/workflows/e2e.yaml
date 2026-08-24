@@ -137,7 +137,7 @@ jobs:
         if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 

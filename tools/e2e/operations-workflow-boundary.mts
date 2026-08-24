@@ -485,7 +485,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_OR_REUSE_CONDITION &&
-        step.with?.ref === "${{ inputs.checkout_sha || github.sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -622,7 +622,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ inputs.checkout_sha || github.sha }}",
+          ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
