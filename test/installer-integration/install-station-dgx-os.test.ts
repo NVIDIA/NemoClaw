@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
@@ -182,20 +182,19 @@ function writeOtaUpgradedRelease(
 }
 
 describe("DGX Station stock DGX OS classification", () => {
-  it.each([
-    "7.2.0",
-    "7.4.0",
-    "7.5.0",
-  ])("accepts the reviewed stock DGX OS %s marker as data", (version) => {
-    const release = writeDgxReleaseFixture(version);
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
-      { DGX_RELEASE: release },
-    );
+  it.each(["7.2.0", "7.4.0", "7.5.0"])(
+    "accepts the reviewed stock DGX OS %s marker as data",
+    (version) => {
+      const release = writeDgxReleaseFixture(version);
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-  });
+      expect(result.status, output).toBe(0);
+    },
+  );
 
   it.each([
     [
@@ -232,20 +231,23 @@ dgx_station_release_state "$DGX_RELEASE"
   it.each([
     ["7.6.0", "2026-07-14-13-59-06"],
     ["7.6.1", "2026-08-01-00-00-00"],
-  ])("classifies no-OTA stock DGX OS %s without binding its build date (#7417)", (version, buildDate) => {
-    const release = writeNoOtaDgxOs76Release({ version, buildDate });
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  ])(
+    "classifies no-OTA stock DGX OS %s without binding its build date (#7417)",
+    (version, buildDate) => {
+      const release = writeNoOtaDgxOs76Release({ version, buildDate });
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 stat() { printf '0|0|644|256\n'; }
 dgx_station_release_state "$DGX_RELEASE"
 `,
-      { DGX_RELEASE: release },
-    );
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("supported-dgx-os");
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout).toBe("supported-dgx-os");
+    },
+  );
 
   it.each([
     ["different lineage", writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Server" })],
@@ -599,10 +601,12 @@ check_platform
     "supported-dgx-os",
     "supported-colossus-baseos",
     "supported-ai-developer-tools",
-  ])("rejects explicit metadata intent for recognized %s before preparation (#7138)", (releaseState) => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  ])(
+    "rejects explicit metadata intent for recognized %s before preparation (#7138)",
+    (releaseState) => {
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
 printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
 uname() { printf 'aarch64\n'; }
@@ -614,15 +618,16 @@ FORCE_STATION_INSTALL=1
 check_platform
 printf 'PREPARATION_REACHED\n'
 `,
-      { RELEASE_STATE: releaseState },
-    );
+        { RELEASE_STATE: releaseState },
+      );
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toContain(
-      `This host is already supported (${releaseState}); omit --force-station-install`,
-    );
-    expect(output).not.toContain("PREPARATION_REACHED");
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain(
+        `This host is already supported (${releaseState}); omit --force-station-install`,
+      );
+      expect(output).not.toContain("PREPARATION_REACHED");
+    },
+  );
 
   it("keeps generic Ubuntu preparation unchanged without explicit metadata intent (#7138)", () => {
     const { result, output } = runSourced(

@@ -173,20 +173,13 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("uses the trusted Dockerfile when the stock managed-image catalog is unavailable", async () => {
+  it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
       { stockManagedRuntime: true, unavailableCatalog: true },
     );
 
-    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
-      source: {
-        kind: "legacy-dockerfile",
-        dockerfilePath: "agents/openclaw/Dockerfile",
-        reason: "contract-unavailable",
-      },
-      fallbackDiagnostic: expect.stringContaining("registry offline"),
-    });
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
   });
 
   it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
