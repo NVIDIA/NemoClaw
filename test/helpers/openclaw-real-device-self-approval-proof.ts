@@ -1634,7 +1634,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     requireLiveProof(
       portableRepairObservation.state === "pairing-pending" &&
         portableRepairObservation.deviceIdentitySha256 ===
-          pairingOnlyObservation.deviceIdentitySha256,
+          pendingUpgradeObservation.deviceIdentitySha256,
       "Portable repair observation did not preserve the canonical pending transition",
     );
     const pendingBeforeOrdinaryApproval = fs.readFileSync(pendingPath, "utf8");
