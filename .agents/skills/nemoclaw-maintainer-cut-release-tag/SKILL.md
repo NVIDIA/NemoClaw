@@ -27,7 +27,10 @@ Treat these as separate states:
 
 - Use the exact requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
 - Tag only the candidate captured in the plan.
-- Require the release entry. It cannot be waived.
+- By default, plan `origin/main` without an exception. For urgent QA qualification, a maintainer may
+  select an exact historical ancestor with `--candidate <full-sha> --exception <reason>`.
+- Require the release entry for a current-main plan. A historical plan records its explicit
+  release-entry exception in the signed release brief.
 - Treat documentation coverage as maintainer context, not a tag gate. Show the exact coverage point,
   later commits and PRs, review and check state, changed paths, and open managed docs PRs.
 - Record the maintainer's documentation decision in the signed release brief.
@@ -66,11 +69,22 @@ Release tag:
 
 ### 1. Generate the Plan and Brief Template
 
-Run:
+Run the default current-main plan:
 
 ```bash
 npm run release:plan -- --version vX.Y.Z
 ```
+
+For an accepted urgent QA qualification, run:
+
+```bash
+npm run release:plan -- --version vX.Y.Z \
+  --candidate <full-lowercase-40-sha> \
+  --exception "<plain-language reason>"
+```
+
+Do not pass `--exception` without a historical candidate. Do not select current `origin/main` with an
+exception.
 
 The script writes `../nemoclaw-release-vX.Y.Z/plan.json`. Show the maintainer:
 
@@ -84,7 +98,8 @@ After later reads of remote state, keep this candidate when all of these remain 
 
 - the candidate is still an ancestor of `origin/main`;
 - the previous release tag still peels to the commit recorded in the plan;
-- the candidate's release entry remains valid; and
+- the candidate's release entry remains valid, or the historical plan retains its explicit
+  release-entry exception; and
 - the candidate's own required evidence remains valid.
 
 New commits on `main` do not invalidate that plan. A managed documentation PR or branch for a later
@@ -155,14 +170,15 @@ and no requested run remains unresolved. Otherwise, ask for and record one conci
 reason. The reason must say what differs or remains unresolved and why the maintainer is proceeding.
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
-This exception applies only to E2E. It never replaces the release entry, documentation coverage
-decision, or required image evidence.
+This exception applies only to E2E. It never replaces the current-main release entry, a historical
+plan's release-entry exception, the documentation coverage decision, or required image evidence.
 
 ### 4. Finish and Review the Release Brief
 
 Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 
-- the complete canonical release entry and its repository path;
+- the complete canonical release entry and its repository path for a current-main plan, or the
+  plan-bound historical release-entry exception;
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
 - exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
@@ -244,8 +260,9 @@ Keep the semver tag immutable.
 
 ## Recovery
 
-- Missing release entry: finish the candidate's documentation work and generate a new plan for the
-  resulting commit. Do not bypass the release entry.
+- Missing release entry in a current-main plan: finish the candidate's documentation work and
+  generate a new plan for the resulting commit. A historical plan uses only its plan-bound explicit
+  exception.
 - Documentation coverage shows a gap, failed checks, unapproved changes, unsupported paths, or an
   open managed docs PR: show that state. Let the maintainer proceed, create or update a docs PR, or
   stop. If documentation work changes the candidate, generate a new plan.

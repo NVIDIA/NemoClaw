@@ -353,9 +353,23 @@ JSON
     _doc_flags="$(
       printf '%s\n' "$_section" \
         | LC_ALL=C perl -CS -ne '
-            if (/^```/) { $in_fence = !$in_fence; next; }
+            sub emit_flags {
+              my ($line) = @_;
+              while ($line =~ /--([a-z][a-z0-9-]+)/g) { print "--$1\n"; }
+            }
+
+            if (/^```/) {
+              $in_fence = !$in_fence;
+              $in_nemoclaw_command = 0;
+              next;
+            }
             if ($in_fence) {
-              while (/--([a-z][a-z0-9-]+)/g) { print "--$1\n"; }
+              # Ignore flags belonging to shell tools shown alongside the
+              # CLI, while preserving flags on multiline NemoClaw examples.
+              if ($in_nemoclaw_command || /(?:^|\s)(?:\$\$)?nemoclaw(?:\s|$)/) {
+                emit_flags($_);
+                $in_nemoclaw_command = /\\\s*$/ ? 1 : 0;
+              }
             } else {
               while (/`--([a-z][a-z0-9-]+)/g) { print "--$1\n"; }
             }
