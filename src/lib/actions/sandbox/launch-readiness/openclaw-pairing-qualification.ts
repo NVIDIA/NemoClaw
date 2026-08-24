@@ -162,7 +162,14 @@ export function parseOpenClawPairingSettlementObservation(
   output: string,
 ): OpenClawPairingSettlementObservation | null {
   const record = parseOpenClawPairingSettlementRecord(output);
-  if (!record || (record.state !== "pairing-only" && record.state !== "settled")) return null;
+  if (
+    !record ||
+    (record.state !== "pairing-only" &&
+      record.state !== "scope-upgrade-pending" &&
+      record.state !== "settled")
+  ) {
+    return null;
+  }
   return record as OpenClawPairingSettlementObservation;
 }
 
@@ -713,11 +720,7 @@ function runOpenClawPairingObservation(
       timeout: OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
     },
   );
-  if (
-    !result.error &&
-    !result.signal &&
-    result.status === RETRYABLE_OBSERVATION_EXIT_STATUS
-  ) {
+  if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
     throw new OpenClawPairingObservationRetryableError();
   }
   if (result.error || result.signal || result.status !== 0) {

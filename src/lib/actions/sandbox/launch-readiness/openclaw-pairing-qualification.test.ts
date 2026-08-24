@@ -402,9 +402,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     it("classifies a canonical state file that is not visible yet as retryable (#9817)", () => {
       fs.rmSync(path.join(stateDirectory, "devices", "pending.json"));
 
-      expect(() => observeRepairSettlement()).toThrow(
-        OpenClawPairingObservationRetryableError,
-      );
+      expect(() => observeRepairSettlement()).toThrow(OpenClawPairingObservationRetryableError);
     });
 
     it("keeps unrelated pending requests terminal instead of retrying them (#9817)", () => {
@@ -445,7 +443,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       });
 
       expect(observeOrdinarySettlement()).toEqual({
-        state: "pairing-only",
+        state: "scope-upgrade-pending",
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(() => observeRepairSettlement()).toThrow(
