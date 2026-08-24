@@ -149,7 +149,7 @@ info "4b. Verify blueprint runner apply smoke test"
 # response is intentionally rejected by the runner.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
-APPLY_CALLS=$(mktemp)
+APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
   rm -rf "$FAKE_OPENSHELL_BIN"
   rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
@@ -166,7 +166,7 @@ if [ "${1:-} ${2:-}" = "policy list" ]; then
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "policy get" ]; then
-  printf '%s\n' "$*" >>"$NEMOCLAW_E2E_OPENSHELL_CALLS"
+  printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
@@ -189,7 +189,7 @@ case "$*" in
 esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
-PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint NEMOCLAW_E2E_OPENSHELL_CALLS="$APPLY_CALLS" node --input-type=module -e "
+PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"
