@@ -135,7 +135,6 @@ function hasPreservedManagedMcpRebuildHandoff(
 ): boolean {
   return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
 }
-
 type ApplyRecreatePolicyCarryForward = (
   sandboxName: string,
   nonInteractive: boolean,
