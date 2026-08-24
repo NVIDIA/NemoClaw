@@ -4,7 +4,10 @@
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
 import {
+  ADVISOR_INTERESTS,
   ADVISOR_SPECIALISTS,
+  parseAdvisorInterest,
+  readAdvisorSpecialists,
   type AdvisorInterest,
   type AdvisorSpecialist,
 } from "./specialist-catalog.mts";
@@ -17,7 +20,7 @@ export {
   readAdvisorSpecialists,
   type AdvisorInterest,
   type AdvisorSpecialist,
-} from "./specialist-catalog.mts";
+};
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);

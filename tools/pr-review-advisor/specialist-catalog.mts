@@ -66,6 +66,7 @@ export function readAdvisorSpecialists(
       const [heading, ...promptLines] = markdown.split("\n");
       const label = heading?.startsWith("# ") ? heading.slice(2).trim() : specialistLabel(interest);
       const prompt = heading?.startsWith("# ") ? promptLines.join("\n").trim() : markdown;
+      if (!label) throw new Error(`Specialist label is empty: ${interest}`);
       if (!prompt) throw new Error(`Specialist prompt is empty: ${interest}`);
       return {
         interest,

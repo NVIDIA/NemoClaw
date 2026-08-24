@@ -114,6 +114,39 @@ describe("PR review advisor specialist prompts", () => {
     );
   });
 
+  it("renders the workflow matrix without installed packages", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-renderer-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    expect(() =>
+      execFileSync(process.execPath, ["--eval", "import('@earendil-works/pi-coding-agent')"], {
+        cwd: directory,
+        stdio: "ignore",
+      }),
+    ).toThrow();
+    const sourceDirectory = path.join(process.cwd(), "tools/pr-review-advisor");
+    fs.copyFileSync(
+      path.join(sourceDirectory, "render-specialist-matrix.mts"),
+      path.join(directory, "render-specialist-matrix.mts"),
+    );
+    fs.copyFileSync(
+      path.join(sourceDirectory, "specialist-catalog.mts"),
+      path.join(directory, "specialist-catalog.mts"),
+    );
+    fs.cpSync(path.join(sourceDirectory, "specialists"), path.join(directory, "specialists"), {
+      recursive: true,
+    });
+
+    const output = execFileSync(
+      process.execPath,
+      ["--experimental-strip-types", "render-specialist-matrix.mts"],
+      { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
+    );
+    const matrix = JSON.parse(output) as Array<{ interest: string; sandbox_name: string }>;
+
+    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
+    expect(matrix.every(({ sandbox_name: sandboxName }) => sandboxName.length <= 19)).toBe(true);
+  });
+
   it("discovers a specialist from one Markdown prompt file", () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-prompts-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
