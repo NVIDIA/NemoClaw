@@ -184,7 +184,7 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("uses the pinned registry catalog release when candidate and image revisions differ (#8142)", async () => {
+  it("uses the catalog release when the requested release differs and the pinned revision matches (#8142)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 
     const prepared = await prepareSandboxWorkloadSource(
