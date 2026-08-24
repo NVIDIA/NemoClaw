@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   RESTORED_CLONE_WARMUP_SCRIPT,
+  sandboxWarmupExecArgs,
   WARMUP_PROBE_TIMEOUT_S,
   WARMUP_SCRIPT,
   WARMUP_TIMEOUT_MS,
@@ -53,11 +54,23 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
 });
 
 describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {
-  it("keeps the real warm-up as one multiline command argument", () => {
+  it("keeps the real warm-up as one multiline command on the owning gateway (#10014)", () => {
     expect(WARMUP_SCRIPT).toContain("\n");
     expect(WARMUP_SCRIPT).toContain("command -v openclaw");
     expect(WARMUP_SCRIPT).not.toContain("base64 -d");
     expect(WARMUP_SCRIPT).not.toContain("mktemp");
+    expect(sandboxWarmupExecArgs("alpha", "nemoclaw-19000", WARMUP_SCRIPT)).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "nemoclaw-19000",
+      "--",
+      "sh",
+      "-c",
+      WARMUP_SCRIPT,
+    ]);
   });
 
   itWithSh("runs a multiline warm-up-shaped payload and preserves its exit-0 status", () => {

@@ -182,7 +182,21 @@ NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
 exit 0
 `;
 
-function runSandboxWarmupScript(sandboxName: string, script: string): void {
+export function sandboxWarmupExecArgs(
+  sandboxName: string,
+  gatewayName: string | undefined,
+  script: string,
+): string[] {
+  const target = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) target.push("-g", gatewayName);
+  return [...target, "--", "sh", "-c", script];
+}
+
+function runSandboxWarmupScript(
+  sandboxName: string,
+  gatewayName: string | undefined,
+  script: string,
+): void {
   // Lazy require: `adapters/openshell/resolve` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
@@ -197,7 +211,7 @@ function runSandboxWarmupScript(sandboxName: string, script: string): void {
     if (!openshellBinary) return;
     spawnSync(
       openshellBinary,
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+      sandboxWarmupExecArgs(sandboxName, gatewayName, script),
       {
         cwd: ROOT,
         env: process.env,
@@ -216,8 +230,8 @@ function runSandboxWarmupScript(sandboxName: string, script: string): void {
  * missing openclaw, gateway unreachable) are swallowed. The finalization
  * settlement gate decides readiness from a later canonical observation.
  */
-export function runSandboxScopeWarmupRun(sandboxName: string): void {
-  runSandboxWarmupScript(sandboxName, WARMUP_SCRIPT);
+export function runSandboxScopeWarmupRun(sandboxName: string, gatewayName: string): void {
+  runSandboxWarmupScript(sandboxName, gatewayName, WARMUP_SCRIPT);
 }
 
 /**
@@ -225,5 +239,5 @@ export function runSandboxScopeWarmupRun(sandboxName: string): void {
  * embedded fallback. Failures remain non-blocking.
  */
 export function runRestoredSandboxScopeWarmupRun(sandboxName: string): void {
-  runSandboxWarmupScript(sandboxName, RESTORED_CLONE_WARMUP_SCRIPT);
+  runSandboxWarmupScript(sandboxName, undefined, RESTORED_CLONE_WARMUP_SCRIPT);
 }

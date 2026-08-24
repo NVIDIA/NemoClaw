@@ -522,7 +522,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
       kind: "settled",
     });
-    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 

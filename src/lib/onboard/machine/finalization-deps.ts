@@ -154,8 +154,10 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
       finalizationHandlerRuntime
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
-    runWarmup: (name, _gatewayName) =>
-      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name),
+    runWarmup: (name, gatewayName) =>
+      finalizationHandlerRuntime
+        .loadAutoPairWarmup()
+        .runSandboxScopeWarmupRun(name, gatewayName),
     runApproval: (name, gatewayName) =>
       finalizationHandlerRuntime
         .loadAutoPairApproval()
