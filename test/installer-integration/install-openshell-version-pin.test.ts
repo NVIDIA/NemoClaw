@@ -8,34 +8,37 @@ import path from "node:path";
 
 import { expect, test } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const TEST_TIMEOUT_MS = 2 * 60_000;
 
-test("selects the supported OpenShell version when newer releases exist (#3474)", {
-  timeout: TEST_TIMEOUT_MS,
-}, () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
-  const binDir = path.join(tmpDir, "bin");
-  fs.mkdirSync(binDir);
-  writeExecutable(
-    path.join(binDir, "gh"),
-    `#!/bin/sh
+test(
+  "selects the supported OpenShell version when newer releases exist (#3474)",
+  {
+    timeout: TEST_TIMEOUT_MS,
+  },
+  () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
+    const binDir = path.join(tmpDir, "bin");
+    fs.mkdirSync(binDir);
+    writeExecutable(
+      path.join(binDir, "gh"),
+      `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
-      { tagName: "v0.0.99" },
-      { tagName: "v0.0.107" },
-      { tagName: "v0.0.106" },
-    ])}'`,
-  );
+        { tagName: "v0.0.99" },
+        { tagName: "v0.0.107" },
+        { tagName: "v0.0.106" },
+      ])}'`,
+    );
 
-  try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "-e",
-        `
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "-e",
+          `
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
@@ -53,30 +56,31 @@ process.stdout.write(JSON.stringify({
   resolution,
   replacement: replacement.env,
 }));`,
-      ],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
-        killSignal: "SIGKILL",
-        timeout: 60_000,
-      },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      installed: "0.0.99",
-      resolution: { kind: "pin", version: "0.0.106", latest: "0.0.107", reason: "max-cap" },
-      replacement: {
-        INSTALLED_OPENSHELL_VERSION: "0.0.99",
-        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.106",
-        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.106",
-        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106",
-      },
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-});
+        ],
+        {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+          killSignal: "SIGKILL",
+          timeout: 60_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        installed: "0.0.99",
+        resolution: { kind: "pin", version: "0.0.106", latest: "0.0.107", reason: "max-cap" },
+        replacement: {
+          INSTALLED_OPENSHELL_VERSION: "0.0.99",
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.106",
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.106",
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106",
+        },
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  },
+);
 
 const PINNED_OPEN_SHELL_SHA256 = {
   cliLinuxX64: "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
@@ -391,32 +395,44 @@ function runVersionPinTarget(options: {
   }
 }
 
-test("replaces an installed OpenShell version above the supported maximum (#3474)", {
-  timeout: TEST_TIMEOUT_MS,
-}, () => {
-  runVersionPinTarget({
-    expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
-    ghDownloadMode: "success",
-    installedVersion: "0.0.107",
-  });
-});
+test(
+  "replaces an installed OpenShell version above the supported maximum (#3474)",
+  {
+    timeout: TEST_TIMEOUT_MS,
+  },
+  () => {
+    runVersionPinTarget({
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
+      ghDownloadMode: "success",
+      installedVersion: "0.0.107",
+    });
+  },
+);
 
-test("falls back to curl when GitHub release download fails (#3474)", {
-  timeout: TEST_TIMEOUT_MS,
-}, () => {
-  runVersionPinTarget({
-    expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
-    ghDownloadMode: "fail",
-    installedVersion: "0.0.107",
-  });
-});
+test(
+  "falls back to curl when GitHub release download fails (#3474)",
+  {
+    timeout: TEST_TIMEOUT_MS,
+  },
+  () => {
+    runVersionPinTarget({
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
+      ghDownloadMode: "fail",
+      installedVersion: "0.0.107",
+    });
+  },
+);
 
-test("replaces an installed OpenShell 0.0.99 with the pinned 0.0.106 release (#8606)", {
-  timeout: TEST_TIMEOUT_MS,
-}, () => {
-  runVersionPinTarget({
-    expectedDecision: /below minimum 0\.0\.106.*upgrading/u,
-    ghDownloadMode: "success",
-    installedVersion: "0.0.99",
-  });
-});
+test(
+  "replaces an installed OpenShell 0.0.99 with the pinned 0.0.106 release (#8606)",
+  {
+    timeout: TEST_TIMEOUT_MS,
+  },
+  () => {
+    runVersionPinTarget({
+      expectedDecision: /below minimum 0\.0\.106.*upgrading/u,
+      ghDownloadMode: "success",
+      installedVersion: "0.0.99",
+    });
+  },
+);

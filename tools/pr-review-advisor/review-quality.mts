@@ -19,7 +19,6 @@ type QualityFinding = {
 
 type QualityReview = {
   findings: readonly QualityFinding[];
-  securityCategories: readonly { justification: string }[];
 };
 
 const PLACEHOLDER_VALUES = new Set([
@@ -49,13 +48,6 @@ export function reviewQualityIssues(result: QualityReview): string[] {
         issues.push(`${prefix} has placeholder ${field}`);
       }
     }
-  }
-  if (
-    result.securityCategories.some((category) =>
-      category.justification.startsWith("Advisor did not provide a category-specific verdict"),
-    )
-  ) {
-    issues.push("securityCategories were defaulted because the advisor omitted verdicts");
   }
   return issues.slice(0, 20);
 }

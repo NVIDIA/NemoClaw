@@ -97,7 +97,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/openshell-version-pin.test.ts",
     tests: [
       {
-        files: ["test/install-openshell-version-pin.test.ts"],
+        files: ["test/installer-integration/install-openshell-version-pin.test.ts"],
         project: "installer-integration",
       },
     ],

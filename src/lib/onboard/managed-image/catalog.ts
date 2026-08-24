@@ -443,6 +443,7 @@ function validateImageLabels(
   imageConfig: OciImageConfig,
   platform: ManagedImagePlatform,
   expectedRelease?: string,
+  revisionPinnedRelease?: string,
 ): {
   readonly cohort: ManagedImagePublicationCohort;
   readonly release: string;
@@ -475,8 +476,16 @@ function validateImageLabels(
   if (typeof cohort !== "string" || !COHORT_PATTERN.test(cohort)) {
     return invalid(`'${agent}' image publication cohort is not a supported identity`);
   }
-  const release = labels["org.opencontainers.image.version"];
-  if (typeof release !== "string" || !RELEASE_PATTERN.test(release)) {
+  const imageRelease = labels["org.opencontainers.image.version"];
+  // Older main publications used `latest` as metadata. Only an exact source
+  // revision can bind that legacy label to the requested release.
+  const release =
+    typeof imageRelease === "string" && RELEASE_PATTERN.test(imageRelease)
+      ? imageRelease
+      : imageRelease === "latest" && revisionPinnedRelease !== undefined
+        ? revisionPinnedRelease
+        : null;
+  if (release === null) {
     return invalid(`'${agent}' image release is not a supported release version`);
   }
   if (expectedRelease !== undefined && release !== expectedRelease) {
@@ -529,6 +538,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
     imageConfig,
     options.platform,
     options.expectedRelease,
+    options.expectedRevision === undefined ? undefined : release,
   );
   if (options.expectedCohort !== undefined && identity.cohort !== options.expectedCohort) {
     return invalid(`'${agent}' image publication cohort does not match the OpenClaw cohort`);
