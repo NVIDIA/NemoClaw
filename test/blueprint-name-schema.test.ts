@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import { compileConfigSchema } from "../scripts/validate-configs.mts";
 
+const validate = compileConfigSchema("schemas/blueprint.schema.json");
+
 interface BlueprintFixture {
   version: string;
   profiles: string[];
@@ -37,9 +39,28 @@ function createBlueprint(): BlueprintFixture {
   };
 }
 
-describe("blueprint name schema", () => {
-  const validate = compileConfigSchema("schemas/blueprint.schema.json");
+const externalTarget = {
+  endpoint: "https://openshell.example.test:8443",
+  workspace: "default",
+  expected_release: "0.0.106",
+  lifecycle: "external",
+  trust: { ca_file: "/run/secrets/openshell/ca.pem" },
+  authentication: {
+    kind: "oidc",
+    token_file: "/run/secrets/openshell/token",
+  },
+};
 
+function blueprintWithExternalTarget(target: object = externalTarget): object {
+  return {
+    ...createBlueprint(),
+    min_openshell_version: "0.0.106",
+    max_openshell_version: "0.0.106",
+    openshell_target: target,
+  };
+}
+
+describe("blueprint name schema", () => {
   it.each([
     ["a flag-like sandbox name", "--help"],
     ["a leading-dash sandbox name", "-x"],
@@ -72,5 +93,58 @@ describe("blueprint name schema", () => {
     const blueprint = createBlueprint();
     blueprint.components.sandbox.name = `a${"b".repeat(18)}`;
     expect(validate(blueprint), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("blueprint external OpenShell target schema", () => {
+  it("accepts one explicit target", () => {
+    expect(validate(blueprintWithExternalTarget()), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects mixed local and external lifecycle fields", () => {
+    const target = {
+      ...externalTarget,
+      local: { mode: "managed" },
+    };
+
+    expect(validate(blueprintWithExternalTarget(target))).toBe(false);
+  });
+
+  it("accepts the mTLS authentication form", () => {
+    const target = {
+      ...externalTarget,
+      authentication: {
+        kind: "mtls",
+        client_certificate_file: "/run/secrets/openshell/client.crt",
+        client_key_file: "/run/secrets/openshell/client.key",
+      },
+    };
+
+    expect(validate(blueprintWithExternalTarget(target)), JSON.stringify(validate.errors)).toBe(
+      true,
+    );
+  });
+
+  it("rejects mixed authentication forms", () => {
+    const target = {
+      ...externalTarget,
+      authentication: {
+        kind: "oidc",
+        token_file: "/run/secrets/openshell/token",
+        client_certificate_file: "/run/secrets/openshell/client.crt",
+        client_key_file: "/run/secrets/openshell/client.key",
+      },
+    };
+
+    expect(validate(blueprintWithExternalTarget(target))).toBe(false);
+  });
+
+  it("rejects a target without the OpenShell release range", () => {
+    const blueprint = {
+      ...createBlueprint(),
+      openshell_target: externalTarget,
+    };
+
+    expect(validate(blueprint)).toBe(false);
   });
 });
