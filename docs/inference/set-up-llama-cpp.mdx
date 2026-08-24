@@ -88,7 +88,8 @@ That path supports operator-selected endpoints and ports without claiming llama.
 Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
 The recommended recipe serves Meta Muse Glimmer 30B through the OpenAI Chat Completions API.
 The NVIDIA Nemotron 3 Nano 30B-A3B recipe remains available as a lower-priority profile.
-The Qwen3.8 27B recipe is also available as a lower-priority profile.
+The Qwen3.8 27B recipe is explicit-only: it never appears in the interactive menu and is never selected automatically.
+Select it by exact recipe ID.
 
 <Note>
 This path is an experimental implementation.
@@ -145,6 +146,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 ```
 
 Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
+Use `llama-cpp.qwen3-8-27b.spark-single.v1` to select the Qwen3.8 27B recipe, which is only reachable this way.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
 If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.

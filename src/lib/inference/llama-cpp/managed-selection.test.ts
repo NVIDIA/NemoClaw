@@ -197,7 +197,6 @@ describe("managed llama.cpp selection", () => {
       [550, synthetic.recipeId],
       [500, MUSE_RECIPE_ID],
       [450, RECIPE_ID],
-      [430, QWEN_RECIPE_ID],
     ]);
   });
 
@@ -313,6 +312,21 @@ describe("managed llama.cpp selection", () => {
       kind: "rejected",
       reason: `Managed llama.cpp recipe ${RECIPE_ID} matches more than one serving preset: ${GENERIC_PRESET_ID}, ${GENERIC_PRESET_ID}.duplicate.`,
     });
+  });
+
+  it("keeps the explicit-only Qwen recipe out of automatic choices but selectable by name", () => {
+    const { catalog, report } = fixture();
+
+    expect(
+      listManagedLlamaCppSelectionChoices(catalog, report).map(
+        ({ selection }) => selection.recipe.metadata.id,
+      ),
+    ).not.toContain(QWEN_RECIPE_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection({ [LLAMA_CPP_RECIPE_ENV]: QWEN_RECIPE_ID }, catalog, report)
+        .kind,
+    ).toBe("selected");
   });
 
   it("selects an explicitly named shipped recipe", () => {
