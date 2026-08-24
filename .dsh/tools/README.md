@@ -37,6 +37,10 @@ const range = await tools.git_tested_commit_range({
   recentSha: diff.recent.headSha,
 })
 
+if (!range.ancestor) {
+  throw new Error("The tested commit range diverges and cannot be correlated")
+}
+
 const failures = []
 for (const job of diff.newlyFailing) {
   const evidence = await tools.github_actions_failure_evidence({
@@ -56,11 +60,26 @@ const correlation = await tools.e2e_root_cause_correlator({
   failures,
   changedFiles: range.changedFiles,
 })
+
+const report = await tools.e2e_investigation_report({
+  repository: "NVIDIA/NemoClaw",
+  earlier: diff.earlier,
+  recent: diff.recent,
+  range: {
+    ancestor: range.ancestor,
+    commitsTruncated: range.commitsTruncated,
+    filesTruncated: range.filesTruncated,
+  },
+  commits: range.commits,
+  groups: correlation.groups,
+})
 ```
 
 Add `relevantPaths` to each failure before correlation when repository knowledge
 identifies the owning source paths. Without those paths, a no-overlap result has
 low confidence.
+The report marks the investigation as incomplete when the commit or changed-file list is truncated.
+Do not claim causal completeness or absence of path overlap from a truncated range.
 
 ## Trust boundaries
 

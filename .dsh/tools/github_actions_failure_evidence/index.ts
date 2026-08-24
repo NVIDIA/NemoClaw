@@ -24,6 +24,13 @@ export default async function github_actions_failure_evidence(input: {
     throw new Error("jobId must be a positive integer");
   const contextLines = Math.max(0, Math.min(input.contextLines ?? 2, 10));
   const maximumLines = Math.max(1, Math.min(input.maximumLines ?? 120, 300));
+  const summary = await tools.github_actions_run_summary({
+    workdir: input.workdir,
+    repository: input.repository,
+    runId: input.runId,
+  });
+  if (summary.run.id !== input.runId || !summary.jobs.some((job) => job.id === input.jobId))
+    throw new Error("jobId does not belong to runId");
   const evidence = await tools.inspect_gh_job_log({
     workdir: input.workdir,
     jobId: input.jobId,

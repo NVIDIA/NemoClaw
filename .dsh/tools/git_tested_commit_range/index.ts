@@ -31,7 +31,7 @@ export default async function git_tested_commit_range(input: {
       "printf '%s\\n' __COMMITS__",
       `git log --format='%H%x09%s' --reverse --max-count=${maximumCommits + 1} '${input.earlierSha}..${input.recentSha}'`,
       "printf '%s\\n' __FILES__",
-      `git diff --name-only --diff-filter=ACDMRTUXB '${input.earlierSha}..${input.recentSha}' | head -n ${maximumFiles + 1}`,
+      `git diff --name-only --diff-filter=ACDMRTUXB '${input.earlierSha}..${input.recentSha}' | sed -n '1,${maximumFiles + 1}p'`,
     ].join("; "),
     workdir: input.workdir,
     description: "Summarize tested Git commit range",
