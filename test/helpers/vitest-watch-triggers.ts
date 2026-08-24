@@ -50,13 +50,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
     testsToRun: runTests(
-      "test/onboard-extra-provider-reconciliation.test.ts",
-      "test/onboard-installer-restore-intent.test.ts",
-      "test/onboard-messaging.test.ts",
-      "test/onboard-reservation-recreate.test.ts",
-      "test/onboard-sandbox-build.test.ts",
-      "test/onboard-sandbox-recreation.test.ts",
-      "test/onboard-terminal-dashboard.test.ts",
+      "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-messaging.test.ts",
+      "test/onboarding/onboard-reservation-recreate.test.ts",
+      "test/onboarding/onboard-sandbox-build.test.ts",
+      "test/onboarding/onboard-sandbox-recreation.test.ts",
+      "test/onboarding/onboard-terminal-dashboard.test.ts",
     ),
   },
   {
@@ -97,8 +97,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/base-image-resolver-helper.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
+    pattern: /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/reviewed-hermes-platform-action.test.ts",
       "test/protected-managed-image-contract.test.ts",
@@ -254,6 +253,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/issue-9880-staging-reproduction\.yaml$/,
+    testsToRun: runTests("test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,

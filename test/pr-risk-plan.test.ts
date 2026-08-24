@@ -117,7 +117,7 @@ describe("deterministic PR risk plan", () => {
   });
 
   it("does not require runtime E2E for docs and ordinary tests", () => {
-    const result = plan("docs/get-started/quickstart.mdx", "test/onboard.test.ts");
+    const result = plan("docs/get-started/quickstart.mdx", "test/onboarding/onboard.test.ts");
 
     expect(result.tier).toBe(0);
     expect(result.families).toEqual([]);
