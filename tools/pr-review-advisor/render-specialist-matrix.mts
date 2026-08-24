@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 
-import { ADVISOR_SPECIALISTS } from "./specialists.mts";
+import { ADVISOR_SPECIALISTS } from "./specialist-catalog.mts";
 
 const model = process.env.PR_REVIEW_ADVISOR_MODEL?.trim() || "azure/openai/gpt-5.6-terra";
 const matrix = ADVISOR_SPECIALISTS.map(({ interest, label, sandboxName }) => ({
