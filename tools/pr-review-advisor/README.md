@@ -92,7 +92,30 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 13 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 19 selects the `gateway-topology` family for these production paths:
+
+- `src/lib/onboard/docker-driver-gateway-config.ts`.
+- `src/lib/onboard/docker-driver-gateway-env.ts`.
+- `src/lib/onboard/docker-driver-gateway-local-tls.ts`.
+- `src/lib/onboard/docker-driver-platform.ts`.
+- `src/lib/onboard/experimental/hermes-portable-ollama-authority.ts`.
+- `src/lib/onboard/experimental/portable-host-preparation.ts`.
+- `src/lib/onboard/experimental/portable-profile.ts`.
+- `src/lib/onboard/gateway-sandbox-reachability.ts`.
+- `src/lib/onboard/host-service-reachability.ts`.
+- `src/lib/onboard/runtime-provider/contract.ts`.
+- `src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts`.
+
+The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
+and checked-in evidence:
+
+> An explicit sandbox-visible host address must be outside the sandbox network subnet, and every
+> gateway-address projection must derive from the same authority.
+
+The family does not add an E2E job. Existing topology tests and workflows remain the behavior
+authority. Documentation-only and test-only changes do not select the family.
+
+The same risk plan maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.

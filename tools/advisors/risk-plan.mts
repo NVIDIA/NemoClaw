@@ -21,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 18 as const;
+export const RISK_PLAN_VERSION = 19 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -48,6 +48,19 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
   "tools/e2e/onboard-timeout-contract.mts",
+]);
+const GATEWAY_TOPOLOGY_FILES = new Set([
+  "src/lib/onboard/docker-driver-gateway-config.ts",
+  "src/lib/onboard/docker-driver-gateway-env.ts",
+  "src/lib/onboard/docker-driver-gateway-local-tls.ts",
+  "src/lib/onboard/docker-driver-platform.ts",
+  "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts",
+  "src/lib/onboard/experimental/portable-host-preparation.ts",
+  "src/lib/onboard/experimental/portable-profile.ts",
+  "src/lib/onboard/gateway-sandbox-reachability.ts",
+  "src/lib/onboard/host-service-reachability.ts",
+  "src/lib/onboard/runtime-provider/contract.ts",
+  "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
 ]);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
   "device-auth-health",
@@ -141,6 +154,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES = [
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
   | "lifecycle-state"
+  | "gateway-topology"
   | "upgrade-rebuild"
   | "shared-agent"
   | "inference-policy"
@@ -364,6 +378,17 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("src/lib/onboard/") ||
       file.startsWith("src/lib/state/") ||
       STATEFUL_SANDBOX_FILE.test(file),
+  },
+  {
+    id: "gateway-topology",
+    summary:
+      "Gateway topology changes must keep sandbox-visible host addresses outside sandbox network subnets and use one address authority.",
+    tier: 2,
+    requiredJobs: [],
+    invariants: [
+      "An explicit sandbox-visible host address must be outside the sandbox network subnet, and every gateway-address projection must derive from the same authority.",
+    ],
+    matches: (file) => GATEWAY_TOPOLOGY_FILES.has(file),
   },
   {
     id: "upgrade-rebuild",
