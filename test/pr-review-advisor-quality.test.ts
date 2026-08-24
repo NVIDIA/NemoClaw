@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
 import { reviewQualityIssues } from "../tools/pr-review-advisor/review-quality.mts";
 import {
-  parseSecurityRubric,
+  buildSystemPrompt,
   readTrustedSecurityRubric,
 } from "../tools/pr-review-advisor/trusted-guidance.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
@@ -39,8 +39,7 @@ describe("PR review advisor", () => {
     try {
       process.chdir(tmp);
       const rubric = readTrustedSecurityRubric();
-      expect(rubric).toContain("# Security Rubric");
-      expect(rubric).toContain("Category 9: System Security");
+      expect(rubric).toContain("## Category 9: System Security");
       expect(rubric).not.toContain("PR-controlled rubric");
     } finally {
       process.chdir(originalCwd);
@@ -48,37 +47,65 @@ describe("PR review advisor", () => {
     }
   });
 
-  it("rejects missing and malformed trusted security rubrics", () => {
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+  it("embeds the complete trusted security rubric in the model prompt", () => {
+    const rubric = readTrustedSecurityRubric();
+
+    expect(buildSystemPrompt()).toContain(rubric);
+  });
+
+  it("reports a missing trusted security rubric", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing rubric fixture");
     });
-    expect(() => readTrustedSecurityRubric()).toThrow("Security rubric unavailable");
-    readSpy.mockRestore();
 
-    expect(() => parseSecurityRubric("# Security Rubric\n\n## Category 1: Secrets\n")).toThrow(
+    expect(() => readTrustedSecurityRubric()).toThrow("Security rubric unavailable");
+  });
+
+  it.each([
+    [
+      "a missing category",
+      (rubric: string) => rubric.replace(/## Category 5:.*?(?=## Category 6:)/su, ""),
       "must define exactly 9 categories",
-    );
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace("### Expected evidence", "### Evidence"),
-      ),
-    ).toThrow("must define Meaning, Questions, and Expected evidence in order");
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace(
+    ],
+    [
+      "an out-of-order category",
+      (rubric: string) => rubric.replace("## Category 2:", "## Category 3:"),
+      "category 2 has a malformed heading",
+    ],
+    [
+      "a duplicate category name",
+      (rubric: string) =>
+        rubric.replace("## Category 2: Input Validation and Data Sanitization", "## Category 2: Secrets and Credentials"),
+      "category names must be unique",
+    ],
+    [
+      "an empty category section",
+      (rubric: string) =>
+        rubric.replace(
           /### Meaning\n\nKeep credentials[^\n]*\n/u,
           "### Meaning\n\n",
         ),
-      ),
-    ).toThrow("has empty Meaning");
-    expect(() =>
-      parseSecurityRubric(
-        readTrustedSecurityRubric().replace(
-          "### Meaning\n\nKeep credentials",
-          "### Questions\n\nDuplicate section.\n\n### Meaning\n\nKeep credentials",
-        ),
-      ),
-    ).toThrow("must define Meaning, Questions, and Expected evidence in order");
+      "category 1 has empty Meaning",
+    ],
+    [
+      "a different final category",
+      (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
+      "category 9 must be System Security",
+    ],
+    [
+      "reordered category subsections",
+      (rubric: string) =>
+        rubric
+          .replace("### Meaning", "### Temporary")
+          .replace("### Questions", "### Meaning")
+          .replace("### Temporary", "### Questions"),
+      "must define Meaning, Questions, and Expected evidence in order",
+    ],
+  ])("rejects a trusted security rubric with %s", (_case, mutate, message) => {
+    const malformed = mutate(readTrustedSecurityRubric());
+    vi.spyOn(fs, "readFileSync").mockReturnValueOnce(malformed);
+
+    expect(() => readTrustedSecurityRubric()).toThrow(message);
   });
 
   it("renders summaries and sticky comments with maintainer-review framing", () => {
