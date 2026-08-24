@@ -52,7 +52,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach));
-    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart));
+    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.stop));
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });

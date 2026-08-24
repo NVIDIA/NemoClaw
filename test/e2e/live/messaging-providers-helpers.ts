@@ -606,7 +606,7 @@ export async function startFakeDockerApi(
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   if (options.kind === "slack") {
-    dockerArgs.splice(7, 0, "-p", "0:8080");
+    dockerArgs.splice(7, 0, "-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
   }
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     dockerArgs.push("-e", `${key}=${value}`);
@@ -647,26 +647,28 @@ export async function startFakeDockerApi(
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      const port = await runHost(host, "docker", ["port", container, "8080/tcp"], {
+      const restPort = await runHost(host, "docker", ["port", container, "8080/tcp"], {
         artifactName: `port-fake-${options.kind}-api`,
         env: options.env,
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
       });
-      const published = [
-        ...new Set(
-          port.stdout
-            .trim()
-            .split(/\r?\n/u)
-            .map((line) => line.split(":").at(-1)?.trim() ?? "")
-            .filter(Boolean),
-        ),
-      ];
-      if (published.length >= (options.kind === "slack" ? 2 : 1)) {
+      const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      let publishedWebsocketPort = "";
+      if (options.kind === "slack") {
+        const websocketPort = await runHost(host, "docker", ["port", container, "8081/tcp"], {
+          artifactName: "port-fake-slack-websocket-api",
+          env: options.env,
+          redactionValues: options.redactionValues,
+          timeoutMs: 30_000,
+        });
+        publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      }
+      if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
         return {
           kind: options.kind,
-          port: published[0],
-          ...(options.kind === "slack" ? { alternatePort: published[1] } : {}),
+          port: publishedRestPort,
+          ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
           dir,
           captureFile,
           container,

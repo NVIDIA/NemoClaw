@@ -330,7 +330,7 @@ test("openshell-credential-generation-window", {
       "prove a retained credential generation expires",
       "rotate beyond the retained generation window",
       "prove key and bridge removal revoke access",
-      "re-add the bridge and confirm old-process fallback",
+      "re-add the bridge and keep the old process revoked",
       "rebuild the sandbox and confirm credential reuse",
       "remove the MCP bridge and audit denied requests",
     ],
@@ -764,7 +764,7 @@ test("openshell-credential-generation-window", {
       ).seen,
     ).toBe(false);
 
-    progress.phase("re-add the bridge and confirm old-process fallback");
+    progress.phase("re-add the bridge and keep the old process revoked");
     fakeMcp.setSecret(restartSecret);
     const readd = await host.nemoclaw(
       [
@@ -794,31 +794,36 @@ test("openshell-credential-generation-window", {
     );
     expect(restartedRevision).not.toBe(currentRevision);
     expect(restartedRevision).not.toBe(restoredKeyRevision);
+    const freshAfterReaddId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-readd`;
+    const freshAfterReadd = await runFreshRequest(
+      sandbox,
+      tunnel.url,
+      freshAfterReaddId,
+      allSecrets,
+      "credential-window-fresh-request-after-readd",
+    );
+    expect(freshAfterReadd).toEqual({
+      revision: restartedRevision,
+      status: 200,
+    });
+    expect(requestEvidence(fakeMcp, freshAfterReaddId, restartSecret)).toEqual({
+      seen: true,
+      credentialRewritten: true,
+      placeholderAbsent: true,
+    });
     await writeControl(
       sandbox,
-      CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
-      "credential-window-signal-fallback-after-restart",
+      CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
+      "credential-window-signal-denied-after-readd",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart, "allowed");
-    await expect
-      .poll(
-        () =>
-          requestEvidence(
-            fakeMcp,
-            credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart),
-            restartSecret,
-          ),
-        {
-          interval: 500,
-          timeout: 30_000,
-          message: "old revision fallback after restart",
-        },
-      )
-      .toEqual({
-        seen: true,
-        credentialRewritten: true,
-        placeholderAbsent: true,
-      });
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterReadd, "denied");
+    expect(
+      requestEvidence(
+        fakeMcp,
+        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
+        restartSecret,
+      ).seen,
+    ).toBe(false);
   } finally {
     await writeControl(
       sandbox,
@@ -846,8 +851,8 @@ test("openshell-credential-generation-window", {
       { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
       { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
       {
-        step: CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
-        outcome: "allowed",
+        step: CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
+        outcome: "denied",
       },
     ],
   });
@@ -920,6 +925,9 @@ test("openshell-credential-generation-window", {
   );
   expect(upstreamRequestIds).not.toContain(
     credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
+  );
+  expect(upstreamRequestIds).not.toContain(
+    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
   );
   expect(
     fakeMcp.requests.every(
