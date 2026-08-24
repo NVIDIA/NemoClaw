@@ -181,15 +181,13 @@ describe("OpenShell policy boundary package contract", () => {
     ).toBe(false);
   });
 
-  it.each(
-    [
-        "managed-tool-gateway-matrix.json",
-        "runtime-refresh-credentials.ts",
-        "tool-gateway-broker.ts",
-        "tool-gateway-control-contract.ts",
-      ],
-  )("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
-    expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
+  it.each([
+    "managed-tool-gateway-matrix.json",
+    "runtime-refresh-credentials.ts",
+    "tool-gateway-broker.ts",
+    "tool-gateway-control-contract.ts",
+  ])("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
+    expect(packageFiles(repoRoot)).toContain("agents/");
 
     expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
 
@@ -215,19 +213,44 @@ describe("OpenShell policy boundary package contract", () => {
     expect(validation).toEqual([true, false]);
   });
 
-  it("ships agent manifests and generated state lock plans (#8006)", () => {
-    expect(packageFiles(repoRoot)).toContain("agents/*/manifest.yaml");
-    expect(packageFiles(repoRoot)).toContain("agents/*/state-lock-plan.json");
+  it("ships complete repository-owned agent definitions", () => {
+    expect(packageFiles(repoRoot)).toContain("agents/");
+  });
+
+  it.each(["hermes", "langchain-deepagents-code", "nemocua", "openclaw", "pi"])(
+    "ships the %s agent manifest",
+    (agent) => {
+      const manifest = fs.readFileSync(
+        path.join(repoRoot, "agents", agent, "manifest.yaml"),
+        "utf8",
+      );
+      expect(manifest).toMatch(new RegExp(`^name: ${agent}$`, "m"));
+    },
+  );
+
+  it.each([
+    "hermes/Dockerfile",
+    "hermes/Dockerfile.base",
+    "hermes/policy-additions.yaml",
+    "hermes/policy-permissive.yaml",
+    "hermes/start.sh",
+    "langchain-deepagents-code/Dockerfile",
+    "langchain-deepagents-code/Dockerfile.base",
+    "langchain-deepagents-code/policy-additions.yaml",
+    "langchain-deepagents-code/start.sh",
+    "nemocua/Dockerfile",
+    "nemocua/policy-additions.yaml",
+    "openclaw/policy-permissive.yaml",
+    "pi/Dockerfile",
+    "pi/Dockerfile.base",
+    "pi/policy-additions.yaml",
+    "pi/start.sh",
+  ])("ships the native agent asset %s", (asset) => {
+    expect(fs.existsSync(path.join(repoRoot, "agents", asset))).toBe(true);
   });
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
-    expect(packageFiles(repoRoot)).toEqual(
-      expect.arrayContaining([
-        "agents/*/manifest.yaml",
-        "agents/nemocua/Dockerfile",
-        "agents/nemocua/policy-additions.yaml",
-      ]),
-    );
+    expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/"]));
     expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "manifest.yaml"))).toBe(true);
     expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "Dockerfile"))).toBe(true);
     expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "policy-additions.yaml"))).toBe(
