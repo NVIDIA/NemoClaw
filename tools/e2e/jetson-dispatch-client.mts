@@ -10,6 +10,7 @@ import {
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_TARGET,
   type JetsonDispatchArtifact,
+  type JetsonDispatchRequest,
   type JetsonDispatchStatus,
   MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
   parseJetsonDispatchArtifact,
@@ -226,14 +227,21 @@ export async function pollJetsonDispatch(options: {
   return status;
 }
 
-async function main(): Promise<void> {
-  const request = parseJetsonDispatchRequest({
-    schemaVersion: 1,
+export function jetsonDispatchRequestFromEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): JetsonDispatchRequest {
+  return parseJetsonDispatchRequest({
+    schemaVersion: 2,
     target: JETSON_DISPATCH_TARGET,
-    candidateSha: process.env.JETSON_DISPATCH_CANDIDATE_SHA,
-    workflowRunId: process.env.GITHUB_RUN_ID,
-    workflowRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+    candidateSha: environment.JETSON_DISPATCH_CANDIDATE_SHA,
+    managedImageRevision: environment.JETSON_DISPATCH_MANAGED_IMAGE_REVISION,
+    workflowRunId: environment.GITHUB_RUN_ID,
+    workflowRunAttempt: Number(environment.GITHUB_RUN_ATTEMPT),
   });
+}
+
+async function main(): Promise<void> {
+  const request = jetsonDispatchRequestFromEnvironment();
   const baseUrl = dispatcherBaseUrl(process.env.JETSON_DISPATCH_URL);
   const artifactDirectory = process.env.E2E_ARTIFACT_DIR ?? "";
   if (!path.isAbsolute(artifactDirectory)) throw new Error("E2E_ARTIFACT_DIR must be absolute");
