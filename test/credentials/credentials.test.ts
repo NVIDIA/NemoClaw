@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type CredentialsModule = typeof import("../src/lib/credentials/store.js");
+type CredentialsModule = typeof import("../../src/lib/credentials/store.js");
 
 function isCredentialsModule(value: object | null): value is CredentialsModule {
   return (
@@ -28,7 +28,7 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
 // Pull the credential-env-key allowlist from the production module so
 // future additions only need to be made in one place. Plus a few
 // fixture-only names this suite mutates directly.
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../src/lib/credentials/store.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../../src/lib/credentials/store.js";
 
 const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
@@ -49,7 +49,7 @@ async function importCredentialsModule(
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
   vi.stubEnv("NEMOCLAW_GATEWAY_PORT", gatewayPort === undefined ? "" : String(gatewayPort));
-  const module = await import("../src/lib/credentials/store.js");
+  const module = await import("../../src/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isCredentialsModule(moduleObject)) {
@@ -134,50 +134,51 @@ describe("host-side credential staging", () => {
     expect(credentials.getCredential("NVIDIA_INFERENCE_API_KEY")).toBe("nvapi-from-env");
   });
 
-  it.each(
-    ["secret\nheader", "secret\rheader", "secret\0tail"],
-  )("scopes a runtime credential without exporting or enumerating it [%s]", async (value) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
-    try {
-      const credentials = await importCredentialsModule(home);
+  it.each(["secret\nheader", "secret\rheader", "secret\0tail"])(
+    "scopes a runtime credential without exporting or enumerating it [%s]",
+    async (value) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+      try {
+        const credentials = await importCredentialsModule(home);
 
-      await credentials.withCredentialOverrides(
-        { COMPATIBLE_API_KEY: "runtime-only-secret" },
-        async () => {
-          await Promise.resolve();
-          expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
-          expect(credentials.resolveProviderCredential("COMPATIBLE_API_KEY")).toBe(
-            "runtime-only-secret",
-          );
-          expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
-          expect(credentials.loadCredentials()).not.toHaveProperty("COMPATIBLE_API_KEY");
-          expect(credentials.listCredentialKeys()).not.toContain("COMPATIBLE_API_KEY");
+        await credentials.withCredentialOverrides(
+          { COMPATIBLE_API_KEY: "runtime-only-secret" },
+          async () => {
+            await Promise.resolve();
+            expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
+            expect(credentials.resolveProviderCredential("COMPATIBLE_API_KEY")).toBe(
+              "runtime-only-secret",
+            );
+            expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+            expect(credentials.loadCredentials()).not.toHaveProperty("COMPATIBLE_API_KEY");
+            expect(credentials.listCredentialKeys()).not.toContain("COMPATIBLE_API_KEY");
 
-          const child = spawnSync(
-            process.execPath,
-            ["-e", "process.stdout.write(process.env.COMPATIBLE_API_KEY || '')"],
-            { encoding: "utf8" },
-          );
-          expect(child.status).toBe(0);
-          expect(child.stdout).toBe("");
-        },
-      );
+            const child = spawnSync(
+              process.execPath,
+              ["-e", "process.stdout.write(process.env.COMPATIBLE_API_KEY || '')"],
+              { encoding: "utf8" },
+            );
+            expect(child.status).toBe(0);
+            expect(child.stdout).toBe("");
+          },
+        );
 
-      expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBeNull();
-      await credentials.withCredentialOverrides(
-        { COMPATIBLE_API_KEY: " runtime-only-secret " },
-        async () => {
-          expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe(" runtime-only-secret ");
-        },
-      );
+        expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBeNull();
+        await credentials.withCredentialOverrides(
+          { COMPATIBLE_API_KEY: " runtime-only-secret " },
+          async () => {
+            expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe(" runtime-only-secret ");
+          },
+        );
 
-      await expect(
-        credentials.withCredentialOverrides({ COMPATIBLE_API_KEY: value }, async () => {}),
-      ).rejects.toThrow(/must not contain NUL, CR, or LF/);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          credentials.withCredentialOverrides({ COMPATIBLE_API_KEY: value }, async () => {}),
+        ).rejects.toThrow(/must not contain NUL, CR, or LF/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("returns null for missing or blank credential values", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
@@ -729,7 +730,7 @@ describe("prompt machinery (unchanged)", () => {
         sleep 1
         printf 'n\\n'
       } > "$pipe" &
-      ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
+      ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
     `;
 
     const result = spawnSync("bash", ["--noprofile", "--norc"], {
@@ -744,8 +745,8 @@ describe("prompt machinery (unchanged)", () => {
 
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
-const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "core", "prompt-activity.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -770,8 +771,8 @@ prompt('secret: ', { secret: true })
 
   it("releases secret prompt activity when stdin closes before an answer (#6651)", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
-const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "core", "prompt-activity.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -820,8 +821,8 @@ pending
 
   it("re-prompts shared credential prompts after help input", () => {
     const script = `
-const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
-const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "onboard", "credential-navigation.ts"))});
+const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
+const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "onboard", "credential-navigation.ts"))});
 const answers = ["help", "sk-TEST-NOT-A-REAL-KEY"];
 const logs = [];
 credentials.prompt = async () => answers.shift() || "";
@@ -866,7 +867,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
 
     try {
-      const credentials = await import("../src/lib/credentials/store.js");
+      const credentials = await import("../../src/lib/credentials/store.js");
       const pending = credentials.prompt("question: ");
       rl.emit("SIGINT");
       await expect(pending).rejects.toMatchObject({
@@ -899,7 +900,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
 
     try {
-      const credentials = await import("../src/lib/credentials/store.js");
+      const credentials = await import("../../src/lib/credentials/store.js");
       const pending = credentials.prompt("question: ");
       // Simulate stdin EOF (e.g. `< /dev/null`): readline closes without ever
       // invoking the question callback.
@@ -932,8 +933,8 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
 
     try {
-      const credentials = await import("../src/lib/credentials/store.js");
-      const promptActivity = await import("../src/lib/core/prompt-activity.js");
+      const credentials = await import("../../src/lib/credentials/store.js");
+      const promptActivity = await import("../../src/lib/core/prompt-activity.js");
       expect(promptActivity.isAnyPromptActive()).toBe(false);
 
       const pending = credentials.prompt("question: ");
@@ -963,7 +964,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then(() => console.log('STAGED=' + process.env.NVIDIA_INFERENCE_API_KEY))
@@ -1006,7 +1007,7 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 
   it("returns navigation from the NVIDIA API key prompt without staging it", () => {
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_INFERENCE_API_KEY || null })))
@@ -1026,7 +1027,7 @@ ensureApiKey()
 
   it("returns exit from the NVIDIA API key prompt without staging it", () => {
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_INFERENCE_API_KEY || null })))
@@ -1046,7 +1047,7 @@ ensureApiKey()
 
   it("normal and secret prompts re-ref, cleanup stdin, and preserve masked input", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
 const counts = { ref: 0, resume: 0, pause: 0, unref: 0, raw: [] };
 process.stdin.ref = () => { counts.ref += 1; return process.stdin; };
 process.stdin.resume = () => { counts.resume += 1; return process.stdin; };
