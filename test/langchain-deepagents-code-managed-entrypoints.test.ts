@@ -87,6 +87,34 @@ function makeWrapperFixture(
 }
 
 describe("LangChain Deep Agents Code managed entrypoints", () => {
+  it("uses loopback with a canonical DNS URL when the build validator has no route", () => {
+    const validator = path.join(agentDir, "validate-read-only-mcp-call.py");
+    const probe = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        [
+          "import errno, importlib.util, sys",
+          'spec = importlib.util.spec_from_file_location("validator", sys.argv[1])',
+          "module = importlib.util.module_from_spec(spec)",
+          "spec.loader.exec_module(module)",
+          "class Probe:",
+          "    def __enter__(self): return self",
+          "    def __exit__(self, *_args): return False",
+          "    def connect(self, _address): raise OSError(errno.ENETUNREACH, 'offline')",
+          "module.socket.socket = lambda *_args: Probe()",
+          "print(*module._validation_hosts())",
+        ].join("\n"),
+        validator,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout).toBe("127.0.0.1 localhost\n");
+  });
+
   it("exposes only the fixed deterministic read-only MCP command (#9889)", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const command = readAgentFile("nemoclaw_read_only_mcp.py");
