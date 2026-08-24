@@ -429,17 +429,17 @@ function expectStatePreservedAcrossUpgrade(
   legacy: OpenClawStateContract,
   upgraded: OpenClawStateContract,
 ): void {
-  expect(upgraded.placeholderEnvKeys).toContain("COMPATIBLE_API_KEY");
+  expect(legacy.placeholderEnvKeys).toContain("COMPATIBLE_API_KEY");
+  expect(upgraded.placeholderEnvKeys).toEqual([]);
 
-  // This custom-provider fixture sets COMPATIBLE_API_KEY, not
-  // NVIDIA_INFERENCE_API_KEY, so v0.0.89 intentionally does not create the
-  // NVIDIA auth-profile keyRef. Preserve any references the frozen runtime
-  // does emit without inventing one for this route.
+  // The current rebuild intentionally omits COMPATIBLE_API_KEY from its host
+  // environment. After trusted post-restore finalization (#9946), the
+  // credential remains gateway-held instead of being projected back into the
+  // sandbox environment. The upgraded agent turn below proves that the exact
+  // credential still reaches the compatible endpoint. Preserve any key refs
+  // the frozen runtime emitted without inventing one for this route.
   for (const keyRefId of legacy.keyRefIds) {
     expect(upgraded.keyRefIds).toContain(keyRefId);
-  }
-  for (const envKey of legacy.placeholderEnvKeys) {
-    expect(upgraded.placeholderEnvKeys).toContain(envKey);
   }
 }
 

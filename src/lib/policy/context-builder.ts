@@ -111,7 +111,12 @@ export interface PolicyContext {
 }
 
 const POLICY_DOC_URL = "docs/network-policy/customize-network-policy.mdx";
-const EXTERNAL_POLICY_CHANGE_PATH = "Ask the external policy authority to supply a changed entry.";
+const EXTERNAL_POLICY_ADD_PATH =
+  "Ask the external policy authority to add or replace the policy entries required by `<preset>`.";
+const EXTERNAL_POLICY_REMOVE_PATH =
+  "Ask the external policy authority to remove the policy entries supplied by `<preset>`.";
+const EXTERNAL_POLICY_RESTORE_PATH =
+  "Ask the external policy authority to restore baseline policy entry `<key>`.";
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
@@ -267,14 +272,14 @@ function buildApprovalPath(
   return {
     inspect: `nemoclaw ${sandboxName} policy list`,
     add: externallyManaged
-      ? EXTERNAL_POLICY_CHANGE_PATH
+      ? EXTERNAL_POLICY_ADD_PATH
       : `nemoclaw ${sandboxName} policy add <preset>`,
     remove: externallyManaged
-      ? EXTERNAL_POLICY_CHANGE_PATH
+      ? EXTERNAL_POLICY_REMOVE_PATH
       : `nemoclaw ${sandboxName} policy remove <preset>`,
     excludeBaseline: `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
     restoreBaseline: externallyManaged
-      ? EXTERNAL_POLICY_CHANGE_PATH
+      ? EXTERNAL_POLICY_RESTORE_PATH
       : `nemoclaw ${sandboxName} policy restore <key>`,
     documentation: POLICY_DOC_URL,
   };
@@ -289,7 +294,7 @@ function buildSupportBoundaries(
       capability: "preset selection",
       owner: externallyManaged ? "external" : "nemoclaw",
       note: externallyManaged
-        ? "the external policy authority must supply a changed entry"
+        ? "the external policy authority applies each requested add or remove action to the live policy"
         : tier
           ? `tier: ${tier.label}`
           : "no tier recorded",
@@ -299,13 +304,26 @@ function buildSupportBoundaries(
       owner: "openshell",
       note: "policy is enforced by the OpenShell gateway",
     },
-    {
-      capability: "shields toggle",
-      owner: externallyManaged ? "external" : "nemoclaw",
-      note: externallyManaged
-        ? "the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed"
-        : "shields up locks down mutable config",
-    },
+    ...(externallyManaged
+      ? [
+          {
+            capability: "Shields network policy",
+            owner: "external" as const,
+            note: "the external policy authority controls live network policy changes while authority remains external",
+          },
+          {
+            capability: "Shields state, configuration protection, and cleanup",
+            owner: "nemoclaw" as const,
+            note: "NemoClaw retains Shields state, configuration protection, and cleanup. Saved snapshot restoration requires NemoClaw-managed authority.",
+          },
+        ]
+      : [
+          {
+            capability: "Shields transition",
+            owner: "nemoclaw" as const,
+            note: "Shields up locks down mutable configuration",
+          },
+        ]),
     {
       capability: "credential storage",
       owner: "nemoclaw",

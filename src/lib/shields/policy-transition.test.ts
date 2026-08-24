@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   createShieldsFlowHarness,
   externalPolicyAuthorityInspection,
+  managedPolicyMutationAuthority,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -157,9 +158,7 @@ describe("shields policy transition", () => {
     });
 
     expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
-      "NemoClaw cannot restore the externally managed policy for sandbox 'openclaw' from its " +
-        "saved Shields policy snapshot. Ask the external policy authority to restore the " +
-        "restrictive policy, then run `nemoclaw openclaw shields up` to retry Shields reconciliation.",
+      "return policy authority to NemoClaw management",
     );
     expect(runSpy).not.toHaveBeenCalled();
   });
@@ -234,7 +233,7 @@ describe("shields down policy rejection", () => {
     expect(harness.dockerSpawnCalls).toEqual([]);
   });
 
-  it("hands external policy restoration to its authority after Shields down (#9833)", () => {
+  it("restores the Shields snapshot after policy authority returns to NemoClaw (#9833)", () => {
     const sandboxName = "openclaw";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
@@ -253,10 +252,7 @@ describe("shields down policy rejection", () => {
       gatewayName: "nemoclaw",
       inspection: externalPolicyAuthorityInspection,
     });
-    const recovery =
-      "NemoClaw cannot restore the externally managed policy for sandbox 'openclaw' from its " +
-      "saved Shields policy snapshot. Ask the external policy authority to restore the " +
-      "restrictive policy, then run `nemoclaw openclaw shields up` to retry Shields reconciliation.";
+    const recovery = "return policy authority to NemoClaw management";
     expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(recovery);
     expect(policySetCount()).toBe(policySetsAfterDown);
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(recovery);
@@ -272,6 +268,11 @@ describe("shields down policy rejection", () => {
       "Shields: DOWN (RECOVERY REQUIRED — policy is externally managed)",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(recovery);
+
+    harness.policyAuthoritySpy.mockReturnValue(managedPolicyMutationAuthority);
+    harness.shieldsUp(sandboxName, { throwOnError: true });
+    expect(harness.isShieldsDown(sandboxName)).toBe(false);
+    expect(policySetCount()).toBeGreaterThan(policySetsAfterDown);
   });
 
   it("pins Shields policy inspection, reads, and writes to the recorded gateway (#9833)", () => {
