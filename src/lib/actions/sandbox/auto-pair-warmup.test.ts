@@ -183,8 +183,13 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       const binDir = path.join(fixtureRoot, "bin");
       const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
       const pollLog = path.join(fixtureRoot, "poll.log");
+      const identityPath = path.join(fixtureRoot, "device.json");
       fs.mkdirSync(binDir);
       fs.writeFileSync(proxyEnv, "", { mode: 0o444 });
+      fs.writeFileSync(
+        identityPath,
+        JSON.stringify({ deviceId: "local-device", publicKey: "local-public-key" }),
+      );
       fs.writeFileSync(
         path.join(binDir, "openclaw"),
         [
@@ -193,14 +198,17 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
           "  exec sleep 60",
           "fi",
           "printf 'poll\\n' > \"$NEMOCLAW_TEST_POLL_LOG\"",
-          'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
+          'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","deviceId":"local-device","publicKey":"local-public-key","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
           "",
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
-        const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
+        const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv).replace(
+          "/sandbox/.openclaw/identity/device.json",
+          identityPath,
+        );
         const result = spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
@@ -226,7 +234,12 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
     const pollEnvLog = path.join(fixtureRoot, "poll-env.log");
     const provokeEnvLog = path.join(fixtureRoot, "provoke-env.log");
+    const identityPath = path.join(fixtureRoot, "device.json");
     fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      identityPath,
+      JSON.stringify({ deviceId: "local-device", publicKey: "local-public-key" }),
+    );
     fs.writeFileSync(
       proxyEnv,
       [
@@ -267,14 +280,17 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
         "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
         '} > "$NEMOCLAW_TEST_POLL_ENV_LOG"',
-        'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
+        'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","deviceId":"local-device","publicKey":"local-public-key","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
         "",
       ].join("\n"),
       { mode: 0o700 },
     );
 
     try {
-      const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
+      const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv).replace(
+        "/sandbox/.openclaw/identity/device.json",
+        identityPath,
+      );
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {

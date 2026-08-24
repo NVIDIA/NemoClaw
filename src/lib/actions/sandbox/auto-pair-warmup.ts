@@ -104,6 +104,17 @@ import subprocess
 import sys
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+try:
+    with open('/sandbox/.openclaw/identity/device.json', 'r', encoding='utf-8') as handle:
+        local_identity = json.load(handle)
+except (OSError, ValueError, TypeError):
+    sys.exit(1)
+local_device_id = local_identity.get('deviceId') if isinstance(local_identity, dict) else None
+local_public_key = local_identity.get('publicKey') if isinstance(local_identity, dict) else None
+if not isinstance(local_device_id, str) or not local_device_id:
+    sys.exit(1)
+if not isinstance(local_public_key, str) or not local_public_key:
+    sys.exit(1)
 # The proxy environment is shared gateway routing. Settlement must instead use
 # the paired CLI identity with its current pairing-only credential so the list
 # call can observe the write-scope request that the provoke command created.
@@ -143,6 +154,8 @@ for device in pending:
     if not isinstance(device, dict):
         continue
     if device.get('clientId') != 'cli' or device.get('clientMode') != 'cli':
+        continue
+    if device.get('deviceId') != local_device_id and device.get('publicKey') != local_public_key:
         continue
     scopes = device.get('scopes') or device.get('requestedScopes')
     if isinstance(scopes, str):

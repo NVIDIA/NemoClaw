@@ -243,10 +243,6 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
-          if (deps.now() >= settlementDeadline) {
-            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
-          }
-
           let approvalFailed = false;
           try {
             await deps.runApproval(name, target.gatewayName);
