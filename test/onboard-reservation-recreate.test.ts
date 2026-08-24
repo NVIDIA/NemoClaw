@@ -145,7 +145,7 @@ const { createSandbox } = require(${onboardPath});
     const result = runOnboardProcess([scriptPath], {
       env: workspaceEnv(workspace, {
         NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       }),
       timeoutMs: 30_000,

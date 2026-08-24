@@ -17,7 +17,7 @@ import {
   STATION_PREP_EXISTING_VLLM_EXIT,
   validateResumeFileMetadata,
   validateStationPeerTarget,
-} from "../scripts/lib/dgx-station-peer.mts";
+} from "../../scripts/lib/dgx-station-peer.mts";
 import {
   buildRemoteHelperCommand,
   buildStationPrepSubprocessEnv,
@@ -26,9 +26,9 @@ import {
   readDualStationResumeState,
   stationPrepSshArgs,
   writeDualStationResumeState,
-} from "../scripts/prepare-dual-dgx-station.mts";
-import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../src/lib/inference/vllm-station-cluster-lifecycle.ts";
-import { strictVllmSshTransportArgs } from "../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
+} from "../../scripts/prepare-dual-dgx-station.mts";
+import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../../src/lib/inference/vllm-station-cluster-lifecycle.ts";
+import { strictVllmSshTransportArgs } from "../../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import {
   HELPER_SHA256,
   HOST_KEY_DATA,
@@ -39,11 +39,11 @@ import {
   sshBinding,
   stationConnectivity,
   stationHost,
-} from "./helpers/dgx-station-peer-fixture";
-import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+} from "../helpers/dgx-station-peer-fixture";
+import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const COORDINATOR = path.join(REPO_ROOT, "scripts", "prepare-dual-dgx-station.mts");
 const STATION_HELPER = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 
