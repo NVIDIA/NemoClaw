@@ -372,7 +372,7 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       };
     }
     const result = run(command, options);
-    if (normalized.startsWith("docker rm ") && Number(result?.status ?? 0) === 0) {
+    if (normalized.startsWith("docker rm ") && result?.status === 0) {
       lifecycleReleased = true;
       if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
         finalCommitReleased = true;
