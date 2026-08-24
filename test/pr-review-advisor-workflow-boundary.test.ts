@@ -138,6 +138,40 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
+  it("requires the specialist discovery Node setup action", () => {
+    const errors = validateMutation((value) => {
+      const steps = value.jobs["discover-specialists"].steps as Array<Record<string, any>>;
+      const setup = steps.find((step) => step.name === "Setup Node for specialist discovery")!;
+      setup.uses = `actions/checkout@${"a".repeat(40)}`;
+    });
+
+    expect(errors).toContain(
+      "specialist discovery must use actions/setup-node pinned to a full commit SHA",
+    );
+  });
+
+  it("rejects a specialist discovery Node setup step without an action", () => {
+    const errors = validateMutation((value) => {
+      const steps = value.jobs["discover-specialists"].steps as Array<Record<string, any>>;
+      const setup = steps.find((step) => step.name === "Setup Node for specialist discovery")!;
+      delete setup.uses;
+    });
+
+    expect(errors).toContain(
+      "specialist discovery must use actions/setup-node pinned to a full commit SHA",
+    );
+  });
+
+  it("requires one specialist discovery Node setup step", () => {
+    const errors = validateMutation((value) => {
+      const steps = value.jobs["discover-specialists"].steps as Array<Record<string, any>>;
+      const setup = steps.find((step) => step.name === "Setup Node for specialist discovery")!;
+      steps.push({ ...setup, with: { ...setup.with } });
+    });
+
+    expect(errors).toContain("specialist discovery must declare exactly one Node setup step");
+  });
+
   it("keeps model jobs read-only and the publisher separate", () => {
     const errors = validateMutation((value) => {
       value.jobs["review-specialists"].permissions["pull-requests"] = "write";

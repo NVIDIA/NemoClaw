@@ -13,6 +13,7 @@ const DEFAULT_WORKFLOW = join(ROOT, ".github", "workflows", "pr-review-advisor.y
 const DEFAULT_LOCK = join(ROOT, "package-lock.json");
 const DEFAULT_POLICY = join(ROOT, "tools", "pr-review-advisor", "openshell-policy.yaml");
 const ACTION_PIN = /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}(?:\s*#.*)?$/u;
+const SETUP_NODE_PIN = /^actions\/setup-node@[0-9a-f]{40}$/u;
 const SANDBOX_NAME = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u;
 const INTERESTS = new Set(ADVISOR_INTERESTS);
 const SPECIALIST_MATRIX_EXPRESSION =
@@ -80,11 +81,14 @@ function checkActionPins(errors: string[], name: string, job: Value): void {
 
 function checkSpecialistDiscoveryRuntime(errors: string[], discovery: Value): void {
   const steps = jobSteps(discovery);
-  const setup = namedStep(discovery, "Setup Node for specialist discovery");
+  const setupSteps = steps.filter((item) => item.name === "Setup Node for specialist discovery");
+  const setup = setupSteps.length === 1 ? setupSteps[0] : undefined;
   const install = namedStep(discovery, "Install specialist discovery dependencies");
   const render = namedStep(discovery, "Read specialist prompts");
-  if (!setup) {
-    errors.push("specialist discovery must set up Node");
+  if (setupSteps.length !== 1) {
+    errors.push("specialist discovery must declare exactly one Node setup step");
+  } else if (!setup || !SETUP_NODE_PIN.test(setup.uses ?? "")) {
+    errors.push("specialist discovery must use actions/setup-node pinned to a full commit SHA");
   } else if (object(setup.with)["node-version"] !== "22") {
     errors.push("specialist discovery must use Node 22");
   }
