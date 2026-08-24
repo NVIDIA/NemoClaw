@@ -128,6 +128,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "export OPENCLAW_GATEWAY_PORT=18789",
         "",
       ].join("\n"),
+      { mode: 0o444 },
     );
     fs.writeFileSync(
       path.join(binDir, "openclaw"),
@@ -183,7 +184,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
       const pollLog = path.join(fixtureRoot, "poll.log");
       fs.mkdirSync(binDir);
-      fs.writeFileSync(proxyEnv, "");
+      fs.writeFileSync(proxyEnv, "", { mode: 0o444 });
       fs.writeFileSync(
         path.join(binDir, "openclaw"),
         [
@@ -192,7 +193,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
           "  exec sleep 60",
           "fi",
           "printf 'poll\\n' > \"$NEMOCLAW_TEST_POLL_LOG\"",
-          'printf \'%s\\n\' \'{"pending":[{"scopes":["operator.write"]}],"paired":[]}\'',
+          'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
           "",
         ].join("\n"),
         { mode: 0o700 },
@@ -238,6 +239,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "export NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT=ambient-settlement-marker",
         "",
       ].join("\n"),
+      { mode: 0o444 },
     );
     fs.writeFileSync(
       path.join(binDir, "openclaw"),
@@ -265,7 +267,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
         "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
         '} > "$NEMOCLAW_TEST_POLL_ENV_LOG"',
-        'printf \'%s\\n\' \'{"pending":[{"scopes":["operator.write"]}],"paired":[]}\'',
+        'printf \'%s\\n\' \'{"pending":[{"clientId":"cli","clientMode":"cli","requestedScopes":["operator.pairing","operator.write"]}],"paired":[]}\'',
         "",
       ].join("\n"),
       { mode: 0o700 },
@@ -300,6 +302,30 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
           "",
         ].join("\n"),
       );
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe proxy source paths before a warm-up child can read credentials (#10014)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-unsafe-proxy-"));
+    const unsafeProxy = path.join(fixtureRoot, "proxy-env.sh");
+    const evaluated = path.join(fixtureRoot, "evaluated");
+    fs.writeFileSync(unsafeProxy, `printf evaluated > ${evaluated}\n`, { mode: 0o666 });
+
+    try {
+      const result = spawnSync(
+        "sh",
+        ["-c", WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", unsafeProxy)],
+        {
+          encoding: "utf8",
+          env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "inherited-secret" },
+          timeout: 10_000,
+        },
+      );
+      expect(result.status).toBe(126);
+      expect(fs.existsSync(evaluated)).toBe(false);
+      expect(result.stderr).not.toContain("inherited-secret");
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }

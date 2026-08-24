@@ -36,6 +36,7 @@
 import { spawnSync } from "node:child_process";
 
 import { ROOT } from "../../state/paths";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 // Outer spawnSync cap (ms) for the direct write-scope probe and its bounded
@@ -69,8 +70,7 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so force
 // device pairing only on this command.
 export const WARMUP_SCRIPT = `
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+${buildTrustedProxyEnvSourceShell()}
 command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \\
@@ -133,18 +133,17 @@ except ValueError:
     sys.exit(1)
 if not isinstance(data, dict):
     sys.exit(1)
-# Terminal success = operator.write is satisfied, whether it is a PENDING
-# upgrade (the approval pass will grant it next) or ALREADY GRANTED on a
-# re-onboard (idempotent no-op — nothing left to do before handoff). Scan
-# every device collection the response exposes (pending plus any granted/
-# approved/paired/devices list, and any other top-level list of device dicts)
-# rather than only 'pending', so the already-paired path short-circuits
-# immediately instead of burning the whole poll budget.
-devices = []
-for value in data.values():
-    if isinstance(value, list):
-        devices.extend(d for d in value if isinstance(d, dict))
-for device in devices:
+# The approval pass needs the request created by this local CLI flow. Do not
+# accept an unrelated paired/granted device with operator.write; an already
+# settled local device is recognized by finalization's canonical observer.
+pending = data.get('pending')
+if not isinstance(pending, list):
+    sys.exit(1)
+for device in pending:
+    if not isinstance(device, dict):
+        continue
+    if device.get('clientId') != 'cli' or device.get('clientMode') != 'cli':
+        continue
     scopes = device.get('scopes') or device.get('requestedScopes')
     if isinstance(scopes, str):
         scopes = scopes.replace(',', ' ').split()
@@ -170,8 +169,7 @@ exit 0
 // When the clone is already fully paired, the call creates only a tagged empty
 // warm-up session, matching the existing user-facing session filter contract.
 export const RESTORED_CLONE_WARMUP_SCRIPT = `
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+${buildTrustedProxyEnvSourceShell()}
 command -v openclaw >/dev/null 2>&1 || exit 0
 unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \
   NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || exit 0
