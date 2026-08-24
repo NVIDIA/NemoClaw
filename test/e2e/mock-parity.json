@@ -27,7 +27,7 @@
         "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
         "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
         "test/inference/llama/llama-cpp-image.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -44,7 +44,7 @@
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
-        "test/pr-risk-plan.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
         "test/protected-managed-image-contract.test.ts"
       ]
     },
@@ -55,7 +55,7 @@
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {

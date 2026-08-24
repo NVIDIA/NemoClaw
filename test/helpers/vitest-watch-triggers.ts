@@ -66,12 +66,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-daily-brev-image\.yaml|scripts\/release-daily-brev-image\.sh)$/,
-    testsToRun: runTests("test/release-daily-brev-image.test.ts"),
+    testsToRun: runTests("test/automation/releases/release-daily-brev-image.test.ts"),
   },
   {
     pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
-    testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
+    testsToRun: runTests("test/automation/releases/release-lkg-brev-image.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/e2e\/brev-launchable-e2e\.sh$/,
@@ -289,7 +289,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
-    testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+    testsToRun: runTests("test/automation/pull-requests/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
   {
     pattern:
@@ -299,17 +299,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests(
-      "test/pr-review-advisor-workflow-boundary.test.ts",
-      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
-    testsToRun: runTests("test/pr-review-advisor-openshell-workflow-boundary.test.ts"),
+    testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,
-    testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
+    testsToRun: runTests("test/automation/e2e/e2e-main-retry-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
@@ -330,7 +330,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
       /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
-    testsToRun: runTests("test/release-post-tag-follow-through.test.ts"),
+    testsToRun: runTests("test/automation/releases/release-post-tag-follow-through.test.ts"),
   },
 ];
 export function resolveVitestWatchTests(file: string): string[] {
