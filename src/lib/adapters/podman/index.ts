@@ -58,9 +58,9 @@ export interface PodmanManagedWorkspaceRootReceipt {
   readonly path: string;
   readonly device: string;
   readonly inode: string;
-  readonly uid: 0;
+  readonly uid: number;
   readonly gid: number;
-  readonly mode: 0o1775;
+  readonly mode: 0o755;
 }
 
 export interface PodmanManagedVolumeRootReceipt {
@@ -69,7 +69,7 @@ export interface PodmanManagedVolumeRootReceipt {
   readonly inode: string;
   readonly uid: number;
   readonly gid: number;
-  readonly mode: 0o1775 | 0o3770;
+  readonly mode: 0o755 | 0o1775 | 0o3770;
 }
 
 /** Podman engine whose exact socket and executable authority can be revalidated on demand. */
@@ -78,6 +78,7 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
   /** Exact local user-namespace mutation available only to managed bootstrap. */
   readonly prepareManagedWorkspaceRoot?: (input: {
     readonly path: string;
+    readonly uid: number;
     readonly gid: number;
   }) => PodmanManagedWorkspaceRootReceipt;
   /** Exact, non-recursive local user-namespace mutation for one managed volume root. */
@@ -85,7 +86,7 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
-    readonly mode: 0o1775 | 0o3770;
+    readonly mode: 0o755 | 0o1775 | 0o3770;
   }) => PodmanManagedVolumeRootReceipt;
 }
 
@@ -261,7 +262,7 @@ export function createPodmanContainerEngine(
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
-    readonly mode: 0o1775 | 0o3770;
+    readonly mode: 0o755 | 0o1775 | 0o3770;
   }): PodmanManagedVolumeRootReceipt => {
     if (options.operation !== "managed-bootstrap") {
       throw new Error("Podman volume-root preparation requires managed-bootstrap authority.");
@@ -281,7 +282,7 @@ export function createPodmanContainerEngine(
       !Number.isSafeInteger(input.gid) ||
       input.gid < 1 ||
       input.gid > 2_147_483_647 ||
-      (input.mode !== 0o1775 && input.mode !== 0o3770)
+      (input.mode !== 0o755 && input.mode !== 0o1775 && input.mode !== 0o3770)
     ) {
       throw new Error("Podman managed volume root metadata is invalid.");
     }
@@ -349,15 +350,16 @@ export function createPodmanContainerEngine(
   };
   const prepareManagedWorkspaceRoot = (input: {
     readonly path: string;
+    readonly uid: number;
     readonly gid: number;
   }): PodmanManagedWorkspaceRootReceipt => {
     const receipt = prepareManagedVolumeRoot({
       path: input.path,
-      uid: 0,
+      uid: input.uid,
       gid: input.gid,
-      mode: 0o1775,
+      mode: 0o755,
     });
-    return Object.freeze({ ...receipt, uid: 0 as const, mode: 0o1775 as const });
+    return Object.freeze({ ...receipt, mode: 0o755 as const });
   };
   return Object.freeze({
     ...boundEngine,

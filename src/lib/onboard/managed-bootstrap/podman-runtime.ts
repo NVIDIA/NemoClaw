@@ -679,6 +679,7 @@ export function preparePodmanManagedWorkspaceAuthority(input: {
   readonly engine: PodmanBoundContainerEngine;
   readonly inspect: JsonRecord;
   readonly sandboxId: string;
+  readonly agentUid: number;
   readonly agentGid: number;
 }): void {
   const workspace = exactPodmanManagedWorkspaceVolume(input.inspect, input.sandboxId);
@@ -695,12 +696,16 @@ export function preparePodmanManagedWorkspaceAuthority(input: {
   if (!prepare) {
     throw new Error("Managed bootstrap Podman workspace-root preparation is unavailable.");
   }
-  const receipt = prepare({ path: workspace.mountpoint, gid: input.agentGid });
+  const receipt = prepare({
+    path: workspace.mountpoint,
+    uid: input.agentUid,
+    gid: input.agentGid,
+  });
   if (
     receipt.path !== workspace.mountpoint ||
-    receipt.uid !== 0 ||
+    receipt.uid !== input.agentUid ||
     receipt.gid !== input.agentGid ||
-    receipt.mode !== 0o1775 ||
+    receipt.mode !== 0o755 ||
     !/^\d+$/u.test(receipt.device) ||
     !/^\d+$/u.test(receipt.inode)
   ) {
@@ -1952,6 +1957,7 @@ export function createPodmanManagedBootstrapAdapter(
         engine: options.engine,
         inspect: current.rawInspect,
         sandboxId: current.held.sandboxId,
+        agentUid: snapshot.agentIdentity.uid,
         agentGid: snapshot.agentIdentity.gid,
       });
       const prepareStateRoot = options.engine.prepareManagedVolumeRoot;

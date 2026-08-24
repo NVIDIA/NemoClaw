@@ -358,9 +358,9 @@ describe("Podman managed-bootstrap runtime surface", () => {
       path: mountpoint,
       device: "8",
       inode: "9001",
-      uid: 0 as const,
+      uid: 998,
       gid: 999,
-      mode: 0o1775 as const,
+      mode: 0o755 as const,
     }));
     const capture = vi.fn(() => ({
       status: 0,
@@ -384,6 +384,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         ],
       },
       sandboxId: "sandbox-alpha",
+      agentUid: 998,
       agentGid: 999,
     });
 
@@ -399,6 +400,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
     );
     expect(prepareManagedWorkspaceRoot).toHaveBeenCalledExactlyOnceWith({
       path: mountpoint,
+      uid: 998,
       gid: 999,
     });
   });
