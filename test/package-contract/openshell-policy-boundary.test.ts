@@ -24,6 +24,20 @@ function packageFiles(packageRoot: string): string[] {
   return packageJson.files ?? [];
 }
 
+function collectPackedPaths(): ReadonlySet<string> {
+
+  const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
+  const report = JSON.parse(packed.stdout) as Array<{ files?: Array<{ path?: string }> }>;
+  return new Set((report[0]?.files ?? []).flatMap((entry) => (entry.path ? [entry.path] : [])));
+}
+
+const packedPaths = collectPackedPaths();
+
 describe("OpenShell policy boundary package contract", () => {
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
@@ -189,7 +203,7 @@ describe("OpenShell policy boundary package contract", () => {
   ])("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
     expect(packageFiles(repoRoot)).toContain("agents/");
 
-    expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
+    expect(packedPaths).toContain(`agents/hermes/host/${file}`);
 
     const controlContractPath = path.join(
       repoRoot,
@@ -225,6 +239,7 @@ describe("OpenShell policy boundary package contract", () => {
         "utf8",
       );
       expect(manifest).toMatch(new RegExp(`^name: ${agent}$`, "m"));
+      expect(packedPaths).toContain(`agents/${agent}/manifest.yaml`);
     },
   );
 
@@ -246,16 +261,15 @@ describe("OpenShell policy boundary package contract", () => {
     "pi/policy-additions.yaml",
     "pi/start.sh",
   ])("ships the native agent asset %s", (asset) => {
-    expect(fs.existsSync(path.join(repoRoot, "agents", asset))).toBe(true);
+    expect(packedPaths).toContain(`agents/${asset}`);
   });
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
     expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/"]));
-    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "manifest.yaml"))).toBe(true);
-    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "Dockerfile"))).toBe(true);
-    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "policy-additions.yaml"))).toBe(
-      true,
-    );
+    const packed = packedPaths;
+    expect(packed).toContain("agents/nemocua/manifest.yaml");
+    expect(packed).toContain("agents/nemocua/Dockerfile");
+    expect(packed).toContain("agents/nemocua/policy-additions.yaml");
   });
 
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
