@@ -62,6 +62,27 @@ nvm use 22
 
 Then re-run the installer.
 
+### Installer Reports `No SHA-256 tool available (sha256sum/shasum)`
+
+The installer must verify the nvm installer before it installs or upgrades Node.js.
+It exits before running the downloaded script when neither `sha256sum` nor `shasum` is available.
+
+On Debian or Ubuntu, install `sha256sum` through `coreutils`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y coreutils
+```
+
+On another Linux distribution, install its `coreutils` package.
+On macOS, `/usr/bin/shasum` is normally present; restore it through the operating system if it is missing.
+
+Verify that one supported tool is available, then rerun the installer:
+
+```bash
+command -v sha256sum || command -v shasum
+```
+
 ### Contributor Setup Fails with a JavaScript Heap Out-of-Memory Error
 
 This applies to a source checkout, not to an installed release.
@@ -173,6 +194,26 @@ $$nemoclaw onboard
 
 NemoClaw rejects TCP and SSH endpoints, relative socket paths, values that contain single quotes, and values that contain line breaks.
 Do not wrap the socket path in single quotes inside the variable value.
+
+### Onboarding Warns About the Docker Desktop Credential Store in a Headless Session
+
+The `docker_desktop_credential_store_headless` advisory means that the Docker client config sets `credsStore` to `desktop` (macOS) or `desktop.exe` (WSL2) and the session looks headless, for example an SSH session without a GUI.
+The Docker Desktop credential helper needs an interactive GUI session.
+Without one, the helper can fail and block every image pull, even for public images.
+A common failure message from Docker in this state is `A specified logon session does not exist`.
+
+Onboarding preflight prints this warning before the first image pull and then continues, on both fresh and resumed onboarding.
+NemoClaw reads the config from `$DOCKER_CONFIG/config.json` when `DOCKER_CONFIG` is set, and from `~/.docker/config.json` otherwise.
+On WSL, NemoClaw probes the credential helper with a read-only `list` call instead of relying on session markers, because WSLg can set `DISPLAY` in every WSL shell.
+
+To work around a failed pull, resume onboarding with an isolated Docker config so every remaining image pull bypasses the unavailable helper:
+
+```bash
+DOCKER_CONFIG=$(mktemp -d) $$nemoclaw onboard --resume
+```
+
+Alternatively, temporarily remove the `credsStore` entry from the Docker client config named above, then rerun `$$nemoclaw onboard`.
+Restore the entry afterward if you use registries that need stored credentials in GUI sessions.
 
 ### macOS first-run failures
 
@@ -379,7 +420,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.101 directly supports Linux hosts with glibc 2.39 or newer.
+OpenShell 0.0.106 directly supports Linux hosts with glibc 2.39 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
@@ -1138,6 +1179,209 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 $$nemoclaw onboard
 ```
+
+### Onboarding Reports a Rejected or Unconfirmed Policy Update
+
+Onboarding can submit several policy mutations in sequence when you deselect policy presets and select others.
+It submits deselection mutations before selection mutations.
+Each successful mutation updates the live OpenShell gateway policy and the sandbox registry before the next mutation starts.
+If a later mutation fails, the earlier successful mutations remain applied and recorded.
+
+Each mutation uses a temporary `policy.yaml` file in a `nemoclaw-policy-*` directory.
+When the submission finishes, NemoClaw removes that directory, whether or not the gateway accepted the mutation.
+If cleanup fails, NemoClaw reports the directory that still holds the policy instead of reporting the submission result.
+
+When NemoClaw reports this directory, do not retry the policy operation.
+Use Bash to enter and validate the exact path from the error before you remove its contents:
+
+```bash
+cleanup_retained_policy() {
+  local platform_tmp_root retained_policy_dir
+
+  if ! platform_tmp_root=$(node -p "require('node:os').tmpdir()"); then
+    printf 'Validation failed: Node.js could not report the platform temporary directory.\n' >&2
+    return 1
+  fi
+  platform_tmp_root=${platform_tmp_root%/}
+  IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
+  python3 - "$platform_tmp_root" "$retained_policy_dir" <<'PY'
+import os
+import re
+import stat
+import sys
+
+
+class CleanupError(Exception):
+    pass
+
+
+def open_retained_policy_directory(platform_tmp_root, reported_path):
+    if not os.path.isabs(platform_tmp_root):
+        raise CleanupError("the platform temporary directory is not absolute")
+    platform_tmp_root_real = os.path.realpath(platform_tmp_root)
+    if platform_tmp_root_real == os.path.abspath(os.sep):
+        raise CleanupError("the platform temporary directory cannot be the filesystem root")
+    reported_basename = os.path.basename(reported_path)
+    reported_parent = os.path.dirname(reported_path)
+    if not re.fullmatch(r"nemoclaw-policy-.+", reported_basename):
+        raise CleanupError("the basename must match nemoclaw-policy-* and include a suffix")
+    if reported_parent != platform_tmp_root:
+        raise CleanupError(
+            f"the path must be a direct child of the actual platform temporary directory {platform_tmp_root!r}"
+        )
+    if os.path.realpath(reported_path) != os.path.join(platform_tmp_root_real, reported_basename):
+        raise CleanupError("the canonical path is outside the actual platform temporary directory")
+    if (
+        not hasattr(os, "geteuid")
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.stat not in os.supports_dir_fd
+        or os.unlink not in os.supports_dir_fd
+    ):
+        raise CleanupError("this platform cannot perform descriptor-relative cleanup")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    root_stat = os.stat(platform_tmp_root_real, follow_symlinks=False)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise CleanupError("the canonical platform temporary path is not a directory")
+    root_fd = os.open(platform_tmp_root_real, directory_flags | os.O_NOFOLLOW)
+    try:
+        opened_root_stat = os.fstat(root_fd)
+        if (opened_root_stat.st_dev, opened_root_stat.st_ino) != (root_stat.st_dev, root_stat.st_ino):
+            raise CleanupError("the platform temporary directory changed while it was being opened")
+        reported_stat = os.stat(reported_basename, dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(reported_stat.st_mode):
+            raise CleanupError("the path is not a directory or is a symbolic link")
+        if reported_stat.st_uid != os.geteuid():
+            raise CleanupError("the current user does not own the directory")
+        policy_fd = os.open(
+            reported_basename,
+            directory_flags | os.O_NOFOLLOW,
+            dir_fd=root_fd,
+        )
+        opened_stat = os.fstat(policy_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (reported_stat.st_dev, reported_stat.st_ino):
+            os.close(policy_fd)
+            raise CleanupError("the directory changed while it was being opened")
+        return root_fd, policy_fd, reported_basename, opened_stat
+    except Exception:
+        os.close(root_fd)
+        raise
+
+
+def remove_retained_policy_material(policy_fd):
+    try:
+        os.unlink("policy.yaml", dir_fd=policy_fd)
+    except FileNotFoundError:
+        pass
+    remaining = os.listdir(policy_fd)
+    if remaining:
+        raise CleanupError(f"the directory contains unexpected entries: {remaining!r}")
+
+
+def main():
+    root_fd = None
+    policy_fd = None
+    try:
+        root_fd, policy_fd, basename, opened_stat = open_retained_policy_directory(
+            sys.argv[1], sys.argv[2]
+        )
+        remove_retained_policy_material(policy_fd)
+        try:
+            current_stat = os.stat(basename, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError as error:
+            raise CleanupError("the reported path changed during cleanup") from error
+        if (current_stat.st_dev, current_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino):
+            raise CleanupError("the reported path was replaced during cleanup; the replacement was not removed")
+        print(
+            f"Removed retained policy material from {sys.argv[2]!r}. "
+            "The empty directory intentionally remains."
+        )
+    except (CleanupError, OSError) as error:
+        print(f"Cleanup failed for {sys.argv[2]!r}: {error}.", file=sys.stderr)
+        raise SystemExit(1) from error
+    finally:
+        if policy_fd is not None:
+            os.close(policy_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+if __name__ == "__main__":
+    main()
+PY
+}
+cleanup_retained_policy
+```
+
+The procedure opens the validated directory without following a symbolic link and removes `policy.yaml` relative to that open directory.
+It fails if the directory contains anything else.
+It intentionally leaves the empty directory because deleting it later by pathname would reintroduce a directory-replacement race.
+Continue only after the procedure reports that the retained policy material was removed.
+Do not remove the empty directory by pathname.
+If validation or cleanup fails, preserve the exact path and complete error message for support.
+Do not use another removal command on that path.
+
+After temporary-directory cleanup, treat the gateway state as unknown because the cleanup error replaced the submission result.
+Restore access to the OpenShell gateway, then read the sandbox policy:
+
+```bash
+$$nemoclaw <name> policy list
+```
+
+If `policy list` reports `⚠ Could not query gateway — showing local state only.`, stop because the command did not read the gateway policy.
+If it reports container-runtime recovery guidance, restore that runtime and run `policy list` again.
+Do not resume or start fresh onboarding until `policy list` reports the live gateway policy.
+
+When NemoClaw reports a rejected or unconfirmed policy mutation, onboarding stops and:
+
+- leaves earlier successful mutations applied and recorded;
+- does not record that mutation in the sandbox registry;
+- marks the session failed and resumable;
+- reports one of the two results below.
+
+After either result, run `policy list` before you resume or start fresh onboarding.
+
+The gateway read the policy and refused it:
+
+```text
+OpenShell rejected the policy for sandbox 'my-assistant' (exit <exit status>): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
+```
+
+An OpenShell refusal means this mutation did not change the live policy.
+Earlier successful mutations in the same onboarding step remain applied and recorded.
+Use the quoted OpenShell diagnostic to identify what the gateway refused.
+After you inspect `policy list`, follow [Previous onboarding session failed](#previous-onboarding-session-failed) to start fresh onboarding and choose a different preset selection.
+
+NemoClaw could not confirm the result.
+This covers a connection that ended before the result arrived, an unreachable gateway, an elapsed deadline, a rejected credential, and a refusal the gateway reported with a status NemoClaw does not recognize as final.
+NemoClaw reports this whenever the gateway did not return an explicit refusal, because only an explicit refusal proves the policy was not applied:
+
+```text
+Could not confirm the policy update for sandbox 'my-assistant': <transport or command error>. The gateway may or may not have applied it; read the current policy back before retrying.
+```
+
+The gateway state is unknown, so read the sandbox policy with `policy list` before you retry.
+`policy list` compares the sandbox registry with the live gateway policy and flags a preset that is applied in one place but not the other.
+The unconfirmed mutation does not update the sandbox registry.
+
+The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
+When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
+If the container runtime is down, it prints that runtime's recovery guidance instead.
+Stop while `policy list` reports local state only because that output does not show whether the gateway applied the mutation.
+Restore gateway access and run `policy list` again before you resume or start fresh onboarding.
+
+After `policy list` reads the live gateway policy, follow the result below.
+The [failed-session recovery steps](#previous-onboarding-session-failed) provide the resume and fresh onboarding commands.
+
+- If an affected preset reports `active on gateway, missing from local state`, resume the failed session.
+  The gateway completed the addition, and resume can record the applied preset locally without submitting that policy change again.
+- If an affected preset reports `recorded locally, not active on gateway`, do not resume or start fresh onboarding.
+  The gateway may have completed the removal while the sandbox registry retained the preset.
+  Preserve the original unconfirmed error and the complete `policy list` output for support.
+- If `policy list` reports no disagreement for the unconfirmed mutation, compare the live preset set with the selection in the failed session.
+  Resume only if the live policy still requires the unconfirmed addition or removal to match that selection.
+  Otherwise, start fresh onboarding and select the exact preset set that `policy list` reports as active.
 
 ### Previous onboarding session failed
 
@@ -2044,6 +2288,41 @@ nemo-deepagents <name> policy add --from-file ./my-preset.yaml --yes
 Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`.
 Run `$$nemoclaw <name> policy add` with no preset to list the available presets.
 
+<AgentOnly variant="openclaw">
+
+### An `openclaw` command inside the sandbox fails with `scope upgrade pending approval`
+
+The OpenClaw gateway refuses a command when the device asks for more scopes than are currently approved.
+The failure names the request id but not the command that clears it:
+
+```text
+gateway connect failed: GatewayClientRequestError: scope upgrade pending approval
+  (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
+```
+
+When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending.
+If one is, it appends the review path to stderr after the command's own output:
+
+```text
+$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
+  The OpenClaw gateway refused the command until the requested scopes are approved.
+  Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
+  Approve the one you recognize, after checking its device and requested scopes:
+                           $$nemoclaw my-assistant exec -- openclaw devices approve <requestId>
+  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```
+
+Read `openclaw devices list`, confirm the requesting device and the requested scopes, approve that request by id, then re-run the original command unchanged.
+
+The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
+
+The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint.
+If the probe fails, or nothing is pending, no hint is added.
+An invalid sandbox name is shown as `<name>`.
+`NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+
+</AgentOnly>
+
 ### Sandbox creation reports a TLS certificate mismatch
 
 If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.
@@ -2309,9 +2588,9 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 
 On hosts other than N1x, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use.
 After the parser-aware server is ready, re-run onboarding.
-Select the **Local vLLM** entry marked **running (suggested)** for a server detected on `localhost:8000`; for another address, select **Other OpenAI-compatible endpoint**.
+Select the **Local vLLM** entry marked **running (suggested)** for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**.
 On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not.
-On N1x, stop any server that occupies port `8000`, then use only the Deferred managed-vLLM preview; existing and compatible servers are not admitted.
+On N1x, stop any server that occupies `${NEMOCLAW_VLLM_PORT:-8000}`, then use only the Deferred managed-vLLM preview; existing and compatible servers are not admitted.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change.
 NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
@@ -2925,8 +3204,18 @@ sudo lsof -i :11435
 ```
 
 Stop the conflicting process and re-run `$$nemoclaw onboard`.
-The wizard cleans up stale proxy processes from previous runs automatically,
-so most failures resolve by retrying.
+The wizard cleans up stale proxy processes from previous runs automatically, so most failures resolve by retrying.
+
+If the proxy refuses to start because the backend also listens on a non-loopback interface, use the remediation that matches the reported backend:
+
+- For Ollama, bind the daemon to the reported loopback port with `OLLAMA_HOST=127.0.0.1:<port>`, then restart Ollama and rerun onboarding.
+- For an unauthenticated OpenAI-compatible endpoint, bind that endpoint server to a loopback address only on the reported port, then rerun onboarding.
+  Do not apply the Ollama setting to vLLM, llama-server, or another compatible endpoint.
+- If recovery cannot identify the backend type, bind the reported service and port to a loopback address only, then rerun onboarding.
+  The neutral diagnostic intentionally does not name Ollama.
+
+In every case, the refusal prevents a backend listener from bypassing the protected route's token check.
+For an IPv6 endpoint, keep it on its IPv6 loopback address instead of changing it to `127.0.0.1`.
 
 The proxy token is persisted to `~/.nemoclaw/ollama-proxy-token` with `0600`
 permissions.
@@ -3028,12 +3317,44 @@ For onboarding-time context, refer to [Use an Existing Server](../inference/loca
 
 Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark profile:
 
+Inspect the running containers, current memory, and kernel evidence:
+
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
-curl -sf http://127.0.0.1:8000/v1/models
 free -h
 journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
 ```
+
+For a NemoClaw-managed Spark profile, derive the host port from the managed container's fixed `8000/tcp` mapping.
+Bearer-protected profiles publish two bindings with the same host port, while bearerless profiles publish one all-interface binding.
+
+```bash
+VLLM_HOST_PORT="$(
+  docker port nemoclaw-vllm 8000/tcp |
+    sed -n 's/^.*:\([0-9][0-9]*\)$/\1/p' |
+    sort -u
+)"
+case "$VLLM_HOST_PORT" in
+  ""|*[!0-9]*)
+    printf '%s\n' 'Could not identify one managed vLLM host port.' >&2
+    exit 1
+    ;;
+esac
+if [ "$VLLM_HOST_PORT" -lt 1024 ] || [ "$VLLM_HOST_PORT" -gt 65535 ]; then
+  printf 'Invalid managed vLLM host port: %s\n' "$VLLM_HOST_PORT" >&2
+  exit 1
+fi
+curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
+```
+
+For an existing vLLM server, set `NEMOCLAW_VLLM_PORT` to its host port in the current shell:
+
+```bash
+VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:?Set NEMOCLAW_VLLM_PORT to the existing vLLM host port.}"
+curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
+```
+
+Both checks use `/health` because a managed profile can require bearer authentication for `/v1/models`.
 
 For an existing vLLM server, inspect its launch arguments:
 
@@ -3125,12 +3446,9 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 The route depends on the host environment and the operator control.
 Identify the matching path before applying the recovery guidance.
 
-<AgentOnly variant="openclaw">
-
-Do not apply this compatibility guidance to portable OpenClaw onboarding.
-That path requires native OpenShell GPU injection and does not use `NEMOCLAW_DOCKER_GPU_PATCH`, so do not set `fallback`, `1`, or another legacy nonzero value for a portable OpenClaw run.
-
-</AgentOnly>
+Do not apply this compatibility guidance to portable onboarding.
+Portable onboarding requires native OpenShell GPU injection for every agent and does not use `NEMOCLAW_DOCKER_GPU_PATCH`.
+Do not set `fallback`, `1`, or another legacy nonzero value for a portable run.
 
 | Symptom | Route or stage | Recovery |
 | --- | --- | --- |
@@ -3186,6 +3504,7 @@ After compatibility recreation starts, onboarding keeps the pre-patch container 
 If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
 When rollback succeeds, the pre-patch sandbox remains available.
 If the failed replacement may remain and NemoClaw retains its validated exact container ID, it prints only an exact-container `docker rm -f` command.
+When a replacement is not stably running, the failure diagnostic includes its exact runtime ID, inspected state, and a bounded redacted log tail when available.
 If replacement cleanup cannot be confirmed without a validated exact ID, onboarding reports cleanup as unknown and prints no deletion command.
 When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command.
 A diagnostic bundle captured before rollback records cleanup as pending and contains no deletion command.
@@ -3211,9 +3530,9 @@ This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does
 Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
 If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
-The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.
+The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to 60 consecutive polls of about 120 seconds in total.
 Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
-Set it to a higher integer such as `30` (about 60 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+Set it to an integer above the default of 60, such as `120` (about 240 seconds), and rerun onboarding; the value is clamped to a minimum of `1`.
 If reconnect still fails after the GPU patch, NemoClaw attempts to restore the pre-patch CPU container before exiting.
 When rollback succeeds, the output says the pre-patch sandbox was restored.
 When rollback fails, the error says rollback failed and the pre-patch container was not restored, so inspect Docker state before retrying.
@@ -3341,9 +3660,14 @@ During onboarding, NemoClaw verifies the loaded model's actual `context_length` 
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this check before reusing its route.
 Resume stops when that recorded model is missing, Ollama is unreachable, model warm-up fails, or the runtime context cannot be verified.
 If you set `NEMOCLAW_CONTEXT_WINDOW` above `64000`, the loaded model must provide at least that larger value.
-If the runtime value is too small, missing, or malformed, onboarding stops before sandbox creation and asks you to restart the host daemon with the required context length.
-`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not change the Ollama daemon or bypass this runtime check.
-Force a larger context length:
+If the runtime value is below the requirement, NemoClaw queries Ollama's `/api/show` endpoint for the selected model's native context window.
+If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.
+`OLLAMA_CONTEXT_LENGTH` cannot raise a model above its native context window.
+If the model can meet the requirement, or NemoClaw cannot read its native context window, onboarding instead shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting the host daemon.
+A missing or malformed runtime value also produces the daemon restart guidance.
+`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not raise the model's native context window or the Ollama daemon's runtime context, and it does not bypass this check.
+Use the daemon restart command only when onboarding shows a required `OLLAMA_CONTEXT_LENGTH` value.
+The example uses the Hermes minimum; replace `64000` with the larger value from onboarding when applicable.
 
 ```bash
 pkill -f 'ollama serve'

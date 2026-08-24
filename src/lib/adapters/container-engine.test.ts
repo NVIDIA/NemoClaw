@@ -131,6 +131,40 @@ describe("operation-scoped container engine command", () => {
     expect(engine.captureWithEnvironment).toBeUndefined();
   });
 
+  it("replaces the ambient environment for one authority-bound operation", () => {
+    const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const commandEnvironment = Object.freeze({
+      HOME: "/home/receipt",
+      XDG_CONFIG_HOME: "/home/receipt/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const engine = createContainerEngineCommand({
+      operation: "state-mutation",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "/usr/bin/podman",
+      commandEnvironment,
+      capture,
+    });
+
+    engine.capture(["container", "inspect", "abc"]);
+
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      "/usr/bin/podman",
+      ["container", "inspect", "abc"],
+      15_000,
+      undefined,
+      commandEnvironment,
+    );
+    expect(capture.mock.calls[0]?.[4]).not.toHaveProperty("HTTP_PROXY");
+    expect(capture.mock.calls[0]?.[4]).not.toHaveProperty("DOCKER_HOST");
+  });
+
   it("rejects unsafe or unbounded operation environments before capture", () => {
     const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
       status: 0,

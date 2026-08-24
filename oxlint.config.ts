@@ -51,6 +51,12 @@ export default defineConfig({
   },
   overrides: [
     {
+      files: [".dsh/tools/*/index.ts"],
+      globals: {
+        tools: "readonly",
+      },
+    },
+    {
       files: [
         "bin/**/*.js",
         "commitlint.config.js",

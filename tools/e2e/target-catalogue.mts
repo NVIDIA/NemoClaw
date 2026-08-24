@@ -8,6 +8,10 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
+import {
+  ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+} from "./onboard-timeout-contract.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -41,6 +45,9 @@ export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
 export const E2E_ARTIFACT_LAYOUTS = ["target-shard", "flat-shard"] as const;
 export type E2eArtifactLayout = (typeof E2E_ARTIFACT_LAYOUTS)[number];
 
+export const E2E_OPTIONAL_CREDENTIALS = ["BRAVE_API_KEY"] as const;
+export type E2eOptionalCredential = (typeof E2E_OPTIONAL_CREDENTIALS)[number];
+
 export interface E2eCatalogueTarget {
   id: string;
   targetId: string;
@@ -65,6 +72,7 @@ export interface E2eCatalogueTarget {
   runnerComparison: boolean;
   runnerPressure: boolean;
   compatibleApiKey: boolean;
+  requiredOptionalCredentials: readonly E2eOptionalCredential[];
   prAdvisorSelectable: boolean;
   shard: string;
   artifactLayout: E2eArtifactLayout;
@@ -117,6 +125,7 @@ type TargetOptions = Omit<
   | "runnerComparison"
   | "runnerPressure"
   | "compatibleApiKey"
+  | "requiredOptionalCredentials"
   | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
@@ -136,6 +145,7 @@ type TargetOptions = Omit<
   runnerComparison?: boolean;
   runnerPressure?: boolean;
   compatibleApiKey?: boolean;
+  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   prAdvisorSelectable?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
@@ -160,6 +170,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison = false,
     runnerPressure = false,
     compatibleApiKey = false,
+    requiredOptionalCredentials = [],
     prAdvisorSelectable = false,
     shard = "default",
     artifactLayout = "target-shard",
@@ -185,6 +196,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison,
     runnerPressure,
     compatibleApiKey,
+    requiredOptionalCredentials,
     prAdvisorSelectable,
     shard,
     artifactLayout,
@@ -209,6 +221,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -219,6 +232,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "brave-nvidia-inference",
+    requiredOptionalCredentials: options.requiredOptionalCredentials,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -471,6 +485,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Brave Search",
     profile: "brave-nvidia-inference",
+    requiredOptionalCredentials: ["BRAVE_API_KEY"],
     timeoutMinutes: 45,
     installMode: "authenticated",
     installNonInteractive: true,
@@ -580,6 +595,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
+    requiredOptionalCredentials: ["BRAVE_API_KEY"],
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -891,11 +907,12 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw + langchain-deepagents-code",
     environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
-    timeoutMinutes: 45,
+    timeoutMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
     cloudflared: true,
+    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
   target("kimi-inference-compat", {
     displayName: "Inference: configures a Kimi-compatible endpoint",
@@ -1029,10 +1046,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
-    timeoutMinutes: 45,
+    timeoutMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   target("openclaw-discord-pairing", {
@@ -1561,6 +1579,15 @@ export function validateE2eTargetCatalogue(
       entry.hostPackages.some((packageName) => !E2E_HOST_PACKAGES.includes(packageName))
     ) {
       throw new Error(`E2E target ${entry.id} has invalid or duplicate host packages`);
+    }
+    if (
+      new Set(entry.requiredOptionalCredentials).size !==
+        entry.requiredOptionalCredentials.length ||
+      entry.requiredOptionalCredentials.some(
+        (credential) => !E2E_OPTIONAL_CREDENTIALS.includes(credential),
+      )
+    ) {
+      throw new Error(`E2E target ${entry.id} has invalid optional credential requirements`);
     }
     if (entry.selector !== undefined && !SELECTOR_PATTERN.test(entry.selector)) {
       throw new Error(`E2E target ${entry.id} has an invalid test selector`);

@@ -4,6 +4,8 @@
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 import { showStatus } from "../../lib/tunnel/services";
+import { resolveDefaultSandboxName } from "../../lib/tunnel/service-command";
+import { serviceDeps } from "../../lib/tunnel/command-support";
 
 export default class TunnelStatusCommand extends NemoClawCommand {
   static id = "tunnel:status";
@@ -17,6 +19,6 @@ export default class TunnelStatusCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(TunnelStatusCommand);
-    showStatus();
+    showStatus({ sandboxName: resolveDefaultSandboxName(serviceDeps().listSandboxes) });
   }
 }

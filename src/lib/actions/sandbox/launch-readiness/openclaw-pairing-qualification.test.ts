@@ -18,10 +18,15 @@ import {
 import {
   buildOpenClawPairingObservationScript,
   observeOpenClawPairingQualification,
+  observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
+  observeOrdinaryOpenClawPairingSettlement,
+  OpenClawPairingObservationRetryableError,
+  OpenClawPairingQualificationError,
   OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
   parseOpenClawPairingObservation,
+  parseOpenClawPairingRepairObservation,
   parseOpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
 
@@ -164,6 +169,34 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
   }
 
+  function observeOrdinarySettlement(approvalPolicy = POLICY) {
+    return observeOrdinaryOpenClawPairingSettlement(
+      "alpha",
+      "nemoclaw-8080",
+      "2026.7.1",
+      stateDirectory,
+      {
+        getOpenshellBinary: () => "openshell",
+        readApprovalPolicy: () => approvalPolicy,
+        spawnSync: localScriptSpawn as typeof spawnSync,
+      },
+    );
+  }
+
+  function observeRepairSettlement(approvalPolicy = POLICY) {
+    return observeOpenClawPairingRepairSettlement(
+      "alpha",
+      "nemoclaw-8080",
+      "2026.7.1",
+      stateDirectory,
+      {
+        getOpenshellBinary: () => "openshell",
+        readApprovalPolicy: () => approvalPolicy,
+        spawnSync: localScriptSpawn as typeof spawnSync,
+      },
+    );
+  }
+
   function writePairingOnlyState(): void {
     const pairedPath = path.join(stateDirectory, "devices", "paired.json");
     const authPath = path.join(stateDirectory, "identity", "device-auth.json");
@@ -219,6 +252,24 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(JSON.stringify([settled, pairingOnly])).not.toContain(publicKey);
     });
 
+    it("observes settlement without version provenance but keeps qualification version-bound (#9527)", () => {
+      const deps = {
+        getOpenshellBinary: () => "openshell",
+        readApprovalPolicy: () => POLICY,
+        spawnSync: localScriptSpawn as typeof spawnSync,
+      };
+
+      expect(
+        observeOpenClawPairingSettlement("alpha", "nemoclaw-8080", "", stateDirectory, deps),
+      ).toEqual({
+        state: "settled",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() =>
+        observeOpenClawPairingQualification("alpha", "nemoclaw-8080", "", stateDirectory, deps),
+      ).toThrow("OpenClaw pairing qualification is unavailable");
+    });
+
     it("accepts the exact canonical Ed25519 public-key PEM representation (#9207)", () => {
       const identityPath = path.join(stateDirectory, "identity", "device.json");
       writeJson(identityPath, {
@@ -256,6 +307,148 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       paired[deviceId]!.scopes = ["operator.pairing", "operator.read"];
       writeJson(pairedPath, paired);
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
+    });
+
+    it("rejects unrelated or same-device pending requests during ordinary onboarding (#9844)", () => {
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        unrelated: {
+          requestId: "unrelated",
+          deviceId: "b".repeat(64),
+          publicKey: "unrelated-public-key",
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+
+      expect(() => observeOrdinarySettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+      expect(() => observeRepairSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+      expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
+
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        related: {
+          requestId: "related",
+          deviceId,
+          publicKey,
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+      expect(() => observeOrdinarySettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+      expect(() => observeRepairSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+    });
+
+    it("observes the exact canonical scope upgrade awaiting approval (#9817)", () => {
+      writePairingOnlyState();
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        "canonical-cli-write": {
+          requestId: "canonical-cli-write",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: true,
+        },
+      });
+
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "scope-upgrade-pending",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(observeRepairSettlement()).toEqual({
+        state: "pairing-pending",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
+
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        first: {
+          requestId: "first",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: true,
+        },
+        second: {
+          requestId: "second",
+          deviceId: "b".repeat(64),
+          publicKey: "unrelated-public-key",
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+      expect(() => observeOrdinarySettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+      expect(() => observeRepairSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+    });
+
+    it("classifies a canonical state file that is not visible yet as retryable (#9817)", () => {
+      fs.rmSync(path.join(stateDirectory, "devices", "pending.json"));
+
+      expect(() => observeRepairSettlement()).toThrow(OpenClawPairingObservationRetryableError);
+    });
+
+    it("keeps unrelated pending requests terminal instead of retrying them (#9817)", () => {
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        unrelated: {
+          requestId: "unrelated",
+          deviceId: "b".repeat(64),
+          publicKey: "unrelated-public-key",
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+
+      let failure: unknown;
+      try {
+        observeRepairSettlement();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenClawPairingQualificationError);
+      expect(failure).not.toBeInstanceOf(OpenClawPairingObservationRetryableError);
+    });
+
+    it("rejects a non-repair request from Portable repair settlement (#9817)", () => {
+      writePairingOnlyState();
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        "canonical-cli-write": {
+          requestId: "canonical-cli-write",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: false,
+        },
+      });
+
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "scope-upgrade-pending",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() => observeRepairSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
     });
 
     it("qualifies the persisted result of the complete canonical approval transition (#9023)", () => {
@@ -730,5 +923,19 @@ process.stdout.write("{}\\n");
         })}\ntrailing\n`,
       ),
     ).toBeNull();
+  });
+
+  it("keeps canonical pending state outside strict Portable settlement (#9817)", () => {
+    const digest = "a".repeat(64);
+    const output = `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
+      state: "pairing-pending",
+      deviceIdentitySha256: digest,
+    })}\n`;
+
+    expect(parseOpenClawPairingRepairObservation(output)).toEqual({
+      state: "pairing-pending",
+      deviceIdentitySha256: digest,
+    });
+    expect(parseOpenClawPairingSettlementObservation(output)).toBeNull();
   });
 });

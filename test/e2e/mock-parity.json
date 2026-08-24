@@ -101,6 +101,7 @@
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
+        "test/e2e/support/hermes-gpu-startup-proof.test.ts",
         "test/e2e/support/hermes-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -114,6 +115,7 @@
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboard-inference-gateway-scope.test.ts"
       ]
     },
@@ -124,6 +126,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
@@ -227,9 +230,12 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -240,12 +246,19 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "src/lib/onboard/sandbox-readiness-tracing.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
+        "test/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
@@ -301,6 +314,9 @@
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -598,6 +614,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -644,9 +661,13 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
+        "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

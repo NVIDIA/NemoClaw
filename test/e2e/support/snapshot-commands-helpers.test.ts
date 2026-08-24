@@ -145,6 +145,15 @@ describe("snapshot restore result classification", () => {
     ],
     [
       {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "restoring 'source' as 'clone' requires managed-profile clone rebind. Destination 'clone' was not changed. secret-output",
+      },
+      "managed-clone-rebind-required",
+    ],
+    [
+      {
         exitCode: null,
         stdout: "State restored into 'clone', but gateway pairing could not be verified.",
         stderr: "scope-upgrade-pending secret-output",

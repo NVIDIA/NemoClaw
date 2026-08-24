@@ -36,6 +36,7 @@ import {
 export type { ManagedWorkloadReceipt } from "./authority";
 
 import {
+  liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
@@ -174,9 +175,16 @@ export async function prepareManagedWorkloadRebuildHandoff(
     }
   } else {
     const qualificationRevision = liveE2eManagedImageRevision(process.env);
+    const liveCatalog = liveE2eManagedImageCatalog(process.env);
+    if (qualificationRevision && liveCatalog) {
+      throw new ManagedWorkloadRebuildError(
+        "live E2E managed-image revision and catalog authority conflict",
+      );
+    }
+    const qualificationSourceRevision = liveCatalog?.revision ?? qualificationRevision;
     if (
-      qualificationRevision !== null &&
-      qualificationRevision !== authority.receipt.sourceRevision
+      qualificationSourceRevision !== null &&
+      qualificationSourceRevision !== authority.receipt.sourceRevision
     ) {
       throw new ManagedWorkloadRebuildError(
         "the live qualification revision does not match the durable workload receipt",
@@ -189,9 +197,13 @@ export async function prepareManagedWorkloadRebuildHandoff(
         runtime: options.runtime,
         version: options.version ?? getVersion(),
         policy: "require-managed",
-        ...(qualificationRevision
-          ? { catalogRevision: authority.receipt.sourceRevision }
+        ...(liveCatalog
+          ? {
+              catalogPath: liveCatalog.path,
+              expectedCatalogRevision: liveCatalog.revision,
+            }
           : {}),
+        ...(qualificationRevision ? { catalogRevision: authority.receipt.sourceRevision } : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(

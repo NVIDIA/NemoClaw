@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectGatewayCredentialOnlyProviderBinding } from "../../onboard/gateway-provider-metadata";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
-import type {
-  MessagingCredentialApplyOptions,
-  MessagingCredentialApplyResult,
-  MessagingOpenShellRunner,
-} from "./types";
+import {
+  ensureMessagingCredentialProviderProfile,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+} from "../provider-profile";
+import type { MessagingCredentialApplyOptions, MessagingCredentialApplyResult } from "./types";
 import { filterEnabledPlanEntries } from "./plan-filter";
 
 type MessagingCredentialApplyEntry = MessagingCredentialApplyResult["upserted"][number];
@@ -27,11 +29,35 @@ export function applyCredentialsAtOpenShell(
   const upserted: MessagingCredentialApplyEntry[] = [];
   const reused: MessagingCredentialReuseEntry[] = [];
   const missing: MessagingMissingCredentialEntry[] = [];
+  const activeBindings = filterEnabledPlanEntries(plan, plan.credentialBindings);
 
-  for (const binding of filterEnabledPlanEntries(plan, plan.credentialBindings)) {
+  if (activeBindings.length > 0) {
+    ensureMessagingCredentialProviderProfile({
+      root: REPOSITORY_ROOT,
+      runOpenshell: (args, runOptions) => runOpenshell(args, runOptions),
+    });
+  }
+
+  for (const binding of activeBindings) {
     const credential = readCredentialEnv(env, binding.providerEnvKey);
+    const providerState = inspectGatewayCredentialOnlyProviderBinding(
+      {
+        name: binding.providerName,
+        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        credentialKey: binding.providerEnvKey,
+      },
+      runOpenshell,
+    );
+    if (providerState.kind === "indeterminate") {
+      throw new Error(`Could not inspect messaging provider '${binding.providerName}'.`);
+    }
+    if (providerState.kind === "collision") {
+      throw new Error(
+        `Messaging provider '${binding.providerName}' does not match the required endpointless credential binding.`,
+      );
+    }
     if (!credential) {
-      if (providerExistsInGateway(binding.providerName, runOpenshell)) {
+      if (providerState.kind === "exact") {
         reused.push(toReuseEntry(binding));
       } else {
         missing.push(toMissingEntry(binding));
@@ -39,9 +65,7 @@ export function applyCredentialsAtOpenShell(
       continue;
     }
 
-    const action = providerExistsInGateway(binding.providerName, runOpenshell)
-      ? "update"
-      : "create";
+    const action = providerState.kind === "exact" ? "update" : "create";
     const result = runOpenshell(
       buildProviderArgs(action, binding.providerName, binding.providerEnvKey),
       {
@@ -50,10 +74,22 @@ export function applyCredentialsAtOpenShell(
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    const status = result.status ?? 0;
-    if (status !== 0) {
+    if (result.status !== 0) {
       throw new Error(
         `Failed to ${action} messaging provider '${binding.providerName}': ${compactOutput(result)}`,
+      );
+    }
+    const verified = inspectGatewayCredentialOnlyProviderBinding(
+      {
+        name: binding.providerName,
+        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        credentialKey: binding.providerEnvKey,
+      },
+      runOpenshell,
+    );
+    if (verified.kind !== "exact") {
+      throw new Error(
+        `OpenShell did not confirm messaging provider '${binding.providerName}' after ${action}.`,
       );
     }
     upserted.push({
@@ -89,17 +125,6 @@ function readCredentialEnv(env: NodeJS.ProcessEnv, envKey: string): string | nul
   return normalized || null;
 }
 
-function providerExistsInGateway(
-  providerName: string,
-  runOpenshell: MessagingOpenShellRunner,
-): boolean {
-  const result = runOpenshell(["provider", "get", providerName], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  return (result.status ?? 0) === 0;
-}
-
 function buildProviderArgs(
   action: "create" | "update",
   providerName: string,
@@ -112,7 +137,7 @@ function buildProviderArgs(
         "--name",
         providerName,
         "--type",
-        "generic",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         "--credential",
         credentialEnv,
       ]

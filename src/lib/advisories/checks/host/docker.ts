@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../../domain/docker-host";
 import type { HostAssessment, PackageManager } from "../../../onboard/preflight";
 import type { AdvisoryCheck } from "../../types";
 import { hostAdvisory } from "./common";
@@ -158,10 +159,47 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment> = {
+  id: "docker_desktop_credential_store_headless",
+  phase: "preflight.host",
+  severity: "warning",
+  resumeSafe: false,
+  check(host) {
+    if (host.runtime !== "docker-desktop") return null;
+    const credsStore = host.dockerCredsStore ?? "";
+    if (!DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(credsStore)) return null;
+    // In WSL the helper runs on the Windows side: WSLg can inject DISPLAY into
+    // every shell and SSH variables do not cross wsl.exe, so session markers
+    // are wrong in both directions there — trust the helper probe instead.
+    const headlessEvidence = host.isWsl
+      ? host.dockerCredentialHelperUnresponsive === true
+      : Boolean(host.isSshSession) || host.isHeadlessLikely;
+    if (!headlessEvidence) return null;
+    const sessionEvidence = host.isWsl
+      ? "The credential helper did not answer a read-only probe from this WSL session"
+      : "This session looks headless";
+    const configPath = host.dockerCredsStorePath ?? "the active Docker client config";
+    return hostAdvisory(dockerDesktopCredentialStoreHeadless, {
+      title: "Avoid Docker Desktop credential store pull failures",
+      kind: "manual",
+      reason:
+        `The active Docker client config (${configPath}) sets credsStore "${credsStore}", ` +
+        "which needs the Docker Desktop GUI session. " +
+        `${sessionEvidence}, so the credential helper can fail ` +
+        "and block every image pull, even for public images.",
+      commands: [
+        "DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume   # resume with an isolated Docker config",
+        `# or temporarily remove the "credsStore" entry from ${configPath}, then rerun \`nemoclaw onboard\`.`,
+      ],
+    });
+  },
+};
+
 export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   enableDockerDesktopWslIntegration,
   installDocker,
   invalidDockerHost,
   addUserToDockerGroup,
   startDocker,
+  dockerDesktopCredentialStoreHeadless,
 ]);

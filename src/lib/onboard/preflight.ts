@@ -15,10 +15,18 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  dockerDesktopCredentialHelperResponds,
+  readDockerCredentialStore,
+} from "../adapters/docker/credential-store";
 import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
 import { DASHBOARD_PORT } from "../core/ports";
-import { isDockerDaemonReachable, isSupportedGatewayDockerHost } from "../domain/docker-host";
+import {
+  DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES,
+  isDockerDaemonReachable,
+  isSupportedGatewayDockerHost,
+} from "../domain/docker-host";
 import { classifyDockerVersionIdentity } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
@@ -27,6 +35,7 @@ import {
 } from "./container-runtime-resources";
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
+import { isSshSession } from "./ssh-forward-hint";
 import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 export {
@@ -136,6 +145,17 @@ export interface HostAssessment {
   requiresHostCgroupnsFix: boolean;
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
+  /** True when the CLI runs inside an SSH session (#9457). */
+  isSshSession?: boolean;
+  /** `credsStore` credential-helper name from the Docker client config (#9457). */
+  dockerCredsStore?: string;
+  /** Active Docker client config path that supplied `credsStore` (#9457). */
+  dockerCredsStorePath?: string;
+  /**
+   * True when the probed Docker Desktop credential helper did not answer a
+   * read-only `list` call; undefined when not probed (#9457).
+   */
+  dockerCredentialHelperUnresponsive?: boolean;
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
@@ -524,8 +544,11 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const env = opts.env ?? process.env;
   const runCaptureImpl =
     opts.runCaptureImpl ??
-    ((command: readonly string[], options?: { ignoreError?: boolean }) =>
-      runCapture(command, { ignoreError: options?.ignoreError ?? false }));
+    ((command: readonly string[], options?: { ignoreError?: boolean; timeout?: number }) =>
+      runCapture(command, {
+        ignoreError: options?.ignoreError ?? false,
+        timeout: options?.timeout,
+      }));
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =
@@ -590,6 +613,17 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     runtime = "docker";
   }
   const isWslHost = detectWsl({ platform, env, release, procVersion });
+  const dockerCredentialStore = readDockerCredentialStore(env, readFileImpl);
+  const dockerCredsStore = dockerCredentialStore.credsStore;
+  // Session markers cannot see the Windows side of WSL interop, so probe the
+  // helper there; the advisory check consumes this instead of DISPLAY/SSH
+  // heuristics on WSL hosts (#9457).
+  const dockerCredentialHelperUnresponsive =
+    isWslHost &&
+    dockerCredsStore !== undefined &&
+    DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(dockerCredsStore)
+      ? !dockerDesktopCredentialHelperResponds(dockerCredsStore, runCaptureImpl)
+      : undefined;
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
@@ -684,6 +718,10 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     requiresHostCgroupnsFix: false,
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
+    isSshSession: isSshSession(env),
+    dockerCredsStore,
+    dockerCredsStorePath: dockerCredentialStore.configPath,
+    dockerCredentialHelperUnresponsive,
     hasNvidiaGpu,
     ...cdiAssessment,
     nvidiaContainerToolkitInstalled,

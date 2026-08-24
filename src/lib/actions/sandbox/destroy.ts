@@ -21,7 +21,7 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import { cleanupManagedLlamaCppRuntimeForSandbox } from "../../inference/local-model-profile/cleanup";
+import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -40,9 +40,13 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
-import { confirmSandboxDestroy } from "./destroy-confirmation";
+import {
+  assertSandboxDestroyCommandAvailable,
+  confirmSandboxDestroy,
+} from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
 } from "./destroy-execution";
@@ -460,11 +464,30 @@ export type { WipeSandboxStateDeps };
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
 export { wipeSandboxState };
 
+class SandboxDestroyExitRequest extends Error {
+  constructor(readonly exitCode: number) {
+    super(`Sandbox destroy requested exit ${String(exitCode)}`);
+    this.name = "SandboxDestroyExitRequest";
+  }
+}
+
+function requestSandboxDestroyExit(exitCode: number): never {
+  throw new SandboxDestroyExitRequest(exitCode);
+}
+
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => destroySandboxUnlocked(sandboxName, options));
+  try {
+    return await withMcpLifecycleLock(sandboxName, () => {
+      assertSandboxDestroyCommandAvailable(sandboxName);
+      return destroySandboxUnlocked(sandboxName, options);
+    });
+  } catch (error) {
+    if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    throw error;
+  }
 }
 
 async function destroySandboxUnlocked(
@@ -474,6 +497,23 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
+  let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
+  try {
+    portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
+      const current = registry.getSandbox(sandboxName);
+      return current
+        ? {
+            agent: current.agent,
+            lifecycleGeneration: current.lifecycleGeneration,
+            openshellDriver: current.openshellDriver,
+          }
+        : null;
+    });
+  } catch (error) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': NemoClaw could not validate Portable lifecycle authority before the Docker preflight: ${redactDestroyError(error)}. NemoClaw removed no sandbox resources.`,
+    );
+  }
 
   const inspectContainerIdentity = () =>
     assertUnambiguousDestroyContainerIdentity(sandboxName, {
@@ -483,39 +523,114 @@ async function destroySandboxUnlocked(
       ),
       redact: redactDestroyError,
     });
-  const initialIdentity = inspectContainerIdentity();
+  const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
-    process.exit(1);
+    requestSandboxDestroyExit(1);
   }
 
-  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
-    prepareSandboxDestroy(sandboxName);
-  // Recheck identity after read-only preflight and before local mutation.
-  const preMutationIdentity = inspectContainerIdentity();
+  const registeredSandbox = registry.getSandbox(sandboxName);
+  let preparedManagedLlamaCppCleanup: ReturnType<
+    typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
+  > = null;
   if (
-    preMutationIdentity === false ||
-    !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
+    !registeredSandbox ||
+    (registeredSandbox.provider === "llama-cpp-local" &&
+      !registeredSandbox.hostLocalInferenceProvenance)
   ) {
-    if (preMutationIdentity !== false) {
+    /**
+     * SOURCE_OF_TRUTH
+     * Invalid state: the sandbox registry row is absent after a partial destroy,
+     * but private managed llama.cpp owner state still requires exact cleanup.
+     * Source boundary: destroy qualifies that private owner, journal, and Docker
+     * operation before crossing the OpenShell sandbox-delete boundary.
+     * Source-fix constraint: destroy cannot reconstruct the missing registry row
+     * or safely select a Docker daemon after deletion, so it may use only the
+     * retained private authority and must fail closed when qualification fails.
+     * Regression proof: destroy-flow.test.ts proves registry-absent preparation
+     * and completion without post-delete authority discovery.
+     * Removal condition: remove this recovery path when sandbox registry
+     * retirement and private managed-runtime retirement are one durable action.
+     */
+    try {
+      // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
+      // or Docker's persisted currentContext. Pin that selection before
+      // OpenShell sandbox deletion so legacy cleanup cannot
+      // switch daemons. A missing registry row still permits exact owner-state
+      // recovery for a prior partial destroy.
+      preparedManagedLlamaCppCleanup = prepareManagedLlamaCppRuntimeCleanupForSandbox(sandboxName, {
+        ...(typeof registeredSandbox?.gatewayPort === "number"
+          ? { gatewayPort: registeredSandbox.gatewayPort }
+          : {}),
+      });
+    } catch (error) {
       console.error(
-        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+        `  Refusing to destroy sandbox '${sandboxName}': Managed llama.cpp cleanup preflight failed: ${redactDestroyError(error)}`,
       );
+      console.error(
+        `  The sandbox was not deleted. Resolve the reported cleanup preflight failure and retry destroy.`,
+      );
+      requestSandboxDestroyExit(1);
     }
-    process.exit(1);
   }
-  const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
-  const destructiveResult = await executeSandboxDestroy({
-    cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
-    force: normalized.force === true,
-    getSandbox: registry.getSandbox,
-    listSandboxes: registry.listSandboxes,
-    runOpenshell,
-    sandbox,
-    sandboxConfirmedAbsent,
-    sandboxName,
-    expectedContainerIdentity: initialIdentity.identity,
-    stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
-  });
+  const abortPreparedCleanupOnError = <T>(operation: () => T): T => {
+    try {
+      return operation();
+    } catch (error) {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw error;
+    }
+  };
+  let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
+  destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
+  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  // Recheck identity after pre-delete qualification and recoverable journal
+  // publication reconciliation, before any sandbox runtime mutation.
+  if (portableContainerAuthority) {
+    try {
+      abortPreparedCleanupOnError(() => portableContainerAuthority.revalidate());
+    } catch (error) {
+      console.error(
+        `  Refusing to destroy sandbox '${sandboxName}': NemoClaw could not revalidate Portable container identity during preflight: ${redactDestroyError(error)}. NemoClaw removed no sandbox resources.`,
+      );
+      requestSandboxDestroyExit(1);
+    }
+  } else {
+    const preMutationIdentity = abortPreparedCleanupOnError(inspectContainerIdentity);
+    if (
+      preMutationIdentity === false ||
+      !isSameDestroyContainerIdentityProof(initialIdentity!, preMutationIdentity)
+    ) {
+      if (preMutationIdentity !== false) {
+        console.error(
+          `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+        );
+      }
+      preparedManagedLlamaCppCleanup?.abort();
+      requestSandboxDestroyExit(1);
+    }
+  }
+  const priorHttpsPinRouteId = abortPreparedCleanupOnError(() =>
+    parseHttpsPinRouteId(sandbox?.endpointUrl),
+  );
+  let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
+  try {
+    destructiveResult = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+      force: normalized.force === true,
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      runOpenshell,
+      sandbox,
+      sandboxConfirmedAbsent,
+      sandboxName,
+      expectedContainerIdentity: initialIdentity?.identity,
+      ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
+      stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+    });
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
   if (!destructiveResult.ok) {
     if (destructiveResult.hostLocalInferenceCleanupFailure) {
       console.error(
@@ -559,6 +674,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
         );
+      } else if (destructiveResult.portableLifecycleOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. NemoClaw preserved the sandbox registry record and schema-4 Portable receipt because OpenShell sandbox deletion and absence of the exact Podman container are unconfirmed.`,
+        );
+        console.error(
+          `  Start the gateway by running '${CLI_NAME} ${sandboxName} status'. Retry destroy. --force cannot discard this ownership state until NemoClaw confirms both results.`,
+        );
       } else {
         console.error(
           `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
@@ -568,7 +690,8 @@ async function destroySandboxUnlocked(
         );
       }
     }
-    process.exit(destructiveResult.exitCode);
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(destructiveResult.exitCode);
   }
   const {
     detachOutcome,
@@ -613,19 +736,25 @@ async function destroySandboxUnlocked(
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  if (!deleteSucceededOrAlreadyGone) {
+    preparedManagedLlamaCppCleanup?.abort();
+  }
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = removeManagedHermesStateVolume({
-      agentName: sandbox.agent,
-      runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
-      sandboxName,
-      workloadKind: sandbox.workload?.kind ?? "",
-    });
+    const stateVolumeCleanup = abortPreparedCleanupOnError(() =>
+      removeManagedHermesStateVolume({
+        agentName: sandbox.agent,
+        runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+        sandboxName,
+        workloadKind: sandbox.workload?.kind ?? "",
+      }),
+    );
     if (stateVolumeCleanup.status === "failed") {
       console.error(
         `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
-      process.exit(1);
+      preparedManagedLlamaCppCleanup?.abort();
+      requestSandboxDestroyExit(1);
     }
     if (stateVolumeCleanup.status === "not-owned") {
       console.warn(
@@ -635,25 +764,29 @@ async function destroySandboxUnlocked(
       console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
     }
   }
-  const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
-    deleteSucceededOrAlreadyGone,
-    registeredSandboxCount: registry.listSandboxes().sandboxes.length,
-    sandboxStillRegistered: !!registry.getSandbox(sandboxName),
-  });
-
-  cleanupSandboxServices(sandboxName, {
-    stopHostServices: shouldStopHostServices,
-  });
-  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
-    const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
-      ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+  abortPreparedCleanupOnError(() => {
+    const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
+      deleteSucceededOrAlreadyGone,
+      registeredSandboxCount: registry.listSandboxes().sandboxes.length,
+      sandboxStillRegistered: !!registry.getSandbox(sandboxName),
     });
-    if (!managedLlamaCppCleanup.ok) {
+    cleanupSandboxServices(sandboxName, {
+      stopHostServices: shouldStopHostServices,
+    });
+  });
+  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
+    preparedManagedLlamaCppCleanup?.abort();
+  } else if (deleteSucceededOrAlreadyGone) {
+    // A null pre-delete result proves that no matching legacy owner state was
+    // present. Never discover and qualify newly appeared state only after the
+    // sandbox boundary; a later destroy retry must preflight that state first.
+    const managedLlamaCppCleanup = preparedManagedLlamaCppCleanup?.cleanup();
+    if (managedLlamaCppCleanup && !managedLlamaCppCleanup.ok) {
       console.error(
         `  Managed llama.cpp cleanup failed for '${sandboxName}': ${managedLlamaCppCleanup.reason}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
-      process.exit(1);
+      requestSandboxDestroyExit(1);
     }
   }
   // The sandbox's gateway was captured before the registry entry is removed —
@@ -697,7 +830,7 @@ async function destroySandboxUnlocked(
     emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (message) =>
       console.warn(`  ${YW}⚠${R}${message}`),
     );
-    process.exit(1);
+    requestSandboxDestroyExit(1);
   }
   if (removed) {
     try {

@@ -129,17 +129,29 @@ function hostFixture(side: "local" | "peer"): StationHostProbe {
     uid: isLocal ? 1000 : 1001,
     gid: isLocal ? 1000 : 1001,
     gpus: isLocal
-      ? [{ index: 0, name: "NVIDIA GB300", uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }]
+      ? [
+          {
+            index: 0,
+            name: "NVIDIA GB300",
+            uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            totalMemoryMiB: 100_000,
+            freeMemoryMiB: 95_000,
+          },
+        ]
       : [
           {
             index: 0,
             name: "NVIDIA RTX PRO 6000",
             uuid: "GPU-11111111-2222-3333-4444-555555555555",
+            totalMemoryMiB: 100_000,
+            freeMemoryMiB: 95_000,
           },
           {
             index: 1,
             name: "NVIDIA GB300 Grace Blackwell Superchip",
             uuid: "GPU-99999999-8888-7777-6666-555555555555",
+            totalMemoryMiB: 100_000,
+            freeMemoryMiB: 95_000,
           },
         ],
     docker: { reachable: true, nvidiaRuntime: true },
@@ -547,7 +559,13 @@ describe("probeDualStationVllmCapability", () => {
       name: "more than one peer GB300",
       code: "peer-gpu-unavailable",
       mutate: (host: StationHostProbe) => {
-        host.gpus.push({ index: 2, name: "NVIDIA GB300", uuid: "GPU-aaaa-bbbb-cccc-dddd" });
+        host.gpus.push({
+          index: 2,
+          name: "NVIDIA GB300",
+          uuid: "GPU-aaaa-bbbb-cccc-dddd",
+          totalMemoryMiB: 100_000,
+          freeMemoryMiB: 95_000,
+        });
       },
     },
     {

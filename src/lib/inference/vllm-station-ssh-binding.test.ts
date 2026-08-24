@@ -21,9 +21,9 @@ import {
   loadDualStationSshBindingHandoff,
   type QualifiedStationSshIdentity,
   stationKnownHostsDigest,
-  strictStationSshTransportArgs,
   writeDualStationSshBinding,
 } from "./vllm-station-ssh-binding";
+import { strictVllmSshTransportArgs } from "./serving/vllm-ssh-transport-policy";
 
 const PEER_TARGET = "station@10.10.0.2";
 const PEER_HOST = "10.10.0.2";
@@ -162,8 +162,8 @@ exit "${"${NEMOCLAW_TEST_DOCKER_EXIT:-0}"}"
     const binding = writeBinding();
     const args = dualStationPinnedSshArgs(binding);
 
-    expect(args.slice(0, strictStationSshTransportArgs().length)).toEqual(
-      strictStationSshTransportArgs(),
+    expect(args.slice(0, strictVllmSshTransportArgs().length)).toEqual(
+      strictVllmSshTransportArgs(),
     );
     expect(args).toEqual(
       expect.arrayContaining([

@@ -30,10 +30,13 @@ import {
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
   withoutCredentialedCatalogueProfiles,
+  withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
+import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
@@ -107,10 +110,26 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(plan.explicitOnlyJobs).toEqual([
+      "staging-brev-launchable-identity",
+      "llama-cpp-dgx-spark-qualification",
+    ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
+    expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("omits only targets whose optional credential is unavailable", () => {
+    const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
+    const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
+
+    expect(braveRows).not.toContain("brave-search");
+    expect(braveRows).not.toContain("common-egress-agent-openclaw-balanced-weather");
+    expect(braveRows).toContain("common-egress-agent-openclaw-open-reference");
+    expect(braveRows).toContain("common-egress-agent-hermes-open-reference");
+    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
   it("keeps multiple inert declarations visibly unresolved without treating them as evidence (#9167)", () => {
@@ -148,6 +167,32 @@ describe("E2E workflow plan", () => {
         coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
       }),
     ).toThrow("execution coverage that does not match its execution plan");
+  });
+
+  it("selects the Launchable identity smoke only when named explicitly (#9925)", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable-identity" });
+
+    expect(plan.selectedJobs).toEqual(["staging-brev-launchable-identity"]);
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({
+        id: "staging-brev-launchable-identity",
+        source: "staging",
+        agentRuntime: "none",
+      }),
+    ]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["staging-brev-launchable-identity"]);
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("staging-brev-launchable-identity");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity,hermes-e2e",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity",
+        targets: "ubuntu-repo-cloud-openclaw",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
@@ -473,13 +518,11 @@ describe("E2E workflow plan", () => {
     expect(plan.selectedJobs).not.toContain(selector);
   });
 
-  it.each(
-    [
-        "Network: enforces network-policy rules",
-        "Network: runs on ubuntu-latest",
-        "Network: validates issue-2478 recovery",
-      ],
-  )(
+  it.each([
+    "Network: enforces network-policy rules",
+    "Network: runs on ubuntu-latest",
+    "Network: validates issue-2478 recovery",
+  ])(
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {
       const networkPolicy = catalogueTarget("network-policy");
@@ -1029,10 +1072,27 @@ describe("E2E workflow plan", () => {
     expect(registryRow).toBeDefined();
     expect(testRow).toBeDefined();
     expect(coverageRow).toBeDefined();
+    const { timeout_minutes: _timeoutMinutes, ...registryRowWithoutTimeout } = registryRow!;
     const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
     const malformedPlans = [
       missingField,
       { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] },
+      {
+        ...validPlan,
+        matrix: [registryRowWithoutTimeout, ...validPlan.matrix.slice(1)],
+      },
+      {
+        ...validPlan,
+        matrix: validPlan.matrix.map((row, index) =>
+          index === 0 ? { ...row, timeout_minutes: 0 } : row,
+        ),
+      },
+      {
+        ...validPlan,
+        matrix: validPlan.matrix.map((row, index) =>
+          index === 0 ? { ...row, timeout_minutes: 1.5 } : row,
+        ),
+      },
       { ...validPlan, testMatrix: [{ ...testRow, id: "invalid_id" }] },
       {
         ...validPlan,
@@ -1204,7 +1264,15 @@ describe("E2E workflow plan", () => {
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    expect(complete.stdout).toMatch(/The \d+ inert typed declarations above/);
+    const inertDeclarationCount = listTargets().filter(
+      (target) => !liveTargetSupport(target).supported,
+    ).length;
+    expect(complete.stdout).toContain(
+      `The ${inertDeclarationCount} inert typed declarations above`,
+    );
+    expect(complete.stdout).toContain(
+      "| `brev-launchable-cloud-openclaw` | unresolved | unresolved | unresolved | platform 'brev-launchable' is not wired for live fixtures; install 'launchable' is not wired for live fixtures |",
+    );
     expect(complete.stdout).toContain("#8285");
     expect(complete.stdout).toContain("#8286");
   });

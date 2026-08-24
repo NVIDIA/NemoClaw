@@ -17,6 +17,7 @@ export interface Deps {
     provider: string,
     model: string,
     preferredInferenceApi: string | null,
+    endpointUrl: string | null,
   ): { changed: boolean; unknown: boolean };
   error(message?: string): void;
   exitProcess(code: number): never;
@@ -32,6 +33,7 @@ interface SelectionOptions<Agent> {
 interface ResumeOptions<Agent> extends SelectionOptions<Agent> {
   readonly resume: boolean;
   readonly preferredInferenceApi: string | null;
+  readonly endpointUrl: string | null;
   readonly requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
 }
 
@@ -116,6 +118,7 @@ export function resolveSignals<Agent>(
     options.provider,
     options.model,
     options.preferredInferenceApi,
+    options.endpointUrl,
   );
   return {
     inferenceSelectionChanged: Boolean(drift.changed || drift.unknown),

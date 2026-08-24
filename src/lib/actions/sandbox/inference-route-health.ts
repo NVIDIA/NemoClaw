@@ -102,13 +102,43 @@ export async function probeSandboxInferenceGatewayHealth(
   };
 }
 
+/**
+ * The upstream probe authenticates with the host credential this command
+ * resolves. The gateway stores the provider credential the sandbox route uses
+ * and does not return its value, so the two can hold different secrets. Once
+ * the route has served an inference request, a provider rejection of the host
+ * credential reports nothing about the sandbox route. Local backend and auth
+ * proxy hops carry their own probeLabel and keep their own remediation.
+ */
+function unattributedUpstreamProbe(probe: ProviderHealthStatus): ProviderHealthStatus {
+  const { failureLabel: _failureLabel, ...rest } = probe;
+  return {
+    ...rest,
+    ok: true,
+    probed: false,
+    detail:
+      `${probe.detail} The sandbox ` +
+      "route served an inference request with the provider credential stored in the gateway, so " +
+      "NemoClaw does not attribute this result to the sandbox route.",
+  };
+}
+
 function providerHealthDiagnostics(
   providerHealth: ProviderHealthStatus | null,
+  routeServedRequest: boolean,
 ): ProviderHealthStatus[] {
   if (!providerHealth) return [];
   const { subprobes = [], ...primary } = providerHealth;
   const labeledPrimary = primary.probeLabel ? primary : { ...primary, probeLabel: "upstream" };
-  return [labeledPrimary, ...subprobes];
+  return [labeledPrimary, ...subprobes].map((probe) =>
+    routeServedRequest &&
+    probe.probeLabel === "upstream" &&
+    probe.probed &&
+    !probe.ok &&
+    probe.failureLabel === "unauthorized"
+      ? unattributedUpstreamProbe(probe)
+      : probe,
+  );
 }
 
 function classifyInferenceInvocationFailureLabel(
@@ -176,7 +206,7 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
 ): ProviderHealthStatus {
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
-  const diagnostics = providerHealthDiagnostics(providerHealth);
+  const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
   let routeHealth: ProviderHealthStatus;
   if (gateway?.ok && invocation) {
     routeHealth = buildInvokedRouteHealth(gateway, endpoint, invocation);

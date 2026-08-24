@@ -4,6 +4,8 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
+import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -59,6 +61,11 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
+  listMessagingCredentialEnvAssignments()
+    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+    .map(({ agent, sourceEnvKey, targetEnvKey }) => `${agent}\0${sourceEnvKey}\0${targetEnvKey}`),
+);
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
@@ -993,8 +1000,19 @@ function valueLooksLikeSecret(value: string): boolean {
   return false;
 }
 
-function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
+function isMessagingCredentialPlaceholder(
+  path: readonly string[],
+  value: unknown,
+  allowedBuildStepPlaceholders: ReadonlySet<string>,
+  allowedMessagingCredentialFields: ReadonlySet<string>,
+): boolean {
   if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+    return false;
+  }
+  if (
+    requiresMessagingSchemaFieldAuthorization(path) &&
+    !allowedMessagingCredentialFields.has(messagingAuthorizedFieldKey(path))
+  ) {
     return false;
   }
   const isCredentialBindingPlaceholder =
@@ -1011,7 +1029,27 @@ function isMessagingCredentialPlaceholder(path: readonly string[], value: unknow
     path[2] === "agentRender" &&
     JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
     path[4] === "value";
-  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+  const isAuthorizedBuildStepPlaceholder = allowedBuildStepPlaceholders.has(
+    buildStepPlaceholderKey(path, value),
+  );
+  return (
+    isCredentialBindingPlaceholder ||
+    isAgentRenderValuePlaceholder ||
+    isAuthorizedBuildStepPlaceholder
+  );
+}
+
+function requiresMessagingSchemaFieldAuthorization(path: readonly string[]): boolean {
+  const fieldName = path[path.length - 1];
+  return fieldName === "webhook";
+}
+
+function messagingAuthorizedFieldKey(path: readonly string[]): string {
+  return JSON.stringify(path);
+}
+
+function buildStepPlaceholderKey(path: readonly string[], value: string): string {
+  return JSON.stringify([path, value]);
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
@@ -1028,6 +1066,7 @@ function containsMessagingCredentialPlaceholder(value: string): boolean {
 }
 
 function isMessagingCredentialPlaceholderAssignment(
+  selectedAgent: unknown,
   path: readonly string[],
   value: string,
 ): boolean {
@@ -1045,8 +1084,17 @@ function isMessagingCredentialPlaceholderAssignment(
   const separator = value.indexOf("=");
   if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
   const envKey = value.slice(0, separator);
-  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
-  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+  const placeholder = value.slice(separator + 1);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(placeholder);
+  return (
+    CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
+    placeholderEnvKey !== null &&
+    (envKey === placeholderEnvKey ||
+      (typeof selectedAgent === "string" &&
+        MESSAGING_CREDENTIAL_ENV_ALIASES.has(
+          `${selectedAgent}\0${placeholderEnvKey}\0${envKey}`,
+        )))
+  );
 }
 
 function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
@@ -1063,6 +1111,66 @@ function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
 function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isStockTeamsOpenClawWebhook(
+  root: unknown,
+  path: readonly string[],
+  value: unknown,
+): boolean {
+  if (
+    path.length !== 6 ||
+    path[0] !== "messaging" ||
+    path[1] !== "plan" ||
+    path[2] !== "agentRender" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") ||
+    path[4] !== "value" ||
+    path[5] !== "webhook" ||
+    !isPlainObject(root) ||
+    ownDataPropertyValue(root, "agent") !== "openclaw"
+  ) {
+    return false;
+  }
+
+  const messaging = ownDataPropertyValue(root, "messaging");
+  if (!isPlainObject(messaging)) return false;
+  const plan = ownDataPropertyValue(messaging, "plan");
+  if (!isPlainObject(plan) || ownDataPropertyValue(plan, "agent") !== "openclaw") return false;
+  const agentRender = ownDataPropertyValue(plan, "agentRender");
+  if (!Array.isArray(agentRender)) return false;
+  const entryIndex = (path[3] as string).slice(1, -1);
+  const entryDescriptor = Object.getOwnPropertyDescriptor(agentRender, entryIndex);
+  const entry = entryDescriptor && "value" in entryDescriptor ? entryDescriptor.value : undefined;
+  if (!isPlainObject(entry)) return false;
+
+  const renderValue = ownDataPropertyValue(entry, "value");
+  if (!isPlainObject(renderValue) || ownDataPropertyValue(renderValue, "webhook") !== value) {
+    return false;
+  }
+  if (
+    ownDataPropertyValue(entry, "channelId") !== "teams" ||
+    ownDataPropertyValue(entry, "renderId") !== "teams-openclaw-channel" ||
+    ownDataPropertyValue(entry, "hookId") !== "teams-openclaw-channel" ||
+    ownDataPropertyValue(entry, "handler") !== "common.staticOutputs" ||
+    ownDataPropertyValue(entry, "kind") !== "json-fragment" ||
+    ownDataPropertyValue(entry, "agent") !== "openclaw" ||
+    ownDataPropertyValue(entry, "target") !== "openclaw.json" ||
+    ownDataPropertyValue(entry, "path") !== "channels.msteams" ||
+    !isPlainObject(value)
+  ) {
+    return false;
+  }
+
+  const keys = Object.getOwnPropertyNames(value);
+  if (keys.length !== 2 || !keys.includes("port") || !keys.includes("path")) return false;
+  const port = ownDataPropertyValue(value, "port");
+  return (
+    typeof port === "number" &&
+    Number.isInteger(port) &&
+    port >= 1 &&
+    port <= 65_535 &&
+    ownDataPropertyValue(value, "path") === "/api/messages"
+  );
 }
 
 function isCanonicalMessagingRuntimeEnvAlias(
@@ -1448,6 +1556,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
+  const allowedMessagingCredentialFields = new Set<string>();
+  const allowedBuildStepPlaceholders = new Set<string>();
+  const selectedAgent = isPlainObject(root) ? ownDataPropertyValue(root, "agent") : undefined;
   let discoveredNodes = 1;
   let observedBytes = 0;
 
@@ -1476,8 +1587,17 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       observeText(current.value);
       if (
         !isAllowedMessagingRuntimeAliasStringPath(current.path, allowedRuntimeAliasIndexes) &&
-        !isMessagingCredentialPlaceholder(current.path, current.value) &&
-        !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
+        !isMessagingCredentialPlaceholder(
+          current.path,
+          current.value,
+          allowedBuildStepPlaceholders,
+          allowedMessagingCredentialFields,
+        ) &&
+        !isMessagingCredentialPlaceholderAssignment(
+          selectedAgent,
+          current.path,
+          current.value,
+        ) &&
         (valueLooksLikeSecret(current.value) ||
           containsMessagingCredentialPlaceholder(current.value))
       ) {
@@ -1538,6 +1658,27 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
+      const messagingPlanSection = current.path[2];
+      if (
+        current.path.length === 4 &&
+        current.path[0] === "messaging" &&
+        current.path[1] === "plan" &&
+        (messagingPlanSection === "buildSteps" || messagingPlanSection === "agentRender") &&
+        JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
+      ) {
+        for (const authorization of authorizeMessagingManagedStartupFields(
+          current.value,
+          messagingPlanSection,
+        )) {
+          const authorizedPath = [...current.path, ...authorization.path];
+          allowedMessagingCredentialFields.add(messagingAuthorizedFieldKey(authorizedPath));
+          if (typeof authorization.value === "string") {
+            allowedBuildStepPlaceholders.add(
+              buildStepPlaceholderKey(authorizedPath, authorization.value),
+            );
+          }
+        }
+      }
       const keys = Object.getOwnPropertyNames(current.value);
       if (
         Object.getOwnPropertySymbols(current.value).length > 0 ||
@@ -1567,8 +1708,17 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         const child = descriptor.value;
         if (
           isCredentialShapedName(key) &&
-          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
-          !isMessagingPackagePin([...current.path, key], child)
+          !allowedMessagingCredentialFields.has(
+            messagingAuthorizedFieldKey([...current.path, key]),
+          ) &&
+          !isMessagingCredentialPlaceholder(
+            [...current.path, key],
+            child,
+            allowedBuildStepPlaceholders,
+            allowedMessagingCredentialFields,
+          ) &&
+          !isMessagingPackagePin([...current.path, key], child) &&
+          !isStockTeamsOpenClawWebhook(root, [...current.path, key], child)
         ) {
           invalid(
             `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,
@@ -2039,7 +2189,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   ) {
     invalid("messaging.plan must be a version 1 plan for the selected agent");
   }
-
   const corporateCa = requireRecord(profile.corporateCa, "corporateCa");
   rejectUnknownKeys(corporateCa, CORPORATE_CA_KEYS, "corporateCa");
   const bundleSha256 = corporateCa.bundleSha256;

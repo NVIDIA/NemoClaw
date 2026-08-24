@@ -144,6 +144,7 @@ function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
   ] as const;
   const contents = {
     compilerVersion: current.compilerVersion,
+    models: current.models,
     presets: [...current.presets, unrelatedPreset],
     recipes: [...current.recipes, unrelatedRecipe],
     readinessSchemaRef: current.readinessSchemaRef,

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -331,6 +334,38 @@ describe("managed workload rebuild preflight", () => {
     });
   });
 
+  it("retains the exact PR catalog during rebuild preflight (#9464)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw"));
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", "a".repeat(40));
+    vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
+
+    try {
+      await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      });
+
+      expect(prepare).toHaveBeenCalledExactlyOnceWith({
+        agentName: "openclaw",
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+        catalogPath,
+        expectedCatalogRevision: "a".repeat(40),
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
     const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
@@ -345,6 +380,31 @@ describe("managed workload rebuild preflight", () => {
       }),
     ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
     expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects a PR catalog revision that conflicts with durable authority (#9464)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw"));
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", "c".repeat(40));
+    vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
+
+    try {
+      await expect(
+        prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+          runtime: runtime(),
+          provider: provider(),
+          version: "0.0.100",
+        }),
+      ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("keeps release-catalog rebuild behavior outside GitHub Actions (#9385)", async () => {

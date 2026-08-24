@@ -210,6 +210,7 @@ describe("ManifestCompiler", () => {
       "discord:discord-openclaw-channel",
       "discord:discord-openclaw-plugin",
       "wechat:wechat-openclaw-plugin",
+      "wechat:wechat-openclaw-channel",
       "slack:slack-openclaw-channel",
       "slack:slack-openclaw-plugin",
       "whatsapp:whatsapp-openclaw-channel",

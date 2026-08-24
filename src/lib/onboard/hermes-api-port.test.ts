@@ -49,7 +49,7 @@ describe("Hermes API and dashboard port creation scopes", () => {
     const entryPoints = createHermesApiPortScopedSandboxEntryPoints({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution,
-      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
+      resolvePortableRuntimeContext: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => ({ sequence: ++sequence }),
     });
 

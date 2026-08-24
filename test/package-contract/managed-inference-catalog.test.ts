@@ -10,6 +10,7 @@ import { parseCompiledServingCatalogJson } from "../../dist/lib/inference/servin
 import catalogSchema from "../../managed-inference/schemas/catalog.schema.json" with {
   type: "json",
 };
+import modelSchema from "../../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import { createPackageFixture } from "./helpers/package-fixture";
@@ -24,6 +25,7 @@ describe("compiled managed inference serving catalog", () => {
     );
     parseCompiledServingCatalogJson(source, {
       catalog: catalogSchema,
+      model: modelSchema,
       preset: presetSchema,
       recipe: recipeSchema,
     });
@@ -45,6 +47,7 @@ describe("compiled managed inference serving catalog", () => {
 
       expect(files).toContain("dist/managed-inference/catalog.json");
       expect(files).toContain("managed-inference/schemas/catalog.schema.json");
+      expect(files).toContain("managed-inference/schemas/model.schema.json");
       expect(files).toContain("managed-inference/schemas/recipe.schema.json");
       expect(files).toContain("managed-inference/schemas/preset.schema.json");
     } finally {

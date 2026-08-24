@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "../sandbox/create-stream";
 import {
@@ -15,6 +15,10 @@ import {
   type SandboxCreateStepContext,
   type SandboxCreateStepDeps,
 } from "./sandbox-create-step";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function makeLaunch(overrides: Record<string, unknown> = {}) {
   return {
@@ -169,6 +173,7 @@ describe("runSandboxCreateStep", () => {
   });
 
   it("gates restart-safe persistence on the step's own portable env, not process.env (#9462)", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "nemoclaw-start"],
     });

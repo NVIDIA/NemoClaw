@@ -116,3 +116,7 @@ export function validateE2eExecutionRows(
 export function e2eExecutionLabel(row: E2eExecutionRow): string {
   return row.variant === "" ? row.id : `${row.id} / ${row.variant}`;
 }
+
+export function e2eExecutionTitle(metadata: E2eExecutionMetadata): string {
+  return `${metadata.observableOutcome} [${metadata.agentRuntime}; ${metadata.environmentOrInferenceEndpoint}]`;
+}

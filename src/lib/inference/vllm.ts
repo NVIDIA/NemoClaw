@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import {
   dockerCapture,
   dockerForceRm,
@@ -24,10 +24,10 @@ import { runCurlProbe } from "../adapters/http/probe";
 import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
-import { VLLM_PORT } from "../core/ports";
+import { VLLM_PORT } from "../core/vllm-port";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
-import { runCapture } from "../runner";
+import { redact, redactFull, runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   acquireHuggingFaceModel,
@@ -43,6 +43,8 @@ import {
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
+  NEMOCLAW_SERVING_PRESET_ENV,
   persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
@@ -57,19 +59,29 @@ import {
 import {
   assertGatedModelAccess,
   buildVllmServeCommand,
-  NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
-  NEMOTRON_ULTRA_STATION_IMAGE,
+  defaultVllmModelForPlatform,
+  defaultVllmRuntimeForPlatform,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  NEMOCLAW_VLLM_GPU_DEVICE_ENV,
+  normalizeVllmGpuDevice,
   parseVllmExtraServeArgs,
+  resolveVllmGpuMemoryUtilization,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
+  vllmModelForOrchestration,
+  vllmModelUsesOrchestration,
+  vllmPlatformSpecificity,
   type VllmModelDef,
   type VllmPlatform,
+  type VllmRuntimeOverride,
+  type VllmRuntimeVariant,
 } from "./vllm-models";
 import {
   type DualStationVllmPlan,
   NEMOCLAW_DGX_STATION_PEER_ENV,
   probeDualStationVllmCapability,
 } from "./vllm-station-cluster";
+import type { ManagedInferenceReadinessSource } from "./serving/types";
 import {
   areDualStationManagedVllmContainersRunning,
   cleanupDualStationManagedVllm,
@@ -102,6 +114,8 @@ import {
   type StorageProbeResult,
 } from "./vllm-storage";
 
+export { selectVllmModelFromEnv } from "./vllm-models";
+
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
@@ -111,6 +125,8 @@ export interface VllmProfile {
   // filters the registry. Decoupled from `name` so future user-facing label
   // tweaks don't change which models are offered.
   platform: VllmPlatform;
+  /** Qualified host architecture for this platform profile. */
+  architecture?: NodeJS.Architecture;
   image: string; // platform-specific image pinned by digest
   // Compressed size of that exact platform manifest. The storage preflight
   // adds unpacking and pull-staging headroom.
@@ -139,6 +155,12 @@ export interface VllmProfile {
   // Optional pinned model snapshot size. Model-specific runtime overrides use
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
+  /** GPU floor selected by a compatibility-qualified model runtime. */
+  minComputeCapability?: number;
+  /** Minimum GPU or unified-memory capacity selected by the runtime recipe. */
+  minGpuMemoryBytes?: number;
+  /** Fraction of one selected GPU that vLLM reserves during startup. */
+  gpuMemoryUtilization?: number;
   servingCatalog?: {
     catalogDigest: string;
     presetId: string;
@@ -148,59 +170,33 @@ export interface VllmProfile {
   };
 }
 
-interface VllmImageCatalogEntry {
-  downloadSizeBytes: number;
-  ref: string;
-  unpackedSizeBytes?: number;
-}
-
 const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000;
 
-// Platform manifests and decimal compressed sizes published by NGC for the
-// named release tags. Pinning the digest makes a cache hit authoritative: an
-// explicit pull cannot begin downloading different same-tag layers. Unpacked
-// sizes are digest-catalog values measured ahead of time because OCI metadata
-// does not publish exact uncompressed byte counts.
+// Compatibility export for image-boundary checks. Runtime image identity and
+// size are owned by catalog recipes, including optional orchestration images.
 export const VLLM_IMAGES = {
-  vllm022: NEMOTRON_ULTRA_STATION_IMAGE,
-  ngc2603Post1: {
-    tag: "nvcr.io/nvidia/vllm:26.03.post1-py3",
-    amd64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
-      downloadSizeBytes: 8_928_665_752,
-    },
-    arm64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
-      downloadSizeBytes: 9_278_081_698,
-    },
-  },
-  ngc2605Post1: {
-    tag: "nvcr.io/nvidia/vllm:26.05.post1-py3",
-    arm64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
-      downloadSizeBytes: 9_603_085_145,
-      unpackedSizeBytes: 27_658_526_720,
-    },
-  },
+  catalog: Object.fromEntries(
+    VLLM_MODELS.flatMap((model) =>
+      (model.runtimeVariants ?? []).flatMap((runtime, index) => [
+        [
+          `${model.envValue}-${String(index)}`,
+          { ref: runtime.image, downloadSizeBytes: runtime.imageDownloadSizeBytes },
+        ],
+        ...(runtime.stationPair
+          ? [
+              [
+                `${model.envValue}-${String(index)}-station-pair`,
+                {
+                  ref: runtime.stationPair.image,
+                  downloadSizeBytes: runtime.stationPair.imageDownloadSizeBytes,
+                },
+              ],
+            ]
+          : []),
+      ]),
+    ),
+  ),
 } as const;
-
-function nemotronNanoModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
-  if (!match) throw new Error("vllm-models registry is missing the nemotron-3-nano-4b entry");
-  return match;
-}
-
-function deepseekV4FlashModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
-  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
-  return match;
-}
-
-function qwen35bNvfp4Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
-  return match;
-}
 
 const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
@@ -260,6 +256,27 @@ function vllmDockerRunFlags(gpuFlag = "all"): string[] {
   ];
 }
 
+function replaceVllmGpuRequest(flags: readonly string[], device: string): string[] {
+  const gpuIndex = flags.indexOf("--gpus");
+  if (gpuIndex < 0 || gpuIndex === flags.length - 1 || flags.indexOf("--gpus", gpuIndex + 1) >= 0) {
+    throw new Error("managed vLLM profile must contain exactly one Docker --gpus request");
+  }
+  const selected = [...flags];
+  selected[gpuIndex + 1] = `device=${device}`;
+  return selected;
+}
+
+export function selectVllmGpuDevice(profile: VllmProfile, device: string): VllmProfile {
+  const normalized = normalizeVllmGpuDevice(device);
+  return {
+    ...profile,
+    dockerRunFlags: replaceVllmGpuRequest(profile.dockerRunFlags, normalized),
+    buildDockerRunFlags: profile.buildDockerRunFlags
+      ? () => replaceVllmGpuRequest(profile.buildDockerRunFlags!(), normalized)
+      : undefined,
+  };
+}
+
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
   const authentication = hfDownloadAuthentication();
   if (authentication.authenticated) {
@@ -297,26 +314,30 @@ function printHfRateLimitRecovery(): void {
   );
 }
 
+const sparkDefaultRuntime = defaultVllmRuntimeForPlatform("spark", "arm64");
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
   platform: "spark",
-  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
-  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
-  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
-  defaultModel: qwen35bNvfp4Model(),
+  architecture: "arm64",
+  image: sparkDefaultRuntime.image,
+  imageDownloadSizeBytes: sparkDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: sparkDefaultRuntime.imageUnpackedSizeBytes,
+  defaultModel: defaultVllmModelForPlatform("spark", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
 };
 
+const n1xDefaultRuntime = defaultVllmRuntimeForPlatform("n1x", "arm64");
 const N1X_PROFILE: VllmProfile = {
   name: "N1x",
   platform: "n1x",
-  image: SPARK_PROFILE.image,
-  imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
-  imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
-  defaultModel: qwen35bNvfp4Model(),
+  architecture: "arm64",
+  image: n1xDefaultRuntime.image,
+  imageDownloadSizeBytes: n1xDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: n1xDefaultRuntime.imageUnpackedSizeBytes,
+  defaultModel: defaultVllmModelForPlatform("n1x", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -324,13 +345,15 @@ const N1X_PROFILE: VllmProfile = {
 };
 
 // DGX Station.
+const stationDefaultRuntime = defaultVllmRuntimeForPlatform("station", "arm64");
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   platform: "station",
-  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
-  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
-  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
-  defaultModel: deepseekV4FlashModel(),
+  architecture: "arm64",
+  image: stationDefaultRuntime.image,
+  imageDownloadSizeBytes: stationDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: stationDefaultRuntime.imageUnpackedSizeBytes,
+  defaultModel: defaultVllmModelForPlatform("station", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -351,21 +374,20 @@ const STATION_PROFILE: VllmProfile = {
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
-const genericLinuxImage: VllmImageCatalogEntry | null =
-  process.arch === "arm64"
-    ? VLLM_IMAGES.ngc2603Post1.arm64
-    : process.arch === "x64"
-      ? VLLM_IMAGES.ngc2603Post1.amd64
-      : null;
+const genericLinuxRuntime =
+  process.arch === "arm64" || process.arch === "x64"
+    ? defaultVllmRuntimeForPlatform("linux", process.arch)
+    : null;
 
-const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
+const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxRuntime
   ? {
       name: "Linux + NVIDIA GPU",
       platform: "linux",
-      image: genericLinuxImage.ref,
-      imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
-      imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
-      defaultModel: nemotronNanoModel(),
+      architecture: process.arch,
+      image: genericLinuxRuntime.image,
+      imageDownloadSizeBytes: genericLinuxRuntime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: genericLinuxRuntime.imageUnpackedSizeBytes,
+      defaultModel: defaultVllmModelForPlatform("linux", process.arch),
       containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
       pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -416,10 +438,15 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-export function readGpuComputeCapabilities(): number[] {
-  const out = captureNvidiaSmi(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
-    runCaptureImpl: runCapture,
-  });
+export function readGpuComputeCapabilities(device?: string): number[] {
+  const out = captureNvidiaSmi(
+    [
+      ...(device ? [`--id=${device}`] : []),
+      "--query-gpu=compute_cap",
+      "--format=csv,noheader,nounits",
+    ],
+    { runCaptureImpl: runCapture },
+  );
   if (!out) return [];
   const capabilities: number[] = [];
   for (const line of out.split("\n")) {
@@ -432,6 +459,13 @@ export function readGpuComputeCapabilities(): number[] {
   return capabilities;
 }
 
+function readProfileGpuComputeCapabilities(profile: VllmProfile): number[] {
+  const request = profileGpuRequest(profile);
+  if (!request?.startsWith("device=")) return readGpuComputeCapabilities();
+  const device = request.slice("device=".length).split(",")[0]?.trim();
+  return readGpuComputeCapabilities(device || undefined);
+}
+
 export function formatComputeCapability(capability: number): string {
   return `${String(Math.floor(capability / 10))}.${String(capability % 10)}`;
 }
@@ -439,8 +473,9 @@ export function formatComputeCapability(capability: number): string {
 export function computeCapabilityPreflight(
   model: VllmModelDef,
   capabilities: number[] = readGpuComputeCapabilities(),
+  runtimeMinimum: number | undefined = model.minComputeCapability,
 ): { ok: true } | { ok: false; reason: string } {
-  const required = model.minComputeCapability;
+  const required = runtimeMinimum;
   if (required === undefined) return { ok: true };
   if (capabilities.length === 0) return { ok: true };
   const lowest = Math.min(...capabilities);
@@ -452,6 +487,170 @@ export function computeCapabilityPreflight(
       `but this host reports ${formatComputeCapability(lowest)}. ` +
       "Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.",
   };
+}
+
+export interface GpuMemoryDevice {
+  index: number;
+  uuid: string;
+  totalBytes: bigint;
+  freeBytes: bigint;
+}
+
+export function readGpuMemoryDevices(): GpuMemoryDevice[] {
+  const out = captureNvidiaSmi(
+    ["--query-gpu=index,uuid,memory.total,memory.free", "--format=csv,noheader,nounits"],
+    { runCaptureImpl: runCapture },
+  );
+  if (!out) return [];
+  const devices: GpuMemoryDevice[] = [];
+  for (const line of out.split("\n")) {
+    const fields = line.split(",").map((field) => field.trim());
+    if (fields.length !== 4) continue;
+    const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
+    const index = Number(indexRaw);
+    const totalMiB = Number(totalMiBRaw);
+    const freeMiB = Number(freeMiBRaw);
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      !uuid ||
+      !Number.isSafeInteger(totalMiB) ||
+      totalMiB <= 0 ||
+      !Number.isSafeInteger(freeMiB) ||
+      freeMiB < 0 ||
+      freeMiB > totalMiB
+    ) {
+      continue;
+    }
+    devices.push({
+      index,
+      uuid,
+      totalBytes: BigInt(totalMiB) * 1024n * 1024n,
+      freeBytes: BigInt(freeMiB) * 1024n * 1024n,
+    });
+  }
+  return devices;
+}
+
+function profileGpuRequest(profile: VllmProfile): string | null {
+  let flags: readonly string[];
+  try {
+    flags = profile.buildDockerRunFlags ? profile.buildDockerRunFlags() : profile.dockerRunFlags;
+  } catch {
+    return null;
+  }
+  const index = flags.indexOf("--gpus");
+  if (index < 0 || index === flags.length - 1) return null;
+  const value = flags[index + 1]!;
+  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+}
+
+function selectedGpuMemoryDevice(
+  request: string,
+  devices: readonly GpuMemoryDevice[],
+): GpuMemoryDevice | null {
+  // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
+  // on the first visible device even when Docker exposes every GPU.
+  if (request === "all" || request === "device=all") {
+    return devices.find((device) => device.index === 0) ?? null;
+  }
+  if (!request.startsWith("device=")) return null;
+  const selector = request.slice("device=".length).split(",")[0]?.trim();
+  if (!selector) return null;
+  return (
+    devices.find(
+      (device) =>
+        String(device.index) === selector || device.uuid.toLowerCase() === selector.toLowerCase(),
+    ) ?? null
+  );
+}
+
+export function gpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
+): { ok: true } | { ok: false; reason: string } {
+  const utilization = profile.gpuMemoryUtilization;
+  if (utilization === undefined) return { ok: true };
+  if (devices.length === 0) {
+    return {
+      ok: false,
+      reason:
+        `Could not read valid GPU memory telemetry for ${model.label} with nvidia-smi. ` +
+        "Verify NVIDIA driver access and GPU health, then resume onboarding.",
+    };
+  }
+  const request = profileGpuRequest(profile);
+  if (!request) {
+    return {
+      ok: false,
+      reason:
+        `Could not determine which GPU ${profile.name} will expose to ${model.label}. ` +
+        "Verify the managed vLLM GPU configuration, then resume onboarding.",
+    };
+  }
+  const device = selectedGpuMemoryDevice(request, devices);
+  if (!device) {
+    return {
+      ok: false,
+      reason:
+        `${profile.name} selects GPU '${request}', but nvidia-smi did not report that device. ` +
+        "Verify the Docker GPU selection and NVIDIA driver state, then resume onboarding.",
+    };
+  }
+  const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
+  if (device.freeBytes >= requiredBytes) return { ok: true };
+  const missingBytes = requiredBytes - device.freeBytes;
+  return {
+    ok: false,
+    reason:
+      `${model.label} sets --gpu-memory-utilization=${String(utilization)}, which requires about ` +
+      `${formatStorageBytes(requiredBytes)} free on GPU ${String(device.index)}, but only ` +
+      `${formatStorageBytes(device.freeBytes)} of ${formatStorageBytes(device.totalBytes)} is free. ` +
+      `Stop other GPU workloads to free at least ${formatStorageBytes(missingBytes)}, then resume onboarding.`,
+  };
+}
+
+function installGpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  dualStationPlan: DualStationVllmPlan | null,
+): ReturnType<typeof gpuMemoryPreflight> {
+  if (!dualStationPlan) return gpuMemoryPreflight(model, profile);
+  const utilization = profile.gpuMemoryUtilization;
+  if (utilization === undefined) return { ok: true };
+  for (const node of [dualStationPlan.local, dualStationPlan.peer]) {
+    const totalBytes = BigInt(node.gpu.totalMemoryMiB) * 1024n * 1024n;
+    const freeBytes = BigInt(node.gpu.freeMemoryMiB) * 1024n * 1024n;
+    const requiredBytes = BigInt(Math.ceil(Number(totalBytes) * utilization));
+    if (freeBytes >= requiredBytes) continue;
+    const missingBytes = requiredBytes - freeBytes;
+    return {
+      ok: false,
+      reason:
+        `${model.label} sets --gpu-memory-utilization=${String(utilization)}, which requires about ` +
+        `${formatStorageBytes(requiredBytes)} free on GPU ${String(node.gpu.index)} ` +
+        `(${node.gpu.uuid}) on ${node.hostname}, but only ${formatStorageBytes(freeBytes)} of ` +
+        `${formatStorageBytes(totalBytes)} is free. Stop other GPU workloads on ${node.hostname} ` +
+        `to free at least ${formatStorageBytes(missingBytes)}, then resume onboarding.`,
+    };
+  }
+  return { ok: true };
+}
+
+function sameDualStationTopology(left: DualStationVllmPlan, right: DualStationVllmPlan): boolean {
+  const withoutVolatileMemory = (plan: DualStationVllmPlan): DualStationVllmPlan => ({
+    ...plan,
+    local: {
+      ...plan.local,
+      gpu: { ...plan.local.gpu, freeMemoryMiB: 0 },
+    },
+    peer: {
+      ...plan.peer,
+      gpu: { ...plan.peer.gpu, freeMemoryMiB: 0 },
+    },
+  });
+  return isDeepStrictEqual(withoutVolatileMemory(left), withoutVolatileMemory(right));
 }
 
 export async function pullImage(
@@ -589,16 +788,75 @@ export function buildVllmRunArgs(
   ];
 }
 
-export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModelDef): VllmProfile {
-  const runtime = model.runtime;
+function selectedVllmRuntime(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): VllmRuntimeOverride | VllmRuntimeVariant | undefined {
+  const matchingVariants = (model.runtimeVariants ?? [])
+    .filter(
+      (candidate) =>
+        vllmPlatformSpecificity(candidate.platforms, profile.platform) >= 0 &&
+        (!candidate.architectures || candidate.architectures.includes(architecture)),
+    )
+    .sort(
+      (left, right) =>
+        vllmPlatformSpecificity(left.platforms, profile.platform) -
+          vllmPlatformSpecificity(right.platforms, profile.platform) ||
+        left.priority - right.priority ||
+        (left.catalogPresetId ?? "").localeCompare(right.catalogPresetId ?? ""),
+    );
+  const runtime = matchingVariants.at(-1) ?? model.runtime;
+  if (model.requireRuntimeVariant && !runtime) {
+    throw new Error(
+      `${model.label} has no managed vLLM runtime for ${profile.name} on ${architecture}.`,
+    );
+  }
+  return runtime;
+}
+
+function replaceCatalogGpuRequest(
+  profile: VllmProfile,
+  runtime: VllmRuntimeOverride,
+  extraRunArgs: string[],
+): string[] {
+  if (runtime.dockerRunArgsMode !== "replace" || !profile.buildDockerRunFlags) {
+    return extraRunArgs;
+  }
+  if (!runtime.catalogPresetId) return extraRunArgs;
+  const platformFlags = profile.buildDockerRunFlags();
+  const platformGpuIndex = platformFlags.indexOf("--gpus");
+  const recipeGpuIndex = extraRunArgs.indexOf("--gpus");
+  if (
+    platformGpuIndex < 0 ||
+    platformGpuIndex === platformFlags.length - 1 ||
+    recipeGpuIndex < 0 ||
+    recipeGpuIndex === extraRunArgs.length - 1
+  ) {
+    throw new Error(`${profile.name} did not produce one declarative GPU request.`);
+  }
+  const replaced = [...extraRunArgs];
+  replaced[recipeGpuIndex + 1] = platformFlags[platformGpuIndex + 1]!;
+  return replaced;
+}
+
+function applyVllmRuntimeProfile(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runtime: VllmRuntimeOverride | VllmRuntimeVariant | undefined,
+): VllmProfile {
   let resolved = profile;
   if (runtime) {
-    const extraRunArgs = [...(runtime.dockerRunArgs ?? [])];
+    const extraRunArgs = replaceCatalogGpuRequest(profile, runtime, [
+      ...(runtime.dockerRunArgs ?? []),
+    ]);
     resolved = {
       ...profile,
       image: runtime.image,
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
-      imageUnpackedSizeBytes: undefined,
+      imageUnpackedSizeBytes:
+        runtime.imageUnpackedSizeBytes ??
+        (runtime.image === profile.image ? profile.imageUnpackedSizeBytes : undefined),
       modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
       loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
       dockerRunFlags:
@@ -612,10 +870,48 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
             ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
             : undefined,
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
+      minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
+      minGpuMemoryBytes: runtime.minGpuMemoryBytes,
+      gpuMemoryUtilization: runtime.gpuMemoryUtilization,
+      servingCatalog: runtime.servingCatalog ?? profile.servingCatalog,
     };
   }
   assertVllmRegistryDigestRef(resolved.image);
   return resolved;
+}
+
+export function resolveVllmRuntimeProfile(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): VllmProfile {
+  return applyVllmRuntimeProfile(profile, model, selectedVllmRuntime(profile, model, architecture));
+}
+
+export function resolveVllmModelRuntime(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): { profile: VllmProfile; model: VllmModelDef } {
+  const runtime = selectedVllmRuntime(profile, model, architecture);
+  const resolvedProfile = applyVllmRuntimeProfile(profile, model, runtime);
+  if (!runtime || !("modelArgs" in runtime)) return { profile: resolvedProfile, model };
+  return {
+    profile: resolvedProfile,
+    model: {
+      ...model,
+      maxModelLen: runtime.maxModelLen,
+      revision: runtime.revision,
+      servedModelId: runtime.servedModelId,
+      modelArgs: runtime.modelArgs,
+      serveEnv: runtime.serveEnv,
+      installFastSafetensors: runtime.installFastSafetensors,
+      fixedServeCommand: runtime.fixedServeCommand,
+      managedBearerAuth: runtime.managedBearerAuth,
+      trustRemoteCode: runtime.trustRemoteCode,
+      runtime,
+    },
+  };
 }
 
 const SHA256_IMAGE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -738,6 +1034,7 @@ function inspectVllmContainerOwnership(containerName: string): VllmContainerOwne
 function vllmContainerReplacementTarget(
   containerName: string,
   dockerEnv?: Record<string, string>,
+  expectedContainerId?: string,
 ): { ok: true; containerId?: string } | { ok: false; reason: string } {
   const ownership = dockerEnv
     ? inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv)
@@ -760,6 +1057,15 @@ function vllmContainerReplacementTarget(
       reason:
         `Container "${containerName}" is the head of a managed dual-Station deployment. ` +
         `Refusing single-host replacement because it would orphan the peer worker. Restore ${NEMOCLAW_DGX_STATION_PEER_ENV} and select Nemotron Ultra to manage the pair.`,
+    };
+  }
+  if (
+    expectedContainerId &&
+    (ownership.kind !== "managed" || ownership.containerId !== expectedContainerId)
+  ) {
+    return {
+      ok: false,
+      reason: `Managed vLLM container "${containerName}" changed after recovery. NemoClaw will not remove it. Retry onboarding.`,
     };
   }
   return ownership.kind === "managed"
@@ -868,6 +1174,7 @@ function startContainer(
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
   resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
     resolveManagedVllmBridgeHost(dockerCapture, env),
+  expectedReplacementContainerId?: string,
 ): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   // The explicit download completed before this long-lived container starts,
@@ -877,11 +1184,17 @@ function startContainer(
     const resolvedFlags = profile.buildDockerRunFlags
       ? profile.buildDockerRunFlags()
       : profile.dockerRunFlags;
+    const commandEnv: NodeJS.ProcessEnv = {
+      ...dockerEnv,
+      ...(process.env[VLLM_EXTRA_ARGS_ENV] === undefined
+        ? {}
+        : { [VLLM_EXTRA_ARGS_ENV]: process.env[VLLM_EXTRA_ARGS_ENV] }),
+    };
     runArgs = buildVllmRunArgs(
       profile,
       model,
       resolvedFlags,
-      dockerEnv,
+      commandEnv,
       model.managedBearerAuth ? resolveBridgeHost(dockerEnv) : undefined,
     );
   } catch (err) {
@@ -892,6 +1205,7 @@ function startContainer(
   const replacement = vllmContainerReplacementTarget(
     profile.containerName,
     model.managedBearerAuth ? dockerEnv : undefined,
+    expectedReplacementContainerId,
   );
   if (!replacement.ok) return replacement;
   if (replacement.containerId) {
@@ -1014,6 +1328,14 @@ function verifyDualStationVllmAuthBoundary(
   }
 }
 
+function sanitizeContainerLogOutput(output: string): string {
+  const normalizedOutput = stripVTControlCharacters(output.replace(/\r\n?/g, "\n")).replace(
+    /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
+    "",
+  );
+  return redact(redactFull(normalizedOutput));
+}
+
 function readContainerLogTail(
   profile: VllmProfile,
   lineCount = 80,
@@ -1022,9 +1344,11 @@ function readContainerLogTail(
   const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
     env: dockerEnv,
     ignoreError: true,
+    includeStderr: true,
   }).trim();
   if (!output) return [];
-  return output.split(/\r?\n/).slice(-lineCount);
+  const safeOutput = sanitizeContainerLogOutput(output);
+  return safeOutput.split(/\r?\n/).slice(-lineCount);
 }
 
 function printContainerLogTail(
@@ -1458,12 +1782,18 @@ function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reas
   return { ok: true };
 }
 
-interface InstallVllmOptions {
+export interface InstallVllmOptions {
   hasImage: boolean;
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
   beforeInstall?: (modelId: string) => void;
+  /** Persist the validated source model before managed install effects begin. */
+  checkpointInstallIntent?: (modelId: string) => void;
+  /** Secret-free model restored from an unfinished onboarding checkpoint. */
+  modelIntent?: string;
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
+  /** Reuse an already-collected readiness snapshot instead of probing the host again. */
+  readinessReports?: readonly ManagedInferenceReadinessSource[];
   /**
    * Injected rather than imported so this module does not take a dependency on
    * the onboard preflight layer. onboard.ts supplies the same probe the gateway
@@ -1476,6 +1806,94 @@ interface InstallVllmOptions {
 interface ServingPortProbe {
   ok: boolean;
   reason?: string;
+}
+
+type VllmInstallSelectionEnv =
+  | { readonly ok: true; readonly env: NodeJS.ProcessEnv; readonly explicitModel: string }
+  | { readonly ok: false };
+
+function resolveVllmInstallSelectionEnv(
+  modelIntent: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): VllmInstallSelectionEnv {
+  const resumedModel = String(modelIntent ?? "").trim();
+  const environmentModel = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
+  if (
+    resumedModel &&
+    environmentModel &&
+    resumedModel.toLowerCase() !== environmentModel.toLowerCase()
+  ) {
+    return { ok: false };
+  }
+  const selectionEnv = resumedModel ? { ...env, NEMOCLAW_VLLM_MODEL: resumedModel } : env;
+  return {
+    ok: true,
+    env: selectionEnv,
+    explicitModel: String(selectionEnv.NEMOCLAW_VLLM_MODEL ?? "").trim(),
+  };
+}
+
+type VllmInstallRequestEnv =
+  | {
+      readonly ok: true;
+      readonly env: NodeJS.ProcessEnv;
+      readonly explicitModel: string;
+      readonly requestedGpuDevice: string | null;
+      readonly configuredPeer: string;
+      readonly configuredManagedClusterPeers: string;
+    }
+  | { readonly ok: false; readonly error: string };
+
+function resolveVllmInstallRequestEnv(
+  modelIntent: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): VllmInstallRequestEnv {
+  const selection = resolveVllmInstallSelectionEnv(modelIntent, env);
+  if (!selection.ok) {
+    return {
+      ok: false,
+      error: "the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
+    };
+  }
+  const rawGpuDevice = String(env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] ?? "").trim();
+  let requestedGpuDevice: string | null = null;
+  try {
+    requestedGpuDevice = rawGpuDevice ? normalizeVllmGpuDevice(rawGpuDevice) : null;
+  } catch (error) {
+    return { ok: false, error: `${(error as Error).message}.` };
+  }
+  const configuredPeer = String(env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  const configuredManagedClusterPeers = String(
+    env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
+  ).trim();
+  if (requestedGpuDevice && (configuredPeer || configuredManagedClusterPeers)) {
+    return {
+      ok: false,
+      error:
+        "--vllm-gpu-device selects one host GPU and cannot be combined with managed multi-node inference.",
+    };
+  }
+  return {
+    ...selection,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  };
+}
+
+function shouldTryManagedClusterInstall(
+  hostLocalSelection: MaterializedHostLocalVllmSelection | undefined,
+  fixedServeCommand: boolean,
+  requestedGpuDevice: string | null,
+): boolean {
+  return !hostLocalSelection && !fixedServeCommand && !requestedGpuDevice;
+}
+
+function applyRequestedVllmGpuDevice(
+  profile: VllmProfile,
+  requestedGpuDevice: string | null,
+): VllmProfile {
+  return requestedGpuDevice ? selectVllmGpuDevice(profile, requestedGpuDevice) : profile;
 }
 
 /**
@@ -1546,46 +1964,72 @@ async function runVllmInstall(
   opts: InstallVllmOptions,
   hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
-  if (profile.defaultModel.fixedServeCommand) {
-    if (String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim()) {
+  const selection = resolveVllmInstallRequestEnv(opts.modelIntent);
+  if (!selection.ok) {
+    console.error(`  vLLM install failed: ${selection.error}`);
+    return { ok: false };
+  }
+  const {
+    env: selectionEnv,
+    explicitModel,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  } = selection;
+  const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
+  if (fixedServeCommand) {
+    if (
+      (!hostLocalSelection && explicitModel) ||
+      String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()
+    ) {
       console.error(
-        "  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL.",
+        `  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL or ${VLLM_EXTRA_ARGS_ENV}.`,
       );
       return { ok: false };
     }
-    if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+    const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+    if (configuredManagedClusterPeers) {
       console.error(
-        `  vLLM install failed: this local model profile does not accept ${VLLM_EXTRA_ARGS_ENV}.`,
+        `  vLLM install failed: this local model profile does not accept ${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV}.`,
       );
       return { ok: false };
     }
-    if (String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()) {
+    if (configuredServingPreset && configuredServingPreset !== profile.servingCatalog?.presetId) {
       console.error(
-        "  vLLM install failed: this local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT.",
+        `  vLLM install failed: ${NEMOCLAW_SERVING_PRESET_ENV} must match this local model profile's catalog preset.`,
       );
       return { ok: false };
     }
   }
-  const managedCluster = hostLocalSelection
-    ? { kind: "not-selected" as const }
-    : await tryInstallManagedClusterManagedVllm(
-        {
-          platform: profile.platform,
-          nonInteractive: opts.nonInteractive,
-          promptFn: opts.promptFn,
-          beforeInstall: opts.beforeInstall,
-        },
-        {
-          prerequisites: dockerPrereqsOk,
-          pullImage,
-          downloadModel,
-          printDownloadAuthentication: printHfDownloadAuthentication,
-        },
-      );
-  if (managedCluster.kind === "handled") return managedCluster.result;
+  if (shouldTryManagedClusterInstall(hostLocalSelection, fixedServeCommand, requestedGpuDevice)) {
+    const managedCluster = await tryInstallManagedClusterManagedVllm(
+      {
+        env: selectionEnv,
+        platform: profile.platform,
+        nonInteractive: opts.nonInteractive,
+        promptFn: opts.promptFn,
+        beforeInstall: opts.beforeInstall,
+        checkpointInstallIntent: opts.checkpointInstallIntent,
+      },
+      {
+        prerequisites: dockerPrereqsOk,
+        pullImage,
+        downloadModel,
+        printDownloadAuthentication: printHfDownloadAuthentication,
+      },
+    );
+    if (managedCluster.kind === "handled") return managedCluster.result;
+  }
 
-  if (!hostLocalSelection) {
-    const selected = resolveHostLocalVllmSelection(profile);
+  if (
+    !hostLocalSelection &&
+    !fixedServeCommand &&
+    !(profile.platform === "station" && configuredPeer)
+  ) {
+    const selected = resolveHostLocalVllmSelection(profile, selectionEnv, {
+      automatic: opts.nonInteractive,
+      readinessReports: opts.readinessReports,
+    });
     if (selected.kind === "rejected") {
       console.error(`  vLLM install failed: ${selected.reason}`);
       return { ok: false };
@@ -1597,27 +2041,30 @@ async function runVllmInstall(
 
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;
-  const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
-  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  const ultra =
+  const pairedModel =
     profile.platform === "station" && configuredPeer
-      ? VLLM_MODELS.find((candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b")
+      ? vllmModelForOrchestration(
+          STATION_PAIR_OPTIONAL_ORCHESTRATION,
+          "station",
+          profile.architecture ?? process.arch,
+        )
       : undefined;
 
   if (profile.platform === "station" && configuredPeer) {
-    if (!ultra) {
-      console.error("  vLLM install failed: Nemotron Ultra is missing from the model registry");
+    if (!pairedModel) {
+      console.error("  vLLM install failed: the Station-pair model is missing from the catalog");
       return { ok: false };
     }
     const normalizedExplicitModel = explicitModel.toLowerCase();
     if (
       normalizedExplicitModel &&
-      normalizedExplicitModel !== ultra.envValue.toLowerCase() &&
-      normalizedExplicitModel !== ultra.id.toLowerCase()
+      normalizedExplicitModel !== pairedModel.envValue.toLowerCase() &&
+      normalizedExplicitModel !== pairedModel.id.toLowerCase() &&
+      normalizedExplicitModel !== pairedModel.servedModelId?.toLowerCase()
     ) {
       console.error(
         `  vLLM install failed: ${NEMOCLAW_DGX_STATION_PEER_ENV} requires the DGX Station dual-serving model. ` +
-          "Unset NEMOCLAW_VLLM_MODEL or select nemotron-3-ultra-550b-a55b; the explicit model override remains authoritative.",
+          `Unset NEMOCLAW_VLLM_MODEL or select ${pairedModel.envValue}; the explicit model override remains authoritative.`,
       );
       return { ok: false };
     }
@@ -1626,7 +2073,7 @@ async function runVllmInstall(
   // stays focused on the docker side effects. Gated-model access is checked
   // there before any docker work happens.
   let resolved: Awaited<ReturnType<typeof resolveVllmInstallModel>>;
-  if (profile.platform === "station" && configuredPeer && !explicitModel && ultra) {
+  if (profile.platform === "station" && configuredPeer && !explicitModel && pairedModel) {
     const capability = probeDualStationVllmCapability();
     if (capability.kind !== "ready") {
       const reason =
@@ -1637,13 +2084,14 @@ async function runVllmInstall(
       return { ok: false };
     }
     resolved = await resolveVllmInstallModel(
-      { ...profile, defaultModel: ultra },
+      { ...profile, defaultModel: pairedModel },
       {
         // A qualified explicit peer is the model-selection signal. The normal
         // resolver still owns access validation, but no second model choice is
         // presented after hardware qualification.
         nonInteractive: true,
         promptFn: opts.promptFn,
+        env: selectionEnv,
       },
     );
     if (!resolved) return { ok: false };
@@ -1659,33 +2107,85 @@ async function runVllmInstall(
     resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
-      nonInteractive: opts.nonInteractive,
+      nonInteractive: opts.nonInteractive || fixedServeCommand,
       promptFn: opts.promptFn,
+      env: selectionEnv,
     });
   }
   if (!resolved) return { ok: false };
-  const { model, source: modelSource } = resolved;
+  if (
+    !hostLocalSelection &&
+    resolved.source === "picker" &&
+    !process.env[VLLM_EXTRA_ARGS_ENV]?.trim()
+  ) {
+    const selected = resolveHostLocalVllmSelection(
+      profile,
+      {
+        ...selectionEnv,
+        NEMOCLAW_VLLM_MODEL: resolved.model.envValue,
+      },
+      {
+        readinessReports: opts.readinessReports,
+      },
+    );
+    if (selected.kind === "rejected") {
+      console.error(`  vLLM install failed: ${selected.reason}`);
+      return { ok: false };
+    }
+    if (selected.kind === "selected") {
+      return await runVllmInstall(selected.profile, opts, selected);
+    }
+  }
+  let { model } = resolved;
+  const { source: modelSource } = resolved;
   // Platform-restricted models are filtered out of the interactive picker,
   // but a direct NEMOCLAW_VLLM_MODEL override bypasses that filter, so this
   // gate is the only platform enforcement on the env-override path. It must
   // reject every wrong-platform model, not just runtime-carrying ones — an
   // NVFP4 Spark checkpoint or a 352 GB Station recipe cannot serve here and
   // must fail before the image pull and download (#7358).
-  if (!model.platforms.includes(profile.platform)) {
+  const architecture = profile.architecture ?? process.arch;
+  const usesStationPair = vllmModelUsesOrchestration(
+    model,
+    STATION_PAIR_OPTIONAL_ORCHESTRATION,
+    profile.platform,
+    architecture,
+  );
+  const hasCompatibleRuntime = (model.runtimeVariants ?? []).some(
+    (variant) =>
+      vllmPlatformSpecificity(variant.platforms, profile.platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+  if (
+    (model.runtimeVariants?.length && !hasCompatibleRuntime) ||
+    (!model.runtimeVariants?.length && !model.platforms.includes(profile.platform))
+  ) {
     console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
     return { ok: false };
   }
   let runtimeProfile: VllmProfile;
-  try {
-    runtimeProfile = resolveVllmRuntimeProfile(profile, model);
-  } catch (err) {
-    console.error(`  vLLM install failed: ${(err as Error).message}`);
-    return { ok: false };
+  if (
+    hostLocalSelection ||
+    (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair)
+  ) {
+    runtimeProfile = profile;
+  } else {
+    try {
+      const runtime = resolveVllmModelRuntime(profile, model);
+      runtimeProfile = runtime.profile;
+      model = runtime.model;
+    } catch (err) {
+      console.error(`  vLLM install failed: ${(err as Error).message}`);
+      return { ok: false };
+    }
   }
 
   let extraServeArgs: string[];
   let servedModelId: string;
   try {
+    if (model.fixedServeCommand && String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+      throw new Error(`this managed vLLM recipe does not accept ${VLLM_EXTRA_ARGS_ENV}`);
+    }
     extraServeArgs = parseVllmExtraServeArgs();
     servedModelId = resolveVllmServedModelId(model.servedModelId ?? model.id, extraServeArgs);
   } catch (err) {
@@ -1693,7 +2193,7 @@ async function runVllmInstall(
     return { ok: false };
   }
 
-  if (profile.platform === "station" && model.envValue === "nemotron-3-ultra-550b-a55b") {
+  if (profile.platform === "station" && usesStationPair) {
     if (!dualStationPlan) {
       const capability = probeDualStationVllmCapability();
       if (capability.kind === "unavailable") {
@@ -1710,16 +2210,11 @@ async function runVllmInstall(
       runtimeProfile = {
         ...runtimeProfile,
         image: dualStationPlan.runtime.image,
-        imageDownloadSizeBytes: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.downloadSizeBytes,
+        imageDownloadSizeBytes: dualStationPlan.runtime.imageDownloadSizeBytes,
         imageUnpackedSizeBytes: undefined,
-        loadTimeoutSec: 7200,
+        loadTimeoutSec: dualStationPlan.runtime.loadTimeoutSeconds,
+        gpuMemoryUtilization: dualStationPlan.runtime.gpuMemoryUtilization,
       };
-      if (VLLM_PORT !== 8000) {
-        console.error(
-          "  Dual DGX Station setup requires the default vLLM port 8000; unset NEMOCLAW_VLLM_PORT and retry.",
-        );
-        return { ok: false };
-      }
       if (extraServeArgs.length > 0) {
         console.error(
           `  Dual DGX Station setup does not accept ${VLLM_EXTRA_ARGS_ENV}; the verified distributed launch is fixed.`,
@@ -1729,32 +2224,52 @@ async function runVllmInstall(
     }
   }
 
+  try {
+    runtimeProfile = {
+      ...runtimeProfile,
+      gpuMemoryUtilization: resolveVllmGpuMemoryUtilization(
+        runtimeProfile.gpuMemoryUtilization,
+        extraServeArgs,
+      ),
+    };
+  } catch (error) {
+    console.error(`  vLLM install failed: ${(error as Error).message}`);
+    return { ok: false };
+  }
+
+  runtimeProfile = applyRequestedVllmGpuDevice(runtimeProfile, requestedGpuDevice);
+
   // Reject a held serving port before anything durable happens. In
   // particular, managed bearer auth persists a host credential below and
   // beforeInstall publishes the selected model to onboarding state. Running
   // the guard first keeps a refused install free of both side effects.
   // Port 25000 is not checked here: it belongs to the managed-cluster
   // rendezvous contract and this single-node path never binds it.
+  let recoveredHostLocalContainerId: string | undefined;
   const servingPort = await opts.checkServingPort?.(VLLM_PORT);
   if (servingPort && !servingPort.ok) {
-    printServingPortConflict(servingPort);
-    return { ok: false };
-  }
-
-  let hostLocalApiKey: string | null = null;
-  if (!dualStationPlan && model.managedBearerAuth) {
+    // An interrupted host-local install can leave its authenticated managed
+    // container holding the fixed port. Admit that state only after the
+    // lifecycle recovery check validates the exact receipt, bindings, and
+    // credential fingerprint. The replacement guard below then removes the
+    // inspected container ID immediately before the new launch.
     try {
-      hostLocalApiKey = ensureDualStationVllmApiKey();
+      const recovered = recoverHostLocalManagedVllmEndpoint();
+      if (recovered?.baseUrl === `http://127.0.0.1:${String(VLLM_PORT)}`) {
+        recoveredHostLocalContainerId = recovered.containerId;
+        // Continue through the ordinary managed-container replacement path.
+      } else {
+        printServingPortConflict(servingPort);
+        return { ok: false };
+      }
     } catch (error) {
-      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      console.error(
+        `  vLLM install failed: managed host-local vLLM recovery could not verify the container: ${(error as Error).message}`,
+      );
       return { ok: false };
     }
   }
-  const localDockerEnv = dualStationPlan
-    ? buildLocalDualStationDockerEnv()
-    : hostLocalApiKey
-      ? buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey })
-      : buildVllmDockerEnv();
+
   opts.beforeInstall?.(servedModelId);
 
   console.log("");
@@ -1786,6 +2301,13 @@ async function runVllmInstall(
     : isAffirmativeAnswer(await opts.promptFn("  Continue? [y/N]: "));
   if (!proceed) return { ok: false };
 
+  let hostLocalApiKey: string | null = null;
+  let localDockerEnv = dualStationPlan
+    ? buildLocalDualStationDockerEnv()
+    : model.managedBearerAuth
+      ? buildLocalManagedVllmDockerEnv()
+      : buildVllmDockerEnv();
+
   console.log("");
   console.log("  Installing vLLM. Progress will print below.");
 
@@ -1795,11 +2317,26 @@ async function runVllmInstall(
     return { ok: false };
   }
 
-  const capability = computeCapabilityPreflight(model);
+  const capability = computeCapabilityPreflight(
+    model,
+    readProfileGpuComputeCapabilities(runtimeProfile),
+    runtimeProfile.minComputeCapability,
+  );
   if (!capability.ok) {
     console.error(`  vLLM install failed: ${capability.reason}`);
     return { ok: false };
   }
+
+  const memory = installGpuMemoryPreflight(model, runtimeProfile, dualStationPlan);
+  if (!memory.ok) {
+    console.error(`  vLLM install failed: ${memory.reason}`);
+    return { ok: false };
+  }
+
+  // Only publish resumable install intent after every read-only hardware
+  // guard passes. A rejected preflight must not create credentials or durable
+  // onboarding state.
+  opts.checkpointInstallIntent?.(explicitModel || model.id);
 
   // Fail before large downloads when either daemon has an ambiguous or
   // foreign fixed-name container. Each launch path repeats this ownership
@@ -1814,6 +2351,7 @@ async function runVllmInstall(
     const replacement = vllmContainerReplacementTarget(
       runtimeProfile.containerName,
       model.managedBearerAuth ? localDockerEnv : undefined,
+      recoveredHostLocalContainerId,
     );
     if (!replacement.ok) {
       console.error(`  vLLM install failed: ${replacement.reason}`);
@@ -1901,7 +2439,7 @@ async function runVllmInstall(
             reason: `dual-Station capability changed: ${reason}`,
           };
         }
-        if (!isDeepStrictEqual(refreshedCapability.plan, stagingPlan)) {
+        if (!sameDualStationTopology(refreshedCapability.plan, stagingPlan)) {
           return {
             ok: false as const,
             reason:
@@ -1914,6 +2452,8 @@ async function runVllmInstall(
             reason: "peer pinned model snapshot was not verified after staging.",
           };
         }
+        const memory = installGpuMemoryPreflight(model, runtimeProfile, refreshedCapability.plan);
+        if (!memory.ok) return { ok: false as const, reason: memory.reason };
         return { ok: true as const, plan: refreshedCapability.plan };
       });
       if (!verification.ok) {
@@ -1929,29 +2469,52 @@ async function runVllmInstall(
     }
   }
 
-  let dualStationApiKey: string | null = null;
   if (dualStationPlan) {
-    try {
-      const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
-      const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
-      // If the key file alone was lost, create a new host-global key. The
-      // lifecycle fingerprint then forces a coordinated pair replacement
-      // under its lock instead of reusing containers bound to an unknown key.
-      dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
-    } catch (err) {
-      console.error(`  vLLM install failed: ${(err as Error).message}`);
-      return { ok: false };
-    }
-  }
-
-  if (dualStationPlan) {
-    if (!dualStationApiKey) {
-      console.error("  vLLM install failed: dual-Station API key was not provisioned");
-      return { ok: false };
-    }
+    const plannedPair = dualStationPlan;
     try {
       return await withDualStationManagedVllmLifecycle(async () => {
-        const start = await startDualStationManagedVllm(dualStationPlan, {
+        const launchCapability = probeDualStationVllmCapability();
+        if (launchCapability.kind !== "ready") {
+          const reason =
+            launchCapability.kind === "unavailable"
+              ? launchCapability.reason
+              : "the explicit peer configuration disappeared";
+          console.error(`  vLLM install failed: dual-Station capability changed: ${reason}`);
+          return { ok: false };
+        }
+        if (!sameDualStationTopology(launchCapability.plan, plannedPair)) {
+          console.error(
+            "  vLLM install failed: dual-Station topology changed before launch; rerun setup against a stable pair.",
+          );
+          return { ok: false };
+        }
+        if (launchCapability.peerModelSnapshot !== "ready") {
+          console.error(
+            "  vLLM install failed: peer pinned model snapshot was not verified before launch.",
+          );
+          return { ok: false };
+        }
+        const launchPlan = launchCapability.plan;
+        const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, launchPlan);
+        if (!launchMemory.ok) {
+          console.error(`  vLLM install failed: ${launchMemory.reason}`);
+          return { ok: false };
+        }
+
+        let dualStationApiKey: string;
+        try {
+          const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
+          const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
+          // If the key file alone was lost, create a new host-global key. The
+          // lifecycle fingerprint then forces a coordinated pair replacement
+          // under its lock instead of reusing containers bound to an unknown key.
+          dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
+        } catch (error) {
+          console.error(`  vLLM install failed: ${(error as Error).message}`);
+          return { ok: false };
+        }
+
+        const start = await startDualStationManagedVllm(launchPlan, {
           apiKey: dualStationApiKey,
         });
         if (!start.ok) {
@@ -1966,7 +2529,7 @@ async function runVllmInstall(
           if (start.reusedExisting) return;
           if (start.legacyMigration) {
             const rollback = await rollbackDualStationLegacyMigration(
-              dualStationPlan,
+              launchPlan,
               start.legacyMigration,
             );
             if (!rollback.ok) {
@@ -1976,7 +2539,7 @@ async function runVllmInstall(
             }
             return;
           }
-          const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+          const cleanup = await cleanupDualStationManagedVllm(launchPlan);
           if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
         };
 
@@ -2004,7 +2567,7 @@ async function runVllmInstall(
           return { ok: false };
         }
 
-        if (!areDualStationManagedVllmContainersRunning(dualStationPlan)) {
+        if (!areDualStationManagedVllmContainersRunning(launchPlan)) {
           await rollbackStartedPair();
           console.error("  vLLM distributed containers exited unexpectedly after readiness");
           return { ok: false };
@@ -2012,10 +2575,7 @@ async function runVllmInstall(
 
         let legacyMigrationCommitted = false;
         if (start.legacyMigration) {
-          const commit = await commitDualStationLegacyMigration(
-            dualStationPlan,
-            start.legacyMigration,
-          );
+          const commit = await commitDualStationLegacyMigration(launchPlan, start.legacyMigration);
           if (!commit.ok) {
             await rollbackStartedPair();
             console.error(`  vLLM install failed: ${commit.reason}`);
@@ -2028,10 +2588,10 @@ async function runVllmInstall(
         }
 
         try {
-          persistDualStationVllmRuntimeReceipt(dualStationPlan);
+          persistDualStationVllmRuntimeReceipt(launchPlan);
         } catch (error) {
           if (legacyMigrationCommitted) {
-            const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+            const cleanup = await cleanupDualStationManagedVllm(launchPlan);
             if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
           } else {
             await rollbackStartedPair();
@@ -2053,11 +2613,28 @@ async function runVllmInstall(
     }
   }
 
+  const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, null);
+  if (!launchMemory.ok) {
+    console.error(`  vLLM install failed: ${launchMemory.reason}`);
+    return { ok: false };
+  }
+
+  if (model.managedBearerAuth) {
+    try {
+      hostLocalApiKey = ensureDualStationVllmApiKey();
+      localDockerEnv = buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey });
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      return { ok: false };
+    }
+  }
+
   const start = startContainer(
     runtimeProfile,
     model,
     localDockerEnv,
     opts.resolveManagedBridgeHost,
+    recoveredHostLocalContainerId,
   );
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);

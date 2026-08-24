@@ -12,6 +12,7 @@ import {
 } from "./provider-host-state";
 
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
+const VALID_OLLAMA_TAGS_BODY = '{"models": [{"name": "llama3.2:latest"}]}';
 
 const SUPPORTED_WINDOWS_OLLAMA = {
   supported: true,
@@ -64,18 +65,19 @@ function detectWithDeps(
 }
 
 describe("detectInferenceProviderHostState", () => {
-  it("suppresses local endpoint probes when route preflight disallows them (#6315)", () => {
+  it("suppresses local and Windows-host Ollama probes when provider discovery disables them (#6315, #9604)", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "{}");
     const findReachableOllamaHost = vi.fn(() => "127.0.0.1");
+    const detectWindowsHostOllama = vi.fn(() => ({
+      installed: true,
+      installedPath: "C:\\Ollama\\ollama.exe",
+      loopbackOnly: false,
+    }));
     const deps = buildDeps({
       runCapture,
       findReachableOllamaHost,
       isWsl: vi.fn(() => true),
-      detectWindowsHostOllama: vi.fn(() => ({
-        installed: true,
-        installedPath: "C:\\Ollama\\ollama.exe",
-        loopbackOnly: false,
-      })),
+      detectWindowsHostOllama,
     });
 
     const state = detectInferenceProviderHostState({
@@ -90,6 +92,7 @@ describe("detectInferenceProviderHostState", () => {
     });
 
     expect(findReachableOllamaHost).not.toHaveBeenCalled();
+    expect(detectWindowsHostOllama).not.toHaveBeenCalled();
     expect(state.ollamaRunning).toBe(false);
     expect(state.vllmRunning).toBe(false);
     expect(state.windowsOllamaReachable).toBe(false);
@@ -187,7 +190,7 @@ describe("detectInferenceProviderHostState", () => {
   it("detects Windows-host Ollama from Docker Desktop when WSL cannot reach it (#8127)", () => {
     const logs: string[] = [];
     const dockerCapture = vi.fn((command: string[]) =>
-      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "",
+      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
     );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -260,6 +263,32 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
 
+  it.each([
+    ["an HTML response", "<html>captive portal</html>"],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("does not treat %s as a live Windows daemon (#9348)", (_label, body) => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
+        () => "docker-desktop",
+      ),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => body),
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.hasWindowsOllama).toBe(true);
+    expect(state.windowsOllamaReachable).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+  });
+
   it("does not run the Windows-host probe without Docker Desktop WSL integration (#8127)", () => {
     const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => "{}");
     const deps = buildDeps({
@@ -311,7 +340,9 @@ describe("detectInferenceProviderHostState", () => {
         if (joined.includes("wslinfo --networking-mode")) return "mirrored\n";
         return "";
       }),
-      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
+      ),
       detectLocalTcpListener: vi.fn(() => false),
     });
 
@@ -346,7 +377,9 @@ describe("detectInferenceProviderHostState", () => {
       runCapture: vi.fn((command) =>
         command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
       ),
-      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
+      ),
       detectLocalTcpListener: vi.fn(() => true),
     });
 
@@ -380,7 +413,9 @@ describe("detectInferenceProviderHostState", () => {
       runCapture: vi.fn((command) =>
         command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
       ),
-      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
+      ),
       detectLocalTcpListener: vi.fn(() => null),
     });
 
@@ -403,7 +438,9 @@ describe("detectInferenceProviderHostState", () => {
       runCapture: vi.fn((command) =>
         command.join(" ").includes("wslinfo --networking-mode") ? "future-mode\n" : "",
       ),
-      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
+      ),
       detectLocalTcpListener,
     });
 

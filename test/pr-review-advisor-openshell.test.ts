@@ -11,6 +11,7 @@ import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   advisorInferenceBaseUrl,
+  DEFAULT_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -31,6 +32,7 @@ import {
   writeUnavailableAdvisorArtifacts,
 } from "../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
+import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -73,7 +75,7 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
     PR_NUMBER: "7542",
     PR_REVIEW_ADVISOR_API_KEY: "advisor-host-secret",
     PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-advisor",
-    PR_REVIEW_ADVISOR_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+    PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
     PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100",
     RUNNER_TEMP: runnerTemp,
     SANDBOX_NAME: "pr-advisor-test",
@@ -139,31 +141,30 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it("recognizes advisor models declared in the extracted provider constants", () => {
-    const runNode = vi.fn(
-      (_script: string, _args: string[], _env: NodeJS.ProcessEnv, _cwd: string) => 0,
-    );
-    const appendEnv = vi.fn();
+  it("preserves hosted provider compatibility", () => {
+    const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+      apiKey: string;
+      baseUrl: string;
+      models: Array<{ id: string; compat?: Record<string, unknown>; reasoning: boolean }>;
+    };
 
-    runPrReviewAdvisorAnalysis(
-      {
-        advisorDir: ROOT,
-        advisorWorkdir: ROOT,
-        outDir: path.join(temporaryDirectory(), "artifacts"),
-        baseRef: "origin/main",
-        headRef: "HEAD",
-        model: "nvidia/nvidia/nemotron-3-ultra",
-        title: "PR Review Advisor",
-        runAnalysis: "0",
-      },
-      { appendEnv, runNode },
+    expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
+    expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+    expect(config.models).toContainEqual(
+      expect.objectContaining({
+        id: DEFAULT_ADVISOR_MODEL,
+        reasoning: false,
+        compat: expect.objectContaining({
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+          supportsStore: false,
+          supportsStrictMode: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_tokens",
+        }),
+      }),
     );
-
-    expect(appendEnv).toHaveBeenCalledWith("PR_REVIEW_ADVISOR_SUPPORTED", "1");
-    expect(runNode).toHaveBeenCalledTimes(1);
-    expect(runNode.mock.calls[0]?.[2].PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
   });
-
   it("loads host-prepared GitHub context without a GitHub token", async () => {
     const directory = temporaryDirectory();
     const contextPath = path.join(directory, "github-context.json");
@@ -211,7 +212,6 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
     });
     const pullRequest = context?.pullRequest as Record<string, unknown>;
     expect(pullRequest.author_association).toBe("MEMBER");
@@ -230,9 +230,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     const longFiles = Array.from({ length: 300 }, (_, index) => ({
       filename: `deep/${String(index).padStart(3, "0")}/${"segment/".repeat(480)}file.ts`,
     }));
-    const openPulls = Array.from({ length: 5 }, (_, index) => ({
+    const openPulls = Array.from({ length: 30 }, (_, index) => ({
       number: 8_000 + index,
-      title: `Overlapping PR ${index}`,
+      title: index === 29 ? "Replaces PR #7542" : `Concurrent PR ${index}`,
       body: "",
       labels: [],
     }));
@@ -273,14 +273,16 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
     });
-    expect(context?.openPrOverlaps).toHaveLength(5);
+    expect(context?.openPrOverlaps).toHaveLength(25);
     (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
       expect(overlap.sameFiles).toHaveLength(20);
       expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
     });
+    expect(context?.openPrOverlaps?.filter((overlap) => overlap.replacesCurrentPr)).toEqual([
+      expect.objectContaining({ number: 8_029 }),
+    ]);
     expect(() => serializePreparedGitHubContext(context)).not.toThrow();
   });
 
@@ -508,7 +510,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "--provider",
         "advisor",
         "--model",
-        "nvidia/nvidia/nemotron-3-ultra",
+        DEFAULT_ADVISOR_MODEL,
         "--timeout",
         "900",
       ],
@@ -723,6 +725,65 @@ describe("PR review advisor OpenShell wrapper", () => {
       expect(options.env.OPENAI_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
     });
+  });
+
+  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
+    const env = advisorEnvironment();
+    const sessionDirectory = path.join(
+      env.ADVISOR_WORKDIR as string,
+      ".pr-review-advisor-sessions",
+    );
+    const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
+    fs.mkdirSync(sessionDirectory);
+    const sessionEntries = Object.fromEntries(
+      ADVISOR_INTERESTS.map((interest) => [interest, interest]),
+    );
+    Object.entries(sessionEntries).forEach(([interest, id]) =>
+      fs.writeFileSync(
+        path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),
+        `${JSON.stringify({ type: "session", id })}\n`,
+      ),
+    );
+    fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
+    const tools = advisorTools();
+
+    createAdvisorSandbox(env, tools);
+    runAdvisorSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    const createArgs =
+      calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
+    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
+    const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
+    expect(
+      driverConfig.docker.mounts.filter(
+        (mount: { target?: string }) => mount.target === "/pr-workdir",
+      ),
+    ).toEqual([expect.objectContaining({ read_only: true })]);
+    const runArgs =
+      calls.find(([, args]) =>
+        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+      )?.[1] ?? [];
+    expect(runArgs).toContain(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
+    );
+    expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
+  });
+
+  it("rejects a specialist session alias outside the fixed workdir input (#9963)", () => {
+    const env = advisorEnvironment();
+    const outsideDirectory = path.join(env.GITHUB_WORKSPACE as string, "outside-sessions");
+    const outsideAlias = path.join(env.ADVISOR_WORKDIR as string, "outside-sessions-alias");
+    fs.mkdirSync(outsideDirectory);
+    fs.symlinkSync(outsideDirectory, outsideAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = outsideAlias;
+    const tools = advisorTools();
+
+    expect(() => createAdvisorSandbox(env, tools)).toThrow(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
+    );
+    expect(tools.run).not.toHaveBeenCalled();
   });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {

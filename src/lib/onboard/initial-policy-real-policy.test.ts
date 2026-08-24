@@ -8,7 +8,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
-import { MANAGED_STARTUP_MERGED_CA_FILE } from "./managed-startup/image-runtime";
+import {
+  MANAGED_STARTUP_COMPLETION_FILE,
+  MANAGED_STARTUP_MERGED_CA_FILE,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
+} from "./managed-startup/image-runtime";
+import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+} from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 type PolicyRule = {
@@ -27,6 +36,7 @@ type PolicyEndpoint = {
   tls?: string;
   allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
+  credential_binding?: { provider?: string };
   rules?: PolicyRule[];
 };
 
@@ -99,8 +109,23 @@ describe("initial sandbox policy real preset merge", () => {
   const shippingPolicyCases = managedImagePolicyCases.filter(
     ({ agent }) => agent !== "langchain-deepagents-code",
   );
+  const managedStartupReadOnlyPaths = [
+    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
+    {
+      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
+      issue: "#9357",
+      purpose: "runtime environment",
+    },
+  ] as const;
+  const protectedManagedStartupPaths = [
+    MANAGED_STARTUP_COMPLETION_FILE,
+    "/run/nemoclaw/openclaw-config-guard",
+    MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  ] as const;
 
-  it("covers the complete shipped managed startup CA policy matrix", () => {
+  it("covers the complete shipped managed startup trust policy matrix", () => {
     const policyIdentities = managedImagePolicyCases.map(
       ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
     );
@@ -108,11 +133,19 @@ describe("initial sandbox policy real preset merge", () => {
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
     expect(policyIdentities).toHaveLength(6);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
+    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
+      MANAGED_STARTUP_MERGED_CA_FILE,
+      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    ]);
   });
 
-  it.each(managedImagePolicyCases)(
-    "grants $agent policy $path exact read-only access to the managed startup CA bundle (#9360)",
-    (policyCase) => {
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
+    ),
+  )(
+    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
+    ({ policyCase, trustedPath }) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
       });
@@ -121,19 +154,44 @@ describe("initial sandbox policy real preset merge", () => {
       const readWrite = policy.filesystem_policy?.read_write ?? [];
       const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
       const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
-      const managedCaAncestors = filesystemPolicyAncestors(MANAGED_STARTUP_MERGED_CA_FILE);
+      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
 
-      expect(readOnly, policyCase.path.join("/")).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
-      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(
-        MANAGED_STARTUP_MERGED_CA_FILE,
-      );
+      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
+      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
       expect(
-        normalizedReadOnly.filter((candidate) => managedCaAncestors.includes(candidate)),
+        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
         policyCase.path.join("/"),
       ).toEqual([]);
       expect(
-        normalizedReadWrite.filter((candidate) => managedCaAncestors.includes(candidate)),
+        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
         policyCase.path.join("/"),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      protectedManagedStartupPaths.map((protectedPath) => ({ policyCase, protectedPath })),
+    ),
+  )(
+    "keeps $protectedPath inaccessible in $policyCase.agent policy $policyCase.path (#9357)",
+    ({ policyCase, protectedPath }) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const grantedPaths = [
+        ...(policy.filesystem_policy?.read_only ?? []),
+        ...(policy.filesystem_policy?.read_write ?? []),
+      ].map(normalizeFilesystemPolicyPath);
+      const exposingGrants = new Set([
+        ...filesystemPolicyAncestors(protectedPath),
+        normalizeFilesystemPolicyPath(protectedPath),
+      ]);
+
+      expect(
+        grantedPaths.filter((candidate) => exposingGrants.has(candidate)),
+        `${policyCase.path.join("/")} exposes ${protectedPath}`,
       ).toEqual([]);
     },
   );
@@ -148,6 +206,7 @@ describe("initial sandbox policy real preset merge", () => {
       path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
       agent: "langchain-deepagents-code",
     },
+    { path: ["agents", "nemocua", "policy-additions.yaml"], agent: "nemocua" },
   ])(
     "keeps $agent on the provider-neutral inference.local route without host-native inference egress",
     ({ path: policyPath, agent }) => {
@@ -171,10 +230,48 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
+  it("limits NemoCUA managed inference to the prepared image clients (#9649)", () => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "nemocua", "policy-additions.yaml"),
+        [],
+        { agentName: "nemocua" },
+      ),
+    );
+
+    const managedInference = effective.network_policies?.managed_inference;
+
+    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(managedInference).toEqual({
+      name: "managed_inference",
+      endpoints: [
+        {
+          host: "inference.local",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+            { allow: { method: "POST", path: "/v1/responses" } },
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "GET", path: "/v1/models/**" } },
+          ],
+        },
+      ],
+      binaries: [
+        { path: "/usr/bin/python3" },
+        { path: "/usr/local/bin/python3" },
+        { path: "/usr/bin/curl" },
+      ],
+    });
+    expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
+  });
+
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),
       ["discord", "slack"],
+      { sandboxName: "hermes-channel" },
     );
     const policy = readPreparedPolicy(prepared);
 
@@ -193,6 +290,16 @@ describe("initial sandbox policy real preset merge", () => {
     expect(discordBinaries).toContain("/usr/bin/python3*");
     expect(discordBinaries).toContain("/opt/hermes/.venv/bin/python");
     expect(discordBinaries).not.toContain("/usr/bin/node");
+
+    const boundProviders =
+      policy.network_policies?.discord?.endpoints
+        ?.map((endpoint) => endpoint.credential_binding?.provider)
+        .filter(Boolean) ?? [];
+    expect(boundProviders).toEqual([
+      "hermes-channel-discord-bridge",
+      "hermes-channel-discord-bridge",
+      "hermes-channel-discord-bridge",
+    ]);
 
     const discordRules =
       policy.network_policies?.discord?.endpoints
@@ -313,6 +420,46 @@ describe("initial sandbox policy real preset merge", () => {
       protocol: "rest",
       request_body_credential_rewrite: true,
     });
+  });
+
+  it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
+    const sandboxName = "hermes-discord-e2e";
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    );
+    const endpoints = effective.network_policies?.discord?.endpoints ?? [];
+    const credentialEndpoints = endpoints.filter((endpoint) =>
+      ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
+    );
+
+    expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+      "*.discord.gg",
+      "discord.com",
+      "gateway.discord.gg",
+    ]);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+    ]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unsafe", "bad:provider"],
+  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
+    expect(() =>
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    ).toThrow("a valid sandbox name is required to materialize credential bindings");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(

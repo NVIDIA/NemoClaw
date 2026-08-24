@@ -9,6 +9,7 @@ import {
   getLocalProviderAvailabilityEndpoint,
   getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
+  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_PORT,
 } from "../inference/local";
@@ -193,9 +194,13 @@ function probeWindowsOllamaReachable(input: {
   dockerCapture: DockerCapture;
 }): boolean {
   if (!input.isWsl || input.isWindowsHostOllama || !input.dockerRequirementSupported) return false;
-  return !!input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
+  // A successful Docker run is not enough: a captive proxy, a stale listener, or
+  // a stub on host.docker.internal can all answer with arbitrary 2xx bodies. Only
+  // a body in the Ollama `/api/tags` wire format proves the Windows daemon is live.
+  const body = input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
     ignoreError: true,
   });
+  return isValidOllamaTagsResponseBody(body);
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {
@@ -248,7 +253,10 @@ export function detectInferenceProviderHostState(
   const windowsHostOllamaDockerRequirement = deps.getWindowsHostOllamaDockerRequirement(
     isWsl ? deps.getContainerRuntime() : null,
   );
-  const winOllamaState = deps.detectWindowsHostOllama();
+  const winOllamaState =
+    input.probeOllama === false
+      ? { installed: false, installedPath: "", loopbackOnly: false }
+      : deps.detectWindowsHostOllama();
   const hasWindowsOllama = winOllamaState.installed;
   const windowsOllamaReachable =
     input.probeOllama === false

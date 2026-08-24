@@ -12,11 +12,13 @@ import {
 } from "./managed-cluster-executor.js";
 import {
   fixtureManagedClusterPlan,
+  fixtureManagedClusterSelection,
   STOPPED_FOREIGN_CONTAINER_FIXTURES,
 } from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
   MANAGED_CLUSTER_TRANSACTION_LABEL,
+  materializeManagedClusterVllmPlan,
   type ManagedClusterVllmPlan,
   type ManagedClusterVllmRole,
   type ManagedClusterVllmRolePlan,
@@ -39,8 +41,10 @@ type DockerCaptureOptions = NonNullable<
   Parameters<ManagedClusterVllmExecutorRuntimeDeps["dockerCapture"]>[1]
 >;
 
-function bindPlan(fixture: ManagedVllmSshBindingFixture): ManagedClusterVllmPlan {
-  const plan = fixtureManagedClusterPlan();
+function bindPlan(
+  fixture: ManagedVllmSshBindingFixture,
+  plan = fixtureManagedClusterPlan(),
+): ManagedClusterVllmPlan {
   return {
     ...plan,
     roles: [
@@ -311,6 +315,29 @@ describe("managed-cluster vLLM executor", () => {
     };
     expect(() => assertManagedClusterVllmExecutorConfig({ ...config, plan: changedPlan })).toThrow(
       /catalog-derived adapter contract/,
+    );
+  });
+
+  it("revalidates a deployment-owned API port against the materialized command", () => {
+    plan = bindPlan(
+      bindingFixture,
+      materializeManagedClusterVllmPlan(fixtureManagedClusterSelection(), { apiPort: 19_000 }),
+    );
+    const config = {
+      plan,
+      nodes: [
+        { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+        {
+          nodeId: plan.roles[1].nodeId,
+          modelCacheRoot: PEER_CACHE_ROOT,
+          sshBinding: bindingFixture.binding,
+        },
+      ],
+    };
+
+    expect(() => assertManagedClusterVllmExecutorConfig(config)).not.toThrow();
+    expect(plan.roles[0].command.arguments).toEqual(
+      expect.arrayContaining(["--port", "19000"]),
     );
   });
 

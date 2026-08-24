@@ -43,7 +43,7 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 Run the maintained installer to update the host CLI and reconcile registered sandboxes.
 
 <Warning>
-OpenShell 0.0.101 limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
+The maintained OpenShell 0.0.106 pin limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
 A NemoClaw sandbox name must contain 1 to 19 characters.
 It must start with a lowercase letter, use lowercase letters, numbers, and single internal hyphens, and end with a letter or number.
 Before the OpenShell upgrade, the installer checks registered sandboxes for the selected gateway.
@@ -52,7 +52,7 @@ If the installer finds incompatible names, it lists each name and exits before i
 - Prepare the NemoClaw CLI for the upgrade.
 - Start a backup of the registered sandboxes.
 - Retire the selected OpenShell gateway.
-- Install OpenShell 0.0.101.
+- Install OpenShell 0.0.106.
 - Recreate a sandbox.
 
 NemoClaw does not automatically truncate or change the sandbox name.

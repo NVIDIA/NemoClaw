@@ -9,6 +9,7 @@ import type {
   SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
 import { containerPathsOverlap } from "./host-mount/path-overlap";
+import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
@@ -28,6 +29,10 @@ function buildSandboxDriverConfig(
   intent: SandboxCreateIntent,
   managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
 ): string | null {
+  const cdiDevice = normalizeSandboxGpuDeviceForCdi(intent.sandboxGpuDevice);
+  if (cdiDevice && (!intent.policy.options.directGpu || !intent.gpuCreateArgs.includes("--gpu"))) {
+    throw new Error("Sandbox GPU device selection requires the OpenShell GPU request.");
+  }
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
@@ -47,10 +52,20 @@ function buildSandboxDriverConfig(
     dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
     podmanMounts.push(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
   }
-  if (dockerMounts.length === 0) return null;
+  if (dockerMounts.length === 0 && !cdiDevice) return null;
   return JSON.stringify({
-    docker: { mounts: dockerMounts },
-    ...(podmanMounts.length > 0 ? { podman: { mounts: podmanMounts } } : {}),
+    docker: {
+      ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
+      ...(dockerMounts.length > 0 ? { mounts: dockerMounts } : {}),
+    },
+    ...(podmanMounts.length > 0 || cdiDevice
+      ? {
+          podman: {
+            ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
+            ...(podmanMounts.length > 0 ? { mounts: podmanMounts } : {}),
+          },
+        }
+      : {}),
   });
 }
 
@@ -66,12 +81,56 @@ export type SandboxCreatePlan = {
   sandboxGpuLogMessage: string | null;
 };
 
+export function selectHermesPortableExtraProviderPlan(
+  hermesPortable: boolean,
+  requested: readonly string[] | undefined,
+  planOrdinary: () => {
+    readonly extraProviders: readonly string[];
+    readonly staleExtraProviders: readonly string[];
+  },
+): { readonly extraProviders: readonly string[]; readonly staleExtraProviders: readonly string[] } {
+  if (hermesPortable) {
+    return { extraProviders: [...(requested ?? [])], staleExtraProviders: [] };
+  }
+  return requested ? { extraProviders: [...requested], staleExtraProviders: [] } : planOrdinary();
+}
+
+export async function selectHermesPortableMessagingCapabilities(
+  hermesPortable: boolean,
+  rebindOrdinary: () => Promise<{
+    readonly messagingTokenDefs: MessagingTokenDef[];
+    readonly hasMessagingTokens: boolean;
+  }>,
+): Promise<{
+  readonly messagingTokenDefs: MessagingTokenDef[];
+  readonly hasMessagingTokens: boolean;
+}> {
+  return hermesPortable
+    ? { messagingTokenDefs: [], hasMessagingTokens: false }
+    : await rebindOrdinary();
+}
+
+export function applyOrdinaryExtraProviderReconciliation(
+  hermesPortable: boolean,
+  reconcile: () => void,
+): void {
+  if (!hermesPortable) reconcile();
+}
+
 function getInitialSandboxCreatePolicy(
   ...args: Parameters<PrepareInitialSandboxCreatePolicy>
 ): ReturnType<PrepareInitialSandboxCreatePolicy> {
   const { prepareInitialSandboxCreatePolicy } =
     require("./initial-policy") as typeof import("./initial-policy");
   return prepareInitialSandboxCreatePolicy(...args);
+}
+
+function getHermesPortableInitialSandboxPolicy(
+  ...args: Parameters<typeof import("./initial-policy").planHermesPortableInitialSandboxPolicy>
+): ReturnType<typeof import("./initial-policy").planHermesPortableInitialSandboxPolicy> {
+  const { planHermesPortableInitialSandboxPolicy } =
+    require("./initial-policy") as typeof import("./initial-policy");
+  return planHermesPortableInitialSandboxPolicy(...args);
 }
 
 function messagingProviderRequestKey(
@@ -178,6 +237,7 @@ export function materializeSandboxCreatePlan({
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
         ...exclusion,
@@ -209,7 +269,10 @@ export function materializeSandboxCreatePlan({
   const messagingProviders = filterDisabledMessagingProviders(
     [
       ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+          replaceExisting: true,
+          allowedSandboxes: [intent.sandboxName],
+        }),
         ...intent.reusableMessagingProviders,
       ]),
     ],
@@ -235,6 +298,66 @@ export function materializeSandboxCreatePlan({
     messagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
+    sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
+  };
+}
+
+/** Build the schema-5 create plan without provider, filesystem, Docker, or prebuild effects. */
+export function materializeHermesPortableCreatePlan(input: {
+  readonly intent: SandboxCreateIntent;
+  readonly fromRef: string;
+}): SandboxCreatePlan {
+  const { intent, fromRef } = input;
+  if (
+    intent.policy.options.agentName !== "hermes" ||
+    !["none", "native-only"].includes(intent.gpuRoutePlan) ||
+    (intent.hostMounts?.length ?? 0) > 0 ||
+    intent.activeMessagingChannels.length > 0 ||
+    intent.messagingProviderRequests.length > 0 ||
+    intent.reusableMessagingProviders.length > 0 ||
+    intent.extraProviders.length > 0 ||
+    intent.staleExtraProviders.length > 0 ||
+    intent.hermesToolGateways.length > 0
+  ) {
+    throw new Error(
+      "Hermes portable create intent includes an effect that is not owned by its schema-5 receipt.",
+    );
+  }
+  const initialSandboxPolicy = getHermesPortableInitialSandboxPolicy(
+    intent.policy.basePolicyPath,
+    [...intent.policy.activeMessagingChannels],
+    {
+      directGpu: intent.policy.options.directGpu,
+      hostGpuAvailable: intent.policy.options.hostGpuAvailable,
+      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
+        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
+        : [...intent.policy.options.additionalPresets],
+      agentName: "hermes",
+      policyTier: intent.policy.options.policyTier,
+      baselineExclusions: intent.policy.options.baselineExclusions.map((entry) => ({ ...entry })),
+    },
+  );
+  const driverConfig = buildSandboxDriverConfig(intent, null);
+  const createArgs = [
+    "--from",
+    fromRef,
+    "--name",
+    intent.sandboxName,
+    "--policy",
+    initialSandboxPolicy.policyPath,
+    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
+    ...intent.gpuCreateArgs,
+    ...intent.resourceCreateArgs,
+  ];
+  if (intent.inferenceProvider) createArgs.push("--provider", intent.inferenceProvider);
+  return {
+    activeMessagingChannels: [],
+    initialSandboxPolicy,
+    policyTier: intent.policy.options.policyTier,
+    createArgs,
+    messagingProviders: [],
+    gpuRoutePlan: intent.gpuRoutePlan,
+    compatibilityPolicyPath: null,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
   };
 }

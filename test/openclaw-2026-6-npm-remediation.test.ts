@@ -384,14 +384,14 @@ describe("OpenClaw npm remediation", () => {
       bundledDependencies?: string[];
       dependencies?: Record<string, string>;
     }>(path.join(directory, "package.json"));
-    expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
+    expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.21" });
     expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
-    expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.19" } });
+    expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.21" } });
     expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
-      version: "7.5.19",
-      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+      version: "7.5.21",
+      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
       integrity:
-        "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+        "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
     });
     expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]?.optionalDependencies).toBe(
       undefined,
@@ -454,7 +454,7 @@ describe("OpenClaw npm remediation", () => {
     );
     expect(packageJson).toMatchObject({
       bundledDependencies: ["@openclaw/fs-safe"],
-      dependencies: { jszip: "3.10.1", tar: "7.5.19" },
+      dependencies: { jszip: "3.10.1", tar: "7.5.21" },
     });
     expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
   });

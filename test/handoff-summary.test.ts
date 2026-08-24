@@ -70,6 +70,8 @@ describe("release handoff summary", () => {
         previousTagCommit: previous,
         targetVersion: "v1.2.3",
         candidateCommit: candidate,
+        candidateSelection: "current-main",
+        historicalCandidateException: "None",
       },
       command,
     );
@@ -79,6 +81,8 @@ describe("release handoff summary", () => {
       previousTagCommit: previous,
       targetVersion: "v1.2.3",
       candidateCommit: candidate,
+      candidateSelection: "current-main",
+      historicalCandidateException: "None",
       commitCount: 2,
       riskyFileCount: 5,
       riskyAreas: [
@@ -100,6 +104,8 @@ describe("release handoff summary", () => {
     const markdown = renderHandoffMarkdown(summary);
     expect(markdown).toContain(`- Candidate: \`${candidate}\``);
     expect(markdown).toContain("- Risky files detected: 5");
+    expect(markdown).toContain("## Documentation coverage");
+    expect(markdown).toContain("- Maintainer decision: TODO_RELEASE_BRIEF");
     expectMarkdownList(markdown, summary.riskyAreas);
     expectMarkdownList(markdown, summary.suggestedTestFocus);
   });
@@ -130,6 +136,9 @@ describe("release handoff summary CLI", () => {
     fs.writeFileSync(
       plan,
       JSON.stringify({
+        candidateCommit: candidate,
+        candidateSelection: "current-main",
+        historicalCandidateException: "None",
         nextTag: "v1.2.3",
         originMainCommit: candidate,
         originMainHeadline: "test: release candidate",

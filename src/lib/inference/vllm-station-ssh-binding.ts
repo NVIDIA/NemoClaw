@@ -6,6 +6,8 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
+import { strictVllmSshTransportArgs } from "./serving/vllm-ssh-transport-policy.ts";
+
 export const NEMOCLAW_DGX_STATION_SSH_BINDING_ENV = "NEMOCLAW_DGX_STATION_SSH_BINDING";
 
 const BINDING_SCHEMA_VERSION = 2;
@@ -287,64 +289,6 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function strictStationSshTransportArgs(): string[] {
-  return [
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "VerifyHostKeyDNS=no",
-    "-o",
-    "NoHostAuthenticationForLocalhost=no",
-    "-o",
-    "NumberOfPasswordPrompts=0",
-    "-o",
-    "PasswordAuthentication=no",
-    "-o",
-    "KbdInteractiveAuthentication=no",
-    "-o",
-    "PreferredAuthentications=publickey",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "ServerAliveInterval=5",
-    "-o",
-    "ServerAliveCountMax=1",
-    "-o",
-    "ClearAllForwardings=yes",
-    "-o",
-    "ForwardAgent=no",
-    "-o",
-    "ForwardX11=no",
-    "-o",
-    "ForwardX11Trusted=no",
-    "-o",
-    "Tunnel=no",
-    "-o",
-    "UpdateHostKeys=no",
-    "-o",
-    "ControlMaster=no",
-    "-o",
-    "ControlPath=none",
-    "-o",
-    "PermitLocalCommand=no",
-    "-o",
-    "RemoteCommand=none",
-    "-o",
-    "ProxyCommand=none",
-    "-o",
-    "ProxyJump=none",
-    "-o",
-    "KnownHostsCommand=none",
-    "-o",
-    "LogLevel=ERROR",
-  ];
-}
-
 type PinnedStationEndpoint = Pick<
   DualStationSshBinding,
   "knownHostsFile" | "lookupHost" | "port" | "resolvedHost" | "sshUser"
@@ -352,7 +296,7 @@ type PinnedStationEndpoint = Pick<
 
 function pinnedOptionArgs(binding: PinnedStationEndpoint): string[] {
   return [
-    ...strictStationSshTransportArgs(),
+    ...strictVllmSshTransportArgs(),
     "-o",
     `UserKnownHostsFile=${binding.knownHostsFile}`,
     "-o",

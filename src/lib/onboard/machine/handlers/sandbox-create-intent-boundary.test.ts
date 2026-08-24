@@ -117,6 +117,55 @@ describe("sandbox create intent machine boundary", () => {
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
   });
 
+  it("replaces a stale resumed create-intent policy with the authoritative rebuild selection (#9792)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      policyPresets: ["github"],
+    });
+    const { deps, calls } = createDeps();
+    calls.resolveCreateIntent.mockResolvedValue({
+      sandboxName: "saved",
+      inferenceProvider: "provider",
+      activeMessagingChannels: [],
+      messagingProviderRequests: [],
+      reusableMessagingProviders: [],
+      extraProviders: [],
+      staleExtraProviders: [],
+      hermesToolGateways: [],
+      policy: {
+        basePolicyPath: "/repo/policy.yaml",
+        activeMessagingChannels: [],
+        options: {
+          directGpu: false,
+          additionalPresets: ["mcp-bridge-fake"],
+          policyTier: null,
+          baselineExclusions: [],
+        },
+      },
+      gpuCreateArgs: [],
+      resourceCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      disabledChannelNames: [],
+      extraPlaceholderKeys: [],
+    } as never);
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      authoritativeResumeConfig: true,
+      rebuildPolicyPresets: ["github"],
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      rebuildPolicyPresets: ["github"],
+      resolved: {
+        policy: { options: { additionalPresets: ["github"] } },
+      },
+    });
+  });
+
   it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
     const session = createSession({ sandboxName: "same-sandbox" });
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
@@ -276,7 +325,7 @@ describe("sandbox create intent machine boundary", () => {
       (name: string, type: string, credentialEnvName: string) =>
         (name === "tm-brave-search" && type === "brave" && credentialEnvName === "BRAVE_API_KEY") ||
         (name === "tm-telegram-bridge" &&
-          type === "generic" &&
+          type === "nemoclaw-mcp-v1" &&
           credentialEnvName === "TELEGRAM_BOT_TOKEN"),
     );
     const stageSandboxCredentialProviders = vi
@@ -288,7 +337,11 @@ describe("sandbox create intent machine boundary", () => {
       .mockImplementationOnce(async () => {
         durableSession.stagedCredentialProviders.push("tm-telegram-bridge");
         return [
-          { name: "tm-telegram-bridge", type: "generic", credentialEnv: "TELEGRAM_BOT_TOKEN" },
+          {
+            name: "tm-telegram-bridge",
+            type: "nemoclaw-mcp-v1",
+            credentialEnv: "TELEGRAM_BOT_TOKEN",
+          },
         ];
       })
       .mockResolvedValue([]);
@@ -356,7 +409,7 @@ describe("sandbox create intent machine boundary", () => {
       requiredBindings: [
         {
           name: "tm-telegram-bridge",
-          type: "generic",
+          type: "nemoclaw-mcp-v1",
           credentialEnv: "TELEGRAM_BOT_TOKEN",
         },
       ],
@@ -387,7 +440,7 @@ describe("sandbox create intent machine boundary", () => {
     );
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "tm-telegram-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "TELEGRAM_BOT_TOKEN",
     );
     expect(calls.promptName).not.toHaveBeenCalled();

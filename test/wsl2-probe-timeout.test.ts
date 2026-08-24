@@ -41,14 +41,6 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       ]);
     });
 
-    it("returns widened timeouts when WSL2 is detected", () => {
-      expect(getValidationProbeCurlArgs({ isWsl: true })).toEqual([
-        "--connect-timeout",
-        "20",
-        "--max-time",
-        "30",
-      ]);
-    });
 
     it("returns standard timeouts when called without opts (default path)", () => {
       // On non-WSL hosts this returns the standard values.

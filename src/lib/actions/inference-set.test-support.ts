@@ -138,6 +138,7 @@ export function createDeps(options: {
   probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
   updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
+  settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
 }): InferenceSetDeps & {
@@ -162,6 +163,7 @@ export function createDeps(options: {
     probeSandboxRoute: ReturnType<typeof vi.fn>;
     sleep: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
+    settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
@@ -232,6 +234,7 @@ export function createDeps(options: {
           forwardRecovered: true,
         })),
     ),
+    settleOpenClawPairing: vi.fn(options.settleOpenClawPairing ?? (() => ({ ok: true }) as const)),
     withGatewayRouteMutationLock: vi.fn(
       options.withGatewayRouteMutationLock ??
         (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
@@ -272,6 +275,7 @@ export function createDeps(options: {
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,
+    settleOpenClawPairing: calls.settleOpenClawPairing,
     calls,
     getSession: () => session,
   };

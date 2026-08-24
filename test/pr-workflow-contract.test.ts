@@ -81,6 +81,7 @@ const trustedActionDirs = [
 ] as const;
 
 const cliShardCount = "12";
+const cliShardTimeoutMinutes = 30;
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
@@ -347,6 +348,15 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+
+  it.each([
+    ["pull_request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
+    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(
+      cliShardTimeoutMinutes,
+    );
+  });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
   it("executes pull request installer hash checks only from the PR base SHA", () => {

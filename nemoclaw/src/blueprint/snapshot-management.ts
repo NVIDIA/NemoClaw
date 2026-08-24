@@ -7,8 +7,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { deleteSnapshotDirectory, snapshotDeletionSupported } from "./snapshot-delete-helper.js";
-
-const SNAPSHOT_DIR_NAME_RE = /^\d{8}T\d{6}Z$/;
+import { SNAPSHOT_DIR_NAME_RE } from "./snapshot-directory.js";
 
 export { snapshotDeletionSupported };
 

@@ -48,16 +48,20 @@ function serviceFixture(
     sessionLifetimeMs?: number;
     turnTimeoutMs?: number;
     maxResponseBytes?: number;
+    runtimeIdentity?: string;
+    runtimeProfile?: string;
+    sandbox?: string;
+    agent?: string;
   } = {},
 ) {
   const client = overrides.client ?? new FakeAgentClient();
   const diagnostics: unknown[] = [];
-  const ids = [...(overrides.randomIds ?? ["voice-session", "agent-session", "turn", "response"])];
+  const ids = [...(overrides.randomIds ?? ["voice-session", "turn", "response"])];
   const service = new VoiceSessionService({
-    runtimeIdentity: "voiceclaw-local",
-    runtimeProfile: "voiceclaw-pinned",
-    sandbox: "demo-sandbox",
-    agent: "main",
+    runtimeIdentity: overrides.runtimeIdentity ?? "voiceclaw-local",
+    runtimeProfile: overrides.runtimeProfile ?? "voiceclaw-pinned",
+    sandbox: overrides.sandbox ?? "demo-sandbox",
+    agent: overrides.agent ?? "main",
     createClient: () => client,
     diagnostic: (entry) => diagnostics.push(entry),
     randomId: () => ids.shift() ?? "extra-id",
@@ -71,7 +75,7 @@ function serviceFixture(
 }
 
 describe("voice session and committed turn boundary", () => {
-  it("binds trusted configuration and generates internal agent, turn, and response identities (#8378)", async () => {
+  it("derives an internal agent session key from the trusted runtime binding (#9411)", async () => {
     const { service, client } = serviceFixture();
     const created = service.createSession("runtime-conversation");
     const events: VoiceResponseEvent[] = [];
@@ -91,9 +95,10 @@ describe("voice session and committed turn boundary", () => {
       {
         idempotencyKey: "turn",
         message: "repository status",
-        sessionKey: "agent:main:nemoclaw-voice:agent-session",
+        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:.+$/u),
       },
     ]);
+    expect(client.calls[0]?.sessionKey).not.toContain("runtime-conversation");
     expect(events).toEqual([
       {
         type: "response.started",
@@ -119,6 +124,86 @@ describe("voice session and committed turn boundary", () => {
     service.closeAll();
   });
 
+  it("reuses the derived agent session key across separate admissions for one binding (#9411)", async () => {
+    const { service, client } = serviceFixture({
+      randomIds: [
+        "voice-session-one",
+        "turn-one",
+        "response-one",
+        "voice-session-two",
+        "turn-two",
+        "response-two",
+      ],
+    });
+
+    const first = service.createSession("runtime-conversation");
+    await service.commitTurn({
+      voiceSessionId: first.voiceSessionId,
+      grant: first.grant,
+      commitId: "runtime-commit-one",
+      text: "first question",
+      deliver: () => {},
+      deliveryOpen: () => true,
+    });
+    service.closeSession(first.voiceSessionId, first.grant);
+
+    const second = service.createSession("runtime-conversation");
+    await service.commitTurn({
+      voiceSessionId: second.voiceSessionId,
+      grant: second.grant,
+      commitId: "runtime-commit-two",
+      text: "second question",
+      deliver: () => {},
+      deliveryOpen: () => true,
+    });
+
+    expect(client.calls).toHaveLength(2);
+    expect(client.calls[1]?.sessionKey).toBe(client.calls[0]?.sessionKey);
+    service.closeAll();
+  });
+
+  it("isolates agent session keys when a runtime binding value changes (#9411)", async () => {
+    async function sessionKeyFor(options: {
+      runtimeConversationId?: string;
+      runtimeIdentity?: string;
+      runtimeProfile?: string;
+      sandbox?: string;
+      agent?: string;
+    }): Promise<string> {
+      const { service, client } = serviceFixture({
+        ...(options.runtimeIdentity ? { runtimeIdentity: options.runtimeIdentity } : {}),
+        ...(options.runtimeProfile ? { runtimeProfile: options.runtimeProfile } : {}),
+        ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+        ...(options.agent ? { agent: options.agent } : {}),
+      });
+      const created = service.createSession(
+        options.runtimeConversationId ?? "runtime-conversation",
+      );
+      await service.commitTurn({
+        voiceSessionId: created.voiceSessionId,
+        grant: created.grant,
+        commitId: "runtime-commit",
+        text: "question",
+        deliver: () => {},
+        deliveryOpen: () => true,
+      });
+      service.closeAll();
+      return client.calls[0]?.sessionKey ?? "";
+    }
+
+    const keys = await Promise.all([
+      sessionKeyFor({}),
+      sessionKeyFor({ runtimeConversationId: "other-conversation" }),
+      sessionKeyFor({ runtimeIdentity: "voiceclaw-other" }),
+      sessionKeyFor({ runtimeProfile: "voiceclaw-other" }),
+      sessionKeyFor({ sandbox: "other-sandbox" }),
+      sessionKeyFor({ agent: "secondary" }),
+    ]);
+
+    expect(keys.every((key) => key.length > 0)).toBe(true);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it("rejects duplicate and overlapping runtime commit IDs without another invocation (#8378)", async () => {
     const client = new FakeAgentClient();
     let resolveRun: (value: { outcome: "completed" }) => void = () => {};
@@ -130,7 +215,7 @@ describe("voice session and committed turn boundary", () => {
     };
     const { service } = serviceFixture({
       client,
-      randomIds: ["voice-session", "agent-session", "turn", "response"],
+      randomIds: ["voice-session", "turn", "response"],
     });
     const created = service.createSession("runtime-conversation");
     const first = service.commitTurn({

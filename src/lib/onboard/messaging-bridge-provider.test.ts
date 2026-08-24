@@ -11,6 +11,7 @@ import {
   configureMessagingBridgeRefreshes,
   ensureMessagingBridgeProfiles,
   listMessagingBridgeProfiles,
+  matchesRegisteredStaticMessagingProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
 } from "./messaging-bridge-provider";
@@ -37,6 +38,60 @@ const GC_PROFILE: MessagingBridgeProfile = {
   sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
 };
 
+// Google Chat is the one channel shipping a profile per agent, so a sandbox must
+// pick exactly one. Hermes also needs pubsub on top of chat.bot: one token, both
+// scopes, because `:pull` 403s without it.
+const GC_HERMES_PROFILE: MessagingBridgeProfile = {
+  ...GC_PROFILE,
+  agent: "hermes",
+  profilePath: "/repo/src/lib/messaging/channels/googlechat/provider-profile/hermes.yaml",
+  profileId: "google-chat-bridge-hermes",
+};
+
+const DISCORD_PROFILE: MessagingBridgeProfile = {
+  channelId: "discord",
+  agent: "hermes",
+  profilePath: "/repo/src/lib/messaging/channels/discord/provider-profile/hermes.yaml",
+  profileId: "discord-hermes-static-v1",
+  credentialKey: "DISCORD_BOT_TOKEN",
+  strategy: null,
+  scopes: [],
+  secretMaterialKeys: [],
+  sourceSecretEnv: "DISCORD_BOT_TOKEN",
+};
+
+const DISCORD_PROFILE_DOC = {
+  id: DISCORD_PROFILE.profileId,
+  display_name: "Discord Bot (Hermes)",
+  description: "Endpointless Discord bot credential for sandbox policy binding",
+  category: "agent",
+  credentials: [
+    {
+      name: "bot_token",
+      description: "Discord bot token",
+      env_vars: [DISCORD_PROFILE.credentialKey],
+      required: true,
+      auth_style: "header",
+      header_name: "Authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+};
+
+const STATIC_DEF = {
+  name: "sbx-discord-bridge",
+  providerType: DISCORD_PROFILE.profileId,
+  token: "fixture-discord-token",
+};
+
+const GC_PUBSUB_SCOPES = [
+  "https://www.googleapis.com/auth/chat.bot",
+  "https://www.googleapis.com/auth/pubsub",
+];
+
 const BRIDGE_DEF = {
   name: "sbx-googlechat-bridge",
   providerType: GC_PROFILE.profileId,
@@ -48,6 +103,7 @@ function collectInput(
 ) {
   return {
     sandboxName: "sbx",
+    agent: GC_PROFILE.agent,
     getCredential: () => null,
     enabledChannels: ["googlechat"],
     disabledChannelNames: new Set<string>(),
@@ -91,6 +147,20 @@ describe("collectMessagingBridgeTokenDefs", () => {
         },
       ],
     );
+  });
+
+  it("emits only the profile whose agent matches the sandbox", () => {
+    // Both profiles carry the same channelId, so filtering on the channel alone
+    // would configure the OpenClaw bridge on a Hermes sandbox and the reverse.
+    const defs = collectMessagingBridgeTokenDefs(
+      collectInput({
+        agent: "hermes",
+        getCredential: () => SA_JSON,
+        profiles: [GC_PROFILE, GC_HERMES_PROFILE],
+      }),
+    );
+
+    expect(defs.map((def) => def.providerType)).toEqual([GC_HERMES_PROFILE.profileId]);
   });
 
   it("emits the bridge token def from an env-only secret (resolution parity)", () => {
@@ -194,6 +264,27 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(process.env[secretEnvName]).toBe(parentSecret);
   });
 
+  it("mints one token carrying every scope the profile declares", () => {
+    // Hermes reads Pub/Sub and writes Chat with the same minted token, so sending
+    // only the first scope leaves `:pull` rejected with 403 at runtime.
+    const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
+      status: 0,
+    }));
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [{ ...GC_PROFILE, scopes: GC_PUBSUB_SCOPES }],
+    });
+
+    expect(result).toEqual({ ok: true });
+    const args = runOpenshell.mock.calls[0][0];
+    expect(args).toContain(`scope=${GC_PUBSUB_SCOPES.join(" ")}`);
+    expect(args).not.toContain(`scope=${GC_PUBSUB_SCOPES[0]}`);
+  });
+
   it("forces private_key off argv even when the profile omits it from secretMaterialKeys", () => {
     // A misconfigured / edited / reused profile that marks other material secret
     // but not private_key must still never leak the raw key into argv.
@@ -284,8 +375,99 @@ describe("ensureMessagingBridgeProfiles", () => {
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
     const exportCall = runOpenshell.mock.calls.find((call) => call[0].includes("export"));
-    expect(exportCall?.[0]).toEqual(["provider", "profile", "export", GC_PROFILE.profileId]);
+    expect(exportCall?.[0]).toEqual([
+      "provider",
+      "profile",
+      "export",
+      GC_PROFILE.profileId,
+      "--output",
+      "json",
+    ]);
     expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("accepts an existing static profile only when its credential boundary matches", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: JSON.stringify(DISCORD_PROFILE_DOC),
+    }));
+    const exit = vi.fn(() => undefined as never);
+
+    ensureMessagingBridgeProfiles([STATIC_DEF], {
+      ...baseDeps(),
+      profiles: [DISCORD_PROFILE],
+      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
+
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell.mock.calls[0]?.[0]).toEqual([
+      "provider",
+      "profile",
+      "export",
+      DISCORD_PROFILE.profileId,
+      "--output",
+      "json",
+    ]);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["endpoint authority", { endpoints: [{ host: "gateway.discord.gg", port: 443 }] }],
+    ["binary authority", { binaries: ["/usr/bin/curl"] }],
+    [
+      "credential configuration",
+      {
+        credentials: [
+          {
+            ...DISCORD_PROFILE_DOC.credentials[0],
+            header_name: "X-Discord-Token",
+          },
+        ],
+      },
+    ],
+  ])("rejects an existing static profile with different %s", (_label, override) => {
+    const exported = { ...DISCORD_PROFILE_DOC, ...override };
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: JSON.stringify(exported),
+    }));
+    const exit = vi.fn(() => undefined as never);
+
+    ensureMessagingBridgeProfiles([STATIC_DEF], {
+      ...baseDeps(),
+      profiles: [DISCORD_PROFILE],
+      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
+  });
+
+  it("rejects a mismatched static profile that wins an import race", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({ ...DISCORD_PROFILE_DOC, binaries: ["/usr/bin/curl"] }),
+      });
+    const exit = vi.fn(() => undefined as never);
+
+    ensureMessagingBridgeProfiles([STATIC_DEF], {
+      ...baseDeps(),
+      profiles: [DISCORD_PROFILE],
+      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it("tolerates an already-registered profile without exiting", () => {
@@ -300,6 +482,60 @@ describe("ensureMessagingBridgeProfiles", () => {
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(exit).toHaveBeenCalled();
+  });
+});
+
+describe("matchesRegisteredStaticMessagingProfile", () => {
+  it("accepts only the checked-in static credential boundary", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify(DISCORD_PROFILE_DOC),
+    }));
+
+    expect(
+      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+        runOpenshell,
+      }),
+    ).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "profile", "export", DISCORD_PROFILE.profileId, "--output", "json"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it("rejects a registered static profile with endpoint authority", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        ...DISCORD_PROFILE_DOC,
+        endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+      }),
+    }));
+
+    expect(
+      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+        runOpenshell,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not apply the static-profile check to other provider types", () => {
+    const runOpenshell = vi.fn();
+
+    expect(
+      matchesRegisteredStaticMessagingProfile("generic", {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        runOpenshell,
+      }),
+    ).toBeNull();
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });
 
