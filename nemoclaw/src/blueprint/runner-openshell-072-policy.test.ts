@@ -656,4 +656,84 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     await expect(actionReconcile(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
     await expect(actionRollback(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
   });
+
+  const reconciliationPlan = {
+    run_id: "invalid-reconciliation",
+    sandbox_name: "test-sandbox",
+    sandbox_created_by_apply: false,
+    policy_additions: blueprint().components!.policy!.additions!,
+    policy_transition: {
+      status: "incomplete",
+      sandbox_name: "test-sandbox",
+      gateway: "test-gateway",
+      expected_authority: "nemoclaw-managed",
+      policy_addition_names: ["nim_service"],
+    },
+  };
+
+  it.each([
+    ["a non-object body", [], /plan\.json must contain a JSON object/u],
+    [
+      "an apply-owned sandbox",
+      { ...reconciliationPlan, sandbox_created_by_apply: true },
+      /requires a reused sandbox/u,
+    ],
+    [
+      "a mismatched sandbox",
+      { ...reconciliationPlan, sandbox_name: "other-sandbox" },
+      /sandbox does not match/u,
+    ],
+    [
+      "invalid policy additions",
+      { ...reconciliationPlan, policy_additions: [] },
+      /policy additions are invalid/u,
+    ],
+    [
+      "mismatched policy addition names",
+      {
+        ...reconciliationPlan,
+        policy_transition: {
+          ...reconciliationPlan.policy_transition,
+          policy_addition_names: ["other"],
+        },
+      },
+      /additions do not match/u,
+    ],
+  ])("rejects a reconciliation plan with %s (#9833)", async (_case, plan, expected) => {
+    const runId = "invalid-reconciliation";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, { type: "file", content: JSON.stringify(plan) });
+
+    await expect(actionReconcile(runId)).rejects.toThrow(expected);
+  });
+
+  it("rejects reconciliation for a missing run (#9833)", async () => {
+    await expect(actionReconcile("missing-reconciliation")).rejects.toThrow(/not found/u);
+  });
+
+  it("treats a complete reconciliation as idempotent and requires a CLI run ID (#9833)", async () => {
+    const runId = "complete-reconciliation";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        ...reconciliationPlan,
+        run_id: runId,
+        policy_transition: {
+          ...reconciliationPlan.policy_transition,
+          status: "complete",
+        },
+      }),
+    });
+
+    await actionReconcile(runId);
+
+    expect(stdoutCapture.text()).toContain(
+      `Policy transition for run ${runId} is already complete.`,
+    );
+    expect(mockExeca).not.toHaveBeenCalled();
+    await expect(main(["reconcile"])).rejects.toThrow(/--run-id is required/u);
+  });
 });
