@@ -19,15 +19,12 @@ import {
   type ReviewSubmissionController,
 } from "../tools/pr-review-advisor/review-submission.mts";
 import type { TerminologyTrace } from "../tools/pr-review-advisor/terminology.mts";
-import { readParsedTrustedSecurityRubric } from "../tools/pr-review-advisor/trusted-guidance.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HEAD = "a".repeat(40);
-const SECURITY_CATEGORY_NAMES = readParsedTrustedSecurityRubric().categories;
 function controller(
   traces = new Map<string, TerminologyTrace>(),
   normalizeE2e = (draft: Record<string, unknown>) => draft,
-  securityCategoryNames: readonly string[] = SECURITY_CATEGORY_NAMES,
   hasOpenPrReplacement = false,
 ) {
   return createReviewSubmissionController({
@@ -47,7 +44,6 @@ function controller(
     },
     schema: reviewSchema,
     repositoryRoot: ROOT,
-    securityCategoryNames,
     terminologyTraces: traces,
     normalizeE2e,
   });
@@ -77,7 +73,6 @@ function finding(title = "The refusal is hidden") {
       "acceptance:Propagate refusal",
       "acceptance:Cover refusal regression",
       "acceptance:Clause",
-      `security:${SECURITY_CATEGORY_NAMES[0]}`,
       "source-of-truth:config",
     ],
     basis: {
@@ -108,12 +103,6 @@ function receipt(
         findingId: null,
       },
     ] as Array<{ clause: string; status: string; evidence: string; findingId: string | null }>,
-    securityCategories: SECURITY_CATEGORY_NAMES.map((category) => ({
-      category,
-      verdict: "pass",
-      justification: `${category} passed.`,
-      findingId: null as string | null,
-    })),
     sourceOfTruthReview: [] as Array<{
       surface: string;
       status: string;
@@ -233,12 +222,7 @@ describe("PR review advisor submission tools", () => {
   });
 
   it("preserves superseded with deterministic open-PR overlap and no findings", async () => {
-    const submission = controller(
-      new Map(),
-      (draft: Record<string, unknown>) => draft,
-      SECURITY_CATEGORY_NAMES,
-      true,
-    );
+    const submission = controller(new Map(), (draft: Record<string, unknown>) => draft, true);
     await execute(submission, RECORD_FINDINGS_TOOL, { findings: [] });
     const draft = receipt() as Record<string, any>;
     draft.summary.recommendation = "superseded";
@@ -513,7 +497,7 @@ describe("PR review advisor submission tools", () => {
     expect(submission.result()).toBeNull();
   });
 
-  it("strips acceptance and security finding IDs from the public result", async () => {
+  it("strips acceptance finding IDs and keeps an ordinary security finding", async () => {
     const submission = controller();
     const draft = receipt();
     draft.acceptanceCoverage = [
@@ -524,8 +508,6 @@ describe("PR review advisor submission tools", () => {
         findingId: "F-001",
       },
     ];
-    draft.securityCategories[0].verdict = "warning";
-    draft.securityCategories[0].findingId = "F-002";
     await execute(submission, RECORD_FINDINGS_TOOL, {
       findings: [
         {
@@ -547,10 +529,8 @@ describe("PR review advisor submission tools", () => {
     submission.finalize();
     const result = submission.result() as {
       acceptanceCoverage: unknown[];
-      securityCategories: unknown[];
     };
     expect(result.acceptanceCoverage[0]).not.toHaveProperty("findingId");
-    expect(result.securityCategories[0]).not.toHaveProperty("findingId");
   });
 
   it("replaces drafts, normalizes E2E, and submits canonical state atomically", async () => {
@@ -764,28 +744,7 @@ describe("PR review advisor submission tools", () => {
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
   });
 
-  it("requires all security categories and canonical source-of-truth finding IDs", async () => {
-    const missingSecurity = controller();
-    await execute(missingSecurity, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await execute(missingSecurity, RECORD_REVIEW_RECEIPT_TOOL, {
-      ...receipt(),
-      securityCategories: receipt().securityCategories.slice(1),
-    });
-    await execute(missingSecurity, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(missingSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      "securityCategories must contain each named category exactly once",
-    );
-
-    const duplicateSecurity = controller();
-    await execute(duplicateSecurity, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    const duplicateReceipt = receipt();
-    duplicateReceipt.securityCategories.push(duplicateReceipt.securityCategories[0]);
-    await execute(duplicateSecurity, RECORD_REVIEW_RECEIPT_TOOL, duplicateReceipt);
-    await execute(duplicateSecurity, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(duplicateSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      `securityCategories contains duplicate receipt concern security:${SECURITY_CATEGORY_NAMES[0]}`,
-    );
-
+  it("rejects an unknown source-of-truth finding ID", async () => {
     const badReference = controller();
     await execute(badReference, RECORD_FINDINGS_TOOL, { findings: [finding()] });
     await execute(badReference, RECORD_REVIEW_RECEIPT_TOOL, {
@@ -849,14 +808,6 @@ describe("PR review advisor submission tools", () => {
       },
     ],
     [
-      "security",
-      (value: ReturnType<typeof receipt>) => {
-        value.acceptanceCoverage = [];
-        value.securityCategories[0].verdict = "warning";
-        value.securityCategories[0].findingId = "F-001";
-      },
-    ],
-    [
       "source of truth",
       (value: ReturnType<typeof receipt>) => {
         value.acceptanceCoverage = [];
@@ -902,15 +853,6 @@ describe("PR review advisor submission tools", () => {
             findingId: "F-001",
           },
         ];
-      },
-    ],
-    [
-      "security",
-      "security",
-      "security_violation",
-      (value: ReturnType<typeof receipt>) => {
-        value.securityCategories[0].verdict = "warning";
-        value.securityCategories[0].findingId = "F-001";
       },
     ],
     [
@@ -1137,7 +1079,6 @@ describe("PR review advisor submission tools", () => {
       noChangesReason: null,
     });
     draft.acceptanceCoverage[0].findingId = "F-001";
-    draft.securityCategories[0].findingId = "F-001";
     await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
@@ -1148,7 +1089,6 @@ describe("PR review advisor submission tools", () => {
     );
     expect(failure).toBeInstanceOf(Error);
     expect(failure?.message).toContain("acceptanceCoverage[1] does not report a concern");
-    expect(failure?.message).toContain("securityCategories[1] does not report a concern");
     expect(failure?.message).toContain("normalized E2E failed schema validation");
     expect(failure?.message).toContain("Unknown terminology trace missing-trace");
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
@@ -1184,31 +1124,6 @@ describe("PR review advisor submission tools", () => {
     },
   );
 
-  it("uses the injected security inventory for receipt schema and validation", async () => {
-    const injected = ["Injected Security Category"];
-    const submission = controller(new Map(), (draft) => draft, injected);
-    const draft = receipt();
-    draft.securityCategories = [
-      {
-        category: injected[0]!,
-        verdict: "pass",
-        justification: "The injected category passed.",
-        findingId: null,
-      },
-    ];
-    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await expect(execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft)).resolves.toBeDefined();
-    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
-
-    const rejected = controller(new Map(), (value) => value, injected);
-    await execute(rejected, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await expect(execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, receipt())).rejects.toThrow(
-      "record_review_receipt failed schema validation",
-    );
-    expect(rejected.findingSnapshot()).toEqual({ version: 1, findings: [] });
-  });
-
   const acceptanceMissing = (draft: ReturnType<typeof receipt>) => {
     draft.acceptanceCoverage = [
       { clause: "Clause", status: "missing", evidence: "evidence", findingId: "F-001" },
@@ -1218,22 +1133,6 @@ describe("PR review advisor submission tools", () => {
     draft.acceptanceCoverage = [
       { clause: "Clause", status: "partial", evidence: "evidence", findingId: "F-001" },
     ];
-  };
-  const securityFail = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.securityCategories[0] = {
-      ...draft.securityCategories[0],
-      verdict: "fail",
-      findingId: "F-001",
-    };
-  };
-  const securityWarning = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.securityCategories[0] = {
-      ...draft.securityCategories[0],
-      verdict: "warning",
-      findingId: "F-001",
-    };
   };
   const sourceMissing = (draft: ReturnType<typeof receipt>) => {
     draft.acceptanceCoverage = [];
@@ -1272,9 +1171,6 @@ describe("PR review advisor submission tools", () => {
     ["acceptance missing", "acceptance", "unmet_acceptance", "blocker", acceptanceMissing],
     ["acceptance partial minimum", "acceptance", "unmet_acceptance", "warning", acceptancePartial],
     ["acceptance partial blocker", "acceptance", "unmet_acceptance", "blocker", acceptancePartial],
-    ["security fail", "security", "security_violation", "blocker", securityFail],
-    ["security warning minimum", "security", "security_violation", "warning", securityWarning],
-    ["security warning blocker", "security", "security_violation", "blocker", securityWarning],
     ["source missing suggestion", "architecture", "behavior_mismatch", "suggestion", sourceMissing],
     [
       "source follow-up suggestion",
@@ -1303,8 +1199,6 @@ describe("PR review advisor submission tools", () => {
   it.each([
     ["acceptance missing", "acceptance", "unmet_acceptance", "warning", acceptanceMissing],
     ["acceptance partial", "acceptance", "unmet_acceptance", "suggestion", acceptancePartial],
-    ["security fail", "security", "security_violation", "warning", securityFail],
-    ["security warning", "security", "security_violation", "suggestion", securityWarning],
   ] as const)(
     "rejects weaker %s linked finding severity atomically",
     async (_name, category, basisKind, severity, mutateReceipt) => {
@@ -1343,7 +1237,6 @@ describe("PR review advisor submission tools", () => {
       },
       schema: reviewSchema,
       repositoryRoot: ROOT,
-      securityCategoryNames: SECURITY_CATEGORY_NAMES,
       terminologyTraces: () => traces,
       normalizeE2e: (draft) => draft,
     });

@@ -498,6 +498,31 @@ describe("managed image GHCR catalog", () => {
     ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => publishedRelease));
   });
 
+  it("uses the requested release for a revision-pinned legacy latest label", async () => {
+    const fixture = catalogFixture({
+      openclaw: {
+        rootReference: REVISION,
+        labels: { "org.opencontainers.image.version": "latest" },
+      },
+      hermes: { labels: { "org.opencontainers.image.version": "latest" } },
+      "langchain-deepagents-code": {
+        labels: { "org.opencontainers.image.version": "latest" },
+      },
+    });
+
+    const catalog = await resolveManagedImageCatalogFromGhcr({
+      release: RELEASE,
+      revision: REVISION,
+      fetchImpl: fixture.fetchImpl,
+    });
+
+    expect(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map(
+        (agent) => (catalog[agent] as { source: { release: string } }).source.release,
+      ),
+    ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => RELEASE));
+  });
+
   it.each(["", "0.0.97", "latest"])(
     "rejects malformed image release label %j",
     async (release) => {

@@ -127,7 +127,7 @@ are `a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920` for linux
 `88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4` for linux-aarch64.
 
 The correction commit has a raw SSH signature and exact contributor `Signed-off-by` trailer. Its
-independent exact-commit review passed all nine security categories, 90 focused trust tests, the
+independent exact-commit review passed every security category, 90 focused trust tests, the
 repository integrity checks, and type-checking. Both findings are closed with no new blocker.
 Because the formula asset remains mutable upstream, a replacement now causes a fail-closed
 availability failure instead of silently changing trusted identity. The dormant v0.0.101 sandbox

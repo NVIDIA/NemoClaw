@@ -22,11 +22,6 @@
       "category": "security"
     },
     {
-      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
-      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
@@ -164,11 +159,6 @@
     {
       "file": "test/openclaw-locked-install.test.ts",
       "test": "rejects $name even with a test-only matching lock digest",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-locked-install.test.ts",
-      "test": "rejects a same-registry tarball with a substituted package manifest",
       "category": "security"
     },
     {
