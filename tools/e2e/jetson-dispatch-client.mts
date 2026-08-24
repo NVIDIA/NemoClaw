@@ -278,6 +278,7 @@ function cancellationResultMessage(result: JetsonCancellationResult): string {
 
 export type CancelJetsonDispatch = (
   reason: JetsonCancellationReason,
+  options?: { retryJobNotFound?: boolean },
 ) => Promise<JetsonCancellationResult>;
 
 export function createJetsonCancellation(options: {
@@ -287,9 +288,17 @@ export function createJetsonCancellation(options: {
   request: typeof dispatcherRequest;
 }): CancelJetsonDispatch {
   let inFlight: Promise<JetsonCancellationResult> | undefined;
-  return (reason) => {
+  let retry: Promise<JetsonCancellationResult> | undefined;
+  return (reason, callOptions) => {
+    const cancellationAlreadyStarted = inFlight !== undefined;
     inFlight ??= cancelJetsonDispatch({ ...options, reason });
-    return inFlight;
+    if (!cancellationAlreadyStarted || !callOptions?.retryJobNotFound) return inFlight;
+    retry ??= inFlight.then((result) =>
+      result.outcome === "failed" && result.failure === "job-not-found"
+        ? cancelJetsonDispatch({ ...options, reason })
+        : result,
+    );
+    return retry;
   };
 }
 
@@ -331,13 +340,13 @@ export async function submitJetsonDispatch(options: {
     );
   } catch {
     const reason = options.stopping?.() ? "signal" : "submission-outcome-unknown";
-    const cancellation = await cancel(reason);
+    const cancellation = await cancel(reason, { retryJobNotFound: true });
     throw new Error(
       `Jetson dispatch ${jobId} submission outcome was not confirmed; ${cancellationResultMessage(cancellation)}`,
     );
   }
   if (options.stopping?.()) {
-    const cancellation = await cancel("signal");
+    const cancellation = await cancel("signal", { retryJobNotFound: true });
     throw new Error(
       `Jetson dispatch ${jobId} cancellation requested; ${cancellationResultMessage(cancellation)}`,
     );

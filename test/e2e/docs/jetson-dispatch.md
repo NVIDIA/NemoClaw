@@ -140,8 +140,9 @@ workflow run ID and attempt, selectors, event, and hardware opt-in decisions.
 The Jetson controller writes private files under the target artifact directory:
 
 - `jetson-dispatch.json` records the validated request and derived job ID before
-  submission begins. It records the first cancellation reason and whether the
-  operator service accepted the shared cancellation request. A completed
+  submission begins. It records the cancellation reason and final outcome. If
+  an early request reports that the job is absent before submission settles,
+  the controller records one follow-up request after submission. A completed
   artifact replaces this recovery state with the validated status and bounded
   log. The file excludes the base64 archive payload.
 - `jetson-e2e-artifacts.tar.gz` contains the decoded target evidence when the

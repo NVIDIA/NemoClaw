@@ -721,6 +721,63 @@ describe("Jetson dispatch GitHub controller", () => {
     });
   });
 
+  it("retries an early job-not-found cancellation after submission settles (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    let stopping = false;
+    let markPostStarted!: () => void;
+    const postStarted = new Promise<void>((resolve) => {
+      markPostStarted = resolve;
+    });
+    let releasePost!: () => void;
+    const postRelease = new Promise<void>((resolve) => {
+      releasePost = resolve;
+    });
+    const requestImpl = vi
+      .fn<typeof dispatcherRequest>()
+      .mockImplementationOnce(async () => {
+        markPostStarted();
+        await postRelease;
+        return { job: queuedStatusV2 };
+      })
+      .mockRejectedValueOnce(new Error("Jetson dispatcher returned HTTP 404: request failed"))
+      .mockResolvedValueOnce(undefined);
+    const cancel = createJetsonCancellation({
+      baseUrl: new URL("https://dispatch.test/"),
+      dispatch: queuedStatusV2,
+      receiptFile,
+      request: requestImpl,
+    });
+
+    const submission = submitJetsonDispatch({
+      baseUrl: new URL("https://dispatch.test/"),
+      cancel,
+      dispatchRequest: requestV2,
+      receiptFile,
+      request: requestImpl,
+      stopping: () => stopping,
+    });
+    await postStarted;
+    stopping = true;
+    await expect(cancel("signal")).resolves.toEqual({
+      failure: "job-not-found",
+      outcome: "failed",
+      receiptWritten: true,
+    });
+    releasePost();
+
+    await expect(submission).rejects.toThrow(
+      `Jetson dispatch ${queuedStatusV2.jobId} cancellation requested; cancellation request succeeded`,
+    );
+    expect(requestImpl).toHaveBeenCalledTimes(3);
+    expect(requestImpl).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatusV2.jobId}` }),
+    );
+    expect(readReceipt(receiptFile)).toMatchObject({
+      cancellation: { outcome: "succeeded", reason: "signal" },
+    });
+  });
+
   it("records a rejected cancellation after repeated status failures (#8142)", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const receiptFile = temporaryReceiptFile();
