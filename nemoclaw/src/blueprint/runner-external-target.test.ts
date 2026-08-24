@@ -20,6 +20,7 @@ const { store, addFile } = createRunnerFsStore();
 const stdoutCapture = createStdoutCapture();
 const mockExeca = vi.fn();
 const externalFileSizes = new Map<string, number>();
+const externalFileOpens: string[] = [];
 const externalFileReads: string[] = [];
 
 vi.mock("node:os", () => ({ homedir: () => FAKE_HOME }));
@@ -47,6 +48,7 @@ vi.mock("node:fs", async (importOriginal) => {
       ino: 1,
     }),
     openSync: (filePath: string) => {
+      externalFileOpens.push(filePath);
       const descriptor = nextDescriptor++;
       descriptors.set(descriptor, { filePath, offset: 0 });
       return descriptor;
@@ -129,6 +131,7 @@ describe("Blueprint Runner external OpenShell target", () => {
   beforeEach(() => {
     store.clear();
     externalFileSizes.clear();
+    externalFileOpens.length = 0;
     externalFileReads.length = 0;
     stdoutCapture.reset();
     vi.clearAllMocks();
@@ -200,6 +203,41 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(stdoutCapture.text()).not.toContain("RUN_ID:");
   });
 
+  it.each([
+    ["components", { components: { sandbox: { name: "managed" } } }],
+    ["profiles", { profiles: ["default"] }],
+    ["min_openclaw_version", { min_openclaw_version: "2026.8.0" }],
+  ])(
+    "rejects the managed-only blueprint field %s before any effect (#9872)",
+    async (field, value) => {
+      addFile("blueprint.yaml", YAML.stringify({ ...externalTargetBlueprint(), ...value }));
+
+      await expect(main(["plan"])).rejects.toThrow(
+        `External OpenShell target planning does not accept '${field}'.`,
+      );
+
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+      expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+      expect(externalFileOpens).toEqual([]);
+      expect(externalFileReads).toEqual([]);
+    },
+  );
+
+  it("rejects an explicit inference profile before any effect (#9872)", async () => {
+    seedExternalTarget();
+
+    await expect(main(["plan", "--profile", "default"])).rejects.toThrow(
+      "--profile configures managed inference and is not accepted by external target-only planning.",
+    );
+
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+    expect(externalFileOpens).toEqual([]);
+    expect(externalFileReads).toEqual([]);
+  });
+
   it("preserves the actionable external endpoint validation error (#9872)", async () => {
     const blueprint = externalTargetBlueprint();
     blueprint.openshell_target = {
@@ -214,6 +252,7 @@ describe("Blueprint Runner external OpenShell target", () => {
 
     expect(mockExeca).not.toHaveBeenCalled();
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(externalFileOpens).toEqual([]);
     expect(externalFileReads).toEqual([]);
   });
 

@@ -100,9 +100,13 @@ describe("blueprint external OpenShell target schema", () => {
     expect(validate(blueprintWithExternalTarget()), JSON.stringify(validate.errors)).toBe(true);
   });
 
-  it("rejects an external target with managed components", () => {
+  it.each([
+    ["components", { components: createBlueprint().components }],
+    ["profiles", { profiles: ["default"] }],
+    ["min_openclaw_version", { min_openclaw_version: "2026.8.0" }],
+  ])("rejects an external target with the managed-only field %s (#9872)", (_field, value) => {
     expect(
-      validate({ ...createBlueprint(), ...blueprintWithExternalTarget() }),
+      validate({ ...blueprintWithExternalTarget(), ...value }),
       JSON.stringify(validate.errors),
     ).toBe(false);
   });

@@ -277,7 +277,6 @@ describe("packaged Blueprint Runner external target", () => {
           path.join(blueprintRoot, "blueprint.yaml"),
           YAML.stringify({
             version: "1.0.0",
-            profiles: ["default"],
             min_openshell_version: "0.0.106",
             max_openshell_version: "0.0.106",
             openshell_target: {
@@ -287,17 +286,6 @@ describe("packaged Blueprint Runner external target", () => {
               lifecycle: "external",
               trust: { ca_file: privateCaPath },
               authentication: { credential_file: privateAuthenticationPath },
-            },
-            components: {
-              sandbox: { image: "example.invalid/nemoclaw:fixture", name: "fixture" },
-              inference: {
-                profiles: {
-                  default: {
-                    provider_type: "openai",
-                    endpoint: "https://api.example.test",
-                  },
-                },
-              },
             },
           }),
         );
