@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isAbsolute } from "node:path";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
@@ -29,7 +31,7 @@ export class HostCliClient {
   private readonly runner: CommandRunner;
   private readonly cliPath: string;
   private readonly cwd?: string;
-  private readonly openshellPath: string;
+  private openshellPath: string;
 
   constructor(runner: CommandRunner, options: HostClientOptions = {}) {
     this.runner = runner;
@@ -80,6 +82,34 @@ export class HostCliClient {
     if (result.exitCode === 1) return false;
     assertExitZero(result, `probe command availability for ${command}`);
     return false;
+  }
+
+  async resolveOpenShellCommandPath(options: ShellProbeRunOptions = {}): Promise<string> {
+    const result = await this.command(
+      "bash",
+      ["-lc", 'command -v -- "$1"', "resolve-openshell-command", this.openshellPath],
+      {
+        artifactName: "resolve-openshell-command",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+        ...options,
+      },
+    );
+    assertExitZero(result, "resolve OpenShell command path");
+    const candidates = result.stdout.split(/\r?\n/u).filter((line) => line.length > 0);
+    const resolvedPath = candidates[0];
+    if (
+      candidates.length !== 1 ||
+      resolvedPath === undefined ||
+      !isAbsolute(resolvedPath) ||
+      resolvedPath.includes("\0")
+    ) {
+      throw new Error(
+        "resolve OpenShell command path failed: expected exactly one non-empty absolute path",
+      );
+    }
+    this.openshellPath = resolvedPath;
+    return resolvedPath;
   }
 
   nemoclaw(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
