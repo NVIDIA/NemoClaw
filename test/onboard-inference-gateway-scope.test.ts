@@ -48,6 +48,9 @@ describe("onboarding inference gateway scope", () => {
       ).resolves.toEqual({ ok: true });
 
       expect(harness.commands.map(({ command }) => command)).toEqual([
+        expect.stringMatching(
+          new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
+        ),
         `provider get -g ${GATEWAY} openai-api`,
         `provider create -g ${GATEWAY} --name openai-api --type openai --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://api.openai.com/v1`,
         `inference set -g ${GATEWAY} --no-verify --provider openai-api --model gpt-test`,
@@ -82,6 +85,9 @@ describe("onboarding inference gateway scope", () => {
         ).resolves.toEqual({ ok: true });
 
         expect(harness.commands.map(({ command }) => command)).toEqual([
+          expect.stringMatching(
+            new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
+          ),
           `provider get -g ${GATEWAY} compatible-endpoint`,
           `provider create -g ${GATEWAY} --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1?tenant=local#models`,
           `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
@@ -138,6 +144,9 @@ describe("onboarding inference gateway scope", () => {
 
       expect(harness.commands.map(({ command }) => command)).toEqual([
         `provider get -g ${GATEWAY} compatible-endpoint`,
+        expect.stringMatching(
+          new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
+        ),
         `provider get -g ${GATEWAY} compatible-endpoint`,
         `provider update -g ${GATEWAY} compatible-endpoint --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1`,
         `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
