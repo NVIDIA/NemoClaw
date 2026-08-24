@@ -14,6 +14,7 @@ import {
   dispatcherRequest,
   jetsonDispatchRequestFromEnvironment,
   pollJetsonDispatch,
+  submitJetsonDispatch,
 } from "../../../tools/e2e/jetson-dispatch-client.mts";
 import {
   JETSON_DISPATCH_AUDIENCE,
@@ -604,9 +605,9 @@ describe("Jetson dispatch GitHub controller", () => {
       });
     const cancel = createJetsonCancellation({
       baseUrl: new URL("https://dispatch.test/"),
+      dispatch: queuedStatus,
       receiptFile,
       request: requestImpl,
-      status: queuedStatus,
     });
 
     const deadlineCancellation = cancel("controller-deadline");
@@ -623,6 +624,79 @@ describe("Jetson dispatch GitHub controller", () => {
     );
     expect(readReceipt(receiptFile)).toMatchObject({
       cancellation: { outcome: "succeeded", reason: "controller-deadline" },
+    });
+  });
+
+  it("records and cancels a job when submission times out after acceptance (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    const requestImpl = vi
+      .fn<typeof dispatcherRequest>()
+      .mockImplementationOnce(async () => {
+        expect(readReceipt(receiptFile)).toEqual({
+          schemaVersion: 1,
+          jobId: queuedStatusV2.jobId,
+          request: requestV2,
+        });
+        throw Object.assign(new Error("submission response timed out"), { name: "TimeoutError" });
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      submitJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        dispatchRequest: requestV2,
+        receiptFile,
+        request: requestImpl,
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatusV2.jobId} submission outcome was not confirmed; cancellation request succeeded`,
+    );
+    expect(requestImpl).toHaveBeenCalledTimes(2);
+    expect(requestImpl).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ method: "POST", path: "v1/jobs", body: requestV2 }),
+    );
+    expect(requestImpl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatusV2.jobId}` }),
+    );
+    expect(readReceipt(receiptFile)).toEqual({
+      schemaVersion: 1,
+      jobId: queuedStatusV2.jobId,
+      request: requestV2,
+      cancellation: { outcome: "succeeded", reason: "submission-outcome-unknown" },
+    });
+  });
+
+  it("cancels an accepted job when a signal arrives before the submission response (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    let stopping = false;
+    const requestImpl = vi
+      .fn<typeof dispatcherRequest>()
+      .mockImplementationOnce(async () => {
+        stopping = true;
+        return { job: queuedStatusV2 };
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      submitJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        dispatchRequest: requestV2,
+        receiptFile,
+        request: requestImpl,
+        stopping: () => stopping,
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatusV2.jobId} cancellation requested; cancellation request succeeded`,
+    );
+    expect(requestImpl).toHaveBeenCalledTimes(2);
+    expect(requestImpl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatusV2.jobId}` }),
+    );
+    expect(readReceipt(receiptFile)).toMatchObject({
+      cancellation: { outcome: "succeeded", reason: "signal" },
     });
   });
 

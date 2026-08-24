@@ -9,6 +9,7 @@ import {
   decodeJetsonArtifactArchive,
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_TARGET,
+  jetsonDispatchJobId,
   type JetsonDispatchArtifact,
   type JetsonDispatchRequest,
   type JetsonDispatchStatus,
@@ -36,6 +37,7 @@ type JetsonCancellationReason =
   | "controller-deadline"
   | "recovery-receipt-failure"
   | "signal"
+  | "submission-outcome-unknown"
   | "status-request-failures";
 type JetsonCancellationResult =
   | { outcome: "failed"; failure: JetsonCancellationFailure; receiptWritten: boolean }
@@ -190,7 +192,7 @@ function delay(milliseconds: number): Promise<void> {
 
 function writeJetsonRecoveryReceipt(
   receiptFile: string,
-  status: JetsonDispatchStatus,
+  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">,
   cancellation?: {
     failure?: JetsonCancellationFailure;
     outcome: "failed" | "pending" | "succeeded";
@@ -202,8 +204,8 @@ function writeJetsonRecoveryReceipt(
     `${JSON.stringify(
       {
         schemaVersion: 1,
-        jobId: status.jobId,
-        request: status.request,
+        jobId: dispatch.jobId,
+        request: dispatch.request,
         ...(cancellation === undefined ? {} : { cancellation }),
       },
       null,
@@ -228,14 +230,14 @@ function classifyCancellationFailure(error: unknown): JetsonCancellationFailure 
 
 async function cancelJetsonDispatch(options: {
   baseUrl: URL;
+  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">;
   reason: JetsonCancellationReason;
   receiptFile: string;
   request: typeof dispatcherRequest;
-  status: JetsonDispatchStatus;
 }): Promise<JetsonCancellationResult> {
   const cancellation = { outcome: "pending", reason: options.reason } as const;
   try {
-    writeJetsonRecoveryReceipt(options.receiptFile, options.status, cancellation);
+    writeJetsonRecoveryReceipt(options.receiptFile, options.dispatch, cancellation);
   } catch {
     // The cancellation request must continue when the local recovery receipt cannot be updated.
   }
@@ -245,7 +247,7 @@ async function cancelJetsonDispatch(options: {
     await options.request({
       baseUrl: options.baseUrl,
       method: "DELETE",
-      path: `v1/jobs/${options.status.jobId}`,
+      path: `v1/jobs/${options.dispatch.jobId}`,
       maxBytes: MAX_STATUS_BYTES,
     });
     result = { outcome: "succeeded" };
@@ -255,7 +257,7 @@ async function cancelJetsonDispatch(options: {
 
   let receiptWritten = true;
   try {
-    writeJetsonRecoveryReceipt(options.receiptFile, options.status, {
+    writeJetsonRecoveryReceipt(options.receiptFile, options.dispatch, {
       outcome: result.outcome,
       reason: options.reason,
       ...(result.outcome === "failed" ? { failure: result.failure } : {}),
@@ -274,19 +276,70 @@ function cancellationResultMessage(result: JetsonCancellationResult): string {
   return result.receiptWritten ? outcome : `${outcome}; recovery receipt update failed`;
 }
 
-type CancelJetsonDispatch = (reason: JetsonCancellationReason) => Promise<JetsonCancellationResult>;
+export type CancelJetsonDispatch = (
+  reason: JetsonCancellationReason,
+) => Promise<JetsonCancellationResult>;
 
 export function createJetsonCancellation(options: {
   baseUrl: URL;
+  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">;
   receiptFile: string;
   request: typeof dispatcherRequest;
-  status: JetsonDispatchStatus;
 }): CancelJetsonDispatch {
   let inFlight: Promise<JetsonCancellationResult> | undefined;
   return (reason) => {
     inFlight ??= cancelJetsonDispatch({ ...options, reason });
     return inFlight;
   };
+}
+
+export async function submitJetsonDispatch(options: {
+  baseUrl: URL;
+  dispatchRequest: JetsonDispatchRequest;
+  receiptFile: string;
+  request?: typeof dispatcherRequest;
+  stopping?: () => boolean;
+}): Promise<{ cancel: CancelJetsonDispatch; status: JetsonDispatchStatus }> {
+  const jobId = jetsonDispatchJobId(options.dispatchRequest);
+  const dispatch = { jobId, request: options.dispatchRequest };
+  writeJetsonRecoveryReceipt(options.receiptFile, dispatch);
+  if (options.stopping?.()) {
+    throw new Error(`Jetson dispatch ${jobId} stopped before submission`);
+  }
+  const request = options.request ?? dispatcherRequest;
+  const cancel = createJetsonCancellation({
+    baseUrl: options.baseUrl,
+    dispatch,
+    receiptFile: options.receiptFile,
+    request,
+  });
+
+  let status: JetsonDispatchStatus;
+  try {
+    status = parseJetsonDispatchStatusResponse(
+      await request({
+        baseUrl: options.baseUrl,
+        method: "POST",
+        path: "v1/jobs",
+        body: options.dispatchRequest,
+        maxBytes: MAX_STATUS_BYTES,
+      }),
+      options.dispatchRequest,
+    );
+  } catch {
+    const reason = options.stopping?.() ? "signal" : "submission-outcome-unknown";
+    const cancellation = await cancel(reason);
+    throw new Error(
+      `Jetson dispatch ${jobId} submission outcome was not confirmed; ${cancellationResultMessage(cancellation)}`,
+    );
+  }
+  if (options.stopping?.()) {
+    const cancellation = await cancel("signal");
+    throw new Error(
+      `Jetson dispatch ${jobId} cancellation requested; ${cancellationResultMessage(cancellation)}`,
+    );
+  }
+  return { cancel, status };
 }
 
 export async function pollJetsonDispatch(options: {
@@ -307,9 +360,9 @@ export async function pollJetsonDispatch(options: {
     options.cancel ??
     createJetsonCancellation({
       baseUrl: options.baseUrl,
+      dispatch: options.initialStatus,
       receiptFile: options.receiptFile,
       request,
-      status: options.initialStatus,
     });
   const wait = options.wait ?? delay;
   let consecutiveFailures = 0;
@@ -407,23 +460,15 @@ async function main(): Promise<void> {
   process.on("SIGINT", cancel);
   process.on("SIGTERM", cancel);
 
-  dispatched = parseJetsonDispatchStatusResponse(
-    await dispatcherRequest({
-      baseUrl,
-      method: "POST",
-      path: "v1/jobs",
-      body: request,
-      maxBytes: MAX_STATUS_BYTES,
-    }),
-    request,
-  );
-  const jobId = dispatched.jobId;
-  cancelDispatch = createJetsonCancellation({
+  const submission = await submitJetsonDispatch({
     baseUrl,
+    dispatchRequest: request,
     receiptFile,
-    request: dispatcherRequest,
-    status: dispatched,
+    stopping: () => stopping,
   });
+  dispatched = submission.status;
+  const jobId = dispatched.jobId;
+  cancelDispatch = submission.cancel;
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
   await pollJetsonDispatch({
