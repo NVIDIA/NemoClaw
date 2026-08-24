@@ -99,10 +99,7 @@ function pythonStringMap(source: string, constantName: string): Record<string, s
   );
 }
 
-function expectVersionsMatchLock(
-  requirementsLock: string,
-  versions: Record<string, string>,
-): void {
+function expectVersionsMatchLock(requirementsLock: string, versions: Record<string, string>): void {
   expect(versions, "deepagents-code must be present in the version map").toHaveProperty(
     "deepagents-code",
   );
@@ -123,16 +120,19 @@ const TARGETED_ADVISORY_VERSIONS = [
 ] as const;
 
 describe("targeted dependency advisory review", () => {
-  it.each(TARGETED_ADVISORY_VERSIONS)("documents the reviewed %s %s pin", (distribution, version) => {
-    const normalizedDistribution = distribution.replaceAll("-", "[-_]");
-    const normalizedVersion = version.replaceAll(".", "\\.");
-    expect(readAgentFile("dependency-review.md")).toMatch(
-      new RegExp(
-        `(?:^|[^A-Za-z0-9_-])${normalizedDistribution}\\s+${normalizedVersion}(?=[^0-9.]|$)`,
-        "im",
-      ),
-    );
-  });
+  it.each(TARGETED_ADVISORY_VERSIONS)(
+    "documents the reviewed %s %s pin",
+    (distribution, version) => {
+      const normalizedDistribution = distribution.replaceAll("-", "[-_]");
+      const normalizedVersion = version.replaceAll(".", "\\.");
+      expect(readAgentFile("dependency-review.md")).toMatch(
+        new RegExp(
+          `(?:^|[^A-Za-z0-9_-])${normalizedDistribution}\\s+${normalizedVersion}(?=[^0-9.]|$)`,
+          "im",
+        ),
+      );
+    },
+  );
 });
 
 function writeMinimalWheel(directory: string): string {
@@ -1173,6 +1173,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("keeps image validator versions aligned with the reviewed lockfile", () => {
     const requirementsLock = readAgentFile("requirements.lock");
+    const progressiveValidator = readAgentFile("validate-progressive-tool-disclosure.py");
     const pluginMetadata = readAgentFile("profile-plugin/pyproject.toml");
     const pluginVersion = pluginMetadata.match(/^version = "([^"]+)"$/m)?.[1];
     expect(pluginVersion).toBe("0.1.0");
@@ -1185,7 +1186,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expectVersionsMatchLock(requirementsLock, profileValidatorVersions);
     expectVersionsMatchLock(
       requirementsLock,
-      pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
+      pythonStringMap(progressiveValidator, "PINNED_VERSIONS"),
     );
 
     const observabilityValidator = readAgentFile("validate-observability.py");
@@ -1211,6 +1212,59 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(e2ePluginVersion).toBe(pluginVersion);
     expectVersionsMatchLock(requirementsLock, e2eVersions);
+  });
+
+  it("assigns the read-only MCP contract to each loaded validator tool", () => {
+    const validatorPath = path.join(
+      repoRoot,
+      "agents",
+      "langchain-deepagents-code",
+      "validate-progressive-tool-disclosure.py",
+    );
+    const metadata = JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          `import ast
+import json
+import sys
+
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+values = []
+for node in ast.walk(tree):
+    if not isinstance(node, ast.Assign):
+        continue
+    if not any(isinstance(target, ast.Attribute) and target.attr == "metadata" for target in node.targets):
+        continue
+    value = ast.literal_eval(node.value)
+    if isinstance(value, dict) and value.get("_deepagents_code_mcp") is True:
+        values.append(value)
+print(json.dumps(values, sort_keys=True))`,
+          validatorPath,
+        ],
+        { encoding: "utf8" },
+      ),
+    ) as Array<Record<string, unknown>>;
+
+    expect(metadata).toEqual([
+      {
+        _deepagents_code_mcp: true,
+        _deepagents_code_mcp_server: "direct-runtime-validator",
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      },
+      {
+        _deepagents_code_mcp: true,
+        _deepagents_code_mcp_server: "runtime-validator",
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      },
+    ]);
   });
 
   it.each([

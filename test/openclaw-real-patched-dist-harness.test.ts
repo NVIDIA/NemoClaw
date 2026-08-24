@@ -775,6 +775,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.mts"),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
           tmp,
+          version,
         });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });

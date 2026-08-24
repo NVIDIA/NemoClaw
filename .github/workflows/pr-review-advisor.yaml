@@ -50,6 +50,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  discover-specialists:
+    name: Discover review specialists
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.specialists.outputs.matrix }}
+    steps:
+      - name: Checkout trusted advisor code (workflow revision)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - name: Read specialist prompts
+        id: specialists
+        run: node --experimental-strip-types tools/pr-review-advisor/render-specialist-matrix.mts
+
   review-specialists:
     name: Specialist / ${{ matrix.advisor.label }}
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
@@ -61,50 +81,11 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    needs: discover-specialists
     strategy:
       fail-fast: false
       matrix:
-        advisor:
-          - {
-              interest: behavior,
-              label: Behavior,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-sp-beh,
-              artifact_dir: pr-review-specialist-behavior,
-              artifact_name: pr-review-specialist-behavior,
-            }
-          - {
-              interest: trust,
-              label: Trust,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-sp-trust,
-              artifact_dir: pr-review-specialist-trust,
-              artifact_name: pr-review-specialist-trust,
-            }
-          - {
-              interest: design-architecture,
-              label: Design / Architecture,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-sp-design,
-              artifact_dir: pr-review-specialist-design-architecture,
-              artifact_name: pr-review-specialist-design-architecture,
-            }
-          - {
-              interest: operations,
-              label: Operations,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-sp-ops,
-              artifact_dir: pr-review-specialist-operations,
-              artifact_name: pr-review-specialist-operations,
-            }
-          - {
-              interest: documentation,
-              label: Documentation,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-sp-docs,
-              artifact_dir: pr-review-specialist-documentation,
-              artifact_name: pr-review-specialist-documentation,
-            }
+        advisor: ${{ fromJSON(needs.discover-specialists.outputs.matrix) }}
     env:
       # Pin runtime packages to reviewed versions. Updates go through normal
       # dependency review rather than floating in a secret-bearing job.

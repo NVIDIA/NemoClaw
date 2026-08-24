@@ -9,8 +9,8 @@ the general E2E decision. Keep the shell only until its evidence is copied into 
 
 ```bash
 set -euo pipefail
-PLAN_PATH='../nemoclaw-release-vX.Y.Z/plan.json'
-EVIDENCE_DIR="$(mktemp -d)"
+PLAN_PATH="${PLAN_PATH:-../nemoclaw-release-vX.Y.Z/plan.json}"
+EVIDENCE_DIR="${EVIDENCE_DIR:-$(mktemp -d)}"
 chmod 700 "$EVIDENCE_DIR"
 trap 'rm -rf "$EVIDENCE_DIR"' EXIT
 
@@ -36,26 +36,47 @@ PLAN_FIELDS="$EVIDENCE_DIR/plan-fields.txt"
 run_or_stop "release plan read" jq -er '
   if
     (keys | sort) == [
-      "nextTag", "originMainCommit", "originMainHeadline",
-      "previousTag", "previousTagCommit", "previousTagObject"
+      "candidateCommit", "candidateSelection", "historicalCandidateException",
+      "nextTag", "originMainCommit",
+      "originMainHeadline", "previousTag", "previousTagCommit", "previousTagObject"
     ] and
     (.nextTag | test("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$")) and
+    (.candidateCommit | test("^[0-9a-f]{40}$")) and
     (.originMainCommit | test("^[0-9a-f]{40}$")) and
-    (.previousTagCommit | test("^[0-9a-f]{40}$"))
-  then [.nextTag, .originMainCommit, .previousTagCommit] | @tsv
+    (.previousTagCommit | test("^[0-9a-f]{40}$")) and
+    (
+      (.candidateSelection == "current-main" and
+       .candidateCommit == .originMainCommit and
+       .historicalCandidateException == "None") or
+      (.candidateSelection == "historical" and
+       .candidateCommit != .originMainCommit and
+       (.historicalCandidateException | test("[^[:space:]]")))
+    )
+  then [
+    .nextTag, .candidateCommit, .previousTagCommit,
+    .candidateSelection, .historicalCandidateException
+  ] | @tsv
   else error("release plan is invalid")
   end
 ' "$PLAN_PATH" >"$PLAN_FIELDS"
-IFS=$'\t' read -r VERSION CANDIDATE_SHA PREVIOUS_TAG_SHA <"$PLAN_FIELDS"
+IFS=$'\t' read -r VERSION CANDIDATE_SHA PREVIOUS_TAG_SHA \
+  CANDIDATE_SELECTION HISTORICAL_CANDIDATE_EXCEPTION <"$PLAN_FIELDS"
 DOCS_PREFIX='automation/post-merge-docs-'
 ```
 
 ## Release Entry and Documentation Coverage
 
-Find exactly one target heading at the candidate. Save only that H2 section, ending before the next
-H2, for the release brief.
+For a current-main plan, find exactly one target heading at the candidate. Save only that H2 section,
+ending before the next H2, for the release brief. For a historical plan, record the plan's explicit
+release-entry exception instead. Do not use the historical exception for a current-main plan.
 
 ```bash
+if [[ "$CANDIDATE_SELECTION" == 'historical' ]]; then
+  ENTRY_FILE="$EVIDENCE_DIR/release-entry.md"
+  ENTRY_PATH='Historical candidate exception'
+  printf '%s\n' \
+    "Release entry exception: $HISTORICAL_CANDIDATE_EXCEPTION" >"$ENTRY_FILE"
+else
 ENTRY_MATCHES="$EVIDENCE_DIR/release-entry-matches.txt"
 VERSION_PATTERN="${VERSION//./[.]}"
 run_or_stop "release-entry search" git grep -n -E "^## ${VERSION_PATTERN}$" \
@@ -79,6 +100,7 @@ run_or_stop "release-entry detail validation" awk '
   /^-[[:space:]]/ { detailed = 1 }
   END { exit(detailed ? 0 : 1) }
 ' "$ENTRY_FILE"
+fi
 ```
 
 Read documentation coverage from Git history and GitHub PR state. Do not require another
@@ -241,7 +263,8 @@ Record all of this evidence in the release brief:
 - whether the docs PR changed only allowed documentation paths;
 - the docs PR review decision and complete check state;
 - every open managed docs PR; and
-- the canonical release entry and path.
+- the canonical release entry and path for a current-main plan; or
+- the plan-bound release-entry exception for a historical plan.
 
 Then offer exactly these choices:
 
