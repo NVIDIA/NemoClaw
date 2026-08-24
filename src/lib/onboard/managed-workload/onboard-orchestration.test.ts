@@ -9,12 +9,26 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
 
+const preparationState = vi.hoisted(() => ({
+  prepared: undefined as unknown,
+  useUnavailableCatalog: false,
+}));
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 
-vi.mock("../workload/preparation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../workload/preparation")>()),
-  prepareSandboxWorkloadSource,
-}));
+vi.mock("../workload/preparation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../workload/preparation")>();
+  const { ManagedImageCatalogUnavailableError } = await import("../managed-image/catalog");
+  prepareSandboxWorkloadSource.mockImplementation((input) =>
+    preparationState.useUnavailableCatalog
+      ? original.prepareSandboxWorkloadSource(input, {
+          resolveCatalog: async () => {
+            throw new ManagedImageCatalogUnavailableError("registry offline");
+          },
+        })
+      : Promise.resolve(preparationState.prepared),
+  );
+  return { ...original, prepareSandboxWorkloadSource };
+});
 
 vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 
@@ -26,24 +40,33 @@ import {
   shouldActivateStockManagedRuntime,
 } from "./onboard-orchestration";
 
-function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
+function createFreshOnboardingRuntime(
+  environment: Readonly<Record<string, string>>,
+  options: {
+    readonly stockManagedRuntime?: boolean;
+    readonly tempManagedRuntime?: boolean;
+    readonly unavailableCatalog?: boolean;
+  } = {},
+) {
   const prepared = {
     source: {
       kind: "legacy-dockerfile",
       dockerfilePath: "agents/openclaw/Dockerfile",
-      reason: "managed-image-unavailable",
+      reason: "contract-unavailable",
     },
     release: "v0.0.0",
     fallbackDiagnostic: null,
   };
+  preparationState.prepared = prepared;
+  preparationState.useUnavailableCatalog = options.unavailableCatalog ?? false;
   prepareSandboxWorkloadSource.mockClear();
-  prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
 
   const runtime = createManagedWorkloadOnboardRuntime(
     {
       computePlan: { driverName: "docker" },
       managedWorkloadRebuild: null,
-      tempManagedRuntime: false,
+      tempManagedRuntime: options.tempManagedRuntime ?? false,
+      stockManagedRuntime: options.stockManagedRuntime ?? false,
       tempManagedRuntimeCatalog: null,
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
@@ -148,6 +171,31 @@ describe("managed workload onboard orchestration", () => {
         agentName: "hermes",
       }),
     ).toBe(false);
+  });
+
+  it("uses the trusted Dockerfile when the stock managed-image catalog is unavailable", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, unavailableCatalog: true },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
+      source: {
+        kind: "legacy-dockerfile",
+        dockerfilePath: "agents/openclaw/Dockerfile",
+        reason: "contract-unavailable",
+      },
+      fallbackDiagnostic: expect.stringContaining("registry offline"),
+    });
+  });
+
+  it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, tempManagedRuntime: true, unavailableCatalog: true },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
   });
 
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
