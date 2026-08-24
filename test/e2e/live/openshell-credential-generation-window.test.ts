@@ -330,7 +330,7 @@ test("openshell-credential-generation-window", {
       "prove a retained credential generation expires",
       "rotate beyond the retained generation window",
       "prove key removal and provider detach revoke access",
-      "restart the bridge and confirm old-process fallback",
+      "restart the bridge and keep the detached child revoked",
       "rebuild the sandbox and confirm credential reuse",
       "remove the MCP bridge and audit denied requests",
     ],
@@ -765,7 +765,7 @@ test("openshell-credential-generation-window", {
       ).seen,
     ).toBe(false);
 
-    progress.phase("restart the bridge and confirm old-process fallback");
+    progress.phase("restart the bridge and keep the detached child revoked");
     const reattach = await host.nemoclaw(
       [
         SANDBOX_NAME,
@@ -806,26 +806,14 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
       "credential-window-signal-fallback-after-restart",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart, "allowed");
-    await expect
-      .poll(
-        () =>
-          requestEvidence(
-            fakeMcp,
-            credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart),
-            restartSecret,
-          ),
-        {
-          interval: 500,
-          timeout: 30_000,
-          message: "old revision fallback after restart",
-        },
-      )
-      .toEqual({
-        seen: true,
-        credentialRewritten: true,
-        placeholderAbsent: true,
-      });
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart, "denied");
+    expect(
+      requestEvidence(
+        fakeMcp,
+        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart),
+        restartSecret,
+      ).seen,
+    ).toBe(false);
   } finally {
     await writeControl(
       sandbox,
@@ -854,7 +842,7 @@ test("openshell-credential-generation-window", {
       { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
       {
         step: CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
-        outcome: "allowed",
+        outcome: "denied",
       },
     ],
   });

@@ -258,6 +258,24 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
     },
   );
   expectExitZero(binding, `${options.artifactName} credential binding`);
+
+  const publication = await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "provider",
+      "update",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      options.providerName,
+    ],
+    {
+      artifactName: `${options.artifactName}-provider-publication`,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(publication, `${options.artifactName} provider publication`);
 }
 
 export async function assertOpenClawStateRoot(

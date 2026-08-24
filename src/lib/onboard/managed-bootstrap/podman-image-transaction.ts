@@ -413,7 +413,7 @@ function safeBootstrapFailureLine(output: string): string | null {
         line,
       );
     const exactFixedFailure =
-      /^(?:\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(
+      /^(?:\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed|Managed DCode login profile is missing or unsafe|Could not protect the managed DCode login profile|DCode login profile is not protected; rebuild this sandbox)\.|runtime-state-mutation-startup-gate: held)$/u.test(
         line,
       );
     if (!boundedPrefix && !exactFixedFailure) {

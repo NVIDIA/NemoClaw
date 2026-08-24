@@ -228,12 +228,15 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       {
         status: 1,
         stdout: `${marker}\nBearer should-not-leak`,
-        stderr: "authorization: should-not-leak",
+        stderr:
+          "authorization: should-not-leak\n[SECURITY] proxy startup refused Authorization=should-not-leak",
       },
       entry,
       marker,
     );
     expect(result.detail).toContain("rebuild the sandbox");
+    expect(result.detail).toContain("exit 1");
+    expect(result.detail).toContain("proxy startup refused");
     expect(JSON.stringify(result)).not.toContain("should-not-leak");
   });
 

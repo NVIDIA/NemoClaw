@@ -816,10 +816,10 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     }
 
     progress.phase("exercise installed Slack and Telegram runtimes");
-    const fakeSlack = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "slack",
+    const fakeSlackBot = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "slack-bot",
       imageScript: "fake-slack-api.cjs",
-      containerPrefix: "nemoclaw-fake-slack",
+      containerPrefix: "nemoclaw-fake-slack-bot",
       portEnv: "FAKE_SLACK_API_PORT",
       portFileEnv: "FAKE_SLACK_API_PORT_FILE",
       captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
@@ -830,11 +830,38 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
+    const fakeSlackApp = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "slack-app",
+      imageScript: "fake-slack-api.cjs",
+      containerPrefix: "nemoclaw-fake-slack-app",
+      portEnv: "FAKE_SLACK_API_PORT",
+      portFileEnv: "FAKE_SLACK_API_PORT_FILE",
+      captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+      expectedEnv: {
+        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: state.tokens.slackBot,
+        FAKE_SLACK_API_EXPECTED_APP_TOKEN: state.tokens.slackApp,
+      },
+      env: state.env,
+      redactionValues,
+    });
+    await applyRestRewritePolicy(
+      host,
+      fakeSlackBot,
+      `${SANDBOX_NAME}-slack-bridge`,
+      state.env,
+      redactionValues,
+    );
+    await applyRestRewritePolicy(
+      host,
+      fakeSlackApp,
+      `${SANDBOX_NAME}-slack-app`,
+      state.env,
+      redactionValues,
+    );
 
     const slackAuth = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackBot.port,
       "/api/auth.test",
       "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       redactionValues,
@@ -844,7 +871,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `M-S15: Slack auth.test exercised alias rewrite (${slackAuth.slice(0, 200)})`,
     );
     const slackAuthCapture = lastJsonLine(
-      fakeSlack.captureFile,
+      fakeSlackBot.captureFile,
       (row) => row.event === "request" && row.path === "/api/auth.test",
     );
     check(
@@ -858,7 +885,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackCanonical = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackBot.port,
       "/api/auth.test",
       "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
       redactionValues,
@@ -869,7 +896,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const slackUnset = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackBot.port,
       "/api/auth.test",
       "Bearer openshell:resolve:env:DEFINITELY_NOT_SET_XYZ",
       redactionValues,
@@ -882,7 +909,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackApp = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackApp.port,
       "/api/apps.connections.open",
       "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       redactionValues,
@@ -893,7 +920,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S16: Slack Socket Mode HTTPS leg exercised xapp alias rewrite",
     );
     const slackAppCapture = lastJsonLine(
-      fakeSlack.captureFile,
+      fakeSlackApp.captureFile,
       (row) => row.event === "request" && row.path === "/api/apps.connections.open",
     );
     check(
@@ -910,7 +937,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     check(Boolean(allowedSlackUser), "M-S17: Slack allowlist has a user for the runtime proof");
     const installedSlackProof = await runInstalledSlackRuntimeProof(
       sandbox,
-      fakeSlack,
+      fakeSlackBot,
       allowedSlackUser ?? "U0AR85ATALW",
       redactionValues,
     );
@@ -929,7 +956,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `M-S17c: OpenClaw 2026.7.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
-      fakeSlack.captureFile,
+      fakeSlackBot.captureFile,
       (row) => row.event === "request" && row.path === "/api/chat.postMessage",
     );
     check(
@@ -956,7 +983,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeTelegram, state.env, redactionValues);
+    await applyRestRewritePolicy(
+      host,
+      fakeTelegram,
+      `${SANDBOX_NAME}-telegram-bridge`,
+      state.env,
+      redactionValues,
+    );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(
@@ -1007,7 +1040,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
+    await applyWebSocketRewritePolicy(
+      host,
+      fakeGateway,
+      `${SANDBOX_NAME}-discord-bridge`,
+      state.env,
+      redactionValues,
+    );
     const gatewayProof = await runDiscordGatewayClient(
       sandbox,
       fakeGateway.port,

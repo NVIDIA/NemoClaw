@@ -585,6 +585,8 @@ export async function startFakeDockerApi(
   options: {
     kind:
       | "slack"
+      | "slack-app"
+      | "slack-bot"
       | "slack-rest"
       | "slack-websocket"
       | "telegram"
@@ -690,6 +692,7 @@ export async function startFakeDockerApi(
 export async function applyRestRewritePolicy(
   host: HostCliClient,
   api: FakeDockerApi,
+  providerName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
@@ -720,11 +723,13 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
+  await bindFixturePolicyEndpoint(host, api, providerName, "rest", env, redactionValues);
 }
 
 export async function applyWebSocketRewritePolicy(
   host: HostCliClient,
   api: FakeDockerApi,
+  providerName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
@@ -755,6 +760,58 @@ export async function applyWebSocketRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
+  await bindFixturePolicyEndpoint(host, api, providerName, "websocket", env, redactionValues);
+}
+
+async function bindFixturePolicyEndpoint(
+  host: HostCliClient,
+  api: FakeDockerApi,
+  providerName: string,
+  protocol: "rest" | "websocket",
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  const binding = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -eu
+policy_file="$(mktemp)"
+trap 'rm -f "$policy_file"' EXIT
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
+"$1" policy set --policy "$policy_file" --wait "$2"`,
+      `bind-${api.kind}-${protocol}-policy`,
+      host.openshellCommandPath,
+      SANDBOX_NAME,
+      providerName,
+      "host.openshell.internal",
+      api.port,
+      protocol,
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+    ],
+    {
+      artifactName: `bind-${api.kind}-${protocol}-credential`,
+      cwd: REPO_ROOT,
+      env,
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(binding, `bind ${api.kind} fake ${protocol} credential`);
+
+  const publication = await runHost(
+    host,
+    host.openshellCommandPath,
+    ["provider", "update", "-g", env.OPENSHELL_GATEWAY ?? "nemoclaw", providerName],
+    {
+      artifactName: `publish-${api.kind}-${protocol}-credential`,
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(publication, `publish ${api.kind} fake ${protocol} credential`);
 }
 
 export function lastJsonLine(

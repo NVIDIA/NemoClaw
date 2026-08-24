@@ -167,9 +167,9 @@ test(
   expect(resultText(gatewayProof)).toContain("UPGRADE");
   expect(resultText(gatewayProof)).toContain("HELLO");
   expect(resultText(gatewayProof)).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
   expect(resultText(gatewayProof)).toContain("READY");
   expect(resultText(gatewayProof)).toContain("HEARTBEAT_ACK");
-  assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
   progress.phase("issue a Discord pairing request");
   const issue = await issuePairingRequest({

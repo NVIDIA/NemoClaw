@@ -196,6 +196,24 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
     },
   );
   expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
+
+  const publication = await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "provider",
+      "update",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      `${options.sandboxName}-discord-bridge`,
+    ],
+    {
+      artifactName: "publish-hermes-fake-discord-gateway-credential",
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(publication, "publish Hermes fake Discord Gateway credential");
 }
 
 function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
