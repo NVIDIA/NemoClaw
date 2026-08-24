@@ -185,13 +185,24 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("rejects a resolver-pinned catalog from another release (#8142)", async () => {
-    await expect(
-      prepareSandboxWorkloadSource(
-        { ...input("openclaw"), version: "0.1.0", catalogRevision: REVISION },
-        { resolveCatalog: async () => CATALOG },
-      ),
-    ).rejects.toThrow(`belongs to '${RELEASE}', not 'v0.1.0'`);
+  it("uses a resolver-fetched exact-revision catalog when local release labels differ", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), version: "0.1.0", catalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: "v0.1.0",
+      platform: MANAGED_IMAGE_PLATFORM,
+      revision: REVISION,
+    });
+    expect(prepared.release).toBe(RELEASE);
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      contract: { source: { release: RELEASE, revision: REVISION } },
+    });
   });
 
   it("rejects an exact catalog from another PR commit (#9464)", async () => {

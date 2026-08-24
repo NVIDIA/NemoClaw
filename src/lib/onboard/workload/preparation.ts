@@ -185,7 +185,6 @@ function requireCompleteManagedImageCatalog(
   expectedRelease: string,
   expectedPlatform: ManagedImagePlatform,
   expectedRevision: string | null,
-  acceptCatalogRelease: boolean,
 ): { readonly release: string; readonly revision: string } {
   let cohortRevision: string | null = null;
   let cohortRelease: string | null = null;
@@ -199,7 +198,7 @@ function requireCompleteManagedImageCatalog(
     }
     try {
       const contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
-      if (!acceptCatalogRelease && contract.source.release !== expectedRelease) {
+      if (expectedRevision === null && contract.source.release !== expectedRelease) {
         throw new SandboxWorkloadPreparationError(
           `managed image catalog contract for '${agent}' belongs to '${contract.source.release}', not '${expectedRelease}'`,
         );
@@ -368,13 +367,12 @@ export async function prepareSandboxWorkloadSource(
   } else {
     const trustedCatalogRevision = input.catalogPath
       ? (input.expectedCatalogRevision ?? null)
-      : null;
+      : (input.catalogRevision ?? null);
     const catalogIdentity = requireCompleteManagedImageCatalog(
       catalog,
       release,
       platform,
-      trustedCatalogRevision ?? input.catalogRevision ?? null,
-      trustedCatalogRevision !== null,
+      trustedCatalogRevision,
     );
     release = catalogIdentity.release;
   }
