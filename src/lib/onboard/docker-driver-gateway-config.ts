@@ -287,19 +287,15 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
  * complaint, and so the suggested recovery does not just repeat the exact
  * command that failed.
  */
+class CrossDriverGatewayConflictError extends Error {}
+
 function crossDriverGatewayConflict(
   configPath: string,
   stateDir: string,
   requestedDriver: DockerDriverGatewayDriver,
   configuredDriver: DockerDriverGatewayDriver,
 ): Error {
-  // The generic "onboard --resume" catch-all would repeat this exact
-  // command and hit the identical conflict again — nothing about host
-  // state changes between attempts. Recovery requires one of the two
-  // concrete actions named in the message below, so suppress the
-  // catch-all instead of printing a recovery hint that cannot help (#10071).
-  noteOnboardResumeHintShown();
-  return new Error(
+  return new CrossDriverGatewayConflictError(
     `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
       `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
       `share one gateway state directory between driver types. To switch drivers for NemoClaw-managed state, ` +
@@ -825,11 +821,23 @@ export function prepareDockerDriverGatewayConfigEnv(
   sandboxBin?: string | null,
   options: { allowOpenShell0044PreAuthDatabase?: boolean } = {},
 ): Record<string, string> {
-  const identity = resolveDockerDriverGatewayIdentity(
-    stateDir,
-    gatewayEnv,
-    options.allowOpenShell0044PreAuthDatabase === true,
-  );
+  let identity: DockerDriverGatewayIdentity;
+  try {
+    identity = resolveDockerDriverGatewayIdentity(
+      stateDir,
+      gatewayEnv,
+      options.allowOpenShell0044PreAuthDatabase === true,
+    );
+  } catch (error) {
+    if (error instanceof CrossDriverGatewayConflictError) {
+      // The generic "onboard --resume" catch-all would repeat this exact
+      // command and hit the identical conflict again. Mark the latch only at
+      // the onboarding boundary that surfaces the tailored recovery error;
+      // ownership probes intentionally swallow config-classification errors.
+      noteOnboardResumeHintShown();
+    }
+    throw error;
+  }
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,

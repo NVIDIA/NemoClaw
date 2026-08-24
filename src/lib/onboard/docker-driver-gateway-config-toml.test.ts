@@ -451,6 +451,22 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("does not suppress a later resume hint when an ownership probe swallows the conflict", () => {
+    resetOnboardResumeHintForTests();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-probe-hint-"));
+    try {
+      writePreScopedGatewayConfig(stateDir, false, "podman");
+
+      expect(hasStateScopedSandboxNamespace(stateDir)).toBe(false);
+      const lines: string[] = [];
+      printOnboardResumeHint(false, (line) => lines.push(line));
+      expect(lines.join("\n")).toContain("nemoclaw onboard --resume");
+    } finally {
+      resetOnboardResumeHintForTests();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not rewrite an oversized gateway config (#8740)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-oversized-"));
     try {
