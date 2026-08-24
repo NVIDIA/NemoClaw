@@ -15,7 +15,7 @@ export default class SandboxConfigGetCommand extends NemoClawCommand {
   static usage = ["<name> [--key dotpath] [--format json|yaml]"];
   static examples = [
     "<%= config.bin %> sandbox config get alpha",
-    "<%= config.bin %> sandbox config get alpha --key model --format yaml",
+    "<%= config.bin %> sandbox config get alpha --key agents.defaults.model.primary --format yaml",
   ];
   static args = {
     sandboxName: sandboxNameArg,
