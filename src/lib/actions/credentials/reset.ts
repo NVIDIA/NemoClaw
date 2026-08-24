@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+} from "../../adapters/openshell/provider-adapter";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import {
@@ -9,11 +14,6 @@ import {
   recoverGatewayForCredentialMutationOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
-import {
-  deleteProviderWithRecovery,
-  type ProviderDeleteWithRecoveryResult,
-} from "../../onboard/sandbox-provider-cleanup";
-import { redact } from "../../security/redact";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -27,6 +27,19 @@ export type CredentialsResetResult = {
   failureLines: readonly string[];
 };
 
+export type CredentialsResetDeps = Readonly<{
+  providerAdapter?: OpenShellProviderAdapter;
+}>;
+
+export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
+  ok: boolean;
+  error?: OpenShellProviderError;
+  recoveryFailures: readonly Readonly<{
+    sandbox: string;
+    error: OpenShellProviderError;
+  }>[];
+}>;
+
 const KNOWN_CREDENTIAL_ENV_KEY_SET = new Set(KNOWN_CREDENTIAL_ENV_KEYS);
 
 function ok(outputLines: readonly string[]): CredentialsResetResult {
@@ -39,6 +52,7 @@ function fail(failureLines: readonly string[]): CredentialsResetResult {
 
 export async function runCredentialsResetAction(
   input: CredentialsResetInput,
+  deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
   if (isBridgeProviderName(key)) {
@@ -65,22 +79,15 @@ export async function runCredentialsResetAction(
   });
   if (!recovered) return fail(recoveryFailureLines);
 
-  // `provider delete` trips on FailedPrecondition while the provider is still
-  // attached to a sandbox. Detach listed sandboxes and retry once (#5560).
-  const recovery = deleteProviderWithRecovery(key, {
-    runOpenshell: (cmdArgs) =>
-      runOpenshellProviderCommand(cmdArgs, {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      }),
-  });
+  const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
+  const recovery = await deleteProviderWithRecovery(key, providerAdapter);
 
   if (
     !recovery.ok &&
     recovery.recoveryFailures.length === 0 &&
     !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
-    /not found|does not exist|already absent/i.test(recovery.stderr.trim())
+    recovery.error?.kind === "command" &&
+    recovery.error.reason === "not_found"
   ) {
     const removedLocal = forgetExtraProvider(key);
     return ok([
@@ -101,7 +108,7 @@ export async function runCredentialsResetAction(
 /** Build the user-facing result after a provider delete attempt. */
 export function formatResetOutcome(
   key: string,
-  recovery: ProviderDeleteWithRecoveryResult,
+  recovery: CredentialsProviderDeleteWithRecoveryResult,
 ): { ok: boolean; lines: string[] } {
   const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
@@ -130,7 +137,33 @@ export function formatResetOutcome(
       `  for each, then re-run '${CLI_NAME} credentials reset ${key}'.`,
     );
   }
-  const stderr = redact(recovery.stderr.trim());
-  if (stderr) lines.push(`  ${stderr}`);
+  if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
   return { ok: false, lines };
+}
+
+async function deleteProviderWithRecovery(
+  providerName: string,
+  providerAdapter: OpenShellProviderAdapter,
+): Promise<CredentialsProviderDeleteWithRecoveryResult> {
+  const request = {
+    target: selectedOpenShellGateway(),
+    providerName,
+    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+  } as const;
+  let result = await providerAdapter.deleteProvider(request);
+  const recoveryFailures: Array<{ sandbox: string; error: OpenShellProviderError }> = [];
+  if (result.ok || result.error.kind !== "command" || result.error.reason !== "attached") {
+    return result.ok
+      ? { ok: true, recoveryFailures }
+      : { ok: false, error: result.error, recoveryFailures };
+  }
+
+  for (const sandbox of result.error.attachedSandboxes ?? []) {
+    const detach = await providerAdapter.detachProvider({ ...request, sandboxName: sandbox });
+    if (!detach.ok) recoveryFailures.push({ sandbox, error: detach.error });
+  }
+  result = await providerAdapter.deleteProvider(request);
+  return result.ok
+    ? { ok: true, recoveryFailures }
+    : { ok: false, error: result.error, recoveryFailures };
 }

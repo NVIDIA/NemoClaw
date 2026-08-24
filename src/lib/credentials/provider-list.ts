@@ -9,6 +9,17 @@ export function isBridgeProviderName(name: string): boolean {
   return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
+export function classifyGatewayProviderNames(names: readonly string[]): {
+  bridgeNames: string[];
+  credentialNames: string[];
+} {
+  return {
+    bridgeNames: names.filter((name) => isBridgeProviderName(name)),
+    credentialNames: names.filter((name) => !isBridgeProviderName(name)).sort(),
+  };
+}
+
+/** @deprecated CLI output parsing belongs to the OpenShell CLI adapter. */
 export function parseGatewayProviderNames(output: unknown): {
   bridgeNames: string[];
   credentialNames: string[];
@@ -17,8 +28,5 @@ export function parseGatewayProviderNames(output: unknown): {
     .split("\n")
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
-  return {
-    bridgeNames: allNames.filter((name) => isBridgeProviderName(name)),
-    credentialNames: allNames.filter((name) => !isBridgeProviderName(name)).sort(),
-  };
+  return classifyGatewayProviderNames(allNames);
 }

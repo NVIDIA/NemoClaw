@@ -3,15 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatResetOutcome } from "../src/lib/actions/credentials/reset";
-import type { ProviderDeleteWithRecoveryResult } from "../src/lib/onboard/sandbox-provider-cleanup";
+import {
+  type CredentialsProviderDeleteWithRecoveryResult,
+  formatResetOutcome,
+} from "../src/lib/actions/credentials/reset";
 
-function result(over: Partial<ProviderDeleteWithRecoveryResult>): ProviderDeleteWithRecoveryResult {
+function result(
+  over: Partial<CredentialsProviderDeleteWithRecoveryResult>,
+): CredentialsProviderDeleteWithRecoveryResult {
   return {
     ok: false,
-    status: 1,
-    stderr: "",
-    stdout: "",
     recoveryFailures: [],
     ...over,
   };
@@ -19,10 +20,7 @@ function result(over: Partial<ProviderDeleteWithRecoveryResult>): ProviderDelete
 
 describe("formatResetOutcome (#5560)", () => {
   it("reports a clean removal when no detach was needed", () => {
-    const outcome = formatResetOutcome(
-      "my-assistant-brave-search",
-      result({ ok: true, status: 0 }),
-    );
+    const outcome = formatResetOutcome("my-assistant-brave-search", result({ ok: true }));
     expect(outcome.ok).toBe(true);
     expect(outcome.lines[0]).toContain("Removed provider 'my-assistant-brave-search'");
     expect(outcome.lines.join("\n")).toContain("onboard");
@@ -33,8 +31,18 @@ describe("formatResetOutcome (#5560)", () => {
       "my-assistant-brave-search",
       result({
         ok: false,
-        stderr: "FailedPrecondition: provider attached to sandbox(es): my-assistant",
-        recoveryFailures: [{ sandbox: "my-assistant", output: "detach refused" }],
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "FailedPrecondition: provider attached to sandbox(es): my-assistant",
+          attachedSandboxes: ["my-assistant"],
+        },
+        recoveryFailures: [
+          {
+            sandbox: "my-assistant",
+            error: { kind: "command", reason: "failed", message: "detach refused" },
+          },
+        ],
       }),
     );
     expect(outcome.ok).toBe(false);
@@ -45,7 +53,7 @@ describe("formatResetOutcome (#5560)", () => {
   });
 
   it("hints when the argument looks like an env var name instead of a provider", () => {
-    const outcome = formatResetOutcome("BRAVE_API_KEY", result({ ok: false, status: 1 }));
+    const outcome = formatResetOutcome("BRAVE_API_KEY", result({ ok: false }));
     expect(outcome.ok).toBe(false);
     expect(outcome.lines.join("\n")).toContain("looks like a credential env variable name");
   });

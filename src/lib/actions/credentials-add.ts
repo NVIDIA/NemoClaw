@@ -3,14 +3,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
   isBridgeProviderName,
   recoverGatewayForCredentialMutationOrExit,
 } from "../credentials/command-support";
-import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
@@ -33,6 +34,10 @@ export type CredentialsAddResult = {
   successLines: readonly string[];
   failureLines: readonly string[];
 };
+
+export type CredentialsAddDeps = Readonly<{
+  providerAdapter?: OpenShellProviderAdapter;
+}>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
 const CONFIG_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
@@ -70,82 +75,36 @@ function managedMcpCollisionFailure(
   return null;
 }
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseProviderProfileCredentialKeys(output: string): string[] | null {
-  let profile: unknown;
-  try {
-    profile = JSON.parse(output);
-  } catch {
-    return null;
-  }
-  if (!isObjectRecord(profile) || !Array.isArray(profile.credentials)) return null;
-
-  const keys = new Set<string>();
-  for (const credential of profile.credentials) {
-    if (!isObjectRecord(credential) || !Array.isArray(credential.env_vars)) return null;
-    for (const key of credential.env_vars) {
-      if (typeof key !== "string" || !ENV_NAME_PATTERN.test(key)) return null;
-      keys.add(key);
-    }
-  }
-  return [...keys].sort();
-}
-
-function inspectProviderProfileCredentialKeys(type: string): {
-  credentialKeys: string[] | null;
-  diagnostic: string;
-} {
-  const result = runOpenshellProviderCommand(
-    ["provider", "profile", "export", type, "--output", "json"],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  return {
-    credentialKeys:
-      result.status === 0 ? parseProviderProfileCredentialKeys(String(result.stdout || "")) : null,
-    diagnostic: redact(`${String(result.stderr || "")} ${String(result.stdout || "")}`).trim(),
-  };
-}
-
 function bundledProviderProfilePath(type: string): string {
   return path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${type.toLowerCase()}.yaml`);
 }
 
-function ensureBundledProviderProfile(type: string): CredentialsAddResult | null {
+async function ensureBundledProviderProfile(
+  type: string,
+  providerAdapter: OpenShellProviderAdapter,
+): Promise<CredentialsAddResult | null> {
   const profilePath = bundledProviderProfilePath(type);
   if (!fs.existsSync(profilePath)) return null;
 
-  const result = runOpenshellProviderCommand(
-    ["provider", "profile", "import", "--file", profilePath],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  if (result.status === 0) return null;
-
-  const rawDiagnostic = `${String(result.stderr || "")} ${String(result.stdout || "")}`;
-  if (/already exists/i.test(rawDiagnostic)) return null;
-
-  const redactedDiagnostic = redact(rawDiagnostic).trim();
+  const result = await providerAdapter.importProviderProfile({
+    target: selectedOpenShellGateway(),
+    profilePath,
+    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  if (result.ok) return null;
   return fail([
     `  Could not import bundled provider profile '${type}'.`,
     "  Update OpenShell with scripts/install-openshell.sh and retry.",
-    ...(redactedDiagnostic ? [`  ${redactedDiagnostic}`] : []),
+    ...(result.error.message ? [`  ${result.error.message}`] : []),
   ]);
 }
 
 export async function runCredentialsAddAction(
   input: CredentialsAddInput,
+  deps: CredentialsAddDeps = {},
 ): Promise<CredentialsAddResult> {
   const { provider, type, credentials, configPairs, fromExisting } = input;
+  const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
 
   if (!PROVIDER_NAME_PATTERN.test(provider)) {
     return fail([
@@ -251,35 +210,32 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const providerProfileFailure = ensureBundledProviderProfile(type);
+  const providerProfileFailure = await ensureBundledProviderProfile(type, providerAdapter);
   if (providerProfileFailure) return providerProfileFailure;
 
   let importedCredentialKeys: string[] | null = null;
   if (fromExisting) {
-    const inspection = inspectProviderProfileCredentialKeys(type);
-    if (!inspection.credentialKeys) {
+    const inspection = await providerAdapter.inspectProviderProfile({
+      target: selectedOpenShellGateway(),
+      profileType: type,
+      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+    if (!inspection.ok) {
       return fail([
         `  Could not inspect credential keys for provider profile '${type}'.`,
         "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
-        ...(inspection.diagnostic ? [`  ${inspection.diagnostic}`] : []),
+        ...(inspection.error.message ? [`  ${inspection.error.message}`] : []),
       ]);
     }
-    importedCredentialKeys = inspection.credentialKeys;
+    importedCredentialKeys = [...inspection.value.credentialKeys];
   }
 
-  const openshellArgs: string[] = ["provider", "create", "--name", provider, "--type", type];
-  if (fromExisting) {
-    openshellArgs.push("--from-existing");
-  } else {
-    for (const credential of credentials) {
-      openshellArgs.push("--credential", credential);
-    }
-  }
-  for (const configPair of configPairs) {
-    openshellArgs.push("--config", configPair);
-  }
+  const config = configPairs.map((configPair) => {
+    const separator = configPair.indexOf("=");
+    return { key: configPair.slice(0, separator), value: configPair.slice(separator + 1) };
+  });
 
-  return withMcpCredentialOwnershipLock(() => {
+  return withMcpCredentialOwnershipLock(async () => {
     const providerCredentialKeys = importedCredentialKeys ?? credentials;
     const collision = managedMcpCollisionFailure(
       provider,
@@ -291,16 +247,20 @@ export async function runCredentialsAddAction(
     const recordedReservation = recordExtraProvider(provider);
     let keepReservation = false;
     try {
-      const result = runOpenshellProviderCommand(openshellArgs, {
-        env: Object.fromEntries(
-          credentials.map((credential) => [credential, process.env[credential]]),
-        ),
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      const result = await providerAdapter.createProvider({
+        target: selectedOpenShellGateway(),
+        name: provider,
+        type,
+        credentials: credentials.map((credential) => ({
+          name: credential,
+          value: process.env[credential] ?? "",
+        })),
+        config,
+        fromExisting,
+        timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
       });
 
-      if (result.status === 0) {
+      if (result.ok) {
         keepReservation = true;
         return ok([
           `  Registered provider '${provider}' with the OpenShell gateway.`,
@@ -309,17 +269,15 @@ export async function runCredentialsAddAction(
         ]);
       }
 
-      const rawStderr = String(result.stderr || "").trim();
-      const redactedStderr = redact(rawStderr);
       const lines = [`  Could not register provider '${provider}'.`];
-      if (/already exists/i.test(rawStderr)) {
+      if (result.error.kind === "command" && result.error.reason === "already_exists") {
         lines.push(
           "",
           `  '${provider}' is already registered.`,
           `  Run '${CLI_NAME} credentials reset ${provider} --yes' first if you need to replace it.`,
         );
-      } else if (redactedStderr) {
-        lines.push(`  ${redactedStderr}`);
+      } else if (result.error.message) {
+        lines.push(`  ${result.error.message}`);
       }
       return fail(lines);
     } finally {
