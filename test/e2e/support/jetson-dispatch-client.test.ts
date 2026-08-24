@@ -10,12 +10,14 @@ import {
   createGitHubOidcTokenProvider,
   dispatcherBaseUrl,
   dispatcherRequest,
+  jetsonDispatchRequestFromEnvironment,
   pollJetsonDispatch,
 } from "../../../tools/e2e/jetson-dispatch-client.mts";
 import {
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_CONTRACT_VERSION,
   JETSON_DISPATCH_V1_SHA256,
+  JETSON_DISPATCH_V2_SHA256,
   type JetsonDispatchArtifact,
   type JetsonDispatchRequest,
   type JetsonDispatchStatus,
@@ -38,13 +40,27 @@ const vectorBytes = fs.readFileSync(
   path.join(process.cwd(), "tools/e2e/contracts/v1/jetson-dispatch.json"),
 );
 const vectors = JSON.parse(vectorBytes.toString("utf8")) as CompatibilityVectors;
+const vectorV2Bytes = fs.readFileSync(
+  path.join(process.cwd(), "tools/e2e/contracts/v2/jetson-dispatch.json"),
+);
+const vectorsV2 = JSON.parse(vectorV2Bytes.toString("utf8")) as CompatibilityVectors;
 const request = parseJetsonDispatchRequest(vectors.request);
+const requestV2 = parseJetsonDispatchRequest(vectorsV2.request);
 const queuedStatus = parseJetsonDispatchStatusResponse(vectors.queuedResponse);
+const queuedStatusV2 = parseJetsonDispatchStatusResponse(vectorsV2.queuedResponse);
 const completedStatus = parseJetsonDispatchStatus(vectors.completedStatus);
+const completedStatusV2 = parseJetsonDispatchStatus(vectorsV2.completedStatus);
 const invalidRequestErrors: Record<string, string> = {
   "extra request field": "dispatch request fields do not match Jetson dispatch contract 1.0.0",
   "noncanonical candidate SHA": "candidateSha must be a lowercase 40-character commit SHA",
   "wrong target": "dispatch target must be jetson-nvmap-gpu",
+};
+const invalidV2RequestErrors: Record<string, string> = {
+  "extra request field": "dispatch request fields do not match Jetson dispatch contract 2.0.0",
+  "missing managed-image revision":
+    "dispatch request fields do not match Jetson dispatch contract 2.0.0",
+  "noncanonical managed-image revision":
+    "managedImageRevision must be a lowercase 40-character commit SHA",
 };
 
 afterEach(() => {
@@ -57,7 +73,7 @@ describe("Jetson dispatch static HTTP contract", () => {
   });
 
   it("accepts every version 1.0.0 compatibility vector (#8142)", () => {
-    expect(vectors.contractVersion).toBe(JETSON_DISPATCH_CONTRACT_VERSION);
+    expect(vectors.contractVersion).toBe("1.0.0");
     expect(request).toEqual(vectors.request);
     expect({ job: queuedStatus }).toEqual(vectors.queuedResponse);
     expect(completedStatus).toEqual(vectors.completedStatus);
@@ -68,6 +84,26 @@ describe("Jetson dispatch static HTTP contract", () => {
 
   it.each(vectors.invalidRequests)("rejects $name (#8142)", ({ name, value }) => {
     expect(() => parseJetsonDispatchRequest(value)).toThrow(invalidRequestErrors[name]);
+  });
+
+  it("keeps the published v2 bytes immutable (#8142)", () => {
+    expect(createHash("sha256").update(vectorV2Bytes).digest("hex")).toBe(
+      JETSON_DISPATCH_V2_SHA256,
+    );
+  });
+
+  it("accepts every version 2.0.0 compatibility vector (#8142)", () => {
+    expect(vectorsV2.contractVersion).toBe(JETSON_DISPATCH_CONTRACT_VERSION);
+    expect(requestV2).toEqual(vectorsV2.request);
+    expect({ job: queuedStatusV2 }).toEqual(vectorsV2.queuedResponse);
+    expect(completedStatusV2).toEqual(vectorsV2.completedStatus);
+    expect(parseJetsonDispatchArtifact(vectorsV2.artifact, completedStatusV2.jobId)).toEqual(
+      vectorsV2.artifact,
+    );
+  });
+
+  it.each(vectorsV2.invalidRequests)("rejects v2 $name (#8142)", ({ name, value }) => {
+    expect(() => parseJetsonDispatchRequest(value)).toThrow(invalidV2RequestErrors[name]);
   });
 
   it("rejects a valid status for a different submitted request (#8142)", () => {
@@ -223,6 +259,27 @@ describe("Jetson dispatch static HTTP contract", () => {
 });
 
 describe("Jetson dispatch GitHub controller", () => {
+  it("binds the candidate and managed-image publication commits into a v2 request (#8142)", () => {
+    expect(
+      jetsonDispatchRequestFromEnvironment({
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "123456789",
+        JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
+        JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "b".repeat(40),
+      }),
+    ).toEqual(requestV2);
+  });
+
+  it("rejects a v2 request without the managed-image publication commit (#8142)", () => {
+    expect(() =>
+      jetsonDispatchRequestFromEnvironment({
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "123456789",
+        JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
+      }),
+    ).toThrow("managedImageRevision must be a lowercase 40-character commit SHA");
+  });
+
   it("requests a GitHub OIDC token for the fixed dispatcher audience (#8142)", async () => {
     const fetchImpl = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
       Response.json({ value: "oidc-token" }),
@@ -273,19 +330,19 @@ describe("Jetson dispatch GitHub controller", () => {
 
   it("sends the exact request with a bearer token and validates the response (#8142)", async () => {
     const tokenProvider = vi.fn(async () => "oidc-token");
-    const fetchImpl = vi.fn(async () => Response.json(vectors.queuedResponse, { status: 202 }));
+    const fetchImpl = vi.fn(async () => Response.json(vectorsV2.queuedResponse, { status: 202 }));
 
     const response = await dispatcherRequest({
       baseUrl: new URL("https://dispatch.test/"),
       method: "POST",
       path: "v1/jobs",
-      body: request,
+      body: requestV2,
       maxBytes: 64 * 1024,
       fetchImpl,
       tokenProvider,
     });
 
-    expect(parseJetsonDispatchStatusResponse(response)).toEqual(queuedStatus);
+    expect(parseJetsonDispatchStatusResponse(response)).toEqual(queuedStatusV2);
     expect(tokenProvider).toHaveBeenCalledOnce();
     expect(fetchImpl).toHaveBeenCalledWith(
       new URL("https://dispatch.test/v1/jobs"),
@@ -296,7 +353,7 @@ describe("Jetson dispatch GitHub controller", () => {
           Authorization: "Bearer oidc-token",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(requestV2),
       }),
     );
   });
