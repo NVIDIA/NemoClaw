@@ -142,6 +142,13 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toMatch(
       /^ADD --checksum=sha256:[a-f0-9]{64} https:\/\/files[.]pythonhosted[.]org\//mu,
     );
+    expect(stagedDockerfile).not.toMatch(/^RUN\s+--/mu);
+    expect(stagedDockerfile).toContain(
+      "COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/",
+    );
+    expect(stagedDockerfile).toContain(
+      "UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels",
+    );
     const finalStage = stagedDockerfile.slice(stagedDockerfile.lastIndexOf("FROM ${BASE_IMAGE}"));
     const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-runtime-payload / /");
     const permissionNormalizationIndex = finalStage.search(
@@ -400,6 +407,78 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       "unsupported local or unpinned ADD instruction",
     );
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+  });
+
+  it.each([
+    { instruction: "RUN", option: "--network=none", continued: false, commented: false },
+    {
+      instruction: "RUN",
+      option: "--mount=type=cache,target=/tmp/cache",
+      continued: false,
+      commented: false,
+    },
+    { instruction: "run", option: "--network=none", continued: false, commented: false },
+    { instruction: "RUN", option: "--network=none", continued: true, commented: false },
+    {
+      instruction: "RUN",
+      option: "--mount=type=cache,target=/tmp/cache",
+      continued: true,
+      commented: true,
+    },
+    {
+      instruction: "RUN",
+      option: "--network=none",
+      continued: true,
+      commented: true,
+    },
+  ])(
+    "rejects BuildKit-only $instruction option $option before reservation (#10007)",
+    ({ instruction, option, continued, commented }) => {
+      const source = primaryCloneFixture();
+      const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+      const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+      const replacement = continued
+        ? `${instruction} \\\n${commented ? "    # ignored continuation comment\n" : ""}    ${option} mkdir -p /sandbox/.nemoclaw`
+        : `${instruction} ${option} mkdir -p /sandbox/.nemoclaw`;
+      fs.writeFileSync(
+        dockerfile,
+        fs.readFileSync(dockerfile, "utf8").replace("RUN mkdir -p /sandbox/.nemoclaw", replacement),
+        { mode: 0o644 },
+      );
+      const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+      expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+        "non-Portable RUN option",
+      );
+      expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+    },
+  );
+
+  it("rejects a non-backslash Dockerfile escape directive before reservation (#10007)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+    const bytes = fs
+      .readFileSync(dockerfile, "utf8")
+      .replace(
+        "RUN mkdir -p /sandbox/.nemoclaw",
+        "RUN `\n    --mount=type=cache,target=/tmp/cache mkdir -p /sandbox/.nemoclaw",
+      );
+    fs.writeFileSync(dockerfile, `# escape=\`\n${bytes}`, { mode: 0o644 });
+    const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "unsupported escape directive",
+    );
+    expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+  });
+
+  it("treats a later escape-shaped Dockerfile comment as an ordinary comment (#10007)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    fs.appendFileSync(dockerfile, "\n# escape=`\n");
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).not.toThrow();
   });
 
   it("rejects source symlinks, hardlinks, and unreviewed secret paths (#9203)", () => {

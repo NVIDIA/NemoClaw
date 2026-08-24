@@ -99,11 +99,12 @@ type DockerLifecycleReleaseDeps = Pick<
  * - The caller enters this wait only after the replacement reached Ready and
  *   was deliberately stopped. A successful list normally omits the sandbox
  *   name. An Error or Deleting row is also sufficient only when a separate
- *   bounded Docker query confirms that exact stopped replacement is the sole
- *   remaining labeled container. This corroborates the release condition;
- *   the OpenShell row alone is not an identity-bound ownership receipt. The
- *   Deleting case breaks the otherwise circular wait where OpenShell retains
- *   the row until that exact replacement emits its restart event.
+ *   bounded Docker query confirms that the transaction-owned full replacement
+ *   ID still identifies exactly one OpenShell-managed container. This
+ *   corroborates the release condition; the OpenShell row alone is not an
+ *   identity-bound ownership receipt. The Deleting case breaks the otherwise
+ *   circular wait where OpenShell retains the row until that exact replacement
+ *   emits its restart event.
  * - `waits for the sandbox name to disappear before restarting the
  *   replacement (#9531)` protects the event order. `rejects final handoff when
  *   OpenShell never releases the deleting lifecycle record (#9531)` protects
