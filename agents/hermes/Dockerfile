@@ -9,9 +9,9 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-# Portable Podman does not provide BuildKit's automatic platform arguments.
-# Its accepted x86_64 path uses this default; multi-platform builders override it.
-ARG TARGETARCH=amd64
+# BuildKit supplies this automatic platform argument. The Portable staged
+# context pins its accepted x86_64 target because Podman does not supply it.
+ARG TARGETARCH
 
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
@@ -269,14 +269,12 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     && rm /scripts/hermes-security-dependencies.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
-# base freshness. Reassert the idempotent npm-private node-tar fix here. When
-# onboarding supplied a corporate CA, use it for the registry-backed download.
-RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
-      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
-      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
-    fi; \
-    node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
-      --npm-root /usr/local/lib/node_modules/npm
+# base freshness. Reassert the idempotent npm-private node-tar fix from the
+# locked cache seed so protected rebuilds remain network-disabled.
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+      --npm-root /usr/local/lib/node_modules/npm \
+      --archive /tmp/nemoclaw-bundled-npm-tar.tgz
 
 # Reassert the npm-private brace-expansion fix for the exact final filesystem.
 # When onboarding supplied a corporate CA, use it for the registry-backed
