@@ -17,6 +17,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { reasoningPropagationSource } from "../fixtures/reasoning-propagation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
@@ -25,7 +26,7 @@ const LIVE_TIMEOUT_MS = 60 * 60_000;
 const REASONING_PROPAGATION_PROBE = String.raw`
 const fs = require("node:fs");
 const expectedModel = process.argv[1];
-const runtimeEnvironmentPath = "/run/nemoclaw/managed-startup-runtime.env";
+const runtimeEnvironmentPath = process.argv[2];
 const runtimeEnvironmentStat = fs.lstatSync(runtimeEnvironmentPath);
 if (
   !runtimeEnvironmentStat.isFile() ||
@@ -269,9 +270,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
 
+  const workloadKind = registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome);
   const corporateCaProbe = await sandbox.execShell(
     SANDBOX_NAME,
-    corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome)),
+    corporateCaMergeProbeScript(workloadKind),
     {
       artifactName: "phase-2-corporate-ca-merge-probe",
       env: testEnv(),
@@ -281,9 +283,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   progress.phase("verify compatible endpoint reasoning propagation");
+  const reasoningSource = reasoningPropagationSource(workloadKind);
   const reasoningProbe = await sandbox.exec(
     SANDBOX_NAME,
-    ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model],
+    ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model, reasoningSource.path],
     {
       artifactName: "phase-2-compatible-endpoint-reasoning",
       env: testEnv(),
