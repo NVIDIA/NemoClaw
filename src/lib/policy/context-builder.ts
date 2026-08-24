@@ -117,6 +117,8 @@ const EXTERNAL_POLICY_REMOVE_PATH =
   "Ask the external policy authority to remove the policy entries supplied by `<preset>`.";
 const EXTERNAL_POLICY_RESTORE_PATH =
   "Ask the external policy authority to restore baseline policy entry `<key>`.";
+const EXTERNAL_POLICY_EXCLUDE_PATH =
+  "Run `nemoclaw <sandbox> policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.";
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
@@ -277,7 +279,9 @@ function buildApprovalPath(
     remove: externallyManaged
       ? EXTERNAL_POLICY_REMOVE_PATH
       : `nemoclaw ${sandboxName} policy remove <preset>`,
-    excludeBaseline: `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
+    excludeBaseline: externallyManaged
+      ? EXTERNAL_POLICY_EXCLUDE_PATH.replace("<sandbox>", sandboxName)
+      : `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
     restoreBaseline: externallyManaged
       ? EXTERNAL_POLICY_RESTORE_PATH
       : `nemoclaw ${sandboxName} policy restore <key>`,
@@ -291,10 +295,10 @@ function buildSupportBoundaries(
 ): PolicyContextSupportBoundary[] {
   return [
     {
-      capability: "preset selection",
-      owner: externallyManaged ? "external" : "nemoclaw",
+      capability: "policy requirement selection and verification",
+      owner: "nemoclaw",
       note: externallyManaged
-        ? "the external policy authority applies each requested add or remove action to the live policy"
+        ? "NemoClaw selects preset and baseline requirements and verifies the live policy"
         : tier
           ? `tier: ${tier.label}`
           : "no tier recorded",
@@ -307,14 +311,14 @@ function buildSupportBoundaries(
     ...(externallyManaged
       ? [
           {
-            capability: "Shields network policy",
+            capability: "policy mutation",
             owner: "external" as const,
-            note: "the external policy authority controls live network policy changes while authority remains external",
+            note: "the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
           },
           {
-            capability: "Shields state, configuration protection, and cleanup",
+            capability: "Shields state and configuration lock",
             owner: "nemoclaw" as const,
-            note: "NemoClaw retains Shields state, configuration protection, and cleanup. Saved snapshot restoration requires NemoClaw-managed authority.",
+            note: "NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
           },
         ]
       : [
