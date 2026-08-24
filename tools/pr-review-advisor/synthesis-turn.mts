@@ -22,7 +22,7 @@ Inspect the native Pi JSONL sessions below with ordinary filesystem tools as nee
 
 ${sessions}
 
-Reflect on the investigations as one review. Verify every finding-eligible claim against the repository before retaining it. Reconcile overlap and disagreement. Combine concerns with one root cause and remedy. Reject speculation, stale evidence, style preferences, and remedies that add unsupported complexity. Confirm binding acceptance, all nine security categories, source-of-truth behavior, test depth, E2E inputs, design, operations, documentation, terminology, positives, and limitations.
+Reflect on the investigations as one review. Verify every finding-eligible claim against the repository before retaining it. Reconcile overlap and disagreement. Combine concerns with one root cause and remedy. Reject speculation, stale evidence, style preferences, and remedies that add unsupported complexity. Confirm binding acceptance, the trusted security guidance, source-of-truth behavior, test depth, E2E inputs, design, operations, documentation, terminology, positives, and limitations.
 
 Return a concise synthesis receipt for the challenge-and-record turn. Do not call recording, E2E recommendation, or submission tools, and do not produce final JSON in this turn.`,
   };

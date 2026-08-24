@@ -411,6 +411,58 @@ describe("PR review advisor OpenShell wrapper", () => {
     }
   });
 
+  it("prepares specialist diff evidence before the worktree becomes read-only", async () => {
+    const env = advisorEnvironment();
+    const workdir = env.ADVISOR_WORKDIR as string;
+    fs.rmSync(path.join(workdir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "--quiet"], { cwd: workdir });
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "base\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    const commit = (message: string) =>
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=PR Review Advisor",
+          "-c",
+          "user.email=advisor@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          message,
+        ],
+        { cwd: workdir },
+      );
+    commit("test: add base content");
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "changed\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    commit("test: change reviewed content");
+    env.BASE_REF = "HEAD~1";
+    env.HEAD_REF = "HEAD";
+    env.PR_REVIEW_ADVISOR_INTEREST = "security";
+    const binaries = path.join(temporaryDirectory(), "binaries");
+    fs.mkdirSync(binaries);
+    fs.writeFileSync(path.join(binaries, "rg"), "rg", { mode: 0o755 });
+    fs.writeFileSync(path.join(binaries, "fdfind"), "fdfind", { mode: 0o755 });
+
+    await prepareAdvisorSandboxInputs(env, {
+      collectContext: async () => null,
+      resolveExecutable: (name) => path.join(binaries, name),
+    });
+
+    const diffPath = path.join(
+      env.RUNNER_TEMP as string,
+      "pr-review-advisor-context",
+      "specialist",
+      "diff.patch",
+    );
+    expect(fs.readFileSync(diffPath, "utf8")).toContain("+changed");
+    expect(fs.statSync(diffPath).mode & 0o777).toBe(0o444);
+    expect(fs.existsSync(path.join(workdir, ".pr-review-advisor-context"))).toBe(false);
+    fs.chmodSync(path.dirname(diffPath), 0o700);
+    fs.chmodSync(diffPath, 0o600);
+  });
+
   it("requires repository metadata before placing immutable-boundary proof files", async () => {
     const env = advisorEnvironment();
     fs.rmSync(path.join(env.ADVISOR_WORKDIR as string, ".git"), {
