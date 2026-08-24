@@ -472,6 +472,49 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("reports how to restore preserved state when restoration fails", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const renameSync = fs.renameSync;
+      const restoreError = new Error("restore denied");
+      const renameHandlers = new Map<string, (destination: fs.PathLike) => void>();
+      let stagedTarget = "";
+      renameHandlers.set(stateDir, (destination) => {
+        stagedTarget = String(destination);
+        renameHandlers.set(stagedTarget, () => {
+          throw restoreError;
+        });
+      });
+      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+        renameHandlers.get(String(source))?.(destination);
+        return renameSync(source, destination);
+      });
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          preserveCaseDeps(tmpHome, logs, { warnings }),
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(stagedTarget).not.toBe("");
+        expect(fs.existsSync(stateDir)).toBe(false);
+        expectPreservedEntries(stagedTarget);
+        const warningText = warnings.join("\n");
+        expect(warningText).toContain(`Cleanup did not restore ${stateDir}`);
+        expect(warningText).toContain(`Unreconciled staging remains at ${stagedTarget}`);
+        expect(warningText).toContain(
+          "It contains preserved entries: rebuild-backups, backups, sandboxes.json.",
+        );
+        expect(warningText).toContain("Do not retry uninstall");
+        expect(warningText).toContain(`move it back to ${stateDir}`);
+        expect(logs).not.toContain("Claws retracted. Until next time.");
+      } finally {
+        renameSpy.mockRestore();
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("refuses to follow or remove ~/.nemoclaw when it is a symlink", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const realTarget = fs.mkdtempSync(

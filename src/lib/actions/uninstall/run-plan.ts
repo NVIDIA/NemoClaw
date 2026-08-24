@@ -425,6 +425,7 @@ function removePathExcept(
     return false;
   }
   let descriptor: number | null = null;
+  let preservedEntries: readonly string[] = [];
   let stagingRoot: string | null = null;
   let stagedTarget: string | null = null;
   try {
@@ -461,6 +462,7 @@ function removePathExcept(
     // stable across filesystems with non-deterministic readdir ordering.
     const childSet = new Set(children);
     const preserved = preserve.filter((name) => childSet.has(name));
+    preservedEntries = preserved;
     if (preserved.length === 0) {
       if (fs.existsSync(target)) throw new Error("directory path was replaced during cleanup");
       fs.renameSync(stagedTarget, target);
@@ -504,7 +506,15 @@ function removePathExcept(
       try {
         fs.rmdirSync(stagingRoot);
       } catch {
-        if (stagedTarget) deps.warn(`Cleanup staging remains at ${stagedTarget}.`);
+        if (stagedTarget) {
+          const preservedSummary =
+            preservedEntries.length === 0
+              ? ""
+              : ` It contains preserved entries: ${preservedEntries.join(", ")}.`;
+          deps.warn(
+            `Cleanup did not restore ${target}. Unreconciled staging remains at ${stagedTarget}.${preservedSummary} Do not retry uninstall until you inspect both paths without following links. If ${target} is absent and the staging entry is the intended directory, move it back to ${target}; if ${target} exists, stop and reconcile both paths before continuing.`,
+          );
+        }
       }
     }
   }
