@@ -1980,7 +1980,6 @@ async function handleNimLocalSelection(
 
   console.log(`  Pulling NIM image for ${catalogModel}...`);
   nim.pullNimImage(catalogModel);
-
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
@@ -1990,6 +1989,7 @@ async function handleNimLocalSelection(
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
     console.error("  NIM failed to start. Falling back to cloud API.");
+    nim.stopNimContainerByName(nimContainerNameLocal);
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
     return "selected";

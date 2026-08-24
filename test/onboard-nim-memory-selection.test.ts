@@ -17,18 +17,6 @@ const credentialsPath = JSON.stringify(
 const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
 const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-const nimModels = JSON.stringify([
-  {
-    name: "nvidia/nemotron-3-super-120b-a12b",
-    image: "fake-super",
-    minGpuMemoryMB: 127386,
-  },
-  {
-    name: "nvidia/nemotron-3-nano-30b-a3b",
-    image: "fake-nano",
-    minGpuMemoryMB: 8192,
-  },
-]);
 const unifiedGpu = JSON.stringify({
   type: "nvidia",
   totalMemoryMB: 131072,
@@ -64,7 +52,6 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nimMod = require(${nimPath});
-nimMod.listModels = () => ${nimModels};
 let selectedNimModel = null;
 nimMod.pullNimImage = (model) => { selectedNimModel = model; };
 nimMod.containerName = () => "nemoclaw-nim-test";
@@ -103,6 +90,46 @@ reportChildScenario(async () => {
     }
   });
 
+  it("removes the NIM container before selecting cloud inference after a health failure", () => {
+    const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-health-fallback-");
+    const script = String.raw`
+${onboardChildRuntimeSource}
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const nimMod = require(${nimPath});
+let stoppedContainer = null;
+nimMod.pullNimImage = () => {};
+nimMod.containerName = () => "nemoclaw-nim-test";
+nimMod.startNimContainerByName = () => "container-123";
+nimMod.waitForNimHealth = () => false;
+nimMod.stopNimContainerByName = (name) => { stoppedContainer = name; };
+nimMod.isNgcLoggedIn = () => true;
+installPromptQueue(credentials, ["8", "1", "ngc-test"]);
+credentials.ensureApiKey = async () => {};
+runner.runCapture = () => "";
+const { setupNim } = require(${onboardPath});
+reportChildScenario(async () => {
+  const result = await setupNim(${unifiedGpu});
+  return { result, stoppedContainer };
+});
+`;
+
+    try {
+      const result = workspace.runNodeSource(script, {
+        name: "nim-health-fallback.js",
+        cwd: repoRoot,
+        env: workspace.environment({ NEMOCLAW_EXPERIMENTAL: "1" }),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.stoppedContainer, "nemoclaw-nim-test");
+      assert.notEqual(payload.result.provider, "vllm-local");
+      assert.equal(payload.result.nimContainer, null);
+    } finally {
+      workspace.remove();
+    }
+  });
+
   it("rejects a non-interactive NIM model whose minimum exceeds usable memory before image pull", () => {
     const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-memory-reject-");
     const script = String.raw`
@@ -110,7 +137,6 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nimMod = require(${nimPath});
-nimMod.listModels = () => ${nimModels};
 nimMod.pullNimImage = () => { throw new Error("unexpected NIM image pull"); };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = () => "";

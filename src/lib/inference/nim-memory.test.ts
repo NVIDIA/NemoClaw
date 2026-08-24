@@ -25,6 +25,16 @@ describe("NIM memory selection", () => {
     ).toBe(60000);
   });
 
+  it("preserves zero free memory on discrete GPUs", () => {
+    expect(
+      nim.nimUsableMemoryMB({
+        availableMemoryMB: 0,
+        totalMemoryMB: 131072,
+        unifiedMemory: false,
+      }),
+    ).toBe(0);
+  });
+
   it("uses total memory when free memory is unavailable", () => {
     expect(
       nim.nimUsableMemoryMB({

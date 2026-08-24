@@ -390,20 +390,11 @@ export function nimUsableMemoryMB(
   gpu: Pick<GpuDetection, "availableMemoryMB" | "totalMemoryMB" | "unifiedMemory">,
 ): number {
   const availableMemoryMB =
-    typeof gpu.availableMemoryMB === "number" && gpu.availableMemoryMB > 0
-      ? gpu.availableMemoryMB
-      : gpu.totalMemoryMB;
+    typeof gpu.availableMemoryMB === "number" ? gpu.availableMemoryMB : gpu.totalMemoryMB;
   const runtimeLimitMB = gpu.unifiedMemory
     ? Math.floor(gpu.totalMemoryMB * NIM_UNIFIED_MEMORY_UTILIZATION)
     : gpu.totalMemoryMB;
   return Math.min(availableMemoryMB, runtimeLimitMB);
-}
-
-export function nimModelFitsGpu(
-  model: NimModel,
-  gpu: Pick<GpuDetection, "availableMemoryMB" | "totalMemoryMB" | "unifiedMemory">,
-): boolean {
-  return model.minGpuMemoryMB <= nimUsableMemoryMB(gpu);
 }
 
 export function getNimModelOptions(
