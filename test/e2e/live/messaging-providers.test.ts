@@ -421,14 +421,13 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      extraA.startsWith("openshell:resolve:env:"),
-      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is canonical resolve placeholder",
+      extraA === "",
+      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A remains outside the sandbox environment",
     );
     check(
-      extraB.startsWith("openshell:resolve:env:"),
-      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is canonical resolve placeholder",
+      extraB === "",
+      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B remains outside the sandbox environment",
     );
-    check(extraA !== extraB, "X4b: extension keys resolve to distinct placeholders");
 
     const startLog = await sandboxOutput(
       sandbox,
