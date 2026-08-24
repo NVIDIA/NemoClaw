@@ -193,7 +193,6 @@ PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"
-rm -rf "$FAKE_OPENSHELL_BIN"
 if grep -q "RUN_ID:" "$APPLY_OUTPUT"; then
   pass "Apply generates run ID"
 else
