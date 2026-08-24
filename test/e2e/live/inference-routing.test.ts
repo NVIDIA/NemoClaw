@@ -26,6 +26,7 @@ import {
 import { startFakeHttpsCompatibleServer } from "./https-pin-compatible-server.ts";
 import {
   CREDENTIAL_CLASSIFICATION_PATTERN,
+  captureOpenClawPairingDiagnosticsAfterFailedOnboard,
   cleanupSandbox,
   expectNoActiveSandbox,
   expectOnboardFailure,
@@ -43,7 +44,6 @@ import {
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
-
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
 // by the PR-safe workflow job.
@@ -1245,7 +1245,6 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     requireAuthModels: true,
   });
   cleanup.add("close https-pin onboarding placeholder endpoint", () => placeholder.close());
-
   progress.phase("onboard with the placeholder endpoint");
   const onboard = await onboardSandbox(
     artifacts,
@@ -1262,6 +1261,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     progress,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
+  await captureOpenClawPairingDiagnosticsAfterFailedOnboard(onboard, sandbox, sandboxName, [apiKey]);
   expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
 
   progress.phase("reject credential-bearing endpoint state");

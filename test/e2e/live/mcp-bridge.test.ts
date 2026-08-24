@@ -74,7 +74,6 @@ import {
 } from "./mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
-  assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
 } from "./mcp-bridge-tool-discovery.ts";
@@ -1129,22 +1128,16 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const initialDiscoveryOffset = fakeMcp.requests.length;
     const providerName = await addBridgeAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    await assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
-      requestOffset: initialDiscoveryOffset,
-      expectedSecret: HOST_SECRET,
-      label: "Hermes initial MCP discovery",
-      restart: async () => {
-        progress.event("Hermes MCP discovery did not reach the fixture; restarting once");
-        await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-discovery-retry");
-      },
-    });
+    // Hermes discovery is intentionally allowed to finish on the next agent
+    // turn when the bounded startup window expires. Prove the product contract
+    // through the real gateway instead of requiring an eager startup request.
+    await assertHermesToolCall("hermes-real-mcp-tool-call-initial");
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       artifacts,
       sandboxName: HERMES_SANDBOX_NAME,

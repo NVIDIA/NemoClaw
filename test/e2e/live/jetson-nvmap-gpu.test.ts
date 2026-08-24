@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { getBuildIdentity } from "../../../src/lib/core/version";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -21,14 +22,18 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-jetson-nvmap";
 const INFERENCE_API_KEY = "jetson-nvmap-e2e-key";
 const INFERENCE_MODEL = "jetson-nvmap-e2e";
 const TIMEOUT_MS = 50 * 60_000;
+const MANAGED_IMAGE_SOURCE_REVISION = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
+    E2E_MANAGED_IMAGE_REVISION: MANAGED_IMAGE_SOURCE_REVISION,
+    GITHUB_ACTIONS: "true",
     HOME: process.env.HOME,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_JETSON_WORKSPACE: process.env.NEMOCLAW_JETSON_WORKSPACE,
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_E2E_EXPECTED_SHA: MANAGED_IMAGE_SOURCE_REVISION,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_GPU: "0",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,

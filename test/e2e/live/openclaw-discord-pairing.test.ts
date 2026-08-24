@@ -152,6 +152,7 @@ test(
     api: fakeGateway,
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
+    providerName: `${SANDBOX_NAME}-discord-bridge`,
     env,
     redactions,
     artifactName: "apply-discord-gateway-policy",
