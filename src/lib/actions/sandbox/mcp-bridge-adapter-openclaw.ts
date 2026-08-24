@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   type AdapterMutationOptions,
@@ -21,6 +20,7 @@ import {
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand } from "./process-recovery";
 
@@ -57,14 +57,14 @@ export function buildOpenClawMcporterRegisterCommand(
   const authorization = authorizationValue(entry, credentialRevision);
   if (authorization) args.push("--header", `Authorization=${authorization}`);
   args.push("--scope", "project");
-  const addCommand = args.map(shellQuote).join(" ");
+  const addCommand = args.map(quoteMcpBridgeShellArg).join(" ");
   if (replaceExisting) return addCommand;
   const getCommand = mcporterArgs(root, "config", "get", entry.server, "--json")
-    .map(shellQuote)
+    .map(quoteMcpBridgeShellArg)
     .join(" ");
   return [
     `if ${getCommand} >/dev/null 2>&1; then`,
-    `  echo ${shellQuote(`MCP server '${entry.server}' already exists in mcporter config and is not managed by NemoClaw.`)} >&2`,
+    `  echo ${quoteMcpBridgeShellArg(`MCP server '${entry.server}' already exists in mcporter config and is not managed by NemoClaw.`)} >&2`,
     "  exit 2",
     "fi",
     addCommand,

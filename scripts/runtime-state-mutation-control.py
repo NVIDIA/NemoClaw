@@ -2543,6 +2543,18 @@ def _stop_reference(reference: ProcessReference) -> None:
     _wait_for_reference_state(reference, ("T", "t"))
 
 
+def _wait_for_host_stopped_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        process = _recapture_reference(reference, "supervisor-identity-drift")
+        if process.state in ("T", "t"):
+            return process
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("supervisor-not-host-stopped")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
 def _allowed_writer_map(
     allowed: tuple[ProcessReference, ...],
 ) -> dict[int, ProcessReference]:
@@ -2663,7 +2675,12 @@ def _hold_exact_processes(
     activation: ActivationProof | None,
 ) -> None:
     _prove_fence_shape(fence, expected_mount_namespace)
-    _stop_reference(fence.supervisor)
+    # PID-namespace init accepts SIGSTOP only from an ancestor PID namespace.
+    # The provider must therefore stop the exact persisted runtime through its
+    # host-side engine authority before invoking this root helper. Keep the
+    # helper responsible for proving that boundary and for fencing every
+    # workload writer inside the already-proven private namespace.
+    _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
     if activation is not None:
         persistent = set(activation.persistent_pids)
@@ -3671,7 +3688,7 @@ def _retire_activation_tree(
 ) -> None:
     fence = _fence_from_value(marker["fence"])
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
-    _stop_reference(fence.supervisor)
+    _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
     for reference in activation.processes:
         if not _reference_is_terminated(reference):
@@ -3814,23 +3831,15 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _fail("activation-marker-invalid")
     _verify_activation_checkpoint(marker, fence, activation)
     _publish_activation_release(durable_fd, marker, fence, activation)
-    supervisor, _start = _prove_fence_shape(fence, str(marker["mountNamespace"]))
-    if supervisor.state in ("T", "t"):
-        persistent = set(activation.persistent_pids)
-        for reference in activation.processes:
-            if _reference_is_terminated(reference):
-                if reference.pid in persistent:
-                    _fail("activation-process-drift")
-                continue
-            _resume_reference(reference)
-        _resume_reference(fence.start)
-        _prove_released_activation(marker, fence, activation)
-        supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-        if supervisor.state not in ("T", "t"):
-            _fail("release-order-ambiguous")
-        _signal_exact_process(supervisor, signal.SIGCONT)
-        _wait_for_reference_running(fence.supervisor)
-        return
+    _prove_fence_shape(fence, str(marker["mountNamespace"]))
+    persistent = set(activation.persistent_pids)
+    for reference in activation.processes:
+        if _reference_is_terminated(reference):
+            if reference.pid in persistent:
+                _fail("activation-process-drift")
+            continue
+        _resume_reference(reference)
+    _resume_reference(fence.start)
     _prove_released_activation(marker, fence, activation)
 
 

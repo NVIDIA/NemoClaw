@@ -133,17 +133,18 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
-  it("requires all five distinct specialists before synthesis and publication", () => {
+  it("requires discovered specialists before synthesis and publication", () => {
     const errors = validateMutation((value) => {
-      const specialists = value.jobs["review-specialists"].strategy.matrix.advisor;
-      specialists[4].interest = specialists[0].interest;
+      value.jobs["review-specialists"].strategy.matrix.advisor = [];
+      value.jobs["review-specialists"].needs = "publish";
       value.jobs["review-specialists"]["continue-on-error"] = true;
       value.jobs.review.needs = "publish";
       value.jobs.publish.needs = "review-specialists";
     });
     expect(errors).toEqual(
       expect.arrayContaining([
-        "specialist matrix must declare the five review interests",
+        "specialist matrix must use the discovered specialist prompts",
+        "specialist matrix must depend on prompt discovery",
         "specialist failures must block synthesis",
         "review synthesis must depend on the specialist matrix",
         "publisher must depend on review synthesis",

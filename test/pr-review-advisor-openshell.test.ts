@@ -32,6 +32,7 @@ import {
   writeUnavailableAdvisorArtifacts,
 } from "../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
+import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -734,13 +735,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
     fs.mkdirSync(sessionDirectory);
-    const sessionEntries = {
-      behavior: "behavior",
-      trust: "trust",
-      "design-architecture": "design-architecture",
-      operations: "operations",
-      documentation: "documentation",
-    };
+    const sessionEntries = Object.fromEntries(
+      ADVISOR_INTERESTS.map((interest) => [interest, interest]),
+    );
     Object.entries(sessionEntries).forEach(([interest, id]) =>
       fs.writeFileSync(
         path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),

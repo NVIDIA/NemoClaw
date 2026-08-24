@@ -721,11 +721,15 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     )
 
     assert_unique_callable_tool_names(
-        kwargs.get("tools"), kwargs.get("mcp_server_info")
+        kwargs.get("tools"),
+        kwargs.get("mcp_server_info"),
+        kwargs.get("mcp_tools"),
     )
-    has_loaded_mcp_tools = any(
-        getattr(info, "tools", ()) for info in kwargs.get("mcp_server_info") or ()
-    )
+    # Deep Agents Code 0.1.55 passes the exact loaded MCP tool objects
+    # separately from the status-oriented server metadata. The metadata can be
+    # empty or lag the executable catalog, so it must not decide whether the
+    # progressive middleware is installed.
+    has_loaded_mcp_tools = bool(kwargs.get("mcp_tools"))
     if has_loaded_mcp_tools:
         from deepagents_code.progressive_tool_disclosure import (
             progressive_tool_disclosure_enabled,

@@ -202,6 +202,7 @@ describe("onboard performance evidence", () => {
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
         authoritativeLocalBaseBuildAllowanceMs: 500,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 5_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
@@ -246,6 +247,7 @@ describe("onboard performance evidence", () => {
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
         authoritativeLocalBaseBuildAllowanceMs: 0,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 20_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
@@ -274,6 +276,7 @@ describe("onboard performance evidence", () => {
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
         authoritativeLocalBaseBuildAllowanceMs: 0,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 6_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
@@ -301,6 +304,7 @@ describe("onboard performance evidence", () => {
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
         authoritativeLocalBaseBuildAllowanceMs: 0,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 20_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
@@ -317,10 +321,67 @@ describe("onboard performance evidence", () => {
     });
   });
 
+  it("classifies one bounded published-base sandbox overage as an anomaly (#6660)", () => {
+    const trace = readOnboardTraceWindow(traceArtifact());
+    trace.phaseDurationsMs[ONBOARD_PHASE_NAMES[4]] = 1_636;
+    const budget = readColdOnboardPerformanceBudget({
+      fullE2eColdPath: {
+        authoritativeLocalBaseBuildAllowanceMs: 0,
+        sandboxPhaseSingleObservationMaxOverageMs: 5_000,
+        rootStartToFirstTurnCompletionBudgetMs: 20_000,
+        rootEndToFirstTurnCompletionBudgetMs: 1_000,
+        phaseBudgetsMs: completePhaseBudgets(),
+      },
+    });
+
+    expect(evaluateColdOnboardPerformance(trace, 6_500, budget)).toMatchObject({
+      anomalies: [
+        {
+          budgetMs: 1_500,
+          kind: "sandbox-phase-tail",
+          measurementMs: 1_636,
+          overageMs: 136,
+        },
+      ],
+      passed: true,
+      violations: [],
+    });
+  });
+
+  it.each([
+    ["exceeds the overage limit", false, 6_501, 250],
+    ["uses the local-base allowance path", true, 1_636, 250],
+    ["has another phase violation", false, 1_636, 1_501],
+  ])(
+    "keeps a sandbox overage blocking when it %s (#6660)",
+    (_case, localBase, sandboxMs, preflightMs) => {
+      const trace = readOnboardTraceWindow(traceArtifact());
+      trace.phaseDurationsMs[ONBOARD_PHASE_NAMES[4]] = sandboxMs as number;
+      trace.phaseDurationsMs[ONBOARD_PHASE_NAMES[0]] = preflightMs as number;
+      const budget = readColdOnboardPerformanceBudget({
+        fullE2eColdPath: {
+          authoritativeLocalBaseBuildAllowanceMs: 0,
+          sandboxPhaseSingleObservationMaxOverageMs: 5_000,
+          rootStartToFirstTurnCompletionBudgetMs: 20_000,
+          rootEndToFirstTurnCompletionBudgetMs: 1_000,
+          phaseBudgetsMs: completePhaseBudgets(),
+        },
+      });
+
+      expect(
+        evaluateColdOnboardPerformance(trace, 6_500, budget, localBase as boolean),
+      ).toMatchObject({
+        anomalies: [],
+        passed: false,
+      });
+    },
+  );
+
   it("rejects malformed or incomplete cold-path budget configuration", () => {
     expect(() => readColdOnboardPerformanceBudget({})).toThrow("fullE2eColdPath");
     const fullE2eColdPath = {
       authoritativeLocalBaseBuildAllowanceMs: 0,
+      sandboxPhaseSingleObservationMaxOverageMs: 0,
       rootStartToFirstTurnCompletionBudgetMs: 1_000,
       rootEndToFirstTurnCompletionBudgetMs: 1_001,
       phaseBudgetsMs: completePhaseBudgets(),
@@ -361,6 +422,7 @@ describe("onboard performance evidence", () => {
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
         authoritativeLocalBaseBuildAllowanceMs: 0,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 5_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),

@@ -8,8 +8,9 @@ export const FIRST_TURN_LATENCY_MIN_SAMPLES = 12;
 export const FIRST_TURN_LATENCY_MAX_ANOMALIES = 1;
 
 const FIRST_TURN_ARTIFACT_FILE = "onboard-progress-budget.json";
-const FIRST_TURN_ARTIFACT_SCHEMA = "nemoclaw.full_e2e_cold_performance.v3";
+const FIRST_TURN_ARTIFACT_SCHEMA = "nemoclaw.full_e2e_cold_performance.v4";
 const FIRST_TURN_ANOMALY_KIND = "first-turn-latency-tail";
+const SANDBOX_PHASE_ANOMALY_KIND = "sandbox-phase-tail";
 const MAX_ARTIFACT_BYTES = 256 * 1024;
 const MAX_DIRECTORY_DEPTH = 4;
 const MAX_DIRECTORY_ENTRIES = 10_000;
@@ -121,6 +122,23 @@ export function normalizeFirstTurnLatencySample(value: unknown): FirstTurnLatenc
   };
 }
 
+function normalizePerformanceAnomaly(value: unknown): Record<string, unknown> | null {
+  const finding = asRecord(value);
+  if (
+    !finding ||
+    !hasExactKeys(finding, ["budgetMs", "kind", "measurementMs", "overageMs"]) ||
+    (finding.kind !== FIRST_TURN_ANOMALY_KIND && finding.kind !== SANDBOX_PHASE_ANOMALY_KIND) ||
+    !isDuration(finding.budgetMs) ||
+    !isDuration(finding.measurementMs) ||
+    !isDuration(finding.overageMs) ||
+    finding.overageMs !== (finding.measurementMs as number) - (finding.budgetMs as number) ||
+    finding.overageMs <= 0
+  ) {
+    return null;
+  }
+  return finding;
+}
+
 function findArtifactFiles(root: string): string[] {
   const matches: string[] = [];
   let visited = 0;
@@ -148,7 +166,7 @@ function findArtifactFiles(root: string): string[] {
   return matches;
 }
 
-function readCurrentArtifact(root: string): unknown {
+export function readCurrentColdOnboardArtifact(root: string): unknown {
   const matches = findArtifactFiles(root);
   if (matches.length !== 1) return null;
   let descriptor: number | null = null;
@@ -165,7 +183,7 @@ function readCurrentArtifact(root: string): unknown {
 }
 
 export function readCurrentFirstTurnLatencySample(root: string): FirstTurnLatencySample | null {
-  const artifact = asRecord(readCurrentArtifact(root));
+  const artifact = asRecord(readCurrentColdOnboardArtifact(root));
   if (!artifact) return null;
   const performance = asRecord(artifact.performance);
   const phaseMeasurements = asRecord(artifact.phaseMeasurements);
@@ -200,19 +218,18 @@ export function readCurrentFirstTurnLatencySample(root: string): FirstTurnLatenc
   const measurementMs = phaseMeasurements.rootEndToFirstTurnCompletionMs;
   const budgetMs = budget.rootEndToFirstTurnCompletionBudgetMs;
   const overageMs = Math.max(0, measurementMs - budgetMs);
-  const anomaly = performance.anomalies.length === 1;
+  const findings = performance.anomalies.map(normalizePerformanceAnomaly);
+  if (findings.some((finding) => finding === null)) return null;
+  const finding = findings.find((candidate) => candidate?.kind === FIRST_TURN_ANOMALY_KIND);
+  const anomaly = finding !== undefined;
   if (anomaly !== overageMs > 0) return null;
-  if (anomaly) {
-    const finding = asRecord(performance.anomalies[0]);
-    if (
-      !finding ||
-      finding.kind !== FIRST_TURN_ANOMALY_KIND ||
-      finding.measurementMs !== measurementMs ||
+  if (
+    finding &&
+    (finding.measurementMs !== measurementMs ||
       finding.budgetMs !== budgetMs ||
-      finding.overageMs !== overageMs
-    ) {
-      return null;
-    }
+      finding.overageMs !== overageMs)
+  ) {
+    return null;
   }
 
   return { anomaly, budgetMs, cohort, measurementMs, overageMs };

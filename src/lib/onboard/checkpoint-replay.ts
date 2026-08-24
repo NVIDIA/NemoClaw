@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import type {
@@ -151,7 +152,8 @@ export function requiredMessagingProviderBindings(
     bindings.set(binding.providerName, {
       name: binding.providerName,
       type:
-        staticMessagingProviderTypeForChannel(binding.channelId, plan.agent, profiles) ?? "generic",
+        staticMessagingProviderTypeForChannel(binding.channelId, plan.agent, profiles) ??
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       credentialEnv: binding.providerEnvKey,
     });
   }

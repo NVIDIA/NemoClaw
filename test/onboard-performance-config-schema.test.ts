@@ -22,11 +22,15 @@ type PhaseName = (typeof PHASE_NAMES)[number];
 type PhaseBudgets = Record<PhaseName, number>;
 interface ColdPathBudget {
   authoritativeLocalBaseBuildAllowanceMs: number;
+  sandboxPhaseSingleObservationMaxOverageMs: number;
   rootStartToFirstTurnCompletionBudgetMs: number;
   rootEndToFirstTurnCompletionBudgetMs: number;
   phaseBudgetsMs: PhaseBudgets;
 }
-type CalibratedColdPathBudget = Omit<ColdPathBudget, "authoritativeLocalBaseBuildAllowanceMs">;
+type CalibratedColdPathBudget = Omit<
+  ColdPathBudget,
+  "authoritativeLocalBaseBuildAllowanceMs" | "sandboxPhaseSingleObservationMaxOverageMs"
+>;
 interface CalibrationSample {
   runId: number;
   runUrl: string;
@@ -187,6 +191,7 @@ const validConfig = {
   phaseRegressionWarning: { minDeltaMs: 0, minPercent: 0 },
   fullE2eColdPath: {
     authoritativeLocalBaseBuildAllowanceMs: 500,
+    sandboxPhaseSingleObservationMaxOverageMs: 5_000,
     rootStartToFirstTurnCompletionBudgetMs: 5_000,
     rootEndToFirstTurnCompletionBudgetMs: 1_000,
     phaseBudgetsMs,
@@ -210,6 +215,17 @@ describe("onboard performance config schema", () => {
       validate({
         ...validConfig,
         fullE2eColdPath: withoutLocalBuildAllowance,
+      }),
+    ).toBe(false);
+  });
+
+  it("requires the sandbox-phase single-observation overage limit", () => {
+    const { sandboxPhaseSingleObservationMaxOverageMs: _, ...withoutSandboxTailLimit } =
+      validConfig.fullE2eColdPath;
+    expect(
+      validate({
+        ...validConfig,
+        fullE2eColdPath: withoutSandboxTailLimit,
       }),
     ).toBe(false);
   });
@@ -314,6 +330,8 @@ function effectiveBudgets(input: Calibration): ColdPathBudget {
   return {
     authoritativeLocalBaseBuildAllowanceMs:
       input.authoritativeLocalBaseBuildAdjustment.derivedAllowanceMs,
+    sandboxPhaseSingleObservationMaxOverageMs:
+      checkedInConfig.fullE2eColdPath.sandboxPhaseSingleObservationMaxOverageMs,
     ...baseline,
     rootStartToFirstTurnCompletionBudgetMs: Math.max(
       baseline.rootStartToFirstTurnCompletionBudgetMs,

@@ -583,6 +583,22 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
+  it("omits credential-bound Hermes Discord egress until the channel is active", () => {
+    const inactive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+    });
+    const active = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["discord"],
+      knownPresetNames: known,
+    });
+
+    expect(inactive).not.toContain("discord");
+    expect(active).toContain("discord");
+  });
+
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: ["telegram", "not-a-real-preset"],

@@ -50,6 +50,122 @@ function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 }
 
+function providerNameAfterAction(args, providerIndex) {
+  const firstArgument = providerIndex + 2;
+  return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
+}
+
+function createStatefulMessagingProviderRunner({
+  commands,
+  initialProviders = [],
+  readySandboxName = null,
+}) {
+  const providers = new Map(
+    initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
+  );
+  let lifecycleReleased = false;
+  return (command, options = {}) => {
+    const normalized = normalizeCommand(command);
+    const args = normalized.split(/\s+/);
+    const providerIndex = args.indexOf("provider");
+    commands.push({ command: normalized, env: options.env || null });
+
+    const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
+    if (providerAction === "profile") {
+      const profileActionIndex = providerIndex + 2;
+      const profileAction =
+        args[profileActionIndex] === "-g"
+          ? args[profileActionIndex + 2]
+          : args[profileActionIndex];
+      const fileIndex = args.indexOf("--file");
+      return profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]
+        ? { status: 0 }
+        : { status: 1, stderr: "unsupported provider profile command" };
+    }
+    if (
+      args[providerIndex - 1] === "sandbox" &&
+      (providerAction === "attach" || providerAction === "detach")
+    ) {
+      return args.length >= providerIndex + 4
+        ? { status: 0 }
+        : { status: 1, stderr: `invalid provider ${providerAction} command` };
+    }
+    if (providerAction === "create") {
+      const nameIndex = args.indexOf("--name");
+      const typeIndex = args.indexOf("--type");
+      const credentialIndex = args.indexOf("--credential");
+      const name = nameIndex >= 0 ? args[nameIndex + 1] : null;
+      const type = typeIndex >= 0 ? args[typeIndex + 1] : null;
+      const credential = credentialIndex >= 0 ? args[credentialIndex + 1] : null;
+      if (!name || !type || !credential) {
+        return { status: 1, stderr: "invalid provider create command" };
+      }
+      providers.set(name, { type, credential });
+      return { status: 0 };
+    }
+    if (providerAction === "get") {
+      const name = args.at(-1);
+      if (!name || name === "get") {
+        return { status: 1, stderr: "invalid provider get command" };
+      }
+      const provider = providers.get(name);
+      return provider
+        ? {
+            status: 0,
+            stdout: [
+              `Name: ${name}`,
+              `Type: ${provider.type}`,
+              `Credential keys: ${provider.credential}`,
+              "Config keys: <none>",
+            ].join("\n"),
+          }
+        : { status: 1, stderr: `provider '${name}' not found` };
+    }
+    if (providerAction === "update") {
+      const name = providerNameAfterAction(args, providerIndex);
+      const credentialIndex = args.indexOf("--credential");
+      const credential = credentialIndex >= 0 ? args[credentialIndex + 1] : null;
+      const provider = providers.get(name);
+      if (!name || !provider || (credentialIndex >= 0 && !credential)) {
+        return { status: 1, stderr: "invalid provider update command" };
+      }
+      if (credential) provider.credential = credential;
+      return { status: 0 };
+    }
+    if (providerAction === "delete") {
+      const name = providerNameAfterAction(args, providerIndex);
+      if (!name || !providers.delete(name)) {
+        return { status: 1, stderr: "invalid provider delete command" };
+      }
+      return { status: 0 };
+    }
+    if (providerIndex >= 0) {
+      return { status: 1, stderr: "unsupported provider command" };
+    }
+    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (lifecycleReleased && args.includes("sandbox") && args.includes("list")) {
+      return {
+        status: 0,
+        stdout: Buffer.from("No sandboxes found\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    if (
+      readySandboxName &&
+      args.includes("sandbox") &&
+      args.includes("get") &&
+      args.includes(readySandboxName)
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    return { status: 0 };
+  };
+}
+
 const OPENCLAW_SECURITY_INVENTORY_PROBE_PREFIX = Object.freeze([
   "run",
   "--rm",
@@ -214,6 +330,24 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockDockerSandboxLifecycleReleaseFromRunner() {
+  const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  const run = runner.run;
+  let lifecycleReleased = false;
+  runner.run = (command, options) => {
+    const normalized = normalizeCommand(command);
+    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (lifecycleReleased && normalized.includes("sandbox list")) {
+      return {
+        status: 0,
+        stdout: Buffer.from("No sandboxes found\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    return run(command, options);
+  };
+}
+
 function mockManagedImageFallback() {
   const catalog = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
@@ -246,7 +380,9 @@ function mockManagedImageFallback() {
 process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
 
 module.exports = {
+  createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
+  mockDockerSandboxLifecycleReleaseFromRunner,
   mockManagedImageFallback,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
