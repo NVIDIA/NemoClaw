@@ -51,6 +51,7 @@ describe("policy and channel sandbox mutation locking", () => {
     ]);
     vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["pypi"]);
+    vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
     vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
       (_sandboxName, presetName) =>
         `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: example.com\n        port: 443\n`,

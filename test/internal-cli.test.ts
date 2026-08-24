@@ -118,7 +118,7 @@ describe("internal oclif namespace", () => {
     });
   });
 
-  it("fails the experimental voice gateway gate before parsing credential flags (#8378)", () => {
+  it("fails the experimental voice gateway gate before parsing required flags (#8378)", () => {
     const env = { ...process.env };
     delete env.NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY;
 
@@ -144,8 +144,6 @@ describe("internal oclif namespace", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Internal: serve the experimental voice gateway");
-    expect(result.stdout).toContain("--deployment-credential-file");
-    expect(result.stdout).toContain("--openclaw-credential-file");
     expect(result.stdout).toContain("--runtime-identity");
   });
 });

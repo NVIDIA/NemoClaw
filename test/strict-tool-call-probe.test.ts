@@ -20,9 +20,9 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 //
 // Why subprocess: the validation path drives `curl` via spawnSync with a
 // tight process timeout. Driving the entire scenario set through a fresh
-// source-hooked child mirrors the legacy script (and #5119's
-// onboard-gateway-docker-unreachable.test.ts) and keeps the behavior under
-// test identical to production runtime conditions — bypassing Vitest's
+// source-hooked child mirrors the legacy script and the caller-level
+// onboarding process tests. It keeps the behavior under test identical to
+// production runtime conditions — bypassing Vitest's
 // worker pool, fetch shim, and signal handling, all of which can interfere
 // with the in-process curl subprocess used by validateOpenAiLikeSelection.
 //
@@ -49,10 +49,10 @@ const EXPECTED_PASS_MARKERS = [
 ];
 
 describe("strict Chat Completions tool-call probe (#4537)", () => {
-  it(
-    "validates Local Ollama strict tool-call enforcement against a hermetic mock",
+  it.each(Array.from(EXPECTED_PASS_MARKERS, (value) => [value]))(
+    "validates Local Ollama strict tool-call enforcement: %s",
     testTimeoutOptions(120_000),
-    () => {
+    (marker) => {
       const missingSourceModules = REQUIRED_SOURCE_MODULES.filter(
         (modulePath) => !fs.existsSync(modulePath),
       );
@@ -83,12 +83,10 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
         `strict tool-call probe driver exited with ${result.status}; stdout:\n${stdout}`,
       );
 
-      for (const marker of EXPECTED_PASS_MARKERS) {
-        assert.ok(
-          stdout.includes(marker),
-          `missing pass marker ${JSON.stringify(marker)} in driver stdout:\n${stdout}`,
-        );
-      }
+      assert.ok(
+        stdout.includes(marker),
+        `missing pass marker ${JSON.stringify(marker)} in driver stdout:\n${stdout}`,
+      );
     },
   );
 });

@@ -306,7 +306,18 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
 // The markers themselves, all declared on EmbeddedAgentRunMeta:
 //   replayInvalid?: boolean
 //   livenessState?: "working" | "paused" | "blocked" | "abandoned"
+//   timeoutPhase?: "queue" | "preflight" | "provider" | "post_turn" | "gateway_draining"
 //   error?: { kind: ... | "incomplete_turn" | ... }
+//
+// `timeoutPhase` marks a run whose deadline fired (#8723). It is optional and
+// absent from a turn that answered, so its presence is the marker and any phase
+// value counts; the declared phases are recorded above as documentation, not as
+// an allowlist, so a phase added upstream is still classified as a timeout
+// instead of being reported as a success.
+//
+// `livenessState` is deliberately not a timeout marker. Two identical timed-out
+// runs reported `blocked` and `working`, so only `abandoned` stays tied to the
+// abandonment case it was added for.
 const ABANDONED_LIVENESS_VALUE = "abandoned";
 // Compared after `normalized()`, which lowercases and maps `_` to `-`.
 const INCOMPLETE_TURN_ERROR_KIND = "incomplete-turn";
@@ -314,6 +325,8 @@ const INCOMPLETE_TURN_ERROR_KIND = "incomplete-turn";
 export type OpenClawIncompleteTurnSignal = {
   /** Human-readable `field=value` markers, deduped. */
   markers: string[];
+  /** The declared phase the deadline fired in, absent when the run did not time out. */
+  timeoutPhase?: string;
 };
 
 /** The declared run-metadata record from an agent response envelope. */
@@ -349,12 +362,22 @@ function finalAgentResponseMetaRecord(docs: unknown[]): UnknownRecord | null {
   return null;
 }
 
+/** The phase the run's deadline fired in, or null when the run did not time out. */
+function timedOutPhase(meta: UnknownRecord): string | null {
+  const phase = meta.timeoutPhase;
+  if (typeof phase !== "string") return null;
+  const trimmed = phase.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
   if (meta.replayInvalid === true) markers.push("replayInvalid=true");
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
+  const timeoutPhase = timedOutPhase(meta);
+  if (timeoutPhase) markers.push(`timeoutPhase=${timeoutPhase}`);
   const error = meta.error;
   if (isObjectRecord(error) && normalized(error.kind) === INCOMPLETE_TURN_ERROR_KIND) {
     markers.push(`error.kind=${String(error.kind)}`);
@@ -363,8 +386,10 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 }
 
 /**
- * Detect a turn the run metadata itself marks incomplete or abandoned. Returns
- * null when no marker is present, so a healthy turn is never reclassified.
+ * Detect a turn the run metadata itself marks incomplete, abandoned, or timed
+ * out. Returns null when no marker is present, so a healthy turn is never
+ * reclassified. A timed-out run also carries its declared phase, which the
+ * caller uses to pick deadline-specific recovery guidance.
  */
 export function openClawAgentIncompleteTurnSignal(
   raw: string,
@@ -374,5 +399,7 @@ export function openClawAgentIncompleteTurnSignal(
   const meta = finalAgentResponseMetaRecord(docs);
   if (!meta) return null;
   const markers = dedupe(turnMetaMarkers(meta));
-  return markers.length > 0 ? { markers } : null;
+  if (markers.length === 0) return null;
+  const timeoutPhase = timedOutPhase(meta);
+  return timeoutPhase ? { markers, timeoutPhase } : { markers };
 }

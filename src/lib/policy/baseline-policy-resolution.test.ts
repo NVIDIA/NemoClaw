@@ -49,19 +49,20 @@ describe("sandbox baseline policy resolution (#7194)", () => {
   it.each([
     { label: "missing", policyAdditionsPath: null },
     { label: "unreadable", policyAdditionsPath: ROOT },
-  ])("refuses to substitute OpenClaw for a $label recorded-agent baseline (#7194)", ({
-    policyAdditionsPath,
-  }) => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" } as never);
-    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
-      name: "hermes",
-      policyAdditionsPath,
-    } as never);
+  ])(
+    "refuses to substitute OpenClaw for a $label recorded-agent baseline (#7194)",
+    ({ policyAdditionsPath }) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" } as never);
+      vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
+        name: "hermes",
+        policyAdditionsPath,
+      } as never);
 
-    expect(() => resolveSandboxBaselinePolicy("alpha")).toThrow(
-      "Refusing to substitute the OpenClaw baseline",
-    );
-  });
+      expect(() => resolveSandboxBaselinePolicy("alpha")).toThrow(
+        "Refusing to substitute the OpenClaw baseline",
+      );
+    },
+  );
 
   it("rejects malformed agent baseline YAML through the canonical parser (#7194)", () => {
     useAgentPolicy("version: [unterminated");
@@ -88,17 +89,17 @@ network_policies:
     );
   });
 
-  it("accepts every checked-in non-OpenClaw agent baseline under the runtime schema (#7194)", () => {
-    const getSandbox = vi.spyOn(registry, "getSandbox");
-    // Keep this immutable: listAgents() observes the shared agents directory,
-    // where parallel definition tests intentionally create transient manifests.
-    const agentNames = ["hermes", "langchain-deepagents-code"] as const;
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "accepts every checked-in non-OpenClaw agent baseline under the runtime schema [%s] (#7194)",
+    (agentName) => {
+      const getSandbox = vi.spyOn(registry, "getSandbox");
+      // Keep this immutable: listAgents() observes the shared agents directory,
+      // where parallel definition tests intentionally create transient manifests.
 
-    for (const agentName of agentNames) {
       getSandbox.mockReturnValue({ name: "alpha", agent: agentName } as never);
       expect(resolveSandboxBaselinePolicy("alpha")?.policyPath).toBe(
         agentDefs.loadAgent(agentName).policyAdditionsPath,
       );
-    }
-  });
+    },
+  );
 });

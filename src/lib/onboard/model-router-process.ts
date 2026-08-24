@@ -27,6 +27,68 @@ type ModelRouterCommandLineReaderDeps = {
   listProcPids?: () => number[];
 };
 
+export type ModelRouterProcessLookup =
+  | { status: "found"; pid: number }
+  | { status: "absent" }
+  | { status: "unavailable" };
+
+export type RouterHealthSnapshot = {
+  healthy: boolean;
+  body: string | null;
+};
+
+const ROUTER_HEALTH_BODY_MAX_BYTES = 64 * 1024;
+
+/**
+ * Fetch /health and keep the response body for diagnosis (#8962). Unlike
+ * `isRouterHealthy`, this waits for the body, so a caller that must read it
+ * budgets for it; the final startup snapshot uses 30 seconds. LiteLLM's /health probes
+ * every upstream endpoint per request and can answer well after the
+ * 3-second liveness budget. The timeout is a wall-clock deadline, not a
+ * socket idle timeout, so a responder that trickles bytes cannot hold the
+ * caller past it; whatever body arrived by then is returned.
+ */
+export async function getRouterHealthSnapshot(
+  port: number,
+  timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
+): Promise<RouterHealthSnapshot> {
+  return new Promise<RouterHealthSnapshot>((resolve) => {
+    let settled = false;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let responseHealthy = false;
+    const bufferedBody = () => (chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null);
+    const settle = (snapshot: RouterHealthSnapshot) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(snapshot);
+    };
+    const request = http
+      .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
+        responseHealthy = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300;
+        res.on("data", (chunk: Buffer) => {
+          const remaining = ROUTER_HEALTH_BODY_MAX_BYTES - size;
+          const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+          chunks.push(kept);
+          size += kept.length;
+          if (size >= ROUTER_HEALTH_BODY_MAX_BYTES) {
+            res.destroy();
+            settle({ healthy: responseHealthy, body: bufferedBody() });
+          }
+        });
+        res.on("end", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
+        res.on("error", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
+      })
+      .on("error", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
+    const deadline = setTimeout(() => {
+      request.destroy();
+      settle({ healthy: responseHealthy, body: bufferedBody() });
+    }, timeoutMs);
+    deadline.unref?.();
+  });
+}
+
 export async function isRouterHealthy(
   port: number,
   timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
@@ -198,34 +260,34 @@ export async function stopModelRouterProcess(
 /**
  * Scan /proc for a model-router process bound to `port`.
  *
- * Used by reconcileModelRouter to auto-recover orphaned routers whose PID
- * was not recorded in the current session (e.g. after a failed install left a
- * running router and the next session starts fresh). Returns null when /proc
- * is unavailable (macOS) or no matching process is found.
+ * Used by reconcileModelRouter and destroy to recover orphaned routers whose
+ * PID was not recorded in the matching session. The result distinguishes a
+ * completed scan with no match from an unavailable process inventory so
+ * teardown does not erase recovery identity on inconclusive evidence.
  */
-export function findModelRouterPidForPort(
+export function inspectModelRouterProcessForPort(
   port: number,
   deps: ModelRouterCommandLineReaderDeps = {},
-): number | null {
+): ModelRouterProcessLookup {
   let pids: number[];
-  if (deps.listProcPids) {
-    pids = deps.listProcPids();
-  } else {
-    try {
+  try {
+    if (deps.listProcPids) {
+      pids = deps.listProcPids();
+    } else {
       pids = fs
         .readdirSync("/proc")
         .map(Number)
         .filter((n) => Number.isFinite(n) && n > 0);
-    } catch {
-      return null;
     }
+  } catch {
+    return { status: "unavailable" };
   }
   const readCmdLine = deps.readProcCommandLine ?? readProcCommandLine;
   for (const pid of pids) {
     const args = readCmdLine(pid);
-    if (args && isModelRouterCommandLineForPort(args, port)) return pid;
+    if (args && isModelRouterCommandLineForPort(args, port)) return { status: "found", pid };
   }
-  return null;
+  return { status: "absent" };
 }
 
 export async function stopTrackedModelRouterForAgentChange(

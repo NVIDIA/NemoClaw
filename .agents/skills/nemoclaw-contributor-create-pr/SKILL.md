@@ -60,9 +60,21 @@ Select checks that apply to the diff.
 
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-Group valid code-changing findings by root cause. Route each valid code-changing finding to `nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for the group instead of one commit or push per finding.
+This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
+in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and complete its
+count-and-approval decision. The shared workflow owns the single count-and-approval state machine
+for the complete PR task. Carry its recorded progress across every routed repair.
 
-This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. If that review identifies a valid finding, return the repair to `nemoclaw-contributor-implement-issue`, commit the result, and rerun the review against the new `HEAD`. Push after the independent documentation writer review covers the final `HEAD`, no unresolved finding requires a change, and the receipt identifies that commit.
+Group valid code-changing findings in the repair scope by root cause. Route only finding groups in
+the repair scope to `nemoclaw-contributor-implement-issue`. Do not route a finding group that the
+shared workflow excludes from the repair scope. Preserve its unresolved or deferred disposition.
+That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for
+the group instead of one commit or push per finding.
+
+After the routed repair returns and its validation passes, resume the shared sequence at the commit
+step. If validation fails or is inconclusive, return to the repair and validation steps. Do not commit
+or push until validation passes. Complete the final collection and evidence-removal steps before
+pushing. Push after no unresolved finding requires a change.
 
 Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
 
@@ -193,9 +205,6 @@ Do not use a branch-modified template unless the PR changes the template.
 Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers.
 Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
 contract for the PR body and other changed explanatory text.
-Follow the
-[Documentation Writer Review Receipt](../../../CONTRIBUTING.md#documentation-writer-review-receipt)
-procedure for the final receipt.
 
 Complete each section from the diff against the same base ref.
 Select the applicable boxes and leave the other boxes clear.
@@ -230,10 +239,11 @@ Follow these rules when filling in the template:
   - Why a direct change is not sufficient.
   - The test that protects the behavior.
 - **Type of Change:** Check one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Quality Gates:** Select one tests line and one docs line. Select each other line that applies.
-  Explain why tests or docs are not necessary.
-  Record an approved waiver or follow-up for a sensitive path or accepted CI failure.
-- **Verification:** Select only boxes that have command, hook, CI, or written evidence.
+- **Quality Gates:** Select the lines that apply. Explain why tests are not necessary when no test
+  command applies. Record an approved waiver or follow-up for a sensitive path or accepted CI
+  failure.
+- **Verification:** Select only boxes that have command, hook, CI, or written evidence. For a direct
+  documentation PR, record the applicable documentation validation here.
   Do not select a box for a skipped step.
   Select the DCO and commit-verification box after Step 4 passes.
   Leave the broad-gate box clear unless you ran that gate.
@@ -317,6 +327,6 @@ Automated review: no actionable findings / addressed findings / waiting on user
 - Select only boxes that have evidence.
 - Do not create a PR from `main`.
 - Assign the PR to its creator with `--assignee @me` when the creator has triage permission.
-- Route each valid code-changing review finding to `nemoclaw-contributor-implement-issue`.
+- Route only review finding groups in the repair scope to `nemoclaw-contributor-implement-issue`.
 - Report decisions, changes, and verification evidence. Do not report the analysis process.
 - Follow CI and automated reviews after you create the PR.

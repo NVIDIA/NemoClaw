@@ -142,8 +142,8 @@ async function handleGatewayStatePhase<Gpu>({
     } else if (containerState === "stopped") {
       // #4187: a stopped legacy `openshell-cluster-*` container after a host
       // VM stop/start still holds the PVC volume. Attempt non-destructive
-      // recovery (openshell gateway start) before any destructive path so we
-      // never delete the k3s local-path PVC backing data.
+      // gateway recovery before any destructive path so we never delete the
+      // k3s local-path PVC backing data.
       console.log(
         "  Gateway container is stopped (likely host or Docker restart). Attempting non-destructive recovery...",
       );

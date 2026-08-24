@@ -196,6 +196,20 @@ For a stopped source, its registry entry must record both the sandbox image and 
 NemoClaw stops before creating or replacing the destination when either record is missing, and directs you to run `$$nemoclaw onboard` when no image is recorded.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 
+For a new destination, NemoClaw waits for the owning gateway to report the sandbox as Ready with a valid live identity.
+It checks that identity again immediately before registration.
+NemoClaw assigns the destination a new lifecycle generation instead of copying the source sandbox's generation.
+
+If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore.
+The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion.
+Run the exact owner-scoped deletion command printed by the failure:
+
+```bash
+openshell sandbox delete -g '<owning-gateway>' '<destination>'
+```
+
+After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
+
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
 
@@ -217,7 +231,8 @@ It clears the remaining local shields state only after deletion succeeds, before
 ## Restore Agent Configuration Safely
 
 The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
+NemoClaw rejects unsafe symlinks and special files inside sandbox state during backup creation.
+It records multiply-linked regular files and archives each path as a separate regular file.
 
 <AgentOnly variant="openclaw">
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
@@ -298,7 +313,9 @@ If the timer expires during the transaction, the deadline gate blocks new mutati
 An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 NemoClaw attempts to restore the previous Shields state before it processes the next sandbox, including when the backup fails.
 If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
-Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.
+For an ordinary relock failure, correct the reported issue and follow the printed recovery command before rerunning `$$nemoclaw backup-all`.
+If NemoClaw reports that Backup Shields policy recovery failed, do not retry Shields up from the mutable live policy.
+Restore a trusted backup, recreate the sandbox, and then rerun `$$nemoclaw backup-all`.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

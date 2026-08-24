@@ -21,6 +21,7 @@ export const RISKY_PATTERNS: RegExp[] = [
   /^scripts\/.*\.sh$/,
   /^bin\/lib\/onboard\.js$/,
   /^bin\/.*\.js$/,
+  /^src\/lib\/onboard\//,
   /^nemoclaw\/src\/blueprint\//,
   /^nemoclaw-blueprint\//,
   /^\.github\/workflows\//,
@@ -32,10 +33,15 @@ export const RISKY_PATTERNS: RegExp[] = [
   /inference/i,
 ];
 
+const DOCUMENTATION_PATTERNS: RegExp[] = [/^docs\//, /^fern\//];
+
 export const TEST_PATTERNS: RegExp[] = [/\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/, /^test\//];
 
 export function isRiskyFile(path: string): boolean {
-  return RISKY_PATTERNS.some((re) => re.test(path));
+  return (
+    !DOCUMENTATION_PATTERNS.some((pattern) => pattern.test(path)) &&
+    RISKY_PATTERNS.some((pattern) => pattern.test(path))
+  );
 }
 
 export function isTestFile(path: string): boolean {

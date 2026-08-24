@@ -31,22 +31,19 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(lookup).toHaveBeenCalledWith("vllm.example", { all: true });
   });
 
-  it.each([
-    "10.0.0.8",
-    "169.254.169.254",
-    "192.168.1.10",
-    "172.16.0.5",
-    "127.0.0.1",
-  ])("refuses a public hostname that resolves to the private/reserved address %s (#6293)", async (privateAddress) => {
-    const lookup = resolverTo(privateAddress);
-    const result = await assertEndpointResolvesPublic("https://public-name.example/v1", lookup);
-    expect(result).toMatchObject({
-      ok: false,
-      reasonCode: "private-answer",
-      offendingAddress: privateAddress,
-    });
-    expect(result.reason).toContain(privateAddress);
-  });
+  it.each(["10.0.0.8", "169.254.169.254", "192.168.1.10", "172.16.0.5", "127.0.0.1"])(
+    "refuses a public hostname that resolves to the private/reserved address %s (#6293)",
+    async (privateAddress) => {
+      const lookup = resolverTo(privateAddress);
+      const result = await assertEndpointResolvesPublic("https://public-name.example/v1", lookup);
+      expect(result).toMatchObject({
+        ok: false,
+        reasonCode: "private-answer",
+        offendingAddress: privateAddress,
+      });
+      expect(result.reason).toContain(privateAddress);
+    },
+  );
 
   it("refuses a literal private endpoint before resolving anything (#6293)", async () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
@@ -100,16 +97,17 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("keeps private and metadata addresses blocked when the trust list is empty (#6861)", async () => {
-    for (const address of ["10.0.0.8", "169.254.169.254"]) {
+  it.each(["10.0.0.8", "169.254.169.254"])(
+    "keeps private and metadata addresses blocked when the trust list is empty [case %#] (#6861)",
+    async (address) => {
       const result = await assertEndpointResolvesPublic(
         "https://llm.corp.example/v1",
         resolverTo(address),
         { trustedPrivateHosts: [] },
       );
       expect(result.ok).toBe(false);
-    }
-  });
+    },
+  );
 
   it("keeps link-local metadata blocked even when its hostname is allowlisted (#6861)", async () => {
     const result = await assertEndpointResolvesPublic(
@@ -135,24 +133,22 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "100.64.0.0",
-    "100.127.255.255",
-    "fc00::1",
-    "fdff:ffff::1",
-  ])("admits the operator-trustable private boundary address %s (#6861)", async (address) => {
-    const result = await assertEndpointResolvesPublic(
-      "https://llm.corp.example/v1",
-      resolverTo(address),
-      { trustedPrivateHosts: ["llm.corp.example"] },
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      addresses: [address],
-      trustedPrivateEndpoint: true,
-    });
-    expect(result.trustedPrivateCapability?.addresses).toEqual([address]);
-  });
+  it.each(["100.64.0.0", "100.127.255.255", "fc00::1", "fdff:ffff::1"])(
+    "admits the operator-trustable private boundary address %s (#6861)",
+    async (address) => {
+      const result = await assertEndpointResolvesPublic(
+        "https://llm.corp.example/v1",
+        resolverTo(address),
+        { trustedPrivateHosts: ["llm.corp.example"] },
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        addresses: [address],
+        trustedPrivateEndpoint: true,
+      });
+      expect(result.trustedPrivateCapability?.addresses).toEqual([address]);
+    },
+  );
 
   it("carries an allowlisted private DNS result through curl argument validation (#6861)", async () => {
     const endpointUrl = "https://llm.corp.example/v1/models";
@@ -172,20 +168,18 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     );
   });
 
-  it.each([
-    "169.254.0.1",
-    "198.18.0.1",
-    "fe80::1",
-    "ff00::1",
-  ])("keeps the reserved address %s blocked for an allowlisted host (#6861)", async (address) => {
-    const result = await assertEndpointResolvesPublic(
-      "https://llm.corp.example/v1",
-      resolverTo(address),
-      { trustedPrivateHosts: ["llm.corp.example"] },
-    );
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain(address);
-  });
+  it.each(["169.254.0.1", "198.18.0.1", "fe80::1", "ff00::1"])(
+    "keeps the reserved address %s blocked for an allowlisted host (#6861)",
+    async (address) => {
+      const result = await assertEndpointResolvesPublic(
+        "https://llm.corp.example/v1",
+        resolverTo(address),
+        { trustedPrivateHosts: ["llm.corp.example"] },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain(address);
+    },
+  );
 
   it("parses and canonicalizes the private inference host allowlist (#6861)", () => {
     expect(
@@ -202,17 +196,16 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     ).toEqual(["mcp.corp.example", "llm.corp.example", "10.0.0.8"]);
   });
 
-  it.each([
-    "http://127.0.0.1:8000/v1",
-    "http://localhost:8000/v1",
-    "http://[::1]:8000/v1",
-  ])("allows the explicit loopback endpoint %s without resolving (#6293)", async (endpointUrl) => {
-    const lookup = vi.fn<EndpointDnsLookupFn>();
-    const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
-    expect(result.ok).toBe(true);
-    expect(result.addresses).toEqual([]);
-    expect(lookup).not.toHaveBeenCalled();
-  });
+  it.each(["http://127.0.0.1:8000/v1", "http://localhost:8000/v1", "http://[::1]:8000/v1"])(
+    "allows the explicit loopback endpoint %s without resolving (#6293)",
+    async (endpointUrl) => {
+      const lookup = vi.fn<EndpointDnsLookupFn>();
+      const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
+      expect(result.ok).toBe(true);
+      expect(result.addresses).toEqual([]);
+      expect(lookup).not.toHaveBeenCalled();
+    },
+  );
 
   it("allows a public IP literal without resolving (#6293)", async () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
@@ -284,15 +277,18 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     "http://host.openshell.internal:8000/v1",
     "http://host.docker.internal:11434/v1",
     "http://host.containers.internal:11434/v1",
-  ])("exempts the OpenShell-managed alias %s without resolving or pinning (#6293)", async (endpointUrl) => {
-    const lookup = vi.fn<EndpointDnsLookupFn>();
-    const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
-    expect(result.ok).toBe(true);
-    // Managed aliases need no --resolve pin, but the defined empty capability
-    // still forces credentialed host probes to bypass ambient proxies.
-    expect(result.addresses).toEqual([]);
-    expect(lookup).not.toHaveBeenCalled();
-  });
+  ])(
+    "exempts the OpenShell-managed alias %s without resolving or pinning (#6293)",
+    async (endpointUrl) => {
+      const lookup = vi.fn<EndpointDnsLookupFn>();
+      const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
+      expect(result.ok).toBe(true);
+      // Managed aliases need no --resolve pin, but the defined empty capability
+      // still forces credentialed host probes to bypass ambient proxies.
+      expect(result.addresses).toEqual([]);
+      expect(lookup).not.toHaveBeenCalled();
+    },
+  );
 
   it("omits curl pinning without validated addresses or a valid target URL (#6293)", () => {
     expect(buildResolvePinArgs("https://vllm.example/v1", undefined)).toEqual([]);

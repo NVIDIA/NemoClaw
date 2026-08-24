@@ -74,8 +74,13 @@ async function finalizeMigration(
       removeLegacyCredentialsFile,
       cleanupStaleHostFiles: () => undefined,
       checkAndRecoverSandboxProcesses: () => undefined,
-      warmupScopeUpgrade: () => undefined,
-      autoPairScopeApproval: () => undefined,
+      settleOrdinaryOpenClawPairing: async () => ({ kind: "settled" }),
+      ordinaryOpenClawPairingIncompleteMessage: () =>
+        "OpenClaw onboarding is incomplete; resume onboarding.",
+      readRegistryAgent: () => "openclaw",
+      settlePortablePairing: async () => ({ kind: "settled" }),
+      portablePairingIncompleteMessage: () =>
+        "Portable onboarding is incomplete; resume onboarding.",
       getChatUiUrl: () => "",
       buildVerifyChain: () => null,
       verifyDeployment: async () => null,

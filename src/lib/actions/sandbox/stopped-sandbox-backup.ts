@@ -3,6 +3,7 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
+import { retryUntilAsync } from "../../core/retry";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import {
   findLabeledSandboxContainers,
@@ -57,7 +58,8 @@ interface StartDeps {
 
 const defaultStartDeps: StartDeps = {
   getSandboxDriver: readSandboxDriver,
-  listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
+  listSandboxNames: () =>
+    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
   listLabeledContainerNames: (sandboxName) =>
     findLabeledSandboxContainers(sandboxName).map((container) => container.name),
   dockerInspectStatus: (containerName) =>
@@ -182,6 +184,9 @@ interface BackupRetryDeps {
   delayMs: number;
 }
 
+const STARTED_BACKUP_READY_TIMEOUT_MS = 90_000;
+const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
+
 const defaultBackupRetryDeps: BackupRetryDeps = {
   backup: (name) =>
     snapshotBackup.backupSandboxStateWithManagedAuthority(
@@ -192,13 +197,16 @@ const defaultBackupRetryDeps: BackupRetryDeps = {
       },
     ),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  attempts: 5,
-  delayMs: 2000,
+  // Managed-profile containers run their provider-owned startup before the
+  // OpenShell SSH transport becomes reachable. Keep this inside backup-all's
+  // 180-second command budget while allowing a cold managed restart to finish.
+  attempts: Math.floor(STARTED_BACKUP_READY_TIMEOUT_MS / STARTED_BACKUP_RETRY_DELAY_MS) + 1,
+  delayMs: STARTED_BACKUP_RETRY_DELAY_MS,
 };
 
 /**
  * Back up a sandbox whose container was just started. The container's SSH
- * endpoint can take a few seconds to answer after `docker start`, so retry
+ * endpoint can take up to the managed cold-start window after `docker start`, so retry
  * while — and only while — the result is a transport-level `unreachable`
  * failure. Every other outcome (success, permission failure, precondition)
  * is returned as-is on first sight.
@@ -208,14 +216,12 @@ export async function backupStartedSandboxState(
   depsOverride: Partial<BackupRetryDeps> = {},
 ): Promise<sandboxState.BackupResult> {
   const deps: BackupRetryDeps = { ...defaultBackupRetryDeps, ...depsOverride };
-  let result = deps.backup(sandboxName);
-  for (
-    let attempt = 1;
-    attempt < deps.attempts && !result.success && result.unreachable;
-    attempt++
-  ) {
-    await deps.sleep(deps.delayMs);
-    result = deps.backup(sandboxName);
-  }
-  return result;
+  return retryUntilAsync(() => deps.backup(sandboxName), {
+    accept: (result) => result.success || !result.unreachable,
+    retryDelaysMs: Array.from(
+      { length: Math.max(0, Math.ceil(deps.attempts) - 1) },
+      () => deps.delayMs,
+    ),
+    sleep: deps.sleep,
+  });
 }

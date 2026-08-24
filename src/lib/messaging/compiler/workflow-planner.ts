@@ -206,7 +206,6 @@ export class MessagingWorkflowPlanner {
           (b) => b.channelId === channelId && b.providerEnvKey === credential.providerEnvKey,
         );
         if (!binding?.credentialAvailable) continue;
-        availability[credential.sourceInput] = true;
         availability[manifest.id + "." + credential.sourceInput] = true;
         availability[credential.id] = true;
         availability[manifest.id + "." + credential.id] = true;
@@ -510,7 +509,6 @@ function credentialAvailabilityFromPlan(
   for (const channel of plan.channels) {
     for (const input of channel.inputs) {
       if (input.kind !== "secret" || input.credentialAvailable !== true) continue;
-      availability[input.inputId] = true;
       availability[`${channel.channelId}.${input.inputId}`] = true;
       if (input.sourceEnv) availability[input.sourceEnv] = true;
     }
@@ -519,7 +517,6 @@ function credentialAvailabilityFromPlan(
     if (!credential.credentialAvailable) continue;
     availability[credential.credentialId] = true;
     availability[`${credential.channelId}.${credential.credentialId}`] = true;
-    availability[credential.sourceInput] = true;
     availability[`${credential.channelId}.${credential.sourceInput}`] = true;
     availability[credential.providerEnvKey] = true;
   }

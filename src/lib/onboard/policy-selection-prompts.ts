@@ -3,6 +3,7 @@
 
 import type { TierDefinition } from "../policy/tiers";
 import type { SandboxCancelRollback } from "./cancel-rollback";
+import { OnboardDeferredExitError } from "./session-bootstrap";
 
 type PresetWithDescription = { name: string; description?: string };
 type PresetWithAccess = { name: string; access: string };
@@ -41,6 +42,7 @@ export interface PolicySelectionPromptDeps {
   makeOnboardCancelExit(
     rollback: Pick<SandboxCancelRollback, "markCancelled">,
     cleanup: () => void,
+    exit?: (code: number) => void,
   ): () => void;
   sandboxCancelRollback: Pick<SandboxCancelRollback, "markCancelled">;
   useColor: boolean;
@@ -164,7 +166,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     stdin.resume();
     stdin.setEncoding("utf8");
 
-    return new Promise<string>((resolve) => {
+    return new Promise<string>((resolve, reject) => {
       const cleanup = () => {
         stdin.setRawMode(false);
         stdin.pause();
@@ -175,7 +177,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         processEvents.removeListener("SIGTERM", onSigterm);
       };
 
-      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
+      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup, (code) =>
+        reject(new OnboardDeferredExitError(code)),
+      );
       processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
@@ -187,7 +191,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
           selectedIdx = cursor;
           redraw();
         } else if (key === "\x03") {
-          makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
+          onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;
           redraw();
@@ -344,7 +348,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     stdin.resume();
     stdin.setEncoding("utf8");
 
-    return new Promise<PresetWithAccess[]>((resolve) => {
+    return new Promise<PresetWithAccess[]>((resolve, reject) => {
       const cleanup = () => {
         stdin.setRawMode(false);
         stdin.pause();
@@ -355,7 +359,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         processEvents.removeListener("SIGTERM", onSigterm);
       };
 
-      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
+      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup, (code) =>
+        reject(new OnboardDeferredExitError(code)),
+      );
       processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
@@ -368,7 +374,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
               .map((preset) => ({ name: preset.name, access: accessModes[preset.name] })),
           );
         } else if (key === "\x03") {
-          makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
+          onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;
           redraw();
@@ -490,7 +496,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     stdin.resume();
     stdin.setEncoding("utf8");
 
-    return new Promise<string[]>((resolve) => {
+    return new Promise<string[]>((resolve, reject) => {
       const cleanup = () => {
         stdin.setRawMode(false);
         stdin.pause();
@@ -501,7 +507,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         processEvents.removeListener("SIGTERM", onSigterm);
       };
 
-      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
+      const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup, (code) =>
+        reject(new OnboardDeferredExitError(code)),
+      );
       processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
@@ -510,7 +518,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
           stdout.write("\n");
           resolve([...selected]);
         } else if (key === "\x03") {
-          makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
+          onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;
           redraw();

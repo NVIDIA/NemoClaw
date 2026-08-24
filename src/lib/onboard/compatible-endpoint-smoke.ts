@@ -6,6 +6,7 @@ import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
+import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
   buildCompatibleEndpointSmokeRequestScript,
   RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
@@ -43,14 +44,32 @@ const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
+const PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT = 2;
+const PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS = 10;
+const COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS =
+  COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
+  totalRetryBackoffSeconds(
+    COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+  );
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
-  (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    totalRetryBackoffSeconds(
-      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
-      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
-    ) +
+  (COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
+const PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS =
+  (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
+    PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
+    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+  1000;
+const OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT = Object.freeze({
+  version: 1,
+  httpStatus: 403,
+  error: "policy_denied",
+  method: "POST",
+  host: "host.openshell.internal",
+  path: "/v1/chat/completions",
+  detailSuffix: "not permitted by policy",
+});
 
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
@@ -107,8 +126,12 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   credentialEnv?: string | null;
   messagingChannels?: string[] | null;
   agent?: CompatibleEndpointSmokeAgent;
+  /** Force the provider-neutral inference.local proof for any supported agent. */
+  forceCanonicalRoute?: boolean;
+  hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
 }): void {
   if (
+    options.forceCanonicalRoute !== true &&
     !shouldRunCompatibleEndpointSandboxSmoke(
       options.provider,
       options.messagingChannels,
@@ -118,7 +141,11 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     return;
   }
 
-  console.log("  Verifying compatible endpoint through the messaging sandbox...");
+  console.log(
+    options.forceCanonicalRoute
+      ? "  Verifying provider-neutral inference through the sandbox runtime..."
+      : "  Verifying compatible endpoint through the messaging sandbox...",
+  );
 
   const providerResult = options.runOpenshell(["provider", "get", options.provider], {
     ignoreError: true,
@@ -134,10 +161,14 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
 
   if (providerResult.status !== 0) {
     console.error(
-      `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
+      options.forceCanonicalRoute
+        ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
+        : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+      options.forceCanonicalRoute
+        ? "  The sandbox inference.local route cannot reach the selected model provider."
+        : "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
     );
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
@@ -146,6 +177,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   }
 
   if (
+    options.forceCanonicalRoute !== true &&
     options.endpointUrl &&
     providerDetails &&
     /OPENAI_BASE_URL|baseUrl|base URL|endpoint/i.test(providerDetails) &&
@@ -167,14 +199,24 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     );
   }
 
-  const script = buildCompatibleEndpointSandboxSmokeCommand(options.model);
+  const forceCanonicalRoute = options.forceCanonicalRoute === true;
+  const script = forceCanonicalRoute
+    ? buildProviderNeutralInferenceSandboxSmokeScript(
+        options.model,
+        options.hostLocalInferenceProofAuthority,
+      )
+    : buildCompatibleEndpointSandboxSmokeCommand(options.model);
   const smokeResult = options.runOpenshell(
-    ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
+    forceCanonicalRoute
+      ? ["sandbox", "exec", "-n", options.sandboxName, "--", "python3", "-c", script]
+      : ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
     {
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
+      timeout: forceCanonicalRoute
+        ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
+        : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
     },
   );
   const smokeOutput = [
@@ -185,13 +227,23 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     .trim();
 
   if (smokeResult.status !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
-    console.error("  Compatible endpoint sandbox smoke check failed.");
-    console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+    console.error(
+      options.forceCanonicalRoute
+        ? "  Provider-neutral sandbox inference smoke check failed."
+        : "  Compatible endpoint sandbox smoke check failed.",
+    );
+    if (!options.forceCanonicalRoute) {
+      console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+    }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
     process.exit(smokeResult.status || 1);
   }
 
-  console.log("  \u2713 Compatible endpoint responds through inference.local inside the sandbox");
+  console.log(
+    options.forceCanonicalRoute
+      ? "  \u2713 Provider responds through inference.local inside the sandbox"
+      : "  \u2713 Compatible endpoint responds through inference.local inside the sandbox",
+  );
 }
 
 /**
@@ -424,4 +476,208 @@ done
 
 export function buildCompatibleEndpointSandboxSmokeCommand(model: string): string {
   return buildCompatibleEndpointSandboxSmokeScript(model);
+}
+
+/**
+ * Runs through the same Python runtime as the supported agents, proving a real
+ * chat response through inference.local and explicit policy denial for the
+ * selected direct host-native inference port that would bypass the gateway.
+ */
+export function buildProviderNeutralInferenceSandboxSmokeScript(
+  model: string,
+  authority: HostLocalInferenceSandboxProofAuthority | undefined,
+): string {
+  const expectedHealthPath =
+    authority?.service === "ollama"
+      ? "/api/tags"
+      : authority?.service === "nim"
+        ? "/v1/health/ready"
+        : authority?.service === "vllm"
+          ? "/health"
+          : null;
+  if (
+    !authority ||
+    !Number.isSafeInteger(authority.directHostPort) ||
+    authority.directHostPort < 1 ||
+    authority.directHostPort > 65_535 ||
+    authority.directHealthPath !== expectedHealthPath
+  ) {
+    throw new Error("Provider-neutral sandbox smoke requires exact provider health authority.");
+  }
+  const inferenceUrl = JSON.stringify(`${INFERENCE_ROUTE_URL}/chat/completions`);
+  const maxTokensField = JSON.stringify(resolveMaxTokensField(model));
+  const modelValue = JSON.stringify(model);
+  const toolCallingRequired = authority.toolCallingRequired ? "True" : "False";
+  const directAuthority = `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.host}:${String(
+    authority.directHostPort,
+  )}`;
+  const directUrl = JSON.stringify(
+    `http://${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path}`,
+  );
+  const directMethod = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method);
+  const directDenialError = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.error);
+  const directDenialDetail = JSON.stringify(
+    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
+  );
+  return `
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+inference_url = ${inferenceUrl}
+model = ${modelValue}
+max_tokens_field = ${maxTokensField}
+tool_calling_required = ${toolCallingRequired}
+max_response_bytes = 1048576
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+def post_inference(payload, label):
+    request = urllib.request.Request(
+        inference_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    response_data = None
+    for attempt in range(3):
+        try:
+            with opener.open(request, timeout=60) as response:
+                if response.status < 200 or response.status > 299:
+                    raise RuntimeError("inference.local returned HTTP %s" % response.status)
+                response_bytes = response.read(max_response_bytes + 1)
+                if len(response_bytes) > max_response_bytes:
+                    print("inference.local %s proof response exceeded byte limit" % label, file=sys.stderr)
+                    sys.exit(1)
+                try:
+                    response_data = json.loads(response_bytes.decode("utf-8", errors="strict"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    print("inference.local %s proof returned invalid JSON" % label, file=sys.stderr)
+                    sys.exit(1)
+            break
+        except urllib.error.HTTPError as error:
+            if 500 <= error.code <= 599 and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            print("inference.local %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
+            sys.exit(1)
+        except urllib.error.URLError:
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            print("inference.local %s proof transport failed after bounded retries" % label, file=sys.stderr)
+            sys.exit(1)
+    if not isinstance(response_data, dict) or response_data.get("model") != model:
+        print("inference.local %s proof returned a different model identity" % label, file=sys.stderr)
+        sys.exit(1)
+    return response_data
+
+response_data = post_inference({
+    "model": model,
+    "messages": [{"role": "user", "content": "Reply with exactly: PONG"}],
+    max_tokens_field: 512,
+}, "content")
+
+choices = response_data.get("choices") if isinstance(response_data, dict) else None
+choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+content = message.get("content")
+if not isinstance(content, str) or not content.strip():
+    print("inference.local response did not contain assistant content", file=sys.stderr)
+    sys.exit(1)
+
+if tool_calling_required:
+    tool_name = "nemoclaw_route_probe"
+    tool_data = post_inference({
+        "model": model,
+        "messages": [{"role": "user", "content": "Call the required route probe tool."}],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": "Prove tool calling through the selected inference route.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        }],
+        "tool_choice": {"type": "function", "function": {"name": tool_name}},
+        max_tokens_field: 512,
+    }, "tool")
+    tool_choices = tool_data.get("choices")
+    tool_choice = tool_choices[0] if isinstance(tool_choices, list) and tool_choices and isinstance(tool_choices[0], dict) else {}
+    tool_message = tool_choice.get("message") if isinstance(tool_choice.get("message"), dict) else {}
+    tool_calls = tool_message.get("tool_calls")
+    matching_call = next((call for call in tool_calls if isinstance(call, dict) and isinstance(call.get("function"), dict) and call["function"].get("name") == tool_name), None) if isinstance(tool_calls, list) else None
+    if matching_call is None:
+        print("inference.local tool proof did not return the required tool call", file=sys.stderr)
+        sys.exit(1)
+    arguments = matching_call["function"].get("arguments")
+    try:
+        decoded_arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except json.JSONDecodeError:
+        decoded_arguments = None
+    if not isinstance(decoded_arguments, dict) or decoded_arguments:
+        print("inference.local tool proof returned invalid tool arguments", file=sys.stderr)
+        sys.exit(1)
+
+direct_url = ${directUrl}
+direct_method = ${directMethod}
+direct_denial_contract_version = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.version)}
+direct_denial_http_status = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.httpStatus)}
+direct_denial_error = ${directDenialError}
+direct_denial_detail = ${directDenialDetail}
+direct_deny_timeout_seconds = ${String(PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS)}
+direct_request = urllib.request.Request(
+    direct_url,
+    data=json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": "Prove direct inference is denied."}],
+        max_tokens_field: 1,
+    }).encode("utf-8"),
+    headers={"Content-Type": "application/json"},
+    method=direct_method,
+)
+try:
+    with opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
+        print(
+            "direct host inference route unexpectedly returned HTTP %s" % direct_response.status,
+            file=sys.stderr,
+        )
+        sys.exit(1)
+except urllib.error.HTTPError as error:
+    denial_bytes = error.read(max_response_bytes + 1)
+    if len(denial_bytes) > max_response_bytes:
+        print("direct host inference policy-denial response exceeded byte limit", file=sys.stderr)
+        sys.exit(1)
+    try:
+        denial_text = denial_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        print("direct host inference policy-denial response was not valid UTF-8", file=sys.stderr)
+        sys.exit(1)
+    try:
+        denial = json.loads(denial_text)
+    except json.JSONDecodeError:
+        print("direct host inference policy-denial response was not valid JSON", file=sys.stderr)
+        sys.exit(1)
+    detail = denial.get("detail") if isinstance(denial, dict) else None
+    if (
+        error.code != direct_denial_http_status
+        or not isinstance(denial, dict)
+        or denial.get("error") != direct_denial_error
+    ):
+        print("direct host inference response was not an OpenShell policy denial", file=sys.stderr)
+        sys.exit(1)
+    if detail != direct_denial_detail:
+        print(
+            "direct host inference OpenShell policy-denial contract v%s format drifted"
+            % direct_denial_contract_version,
+            file=sys.stderr,
+        )
+        sys.exit(1)
+except urllib.error.URLError:
+    print("direct host inference deny could not be proven", file=sys.stderr)
+    sys.exit(1)
+
+print("INFERENCE_SMOKE_OK " + content.strip()[:200])
+`.trim();
 }

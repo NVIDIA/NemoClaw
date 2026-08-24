@@ -15,6 +15,7 @@ import {
   stationKnownHostsDigest,
   writeDualStationSshBinding,
 } from "../src/lib/inference/vllm-station-ssh-binding.ts";
+import { strictVllmSshTransportArgs } from "../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import {
   type DualStationPreparationDeps,
   type DualStationResumeState,
@@ -378,64 +379,6 @@ function runStreamingCommand(
   return result.status ?? 1;
 }
 
-export function strictStationPrepSshTransportArgs(): string[] {
-  return [
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "VerifyHostKeyDNS=no",
-    "-o",
-    "NoHostAuthenticationForLocalhost=no",
-    "-o",
-    "NumberOfPasswordPrompts=0",
-    "-o",
-    "PasswordAuthentication=no",
-    "-o",
-    "KbdInteractiveAuthentication=no",
-    "-o",
-    "PreferredAuthentications=publickey",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "ServerAliveInterval=5",
-    "-o",
-    "ServerAliveCountMax=1",
-    "-o",
-    "ClearAllForwardings=yes",
-    "-o",
-    "ForwardAgent=no",
-    "-o",
-    "ForwardX11=no",
-    "-o",
-    "ForwardX11Trusted=no",
-    "-o",
-    "Tunnel=no",
-    "-o",
-    "UpdateHostKeys=no",
-    "-o",
-    "ControlMaster=no",
-    "-o",
-    "ControlPath=none",
-    "-o",
-    "PermitLocalCommand=no",
-    "-o",
-    "RemoteCommand=none",
-    "-o",
-    "ProxyCommand=none",
-    "-o",
-    "ProxyJump=none",
-    "-o",
-    "KnownHostsCommand=none",
-    "-o",
-    "LogLevel=ERROR",
-  ];
-}
-
 function parseSshConfig(stdout: string): SshConfig {
   const values = new Map<string, string[]>();
   for (const rawLine of stdout.split(/\r?\n/)) {
@@ -567,11 +510,7 @@ function knownHostEvidence(
 
 export function inspectPretrustedSshTarget(target: string): PretrustedSshTarget | null {
   validateStationPeerTarget(target);
-  const configResult = runCommand(
-    "ssh",
-    ["-G", ...strictStationPrepSshTransportArgs(), "--", target],
-    "",
-  );
+  const configResult = runCommand("ssh", ["-G", ...strictVllmSshTransportArgs(), "--", target], "");
   if (!commandSucceeded(configResult, true)) return null;
   const config = parseSshConfig(configResult.stdout);
   assertStrictSshConfig(config);
@@ -936,13 +875,13 @@ function assertHelperFile(helperPath: string): Buffer {
   }
 }
 
-function sshArgs(
+export function stationPrepSshArgs(
   binding: PretrustedSshTarget,
   pinnedKnownHostsPath: string,
   remoteCommand: string,
 ): string[] {
   return [
-    ...strictStationPrepSshTransportArgs(),
+    ...strictVllmSshTransportArgs(),
     "-o",
     `UserKnownHostsFile=${pinnedKnownHostsPath}`,
     "-o",
@@ -997,7 +936,7 @@ function createRuntimeDeps(options: CliOptions): {
       parseHostResult(
         runCommand(
           "ssh",
-          sshArgs(binding, pinnedKnownHosts(binding), "python3 -"),
+          stationPrepSshArgs(binding, pinnedKnownHosts(binding), "python3 -"),
           STATION_DISCOVERY_PROBE,
         ),
         "Peer Station identity probe",
@@ -1014,7 +953,11 @@ function createRuntimeDeps(options: CliOptions): {
       return connectivityMatches(
         runCommand(
           "ssh",
-          sshArgs(binding, pinnedKnownHosts(binding), ["python3", "-", ...args].join(" ")),
+          stationPrepSshArgs(
+            binding,
+            pinnedKnownHosts(binding),
+            ["python3", "-", ...args].join(" "),
+          ),
           CONNECTIVITY_PROBE,
         ),
         requests,
@@ -1023,7 +966,11 @@ function createRuntimeDeps(options: CliOptions): {
     runRemoteHelper: (binding, mode) => {
       return runStreamingCommand(
         "ssh",
-        sshArgs(binding, pinnedKnownHosts(binding), buildRemoteHelperCommand(helperSha256, mode)),
+        stationPrepSshArgs(
+          binding,
+          pinnedKnownHosts(binding),
+          buildRemoteHelperCommand(helperSha256, mode),
+        ),
         helperBytes.toString("utf8"),
       );
     },

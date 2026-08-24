@@ -64,9 +64,16 @@ let sandboxRecreated = false;
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
+  if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  if (cmd.includes("sandbox list")) {
+    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
+  }
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxDeleted && !sandboxRecreated ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
@@ -191,9 +198,10 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
       cwd: repoRoot,
       encoding: "utf-8",
       env,
+      timeout: 30_000,
     });
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
     const payloadLine = result.stdout
       .trim()
       .split("\n")

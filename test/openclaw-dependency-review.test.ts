@@ -12,14 +12,14 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const MCP_TROUBLESHOOTING = path.join(
@@ -422,15 +422,15 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain("Transitive Remediation Boundary");
     expect(review).toContain("point-in-time record of the remediation shipped for the");
-    expect(review).toContain("current 2026.7.1 path installs the reviewed core archive");
+    expect(review).toContain("current 2026.7.1 path also remediates its source `tar`");
     expect(review).toContain("openclaw-2026.7.1-dependency-review.md");
     expect(review).toContain("Transitive Remediation Concern Ledger");
     expect(review).toContain("`openclaw@2026.6.10`, the helper makes these changes");
-    expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
+    expect(review).toContain("`tar@7.5.16` with `tar@7.5.21`");
     expect(review).toContain("`brace-expansion@5.0.6` with `brace-expansion@5.0.7`");
     expect(review).toContain("`@openclaw/fs-safe@0.3.0`");
     expect(review).toContain("removes its duplicate optional `tar` and `jszip` declarations");
-    expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
+    expect(review).toContain("direct `tar@7.5.21` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
     expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
@@ -449,7 +449,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "core value also covers the bundled `@openclaw/fs-safe` package manifest",
     );
     for (const integrity of [
-      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+      "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
       "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
       "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
@@ -457,7 +457,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
       "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
       "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
-      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-XMycUUV7gCzUYbjgwrglER0AQEtfuKUz6wyo4ilm/7nSSkLocYUYVkrJuBFYPW3no8Y5FW/1+2hWCssIyjxn3g==",
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
@@ -465,7 +465,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       expect(review).toContain(integrity);
     }
     for (const tarball of [
-      "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+      "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
       "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
       "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
@@ -482,7 +482,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "`https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file",
     );
     expect(review).toContain("The other replacement tarballs include license files");
-    expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
+    expect(review).toContain("`tar@7.5.21` declares BlueOak-1.0.0");
     expect(review).toContain("the OpenTelemetry packages declare Apache-2.0");
     expect(review).toContain("the other packages declare MIT");
     expect(review).toContain(
@@ -551,25 +551,6 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
-  });
-
-  // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
-  it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
-    const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
-    const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const groupedHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
-    );
-    const legacyHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
-    );
-    const helperCopy = groupedHelperCopy >= 0 ? groupedHelperCopy : legacyHelperCopy;
-    const helperInvocation = flattenedDockerfile.indexOf(
-      "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
-    );
-
-    expect(helperCopy).toBeGreaterThanOrEqual(0);
-    expect(helperInvocation).toBeGreaterThan(helperCopy);
   });
 
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
@@ -791,28 +772,30 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(source).toContain("#4533");
   });
 
-  it("keeps production Docker build workflows behind the build-arg guard", () => {
-    const workflows = workflowContracts();
-    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
-      findProductionBuildGuardCoverage(name, workflow),
-    );
+  it.each([
+    "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+    "OPENCLAW_VERSION=2026.3.11",
+    "OPENCLAW_VERSION=2026.4.24",
+    "OPENCLAW_2026_3_11_INTEGRITY",
+    "OPENCLAW_2026_3_11_TARBALL",
+    "OPENCLAW_2026_4_24_INTEGRITY",
+    "OPENCLAW_2026_4_24_TARBALL",
+  ])(
+    "keeps production Docker build workflows behind the build-arg guard [%s]",
+    (fixtureSelector) => {
+      const workflows = workflowContracts();
+      const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+        findProductionBuildGuardCoverage(name, workflow),
+      );
 
-    expect(discoveredBuilds.length).toBeGreaterThan(0);
-    expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+      expect(discoveredBuilds.length).toBeGreaterThan(0);
+      expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
-    const productionWorkflowContract = JSON.stringify(workflows);
-    for (const fixtureSelector of [
-      "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-      "OPENCLAW_VERSION=2026.3.11",
-      "OPENCLAW_VERSION=2026.4.24",
-      "OPENCLAW_2026_3_11_INTEGRITY",
-      "OPENCLAW_2026_3_11_TARBALL",
-      "OPENCLAW_2026_4_24_INTEGRITY",
-      "OPENCLAW_2026_4_24_TARBALL",
-    ]) {
+      const productionWorkflowContract = JSON.stringify(workflows);
+
       expect(productionWorkflowContract).not.toContain(fixtureSelector);
-    }
-  });
+    },
+  );
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(

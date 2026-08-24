@@ -678,7 +678,7 @@ describe("shields config lock without a shipped config hash", () => {
       sandboxCommandFailure(`${"x".repeat(100_000)}${lockFailure("config-root")}`, hostileMessage),
     ];
 
-    for (const failure of failures) {
+    failures.forEach((failure) => {
       errorSpy.mockClear();
       commandHandlers.set("python3", rejectConfigLock(failure));
 
@@ -693,7 +693,7 @@ describe("shields config lock without a shipped config hash", () => {
       expect((caught as Error).message.length).toBeLessThan(128);
       expect((caught as Error).message).not.toContain("python3");
       expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
-    }
+    });
   });
 
   it("keeps the fresh seal when a nested entry blocks recursive containment (#7977)", () => {

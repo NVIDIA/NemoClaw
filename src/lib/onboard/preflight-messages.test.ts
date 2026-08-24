@@ -3,15 +3,19 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { GpuDetection } from "../inference/nim";
+import { setOnboardBrandingAgent } from "./branding";
 import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
+  printGpuPreflightLines,
   printLowMemoryWarning,
   printMessagingProviderMissing,
   printSwapCreationFailed,
   printUnderProvisionedRuntimeWarning,
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
   return spy.mock.calls.map((call: unknown[]) => String(call[0]));
@@ -34,6 +38,8 @@ function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
 
 describe("onboard preflight severity messages (#6004)", () => {
   afterEach(() => {
+    setOnboardBrandingAgent(null);
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -118,10 +124,118 @@ describe("onboard preflight severity messages (#6004)", () => {
     expect(lines(warn).join("\n")).toContain("may fail with OOM");
   });
 
-  it("prints a missing messaging provider to stderr with a ⚠ marker and fix hint", () => {
+  it("routes missing messaging provider repair through profile-aware onboarding (#9875)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    setOnboardBrandingAgent("hermes");
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
     printMessagingProviderMissing("slack");
     expect(lines(warn)[0]).toContain("⚠ Messaging provider 'slack' was not found in the gateway.");
-    expect(lines(warn).join("\n")).toContain("openshell provider create --name slack");
+    expect(lines(warn).join("\n")).toContain(
+      "rerun nemohermes onboard with the required messaging credentials",
+    );
+  });
+});
+
+const sandboxGpuDisabled: SandboxGpuConfig = {
+  mode: "auto",
+  hostGpuDetected: false,
+  hostGpuPlatform: null,
+  sandboxGpuEnabled: false,
+  sandboxGpuDevice: null,
+  errors: [],
+};
+
+const nvidiaGpu: GpuDetection = {
+  type: "nvidia",
+  name: "NVIDIA GeForce RTX 4090",
+  count: 1,
+  totalMemoryMB: 24564,
+  perGpuMB: 24564,
+  nimCapable: true,
+};
+
+function collectLines(options: {
+  gpu: GpuDetection | null;
+  sandboxGpuConfig?: SandboxGpuConfig;
+  gpuTrustGateRejection?: string;
+}): string[] {
+  const lines: string[] = [];
+  printGpuPreflightLines({
+    gpu: options.gpu,
+    sandboxGpuConfig: options.sandboxGpuConfig ?? sandboxGpuDisabled,
+    gpuTrustGateRejection: options.gpuTrustGateRejection,
+    log: (message) => lines.push(message),
+  });
+  return lines;
+}
+
+describe("printGpuPreflightLines", () => {
+  it("prints the detected NVIDIA GPU with the sandbox GPU state", () => {
+    const lines = collectLines({
+      gpu: nvidiaGpu,
+      sandboxGpuConfig: {
+        ...sandboxGpuDisabled,
+        mode: "1",
+        hostGpuDetected: true,
+        sandboxGpuEnabled: true,
+      },
+    });
+    expect(lines).toEqual([
+      "  ✓ NVIDIA GPU detected (NVIDIA GeForce RTX 4090, 24564 MB)",
+      "  ✓ Sandbox GPU: enabled (1)",
+    ]);
+  });
+
+  it("marks local NIM unavailable when GPU VRAM is too small", () => {
+    const lines = collectLines({ gpu: { ...nvidiaGpu, nimCapable: false } });
+    expect(lines).toContain("  ⓘ Local NIM unavailable — GPU VRAM too small");
+  });
+
+  it("marks local NIM unavailable for an Apple GPU", () => {
+    const lines = collectLines({
+      gpu: {
+        type: "apple",
+        name: "Apple M3 Max",
+        count: 1,
+        totalMemoryMB: 65536,
+        perGpuMB: 65536,
+        cores: 40,
+        nimCapable: false,
+      },
+    });
+    expect(lines).toEqual([
+      "  ✓ Apple GPU detected: Apple M3 Max (40 cores), 65536 MB unified memory",
+      "  ⓘ Local NIM unavailable — requires NVIDIA GPU",
+      "  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)",
+    ]);
+  });
+
+  it("prints the trust-gate rejection reason under the no-GPU line (#9000)", () => {
+    const lines = collectLines({
+      gpu: null,
+      gpuTrustGateRejection:
+        "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+    });
+    expect(lines).toEqual([
+      "  ⓘ Local NIM unavailable — no GPU detected",
+      "    GPU detection rejected the nvidia-smi report: /proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+      "  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)",
+    ]);
+  });
+
+  it("keeps the bare no-GPU line when detection records no rejection reason", () => {
+    const lines = collectLines({ gpu: null });
+    expect(lines).toEqual([
+      "  ⓘ Local NIM unavailable — no GPU detected",
+      "  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)",
+    ]);
+  });
+
+  it("prints the configuration-disabled sandbox GPU state", () => {
+    const lines = collectLines({
+      gpu: null,
+      sandboxGpuConfig: { ...sandboxGpuDisabled, mode: "0" },
+    });
+    expect(lines).toContain("  ✓ Sandbox GPU: disabled by configuration");
   });
 });

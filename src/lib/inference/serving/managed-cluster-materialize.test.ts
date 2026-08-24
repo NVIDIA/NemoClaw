@@ -214,6 +214,7 @@ function syntheticSecondProfile(
   ];
   const catalogContents = {
     compilerVersion: baseCatalog.compilerVersion,
+    models: baseCatalog.models,
     presets: [...baseCatalog.presets, preset],
     recipes: [...baseCatalog.recipes, recipe],
     readinessSchemaRef: baseCatalog.readinessSchemaRef,
@@ -333,21 +334,46 @@ describe("managed-cluster vLLM materializer", () => {
     );
   });
 
+  it("applies a deployment-owned API port without changing the declarative recipe", () => {
+    const selection = selectionWithDigests();
+    const defaultPlan = materializeManagedClusterVllmPlan(selection);
+    const plan = materializeManagedClusterVllmPlan(selection, { apiPort: 19_000 });
+
+    expect(plan.apiPort).toBe(19_000);
+    expect(plan.roles[0].endpoint).toBe("http://192.168.100.10:19000");
+    expect(plan.roles[0].command.arguments).toEqual(
+      expect.arrayContaining(["--port", "19000"]),
+    );
+    expect(plan.roles[1].command.arguments).toEqual(
+      expect.arrayContaining(["--port", "19000"]),
+    );
+    expect(plan.planId).not.toBe(defaultPlan.planId);
+    expect(selection.recipe.spec.serve.arguments).toEqual(
+      fixtureManagedClusterSelection().recipe.spec.serve.arguments,
+    );
+  });
+
+  it.each([80, 65_536, 8_000.5])("rejects unsafe deployment API port %s", (apiPort) => {
+    expect(() =>
+      materializeManagedClusterVllmPlan(selectionWithDigests(), { apiPort }),
+    ).toThrow("configured API port must contain a valid TCP port");
+  });
+
   it("passes every recipe serving argument without embedding an API key", () => {
     const selection = selectionWithDigests();
     const plan = materializeManagedClusterVllmPlan(selection);
     const headArguments = plan.roles[0].command.arguments;
 
-    for (const argument of selection.recipe.spec.serve.arguments) {
+    selection.recipe.spec.serve.arguments.forEach((argument) => {
       const index = headArguments.indexOf(argument.name);
       expect(index).toBeGreaterThan(-1);
-    }
-    for (const argument of selection.recipe.spec.serve.arguments.filter(
+    });
+    selection.recipe.spec.serve.arguments.filter(
       ({ value }) => value !== undefined,
-    )) {
+    ).forEach((argument) => {
       const index = headArguments.indexOf(argument.name);
       expect(headArguments[index + 1]).toBe(String(argument.value));
-    }
+    });
     expect(headArguments).not.toContain("--api-key");
     expect(plan.roles[1].command.arguments).not.toContain("--api-key");
   });

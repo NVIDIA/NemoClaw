@@ -36,6 +36,7 @@ Run the onboarding wizard and select **NVIDIA Endpoints**.
 $$nemoclaw onboard
 ```
 
+If you enter `back` at the NVIDIA API key prompt, the wizard returns to provider selection without loading the model catalog.
 The wizard validates a manual model entry against the catalog before it continues.
 If the live catalog is unavailable or does not contain safe model IDs, the wizard warns you and uses the bundled fallback list.
 

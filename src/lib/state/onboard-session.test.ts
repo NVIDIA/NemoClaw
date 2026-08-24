@@ -264,7 +264,9 @@ describe("onboard session", () => {
     session.markStepStarted("provider_selection");
     session.updateSession((current) => {
       current.checkpoint = {
-        schemaVersion: 3,
+        schemaVersion: 4,
+        profile: { kind: "selected", value: "default" },
+        runtimeAuthority: { kind: "unset" },
         sessionId: current.sessionId,
         machineState: "init",
         updatedAt: new Date().toISOString(),
@@ -1037,6 +1039,31 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
     expect(session.loadSession()).toBeNull();
+  });
+
+  it("keeps completed legacy checkpoint sessions readable as status evidence", () => {
+    const completed = session.createSession({ sessionId: "legacy-completed" });
+    completed.status = "complete";
+    completed.resumable = false;
+    completed.machine = {
+      version: 1,
+      state: "complete",
+      stateEnteredAt: completed.updatedAt,
+      revision: 8,
+    };
+    const raw = JSON.parse(JSON.stringify(completed)) as Record<string, unknown>;
+    raw.checkpoint = { schemaVersion: 3, sessionId: completed.sessionId };
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(raw, null, 2), { mode: 0o600 });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded).toMatchObject({
+      sessionId: "legacy-completed",
+      status: "complete",
+      resumable: false,
+      machine: { state: "complete", revision: 8 },
+      checkpoint: null,
+    });
   });
 
   it("acquires and releases the onboard lock", () => {

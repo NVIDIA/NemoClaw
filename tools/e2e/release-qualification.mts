@@ -10,6 +10,21 @@ type WorkflowNeed = {
 const CONTROLLER_JOBS = ["base-image-publication", "generate-matrix"] as const;
 const JOB_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
+function parseJobIds(value: string, label: string, invalidLabel = label.toLowerCase()): string[] {
+  const jobs = JSON.parse(value) as unknown;
+  if (!Array.isArray(jobs)) {
+    throw new Error(`${label} must be a JSON array`);
+  }
+  const invalidJobs = jobs.filter((job) => typeof job !== "string" || !JOB_ID_PATTERN.test(job));
+  if (invalidJobs.length > 0) {
+    throw new Error(`Invalid ${invalidLabel}: ${invalidJobs.join(", ")}`);
+  }
+  if (new Set(jobs).size !== jobs.length) {
+    throw new Error(`${label} must not contain duplicates`);
+  }
+  return jobs as string[];
+}
+
 export function failedReleaseQualificationJobs(
   needs: Record<string, WorkflowNeed>,
   releaseRequiredJobs: readonly string[],
@@ -24,17 +39,12 @@ export function assertReleaseQualification(
   releaseRequiredJobsJson: string,
 ): void {
   const needs = JSON.parse(needsJson) as Record<string, WorkflowNeed>;
-  const releaseRequiredJobs = JSON.parse(releaseRequiredJobsJson) as unknown;
-  if (!Array.isArray(releaseRequiredJobs)) {
-    throw new Error("Release-required jobs must be a JSON array");
-  }
-  const invalidJobs = releaseRequiredJobs.filter(
-    (job) => typeof job !== "string" || !JOB_ID_PATTERN.test(job),
+  const releaseRequiredJobs = parseJobIds(
+    releaseRequiredJobsJson,
+    "Release-required jobs",
+    "release-required job IDs",
   );
-  if (invalidJobs.length > 0) {
-    throw new Error(`Invalid release-required job IDs: ${invalidJobs.join(", ")}`);
-  }
-  const failedJobs = failedReleaseQualificationJobs(needs, releaseRequiredJobs as string[]);
+  const failedJobs = failedReleaseQualificationJobs(needs, releaseRequiredJobs);
   if (failedJobs.length > 0) {
     throw new Error(`Release qualification did not pass: ${failedJobs.join(", ")}`);
   }

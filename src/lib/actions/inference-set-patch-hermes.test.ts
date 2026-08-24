@@ -87,8 +87,9 @@ describe("patchHermesInferenceConfig", () => {
     );
   });
 
-  it("replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel", () => {
-    for (const api_key of ["no-key-required", "sk-real-looking-key-that-must-not-survive"]) {
+  it.each(["no-key-required", "sk-real-looking-key-that-must-not-survive"])(
+    "replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel [case %#]",
+    (api_key) => {
       const config: ConfigObject = {
         model: {
           default: "old-model",
@@ -101,8 +102,8 @@ describe("patchHermesInferenceConfig", () => {
       patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
 
       expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
-    }
-  });
+    },
+  );
 
   it("sets Hermes Anthropic Messages mode for Anthropic routes", () => {
     const config: ConfigObject = {

@@ -16,6 +16,11 @@ describe("Ollama version detection", () => {
     expect(getInstalledOllamaVersion(capture)).toBe("0.6.2");
   });
 
+  it("prefers the client version line over the daemon version the CLI reports (#9276)", () => {
+    const capture = () => "ollama version is 0.23.4\nWarning: client version is 0.32.9";
+    expect(getInstalledOllamaVersion(capture)).toBe("0.32.9");
+  });
+
   it("returns null when ollama --version produces no output", () => {
     const capture = () => "";
     expect(getInstalledOllamaVersion(capture)).toBeNull();
@@ -30,20 +35,20 @@ describe("Ollama version detection", () => {
     expect(isOllamaVersionAtLeast(null, MIN_OLLAMA_VERSION)).toBe(false);
   });
 
-  it("treats 0.6.2 as below the 0.7.0 floor", () => {
-    expect(isOllamaVersionAtLeast("0.6.2", "0.7.0")).toBe(false);
+  it("treats Ollama 0.32.8 as below the structured-tool-call floor (#8979)", () => {
+    expect(isOllamaVersionAtLeast("0.32.8", MIN_OLLAMA_VERSION)).toBe(false);
   });
 
-  it("treats 0.7.0 as meeting the 0.7.0 floor", () => {
-    expect(isOllamaVersionAtLeast("0.7.0", "0.7.0")).toBe(true);
+  it("treats Ollama 0.32.9 as meeting the structured-tool-call floor (#8979)", () => {
+    expect(isOllamaVersionAtLeast("0.32.9", MIN_OLLAMA_VERSION)).toBe(true);
   });
 
-  it("treats 0.24.0 as above the 0.7.0 floor", () => {
-    expect(isOllamaVersionAtLeast("0.24.0", "0.7.0")).toBe(true);
+  it("treats newer Ollama versions as meeting the floor", () => {
+    expect(isOllamaVersionAtLeast("0.32.11", MIN_OLLAMA_VERSION)).toBe(true);
   });
 
-  it("treats 1.0.0 as above the 0.7.0 floor", () => {
-    expect(isOllamaVersionAtLeast("1.0.0", "0.7.0")).toBe(true);
+  it("treats 1.0.0 as above the floor", () => {
+    expect(isOllamaVersionAtLeast("1.0.0", MIN_OLLAMA_VERSION)).toBe(true);
   });
 
   it("returns false for unparseable version components", () => {

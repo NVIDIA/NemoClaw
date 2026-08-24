@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AgentDefinition } from "../agent/defs";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime-authority";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
@@ -10,15 +13,38 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+import {
+  classifyHermesPortableRegistry,
+  createHermesPortableChildEnvironment,
+  createHermesPortableContainerDeps,
+  createHermesPortableOpenShellCapture,
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+  defaultHermesPortableStateDir,
+  isHermesPortableLifecycleMode,
+  observeHermesPortableSandbox,
+  runHermesPortableOnboardingFromOnboard,
+  runHermesPortableOnboardingTransaction,
+  shouldManageHermesPortableDashboard,
+} from "./experimental/hermes-portable-onboarding";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
+  buildHermesPortableCommandAuthority,
+  buildHermesPortableOnboardingCommandAuthority,
+} from "./experimental/portable-agent-lifecycle";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
+import {
+  createManagedBootstrapIdentity,
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapImageIdentity,
   ManagedBootstrapRecoveryBlockedError,
+  renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
+import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/onboard-orchestration";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
@@ -27,11 +53,110 @@ import type {
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import {
+  createDirectSandboxGpuVerifier,
+  type DirectSandboxGpuVerifierDeps,
+  type VerifyDirectSandboxGpu,
+} from "./sandbox-gpu-preflight";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+export {
+  classifyHermesPortableRegistry,
+  createHermesPortableChildEnvironment,
+  createHermesPortableContainerDeps,
+  createHermesPortableOpenShellCapture,
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+  defaultHermesPortableStateDir,
+  observeHermesPortableSandbox,
+  runHermesPortableOnboardingFromOnboard,
+  runHermesPortableOnboardingTransaction,
+  shouldManageHermesPortableDashboard,
+  buildHermesPortableCommandAuthority,
+};
+export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
+export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;
+
+/** Release the exit cleanup listener only after its exact create source was retired. */
+export function cleanupSandboxCreateSource(
+  cleanup: (() => boolean) | undefined,
+  options: { readonly exactCleanup?: () => boolean; readonly requireExact?: boolean } = {},
+): boolean {
+  if (options.requireExact && cleanup && !options.exactCleanup) {
+    throw new Error("Hermes portable temporary policy source has no exact cleanup authority.");
+  }
+  const selected = options.exactCleanup ?? cleanup;
+  if (!selected) return true;
+  const completed = selected();
+  if (completed && cleanup) process.removeListener("exit", cleanup);
+  return completed;
+}
+
+/** Bind the exact create-source retirement decision without moving its execution point. */
+export function createSandboxCreateSourceCleanup(
+  source: { readonly cleanup?: () => boolean; readonly cleanupExact?: () => boolean },
+  requireExact: boolean,
+): () => boolean {
+  return () =>
+    cleanupSandboxCreateSource(source.cleanup, { exactCleanup: source.cleanupExact, requireExact });
+}
+
+/** Bind cleanup for the one staged build context owned by this create attempt. */
+export function createSandboxBuildContextCleanup(
+  context: { readonly cleanupBuildCtx?: () => boolean } | null,
+): () => void {
+  return () => {
+    if (context?.cleanupBuildCtx?.()) process.removeListener("exit", context.cleanupBuildCtx);
+  };
+}
+
+export function resolvePortableLifecycleMode(
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw";
+}
+
+/** Resolve the checkpoint-owned authority required by exported portable creation helpers. */
+export function resolveExportedPortableRuntimeAuthority(
+  env: NodeJS.ProcessEnv,
+  loadSession: () => {
+    checkpoint?: {
+      profile: { kind: "selected"; value: "default" | "portable" };
+      runtimeAuthority:
+        | { kind: "unset" }
+        | { kind: "selected"; value: CheckpointPortableRuntimeAuthority };
+    } | null;
+  } | null,
+): CheckpointPortableRuntimeAuthority | null {
+  if (!isPortableExperimentalProfile(env)) return null;
+  const checkpoint = loadSession()?.checkpoint;
+  const authority =
+    checkpoint?.profile.value === "portable" && checkpoint.runtimeAuthority.kind === "selected"
+      ? parsePortableRuntimeAuthority(checkpoint.runtimeAuthority.value)
+      : null;
+  if (authority) return authority;
+  throw new Error(
+    "Portable sandbox creation requires checkpoint-owned Podman runtime authority before creation begins.",
+  );
+}
+
+export function resolveAgentCreateInput(
+  agent: AgentDefinition | null,
+  dockerDriverGateway: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return {
+    dockerDriverGateway,
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway, env),
+    portableLifecycle: resolvePortableLifecycleMode(agent, env),
+    hermesPortableLifecycle: isHermesPortableLifecycleMode(agent, env),
+  };
+}
 
 /*
  * Keep recovery rendering at this public command boundary. Providers own the
@@ -79,9 +204,16 @@ export interface SandboxGpuCreateFlowInput {
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
+  /** Exact schema-5 build context consumed by the OpenShell create child. */
+  createWorkingDirectory?: string;
+  /** Host-side runtime environment used only by the selected lifecycle provider. */
+  hostEnv?: NodeJS.ProcessEnv;
+  portableLifecycle?: boolean;
+  hermesPortableLifecycle?: boolean;
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
+  portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -108,10 +240,14 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  printCreateFailureDiagnostics?: (
+    sandboxName: string,
+    options: { readonly backupPath?: string | null },
+  ) => void;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
-  createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
+  createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
 export interface SandboxGpuCreateFlowResult {
@@ -122,6 +258,37 @@ export interface SandboxGpuCreateFlowResult {
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
   lifecycleRegistrationFields: LifecycleRegistrationFields;
+}
+
+/** Bind only the schema-5 GPU proof child to its admitted command authorities. */
+export function createHermesPortableGpuProofAuthority(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly sourceEnv: NodeJS.ProcessEnv;
+  readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
+  readonly runOpenshell: DirectSandboxGpuVerifierDeps["runOpenshell"];
+  readonly compactText: DirectSandboxGpuVerifierDeps["compactText"];
+  readonly redact: DirectSandboxGpuVerifierDeps["redact"];
+}): { readonly env: NodeJS.ProcessEnv; readonly verify: VerifyDirectSandboxGpu } {
+  const env = createHermesPortableChildEnvironment(input.sourceEnv, input.runtimeAuthority);
+  return {
+    env,
+    verify: createDirectSandboxGpuVerifier({
+      runOpenshell: input.runOpenshell,
+      compactText: input.compactText,
+      redact: input.redact,
+      gatewayName: input.gatewayName,
+      subprocessEnv: env,
+      resolveOpenShellCommandAuthority: () =>
+        buildHermesPortableOnboardingCommandAuthority(
+          input.sandboxName,
+          input.gatewayName,
+          input.lifecycleGeneration,
+          input.sourceEnv,
+        ),
+    }),
+  };
 }
 
 /**
@@ -140,8 +307,31 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
+  assertPortableManagedBootstrapNotSelected(
+    input.portableLifecycle === true,
+    input.managedBootstrap != null,
+  );
+  if (hermesPortableLifecycle && input.managedBootstrap != null) {
+    throw new Error(
+      "Hermes portable onboarding cannot use managed-image bootstrap because it requires Docker lifecycle operations.",
+    );
+  }
+  if (hermesPortableLifecycle && (!input.lifecycleGeneration || !input.portableRuntimeAuthority)) {
+    throw new Error(
+      "Hermes portable onboarding requires checkpoint runtime authority and a lifecycle generation before creation.",
+    );
+  }
   let registryImageRef: string | null = input.prebuild.imageRef;
-  const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
+  const attemptRunner = createSandboxGpuCreateAttemptRunner(
+    hermesPortableLifecycle ? { ...input, portableLifecycle: true } : input,
+    hermesPortableLifecycle
+      ? {
+          ...deps,
+          installPortableDemoLifecycle: () => input.lifecycleGeneration!,
+        }
+      : deps,
+  );
   const gpuCreateOutcome = await sandboxGpuCreateAttempt
     .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
       runAttempt: attemptRunner.runAttempt,
@@ -157,27 +347,49 @@ export async function runSandboxGpuCreateFlow(
         );
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
-      cleanupNativeFailure: () =>
-        sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
-          runOpenshell: deps.runOpenshell,
-          sleep: deps.sleep,
-        }),
+      cleanupNativeFailure: (failure) => {
+        return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
+          input.sandboxName,
+          failure,
+          {
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+          },
+        );
+      },
       prepareCompatibilityAttempt: async () => {
         if (!input.compatibilityPolicyPath) {
           throw new Error("Compatibility retry policy was not materialized.");
         }
         const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
         if (attemptRunner.managedRouting) {
+          const managedBootstrap = input.managedBootstrap;
+          if (!managedBootstrap) {
+            throw new Error("Managed compatibility routing is missing bootstrap authority.");
+          }
+          const bootstrapIdentity = createManagedBootstrapIdentity();
+          const heldWorkloadArgv = [
+            ...renderManagedBootstrapHeldCommand(
+              managedBootstrap.request,
+              bootstrapIdentity,
+              managedBootstrap.intendedWorkloadArgv,
+            ),
+          ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: input.prebuild.createArgs,
+            createArgs: managedBootstrapCreateArgs(
+              input.prebuild.createArgs,
+              bootstrapIdentity,
+            ),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
             compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: input.sandboxStartupCommand,
+            startupCommand: heldWorkloadArgv,
             runtimeSnapshot: nativeRuntimeSnapshot,
           });
           attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+          attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
+          attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
           registryImageRef = prepared.registryImageRef;
         } else {
           const prebuildImageId = input.prebuild.imageId;
@@ -249,24 +461,36 @@ export async function runSandboxGpuCreateFlow(
         `  Cleanup could not be proven safe: ${redactFull(gpuCreateOutcome.cleanupRefused)}`,
       );
     }
-    console.error(`  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`);
+    console.error(
+      gpuCreateOutcome.nativeCleanupHandoff
+        ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
+        : hermesPortableLifecycle
+        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+    );
     process.exit(1);
   }
 
-  let portableLifecycleGeneration: string | null = null;
-  try {
-    portableLifecycleGeneration =
-      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-        input.sandboxName,
-        input.sandboxStartupCommand,
-        process.env,
-        {
-          ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
-        },
-      ) ?? null;
-  } catch (error) {
-    const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
-    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
+  if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
+    try {
+      portableLifecycleGeneration =
+        (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+          input.sandboxName,
+          input.sandboxStartupCommand,
+          process.env,
+          {
+            ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+            runtimeAuthority: input.portableRuntimeAuthority ?? null,
+          },
+        ) ?? null;
+    } catch (error) {
+      const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(
+        0,
+        500,
+      );
+      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+    }
   }
 
   return {
@@ -275,8 +499,8 @@ export async function runSandboxGpuCreateFlow(
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
     lifecycleRegistrationFields: {
-      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
       ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
+      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
     },
   };
 }

@@ -17,15 +17,12 @@ type ArtifactValidationInput = {
   expectedBaseSha: string;
   trustedWorkflowSha: string;
   primaryArtifactDir: string;
-  secondaryArtifactDir: string;
-  secondaryArtifactOutcome: string;
   maxResultBytes: number;
   maxSummaryBytes: number;
 };
 
 type ArtifactValidationOptions = {
   fetchLivePull?: (repository: string, prNumber: string) => { headSha: string; baseSha: string };
-  appendOutput?: (key: string, value: string) => void;
 };
 
 type GhApiRunner = (
@@ -79,10 +76,6 @@ export function fetchLivePullFromGh(
 }
 
 function inputFromEnv(env = process.env): ArtifactValidationInput {
-  const outcome = required(env.SECONDARY_ARTIFACT_OUTCOME, "SECONDARY_ARTIFACT_OUTCOME");
-  if (outcome !== "success" && outcome !== "failure") {
-    fail("Invalid secondary advisor artifact outcome");
-  }
   return {
     repository: required(env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
     prNumber: required(env.PR_NUMBER, "PR_NUMBER"),
@@ -90,11 +83,6 @@ function inputFromEnv(env = process.env): ArtifactValidationInput {
     expectedBaseSha: required(env.PR_BASE_SHA, "PR_BASE_SHA"),
     trustedWorkflowSha: required(env.TRUSTED_WORKFLOW_SHA, "TRUSTED_WORKFLOW_SHA"),
     primaryArtifactDir: required(env.PUBLISH_ARTIFACT_DIR, "PUBLISH_ARTIFACT_DIR"),
-    secondaryArtifactDir: required(
-      env.SECONDARY_PUBLISH_ARTIFACT_DIR,
-      "SECONDARY_PUBLISH_ARTIFACT_DIR",
-    ),
-    secondaryArtifactOutcome: outcome,
     maxResultBytes: positiveInt(
       env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES,
       "PR_REVIEW_ADVISOR_MAX_RESULT_BYTES",
@@ -120,25 +108,6 @@ export function validateAdvisorArtifacts(
     "primary advisor",
   );
 
-  let secondaryArtifactValidated = false;
-  if (input.secondaryArtifactOutcome === "success") {
-    try {
-      const secondary = artifactPaths(input.secondaryArtifactDir);
-      validateLane(
-        secondary,
-        input.maxResultBytes,
-        input.maxSummaryBytes,
-        input.expectedHeadSha,
-        "secondary advisor",
-      );
-      secondaryArtifactValidated = true;
-    } catch {
-      console.error(
-        "::warning::Secondary advisor artifact failed validation; publishing the primary review without it",
-      );
-    }
-  }
-
   const fetchLivePull = options.fetchLivePull ?? fetchLivePullFromGh;
   const live = fetchLivePull(input.repository, input.prNumber);
   if (live.headSha !== input.expectedHeadSha) {
@@ -147,15 +116,6 @@ export function validateAdvisorArtifacts(
   if (live.baseSha !== input.expectedBaseSha) {
     fail("PR base changed after analysis; refusing to publish a stale review");
   }
-
-  const appendOutput =
-    options.appendOutput ??
-    ((key: string, value: string): void => {
-      const target = process.env.GITHUB_OUTPUT;
-      if (!target) fail("GITHUB_OUTPUT is not set");
-      fs.appendFileSync(target, `${key}=${value}\n`);
-    });
-  appendOutput("secondary_artifact_validated", String(secondaryArtifactValidated));
 }
 
 function validateIdentity(input: ArtifactValidationInput): void {
@@ -166,12 +126,6 @@ function validateIdentity(input: ArtifactValidationInput): void {
     !SHA_PATTERN.test(input.trustedWorkflowSha)
   ) {
     fail("Invalid target-event publication identity");
-  }
-  if (
-    input.secondaryArtifactOutcome !== "success" &&
-    input.secondaryArtifactOutcome !== "failure"
-  ) {
-    fail("Invalid secondary advisor artifact outcome");
   }
 }
 

@@ -32,9 +32,12 @@ const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executab
   encoding: "utf8",
 }).trim();
 
-const EXPECTED_DCODE_VERSION = "0.1.34";
-const EXPECTED_DEEPAGENTS_VERSION = "0.7.0a6";
-const NATIVE_PROFILE_SHA256 = "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7";
+const requirementsLock = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+const EXPECTED_DCODE_VERSION = /^deepagents-code==([^\s;]+)/m.exec(requirementsLock)?.[1];
+const EXPECTED_DEEPAGENTS_VERSION = /^deepagents==([^\s;]+)/m.exec(requirementsLock)?.[1];
+assert(EXPECTED_DCODE_VERSION, "requirements.lock must pin deepagents-code");
+assert(EXPECTED_DEEPAGENTS_VERSION, "requirements.lock must pin deepagents");
+const NATIVE_PROFILE_SHA256 = "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a";
 const UNMODIFIED_BOOTSTRAP_SHA256 =
   "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf";
 const CANONICAL_MODEL_SPEC = "nvidia:nvidia/nemotron-3-ultra-550b-a55b";
@@ -656,22 +659,26 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('license = "Apache-2.0"');
     expect(project).toContain('[project.entry-points."deepagents.harness_profiles"]');
     expect(project).toContain('nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"');
-    expect(project).toContain('"deepagents-code==0.1.34"');
-    expect(project).toContain('"deepagents==0.7.0a6"');
+    expect(project).toContain('"deepagents-code==0.1.55"');
+    expect(project).toContain('"deepagents==0.7.5"');
   });
 
-  it("keeps language-local managed Ultra model ID allowlists in sync", () => {
+  it.each(
+    Array.from(
+      [
+        path.join(agentDir, "generate-config.ts"),
+        path.join(agentDir, "patch-managed-deepagents-code.py"),
+        validatorPath,
+        pluginSourcePath,
+        e2eProfileCheckPath,
+      ],
+      (value) => [value],
+    ),
+  )("keeps the managed Ultra model ID allowlist in %s in sync", (sourcePath) => {
     const expected = [...MANAGED_MODEL_IDS].sort();
-    for (const sourcePath of [
-      path.join(agentDir, "generate-config.ts"),
-      path.join(agentDir, "patch-managed-deepagents-code.py"),
-      validatorPath,
-      pluginSourcePath,
-      e2eProfileCheckPath,
-    ]) {
-      const source = fs.readFileSync(sourcePath, "utf8");
-      expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
-    }
+
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
   });
 
   it("accepts the exact plugin, then rejects source substitution", () => {
@@ -815,21 +822,23 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expectOfficialSourcesUnchanged(fixture);
   });
 
-  it("pins guard validators to the ToolMessage string-content API", () => {
-    const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
-    const validator = fs.readFileSync(validatorPath, "utf8");
-    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+  it.each([{ scenario: "validator" }, { scenario: "E2E check" }])(
+    "pins guard validators to the ToolMessage string-content API [$scenario]",
+    ({ scenario }) => {
+      const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+      const validator = fs.readFileSync(validatorPath, "utf8");
+      const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
-    expect(requirements).toMatch(/^langchain-core==1\.4\.8 /m);
-    for (const source of [validator, e2eCheck]) {
+      expect(requirements).toMatch(/^langchain-core==1\.5\.3(?:[ \t]|$)/m);
+      const source = ({ validator: validator, "E2E check": e2eCheck } as const)[scenario]!;
       expect(source).toContain("isinstance(sync_result.content, str)");
       expect(source).toContain("isinstance(async_result.content, str)");
       expect(source).toContain('"complete command" in sync_result.content');
       expect(source).toContain('"complete command" in async_result.content');
       expect(source).not.toContain("sync_result.text");
       expect(source).not.toContain("async_result.text");
-    }
-  });
+    },
+  );
 
   it("resolves a managed model before the E2E probe inspects lazy profile state", () => {
     const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
@@ -843,8 +852,8 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
   });
 
   it.each([
-    ["Deep Agents Code", { dcode: "0.1.35" }, "deepagents-code==0.1.34"],
-    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.0a6"],
+    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.55"],
+    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.5"],
   ] as const)("fails closed on %s version drift", (_label, versions, message) => {
     const fixture = makePluginFixture(versions);
     const result = runPlugin(fixture);
@@ -921,20 +930,20 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expectOfficialSourcesUnchanged(fixture);
   });
 
-  it.each([
-    "partial",
-    "conflict",
-  ] as const)("rejects %s managed alias state without further registry changes", (aliasState) => {
-    const fixture = makePluginFixture();
-    const result = runPlugin(fixture, { aliasState });
+  it.each(["partial", "conflict"] as const)(
+    "rejects %s managed alias state without further registry changes",
+    (aliasState) => {
+      const fixture = makePluginFixture();
+      const result = runPlugin(fixture, { aliasState });
 
-    expect(result.status).not.toBe(0);
-    expect(result.probe.error).toMatch(/partial|conflict/i);
-    expect(result.probe.registryKeys).toHaveLength(
-      aliasState === "partial" ? 3 : MANAGED_MODEL_ALIASES.length + 1,
-    );
-    expectOfficialSourcesUnchanged(fixture);
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.probe.error).toMatch(/partial|conflict/i);
+      expect(result.probe.registryKeys).toHaveLength(
+        aliasState === "partial" ? 3 : MANAGED_MODEL_ALIASES.length + 1,
+      );
+      expectOfficialSourcesUnchanged(fixture);
+    },
+  );
 
   it("rolls back the first alias when the second registration fails", () => {
     const fixture = makePluginFixture();

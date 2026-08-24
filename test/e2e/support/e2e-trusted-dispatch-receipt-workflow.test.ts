@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
-describe("trusted E2E dispatch receipt workflow boundary", () => {
-  it("rejects incomplete or mutable trusted PR dispatch receipts", () => {
+describe("manual PR dispatch receipt", () => {
+  it("rejects receipts with missing fields, changed schema, or mutable uploads", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -44,7 +44,7 @@ describe("trusted E2E dispatch receipt workflow boundary", () => {
     );
   });
 
-  it("rejects candidate execution before the trusted PR dispatch receipt", () => {
+  it("records and uploads the receipt after authentication and before checkout", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,

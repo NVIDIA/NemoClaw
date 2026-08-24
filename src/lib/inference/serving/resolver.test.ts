@@ -36,6 +36,31 @@ import type {
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
+const N1X_VLLM_PRESET_ID = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
+const LINUX_VLLM_PROFILES = [
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
+    recipeId: "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+    model: "muse-glimmer-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
+  },
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+    recipeId: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+    model: "nemotron-3.5-lightning-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
+  },
+] as const;
+const STATION_LARGE_MODEL_PROFILES = [
+  {
+    presetId: "vllm.dgx-station-gb300.single.deepseek-v4-flash",
+    model: "deepseek-v4-flash",
+  },
+  {
+    presetId: "vllm.dgx-station-gb300.single.nemotron-3-ultra-550b-a55b-nvfp4",
+    model: "nemotron-3-ultra-550b-a55b",
+  },
+] as const;
 
 function shippedCatalog(): CompiledManagedInferenceCatalog {
   return structuredClone(loadManagedInferenceCatalog());
@@ -81,7 +106,10 @@ function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
 
 function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
   const catalog = shippedCatalog();
-  const sourceRecipe = catalog.recipes.find(isHostLocalInferenceServingRecipe);
+  const sourceRecipe = catalog.recipes.find(
+    (recipe): recipe is HostLocalInferenceServingRecipe =>
+      isHostLocalInferenceServingRecipe(recipe) && recipe.spec.runtime.architecture === "arm64",
+  );
   expect(sourceRecipe).toBeDefined();
   const sourcePreset = catalog.presets.find(
     ({ spec }) => spec.plan.recipeRef === sourceRecipe!.metadata.id,
@@ -121,27 +149,32 @@ function catalogReadinessEntities(
     "readiness" in requirement ? [requirement.readiness] : [],
   );
   return {
-    observations: readinessRequirements.flatMap((readiness) =>
-      readiness.kind !== "observation"
-        ? []
-        : "state" in readiness
-          ? [
-              {
-                id: readiness.id,
-                state: readiness.state as SystemReadinessReport["observations"][number]["state"],
-              },
-            ]
-          : [
-              {
-                id: readiness.id,
-                state: "present" as const,
-                value:
-                  readiness.comparison.operator === "one-of"
-                    ? readiness.comparison.values[0]
-                    : readiness.comparison.value,
-              },
-            ],
-    ),
+    observations: [
+      ...readinessRequirements.flatMap((readiness) =>
+        readiness.kind !== "observation"
+          ? []
+          : "state" in readiness
+            ? [
+                {
+                  id: readiness.id,
+                  state: readiness.state as SystemReadinessReport["observations"][number]["state"],
+                },
+              ]
+            : [
+                {
+                  id: readiness.id,
+                  state: "present" as const,
+                  value:
+                    readiness.comparison.operator === "one-of"
+                      ? readiness.comparison.values[0]
+                      : readiness.comparison.value,
+                },
+              ],
+      ),
+      { id: "host.gpu.unified_memory", state: "present", value: true },
+      { id: "host.gpu.memory_total_bytes", state: "present", value: 500_000_000_000 },
+      { id: "host.gpu.memory_per_device_bytes", state: "present", value: 500_000_000_000 },
+    ],
     capabilities: readinessRequirements.flatMap((readiness) =>
       readiness.kind === "capability"
         ? [
@@ -224,6 +257,69 @@ function storageRemediableReadinessReport(
     ],
     status: "incompatible",
     exitCode: 2,
+  };
+}
+
+function deferredN1xReadinessReport(
+  extraFindings: SystemReadinessReport["findings"] = [],
+  n1xState: "present" | "absent" = "present",
+): SystemReadinessReport {
+  const catalog = shippedCatalog();
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === N1X_VLLM_PRESET_ID);
+  expect(preset).toBeDefined();
+  const report = readinessReport({}, preset!);
+  return {
+    ...report,
+    capabilities: [
+      ...report.capabilities.map((capability) =>
+        capability.id === "host.platform.n1x"
+          ? { ...capability, state: n1xState }
+          : capability,
+      ),
+      { id: "host.platform.supported", state: "absent" as const },
+    ],
+    findings: [
+      {
+        id: "host.platform.n1x_validation_pending",
+        severity: "blocking",
+        summary: "N1x platform validation is pending a physical NemoClaw Express E2E run.",
+        capabilityIds: ["host.platform.n1x", "host.platform.supported"],
+      },
+      ...extraFindings,
+    ],
+    status: "incompatible",
+    exitCode: 2,
+  };
+}
+
+function deferredN1xWithRemediableStorageReport(
+  extraFindings: SystemReadinessReport["findings"] = [],
+): SystemReadinessReport {
+  const report = deferredN1xReadinessReport([
+    {
+      id: "host.docker.storage_incompatible",
+      severity: "blocking",
+      summary: "The Docker storage configuration requires lifecycle remediation.",
+      capabilityIds: ["host.docker.storage_compatible"],
+    },
+    ...extraFindings,
+  ]);
+  return {
+    ...report,
+    capabilities: [
+      ...report.capabilities.map((capability) =>
+        capability.id === "host.docker.storage_compatible"
+          ? { ...capability, state: "absent" as const }
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
+      ),
+      ...(report.capabilities.some(
+        ({ id }) => id === "host.docker.storage_remediation_available",
+      )
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
+    ],
   };
 }
 
@@ -311,6 +407,163 @@ function catalogWithSecondProfile(options: {
 }
 
 describe("managed inference resolver", () => {
+  it.each(STATION_LARGE_MODEL_PROFILES)(
+    "selects the supported single-Station $model profile at physical GB300 HBM capacity (#9850)",
+    ({ presetId, model }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+      const base = readinessReport({}, preset!);
+      const physicalGb300MemoryBytes = 269_172_604_928;
+      const report = {
+        ...base,
+        observations: base.observations.map((observation) =>
+          observation.id === "host.gpu.memory_total_bytes" ||
+          observation.id === "host.gpu.memory_per_device_bytes"
+            ? { ...observation, value: physicalGb300MemoryBytes }
+            : observation,
+        ),
+      } as SystemReadinessReport;
+
+      expect(
+        resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "station", report }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        ),
+      ).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+      });
+    },
+  );
+
+  it.each(LINUX_VLLM_PROFILES)(
+    "selects the shipped Linux amd64 profile for direct model $model (#9673)",
+    ({ presetId, recipeId, model }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+
+      const result = resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      );
+
+      expect(result).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+        recipe: { metadata: { id: recipeId } },
+      });
+    },
+  );
+
+  it.each([
+    "MUSE-GLIMMER-30B",
+    "INFERACT/MUSE-GLIMMER-30B-NVFP4-W4A4",
+  ])("matches documented model aliases case-insensitively: %s", (model) => {
+    const catalog = shippedCatalog();
+    const { presetId, recipeId } = LINUX_VLLM_PROFILES[0];
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+    expect(preset).toBeDefined();
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: presetId } },
+      recipe: { metadata: { id: recipeId } },
+    });
+  });
+
+  it.each(LINUX_VLLM_PROFILES)(
+    "enforces the Linux amd64 $model GPU memory boundary (#9673)",
+    ({ presetId, model, minimumGpuMemoryBytes }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+      const base = readinessReport({}, preset!);
+      const resolveAtMemory = (memoryBytes: number) => {
+        const report = {
+          ...base,
+          observations: base.observations.map((observation) =>
+            observation.id === "host.gpu.memory_total_bytes" ||
+            observation.id === "host.gpu.memory_per_device_bytes"
+              ? { ...observation, value: memoryBytes }
+              : observation,
+          ),
+        } as SystemReadinessReport;
+        return resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "linux-host", report }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        );
+      };
+
+      expect(resolveAtMemory(minimumGpuMemoryBytes - 1)).toMatchObject({
+        outcome: "rejected",
+        code: "requirements-not-met",
+      });
+      expect(resolveAtMemory(minimumGpuMemoryBytes)).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+      });
+    },
+  );
+
+  it("rejects the Linux amd64 Muse profile on arm64 (#9673)", () => {
+    const catalog = shippedCatalog();
+    const { presetId, model } = LINUX_VLLM_PROFILES[0];
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+    expect(preset).toBeDefined();
+    const base = readinessReport({}, preset!);
+    const report = {
+      ...base,
+      observations: base.observations.map((observation) =>
+        observation.id === "host.os.architecture"
+          ? { ...observation, value: "arm64" }
+          : observation,
+      ),
+    } as SystemReadinessReport;
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "linux-host", report }],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+  });
+
   it("resolves an explicit host-local vLLM preset without topology data (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const presetId = catalog.presets[0]!.metadata.id;
@@ -332,6 +585,54 @@ describe("managed inference resolver", () => {
     expect(result).not.toHaveProperty("topologyQualification");
   });
 
+  it("resolves a direct model slug only after its full host requirements match", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const recipe = catalog.recipes[0] as HostLocalInferenceServingRecipe;
+    const report = readinessReport({}, catalog.presets[0]!);
+    const result = resolveManagedInferenceServing(
+      {
+        readinessReports: [{ nodeId: "host", report }],
+        topologyQualifications: [],
+        intent: { provider: "vllm", vllmModel: recipe.spec.model.environmentValue },
+        now: NOW,
+      },
+      catalog,
+    );
+
+    expect(result).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: catalog.presets[0]!.metadata.id } },
+    });
+  });
+
+  it("rejects a direct model before materialization when GPU memory is below its floor", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const recipe = catalog.recipes[0] as HostLocalInferenceServingRecipe;
+    const base = readinessReport({}, catalog.presets[0]!);
+    const report = {
+      ...base,
+      observations: base.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes" ||
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: 1 }
+          : observation,
+      ),
+    } as SystemReadinessReport;
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "host", report }],
+          topologyQualifications: [],
+          intent: { vllmModel: recipe.spec.model.environmentValue },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+  });
+
   it("materializes a host-local selection into the existing single-Spark runtime (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const presetId = catalog.presets[0]!.metadata.id;
@@ -351,6 +652,7 @@ describe("managed inference resolver", () => {
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
+      architecture: "arm64",
       image: "example.invalid/vllm@sha256:" + "a".repeat(64),
       imageDownloadSizeBytes: 1,
       defaultModel: {} as never,
@@ -366,16 +668,15 @@ describe("managed inference resolver", () => {
       recipeId: catalog.recipes[0]!.metadata.id,
       profile: {
         platform: "spark",
-        servingCatalog: {
-          presetId,
-          recipeId: catalog.recipes[0]!.metadata.id,
-        },
       },
       model: {
         id: catalog.recipes[0]!.spec.model.id,
         platforms: ["spark"],
       },
     });
+    expect(selected.profile.servingCatalog).toBeUndefined();
+    expect(selected.model.managedBearerAuth).toBeUndefined();
+    expect(selected.model.fixedServeCommand).toBeUndefined();
   });
 
   it("selects the shipped automatic preset from catalog data", () => {
@@ -553,92 +854,108 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
   });
 
-  it("selects a preset only when readiness observation comparisons match (#8246)", () => {
-    const catalog = hostLocalFixtureCatalog();
-    const preset = catalog.presets[0]!;
-    const comparedPreset = {
-      ...preset,
-      spec: {
-        ...preset.spec,
-        requirements: {
-          all: [
-            {
-              readiness: {
-                scope: "everyNode",
-                kind: "observation",
-                id: "host.os.platform",
-                comparison: { operator: "equals", value: "linux" },
+  it.each(
+    Array.from(
+      [
+        ["equals", "host.os.platform", "windows"],
+        ["one-of", "host.os.architecture", "riscv64"],
+        ["at-least", "host.gpu.count", 0],
+        ["version-at-least", "host.gpu.driver_version", "580.65"],
+        ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
+        [
+          "version segment above Number.MAX_SAFE_INTEGER",
+          "host.gpu.driver_version",
+          "9007199254740992.1",
+        ],
+      ] as const,
+      (value) => [value],
+    ),
+  )(
+    "selects a preset only when readiness observation comparisons match [case %#] (#8246)",
+    ([caseName, id, value]) => {
+      const catalog = hostLocalFixtureCatalog();
+      const preset = catalog.presets[0]!;
+      const comparedPreset = {
+        ...preset,
+        spec: {
+          ...preset.spec,
+          requirements: {
+            all: [
+              {
+                readiness: {
+                  scope: "everyNode",
+                  kind: "observation",
+                  id: "host.os.platform",
+                  comparison: { operator: "equals", value: "linux" },
+                },
               },
+              {
+                readiness: {
+                  scope: "everyNode",
+                  kind: "observation",
+                  id: "host.os.architecture",
+                  comparison: { operator: "one-of", values: ["arm64", "amd64"] },
+                },
+              },
+              {
+                readiness: {
+                  scope: "everyNode",
+                  kind: "observation",
+                  id: "host.gpu.count",
+                  comparison: { operator: "at-least", value: 1 },
+                },
+              },
+              {
+                readiness: {
+                  scope: "everyNode",
+                  kind: "observation",
+                  id: "host.gpu.driver_version",
+                  comparison: { operator: "version-at-least", value: "580.65.6" },
+                },
+              },
+            ],
+          },
+        },
+      } as ManagedInferenceServingPreset;
+      const comparedCatalog: CompiledManagedInferenceCatalog = {
+        ...catalog,
+        presets: [comparedPreset],
+      };
+      const reports = readinessSources().map(({ nodeId, report }) => ({
+        nodeId,
+        report: readinessReport({
+          ...report,
+          observations: [
+            { id: "host.os.platform", state: "present", value: "linux" },
+            { id: "host.os.architecture", state: "present", value: "arm64" },
+            { id: "host.gpu.count", state: "present", value: 1 },
+            { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
+            { id: "host.gpu.unified_memory", state: "present", value: true },
+            {
+              id: "host.gpu.memory_total_bytes",
+              state: "present",
+              value: 500_000_000_000,
             },
             {
-              readiness: {
-                scope: "everyNode",
-                kind: "observation",
-                id: "host.os.architecture",
-                comparison: { operator: "one-of", values: ["arm64", "amd64"] },
-              },
-            },
-            {
-              readiness: {
-                scope: "everyNode",
-                kind: "observation",
-                id: "host.gpu.count",
-                comparison: { operator: "at-least", value: 1 },
-              },
-            },
-            {
-              readiness: {
-                scope: "everyNode",
-                kind: "observation",
-                id: "host.gpu.driver_version",
-                comparison: { operator: "version-at-least", value: "580.65.6" },
-              },
+              id: "host.gpu.memory_per_device_bytes",
+              state: "present",
+              value: 500_000_000_000,
             },
           ],
-        },
-      },
-    } as ManagedInferenceServingPreset;
-    const comparedCatalog: CompiledManagedInferenceCatalog = {
-      ...catalog,
-      presets: [comparedPreset],
-    };
-    const reports = readinessSources().map(({ nodeId, report }) => ({
-      nodeId,
-      report: readinessReport({
-        ...report,
-        observations: [
-          { id: "host.os.platform", state: "present", value: "linux" },
-          { id: "host.os.architecture", state: "present", value: "arm64" },
-          { id: "host.gpu.count", state: "present", value: 1 },
-          { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
-        ],
-      }),
-    }));
-
-    expect(
-      resolveManagedInferenceServing(
-        resolverInput({
-          readinessReports: reports,
-          topologyQualifications: [],
-          intent: { preset: preset.metadata.id },
         }),
-        comparedCatalog,
-      ),
-    ).toMatchObject({ outcome: "selected" });
+      }));
 
-    const nonmatchingObservations = [
-      ["equals", "host.os.platform", "windows"],
-      ["one-of", "host.os.architecture", "riscv64"],
-      ["at-least", "host.gpu.count", 0],
-      ["version-at-least", "host.gpu.driver_version", "580.65"],
-      ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
-      [
-        "version segment above Number.MAX_SAFE_INTEGER",
-        "host.gpu.driver_version",
-        "9007199254740992.1",
-      ],
-    ] as const;
-    for (const [caseName, id, value] of nonmatchingObservations) {
+      expect(
+        resolveManagedInferenceServing(
+          resolverInput({
+            readinessReports: reports,
+            topologyQualifications: [],
+            intent: { preset: preset.metadata.id },
+          }),
+          comparedCatalog,
+        ),
+      ).toMatchObject({ outcome: "selected" });
+
       const rejectedReports = reports.map(({ nodeId, report }, index) => ({
         nodeId,
         report: readinessReport({
@@ -659,8 +976,8 @@ describe("managed inference resolver", () => {
         ),
         `${caseName} must reject a nonmatching observation`,
       ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
-    }
-  });
+    },
+  );
 
   it("applies any-node readiness requirements as an existential match", () => {
     const catalog = shippedCatalog();
@@ -745,22 +1062,41 @@ describe("managed inference resolver", () => {
     expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
   });
 
-  it.each([
-    { name: "provider", intent: { provider: "vllm" } },
-    { name: "model", intent: { vllmModel: "another/model" } },
-    {
-      name: "extra arguments",
-      intent: { vllmExtraArguments: ["--another-option"] },
-    },
-  ])("leaves existing $name intent authoritative for automatic selection", ({ intent }) => {
+  it("leaves unmodeled extra arguments authoritative for automatic selection", () => {
     expect(
       resolveManagedInferenceServing({
         readinessReports: [],
         topologyQualifications: [],
-        intent,
+        intent: { vllmExtraArguments: ["--another-option"] },
         now: NOW,
       }),
     ).toMatchObject({ outcome: "no-match", code: "explicit-intent" });
+  });
+
+  it("ignores blank extra arguments during declarative selection", () => {
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ intent: { vllmExtraArguments: ["", "   "] } }),
+      ),
+    ).toMatchObject({ outcome: "selected" });
+  });
+
+  it.each([
+    { intent: { provider: "vllm" }, outcome: "no-match", code: "requirements-not-met" },
+    {
+      intent: { vllmModel: "another/model" },
+      outcome: "rejected",
+      code: "requirements-not-met",
+    },
+  ] as const)("routes declarative provider and model intent through selection", (expected) => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [],
+        topologyQualifications: [],
+        intent: expected.intent,
+        now: NOW,
+      }),
+    ).toMatchObject({ outcome: expected.outcome, code: expected.code });
   });
 
   it("rejects an unknown explicit preset", () => {
@@ -849,6 +1185,82 @@ describe("managed inference resolver", () => {
     );
 
     expect(result).toMatchObject({ outcome: "selected", selection: "explicit" });
+  });
+
+  it("selects the N1x managed-vLLM preset with explicit Deferred preview intent (#9902)", () => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report: deferredN1xReadinessReport() }],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+    });
+  });
+
+  it("selects the N1x managed-vLLM preset when Docker storage is remediable (#9902)", () => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [
+          { nodeId: "n1x-host", report: deferredN1xWithRemediableStorageReport() },
+        ],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+    });
+  });
+
+  it.each([
+    {
+      condition: "managed-vLLM intent is absent",
+      intent: undefined,
+      report: deferredN1xReadinessReport(),
+    },
+    {
+      condition: "N1x identity is absent",
+      intent: { provider: "vllm" },
+      report: deferredN1xReadinessReport([], "absent"),
+    },
+    {
+      condition: "another blocking finding remains",
+      intent: { provider: "vllm" },
+      report: deferredN1xReadinessReport([
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking",
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ]),
+    },
+    {
+      condition: "another blocking finding remains with remediable storage",
+      intent: { provider: "vllm" },
+      report: deferredN1xWithRemediableStorageReport([
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking",
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ]),
+    },
+  ])("rejects Deferred N1x readiness when $condition (#9902)", ({ intent, report }) => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report }],
+        topologyQualifications: [],
+        intent,
+        now: NOW,
+      }),
+    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
   });
 
   it("rejects remediation when another blocking finding remains (#8246)", () => {

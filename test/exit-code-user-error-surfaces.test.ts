@@ -186,8 +186,10 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
     ],
   ];
 
-  for (const [label, argv, expected] of cases) {
-    it(`${label} prints an error and exits non-zero`, testTimeoutOptions(30_000), () => {
+  it.each(cases)(
+    "%s prints an error and exits non-zero",
+    testTimeoutOptions(30_000),
+    (_label, argv, expected) => {
       const { status, signal, error, combined } = runCli(argv);
       // The process must have launched and exited on its own — not failed to
       // spawn and not been killed by a signal/timeout (which leaves
@@ -197,8 +199,8 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       expect(combined.trim().length).toBeGreaterThan(0);
       expect(combined).toContain(expected);
       expect(status).toBeGreaterThan(0);
-    });
-  }
+    },
+  );
 
   // PRA-1 (#5974): exercise the NATIVE oclif argv route end-to-end through the
   // real binary. `dispatchCli` sends a leading `sandbox`/`internal` token
@@ -267,7 +269,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           'if [ "${1:-}" = status ]; then printf "No active gateway\\n"; exit 1; fi',
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = info ]; then printf "No gateway metadata found\\n"; exit 1; fi',
           'case "${1:-}" in',
-          '  -V|--version) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
+          '  -V|--version) printf "%s 0.0.106\\n" "${0##*/}"; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),

@@ -37,6 +37,7 @@ function printApplyHelp(): void {
 
 export default class SandboxAgentsApplyCommand extends NemoClawCommand {
   static id = "sandbox:agents:apply";
+  static customHelp = true;
   static strict = false;
   static summary = "Reconcile a sandbox's OpenClaw agents against a declarative manifest";
   static description =

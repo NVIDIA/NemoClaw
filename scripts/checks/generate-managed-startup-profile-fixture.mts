@@ -177,6 +177,28 @@ export function managedStartupE2eProfile(
           reasoningEffort: null,
         },
       };
+    case "pi":
+      return {
+        ...common,
+        agent,
+        agentConfig: { agent },
+        inference: {
+          ...common.inference,
+          primaryModelRef: null,
+          compatibility: null,
+          inputModalities: null,
+        },
+        dashboard: {
+          agent,
+          mode: "disabled",
+        },
+        tuning: {
+          contextWindow: null,
+          maxTokens: null,
+          reasoning: null,
+          reasoningEffort: null,
+        },
+      };
   }
 }
 

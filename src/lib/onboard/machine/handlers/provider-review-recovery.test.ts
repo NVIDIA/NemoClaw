@@ -12,12 +12,14 @@ describe("provider inference review recovery", () => {
   it("rejects configuration review with a non-zero exit before inference setup (#8686)", async () => {
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
-      promptYesNoOrDefault: vi.fn(async () => false),
+      prompt: vi.fn(async () => "4"),
     });
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
 
-    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.complete.mock.calls.some(([stepName]) => stepName === "provider_selection")).toBe(
+      false,
+    );
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
@@ -25,6 +27,7 @@ describe("provider inference review recovery", () => {
     });
     expect(calls.rejected).toHaveBeenCalledWith("provider_selection");
     expect(calls.exit).toHaveBeenCalledWith(1);
+    expect(calls.deleteEnv).toHaveBeenCalledWith(baseSelection.credentialEnv);
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
@@ -52,29 +55,30 @@ describe("provider inference review recovery", () => {
     expect(calls.setupNim).toHaveBeenCalled();
     expect(calls.setupInference).toHaveBeenCalled();
     expect(result).toMatchObject({ provider: "nvidia-prod", model: "nvidia/test" });
-    expect(calls.setupInference).not.toHaveBeenCalledWith(
-      "rejected-review",
-      "qwen3.5:9b",
-      "ollama-local",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(
+      calls.setupInference.mock.calls.some(
+        ([sandboxName, selectedModel, selectedProvider]) =>
+          sandboxName === "rejected-review" &&
+          selectedModel === "qwen3.5:9b" &&
+          selectedProvider === "ollama-local",
+      ),
+    ).toBe(false);
   });
 
   it("checkpoints a prompted sandbox identity before interactive review (#8686)", async () => {
-    const promptYesNoOrDefault = vi.fn(async () => true);
-    const { deps, calls } = createDeps({ isNonInteractive: () => false, promptYesNoOrDefault });
+    const prompt = vi.fn(async () => "1");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+    });
 
     await handleProviderInferenceState(baseOptions(deps));
 
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
-    expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Apply this configuration?", null, true);
+    expect(prompt).toHaveBeenCalledOnce();
     expect(calls.checkpointSandboxIdentity.mock.invocationCallOrder[0]).toBeLessThan(
-      promptYesNoOrDefault.mock.invocationCallOrder[0],
+      prompt.mock.invocationCallOrder[0],
     );
     expect(calls.setupInference).toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
@@ -82,6 +86,87 @@ describe("provider inference review recovery", () => {
       expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
     );
     expect(calls.exit).not.toHaveBeenCalled();
+  });
+
+  it("reselects inference and clears its discarded staged credential before Apply (#6005)", async () => {
+    const setupNim = vi
+      .fn()
+      .mockResolvedValueOnce({ ...baseSelection, credentialEnv: "FIRST_API_KEY" })
+      .mockResolvedValueOnce({
+        ...baseSelection,
+        provider: "openai",
+        model: "gpt-5",
+        credentialEnv: "OPENAI_API_KEY",
+      });
+    const prompt = vi
+      .fn()
+      .mockResolvedValueOnce("2")
+      .mockResolvedValueOnce("1");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+      setupNim,
+    });
+
+    const result = await handleProviderInferenceState(baseOptions(deps));
+
+    expect(setupNim).toHaveBeenCalledTimes(2);
+    expect(calls.deleteEnv).toHaveBeenCalledWith("FIRST_API_KEY");
+    expect(calls.deleteEnv.mock.invocationCallOrder[0]).toBeLessThan(
+      setupNim.mock.invocationCallOrder[1],
+    );
+    expect(calls.promptName).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "gpt-5",
+      "openai",
+      baseSelection.endpointUrl,
+      "OPENAI_API_KEY",
+      null,
+      [],
+      expect.any(Object),
+    );
+    expect(result).toMatchObject({
+      sandboxName: "my-assistant",
+      provider: "openai",
+      model: "gpt-5",
+    });
+  });
+
+  it("edits the sandbox name without reopening inference before Apply (#6005)", async () => {
+    const promptValidatedSandboxName = vi
+      .fn()
+      .mockResolvedValueOnce("first-name")
+      .mockResolvedValueOnce("edited-name");
+    const prompt = vi
+      .fn()
+      .mockResolvedValueOnce("3")
+      .mockResolvedValueOnce("1");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+      promptValidatedSandboxName,
+    });
+
+    const result = await handleProviderInferenceState(baseOptions(deps));
+
+    expect(calls.setupNim).toHaveBeenCalledOnce();
+    expect(promptValidatedSandboxName).toHaveBeenNthCalledWith(1, null);
+    expect(promptValidatedSandboxName).toHaveBeenNthCalledWith(2, null, "first-name");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "edited-name",
+      baseSelection.model,
+      baseSelection.provider,
+      baseSelection.endpointUrl,
+      baseSelection.credentialEnv,
+      null,
+      [],
+      expect.any(Object),
+    );
+    expect(result.sandboxName).toBe("edited-name");
   });
 
   it("resumes an accepted selection after inference setup throws (#8687)", async () => {
@@ -93,7 +178,7 @@ describe("provider inference review recovery", () => {
     const { deps, calls } = createDeps({
       setupInference,
       isInferenceRouteReady: vi.fn(() => false),
-      promptYesNoOrDefault: vi.fn(async () => true),
+      prompt: vi.fn(async () => "1"),
     });
     calls.complete.mockImplementation(async (...args: unknown[]) => {
       const stepName = args[0] as string;
@@ -123,8 +208,11 @@ describe("provider inference review recovery", () => {
   });
 
   it("checkpoints a supplied sandbox identity before review (#8687)", async () => {
-    const promptYesNoOrDefault = vi.fn(async () => false);
-    const { deps, calls } = createDeps({ isNonInteractive: () => false, promptYesNoOrDefault });
+    const prompt = vi.fn(async () => "4");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+    });
 
     await expect(
       handleProviderInferenceState({ ...baseOptions(deps), sandboxName: "supplied-review" }),
@@ -133,12 +221,13 @@ describe("provider inference review recovery", () => {
     expect(calls.promptName).not.toHaveBeenCalled();
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("supplied-review", null);
     expect(calls.checkpointSandboxIdentity.mock.invocationCallOrder[0]).toBeLessThan(
-      promptYesNoOrDefault.mock.invocationCallOrder[0],
+      prompt.mock.invocationCallOrder[0],
     );
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
     });
+    expect(calls.resolveHostLocalInferenceStartupSelection).not.toHaveBeenCalled();
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
   });
 
@@ -170,7 +259,7 @@ describe("provider inference review recovery", () => {
         credentialEnv: null,
       })),
       prepareLocalProviderForInference: providerReviewDeps.prepareLocalProviderForInference,
-      promptYesNoOrDefault: vi.fn(async () => false),
+      prompt: vi.fn(async () => "4"),
     });
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
@@ -198,7 +287,7 @@ describe("provider inference review recovery", () => {
         credentialEnv: null,
       })),
       prepareLocalProviderForInference,
-      promptYesNoOrDefault: vi.fn(async () => true),
+      prompt: vi.fn(async () => "1"),
     });
 
     await handleProviderInferenceState(baseOptions(deps));
@@ -220,12 +309,12 @@ describe("provider inference review recovery", () => {
   });
 
   it("skips configuration review in explicit non-interactive mode (#8687)", async () => {
-    const promptYesNoOrDefault = vi.fn(async () => true);
-    const { deps, calls } = createDeps({ isNonInteractive: () => true, promptYesNoOrDefault });
+    const prompt = vi.fn(async () => "1");
+    const { deps, calls } = createDeps({ isNonInteractive: () => true, prompt });
 
     await handleProviderInferenceState(baseOptions(deps));
 
-    expect(promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(prompt).not.toHaveBeenCalled();
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
@@ -251,10 +340,10 @@ describe("provider inference review recovery", () => {
 
   it("prompts for review when interactive resume reuses an interrupted selection (#8687)", async () => {
     const session = failedReviewSession();
-    const promptYesNoOrDefault = vi.fn(async () => true);
+    const prompt = vi.fn(async () => "1");
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
-      promptYesNoOrDefault,
+      prompt,
       isInferenceRouteReady: vi.fn(() => false),
     });
 
@@ -265,7 +354,7 @@ describe("provider inference review recovery", () => {
     });
 
     expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Apply this configuration?", null, true);
+    expect(prompt).toHaveBeenCalledOnce();
     expect(calls.setupInference).toHaveBeenCalledWith(
       "review-interrupted",
       "qwen3.5:9b",
@@ -280,10 +369,10 @@ describe("provider inference review recovery", () => {
 
   it("bypasses review when non-interactive resume reuses an interrupted selection (#8687)", async () => {
     const session = failedReviewSession();
-    const promptYesNoOrDefault = vi.fn(async () => true);
+    const prompt = vi.fn(async () => "1");
     const { deps, calls } = createDeps({
       isNonInteractive: () => true,
-      promptYesNoOrDefault,
+      prompt,
       isInferenceRouteReady: vi.fn(() => false),
     });
 
@@ -294,7 +383,7 @@ describe("provider inference review recovery", () => {
     });
 
     expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(prompt).not.toHaveBeenCalled();
     expect(calls.setupInference).toHaveBeenCalledWith(
       "review-interrupted",
       "qwen3.5:9b",

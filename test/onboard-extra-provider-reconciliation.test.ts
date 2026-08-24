@@ -40,7 +40,7 @@ describe("onboard extra-provider reconciliation", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -61,6 +61,7 @@ registry.addExtraProvider("my-slack-bridge");
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
     return {
@@ -73,8 +74,11 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
@@ -139,6 +143,7 @@ const { createSandbox } = require(${onboardPath});
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
+        timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -150,7 +155,7 @@ const { createSandbox } = require(${onboardPath});
         },
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payloadLine = result.stdout
         .trim()
         .split("\n")

@@ -4,14 +4,23 @@
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import type { SandboxEntry } from "../../../state/registry/types";
 
+export {
+  confirmHostLocalInferenceAuthority,
+  type PreparedHostLocalInferenceAuthority,
+  prepareHostLocalInferenceAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
+} from "../../../onboard/runtime-provider/host-local-inference-lifecycle";
 export type {
   ManagedWorkloadCloneSnapshot,
   PreparedManagedWorkloadCloneHandoff,
   PrepareManagedWorkloadCloneHandoffInput,
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,
@@ -38,6 +47,7 @@ export {
   prepareSandboxRuntimeRestore,
   SandboxSnapshotProviderError,
 } from "./provider-lifecycle";
+export type { RuntimeProviderBundle };
 
 /**
  * Resolve the one already-registered provider bundle for a durable sandbox.
@@ -48,4 +58,14 @@ export function requireCurrentSnapshotRuntimeProvider(
   sandbox: SandboxEntry,
 ): RuntimeProviderBundle {
   return requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES);
+}
+
+export function assertSandboxSnapshotCommandAvailable(
+  sandboxName: string,
+  commandId:
+    | "sandbox:snapshot:create"
+    | "sandbox:snapshot:list"
+    | "sandbox:snapshot:restore",
+): void {
+  assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }

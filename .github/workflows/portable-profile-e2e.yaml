@@ -1,12 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Portable Profile
+name: E2E / Portable Profile on Rootless Linux
 
-run-name: "Portable profile rootless E2E for ${{ github.sha }}"
+run-name: "Portable profile rootless E2E for ${{ github.event.pull_request.head.sha || github.sha }}"
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/portable-profile-e2e.yaml"
+      - "agents/hermes/Dockerfile"
+      - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
+      - "src/lib/onboard/experimental/portable-host-preparation.ts"
+      - "src/lib/onboard/experimental/portable-profile.ts"
+      - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
+      - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
     branches:
       - main
@@ -20,6 +31,8 @@ on:
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/**"
       - "test/e2e/fixtures/availability-env.ts"
+      - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
+      - "test/e2e/fixtures/portable-profile-systemctl.ts"
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
@@ -30,18 +43,22 @@ permissions:
   contents: read
 
 concurrency:
-  group: portable-profile-e2e-${{ github.ref }}
+  group: portable-profile-e2e-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   rootless-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
+    env:
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -51,6 +68,9 @@ jobs:
 
       - name: Install root dependencies
         run: npm ci --ignore-scripts
+
+      - name: Compile managed inference catalogue
+        run: npm run catalog:compile
 
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
@@ -65,7 +85,17 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          version="$(podman --version)"
+          test "$package_version" = "$PODMAN_APT_VERSION"
+          test "$version" = "podman version 5.7.0"
           runtime_dir="/run/user/$(id -u)"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
           if ! grep -q "^${USER}:" /etc/subuid; then
@@ -77,6 +107,22 @@ jobs:
           podman --version
           pasta --version
           docker --version
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
 
       - name: Exercise portable profile in the rootless environment
         env:
@@ -92,7 +138,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: portable-profile-e2e-artifacts
+          name: portable-profile-e2e-artifacts-${{ github.event.pull_request.head.sha || github.sha }}
           path: e2e-artifacts/portable-profile/
           include-hidden-files: false
           if-no-files-found: ignore
@@ -100,7 +146,7 @@ jobs:
 
   portable-launch:
     if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -113,6 +159,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_EXPERIMENTAL_PROFILE: portable
       NEMOCLAW_SANDBOX_NAME: portable-launch
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,9 +174,32 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          uid="$(id -u)"
+          receipt="${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt"
+          : >"$receipt"
+          if sudo systemctl is-active --quiet "user@${uid}.service"; then
+            printf 'manager-active\t%s\n' "$uid" >>"$receipt"
+          fi
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          runtime_path="$(readlink -f "$(command -v podman)")"
+          runtime_version="$(podman --version)"
+          if [ "$package_version" != "$PODMAN_APT_VERSION" ] || \
+            [ "$runtime_path" != "/usr/bin/podman" ] || \
+            [ "$runtime_version" != "podman version 5.7.0" ]; then
+            printf 'Portable Podman runtime identity mismatch: package version=%s; executable path=%s; client version=%s\n' \
+              "${package_version:-empty}" "${runtime_path:-empty}" "${runtime_version:-empty}" >&2
+            exit 1
+          fi
           runtime_dir="/run/user/$(id -u)"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw
           if ! grep -q "^${USER}:" /etc/subuid; then
             sudo usermod --add-subuids 100000-165535 "$USER"
           fi
@@ -137,55 +207,155 @@ jobs:
             sudo usermod --add-subgids 100000-165535 "$USER"
           fi
 
-          shim_dir="${RUNNER_TEMP}/nemoclaw-portable-bin"
-          install -d -m 700 "$shim_dir"
-          cat >"$shim_dir/systemctl" <<'SHIM'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          runtime_dir="${XDG_RUNTIME_DIR:?}"
-          service_dir="${runtime_dir}/podman"
-          socket_path="${service_dir}/podman.sock"
-          pid_file="${runtime_dir}/nemoclaw-podman-service.pid"
-          log_file="${runtime_dir}/nemoclaw-podman-service.log"
-          case "$*" in
-            "--user set-environment "*) exit 0 ;;
-            "--user try-restart podman.service")
-              if [[ -f "$pid_file" ]]; then
-                kill "$(<"$pid_file")" 2>/dev/null || true
-                rm -f "$pid_file" "$socket_path"
+          containers_conf="/run/nemoclaw/portable-containers.conf"
+          delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"
+          user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+          install_fixture_drop_in() {
+            local receipt_name="$1"
+            local target="$2"
+            local content="$3"
+            local target_dir
+            target_dir="$(dirname "$target")"
+            if sudo test -e "$target" || sudo test -L "$target"; then
+              printf 'Refusing existing Portable CPU-delegation fixture path: %s\n' "$target" >&2
+              return 1
+            fi
+            if sudo test -L "$target_dir" || \
+              { sudo test -e "$target_dir" && ! sudo test -d "$target_dir"; }; then
+              printf 'Refusing unexpected Portable CPU-delegation fixture directory: %s\n' "$target_dir" >&2
+              return 1
+            fi
+            if sudo test -d "$target_dir"; then
+              if [ "$(sudo stat -Lc '%U:%G %a' -- "$target_dir")" != "root:root 755" ]; then
+                printf 'Refusing Portable CPU-delegation fixture directory owner or mode: %s\n' "$target_dir" >&2
+                return 1
               fi
-              ;;
-            "--user enable --now podman.socket")
-              install -d -m 755 "$service_dir"
-              nohup podman system service --time=0 "unix://$socket_path" >"$log_file" 2>&1 &
-              echo $! >"$pid_file"
-              for _ in $(seq 1 100); do
-                if [[ -S "$socket_path" ]]; then
-                  chmod 660 "$socket_path"
-                  exit 0
-                fi
-                sleep 0.1
-              done
-              cat "$log_file" >&2 || true
-              exit 1
-              ;;
-            *)
-              echo "unexpected user-service command: $*" >&2
-              exit 64
-              ;;
-          esac
-          SHIM
-          chmod 700 "$shim_dir/systemctl"
+            else
+              printf 'directory\t%s\n' "$target_dir" >>"$receipt"
+              sudo install -d -m 0755 -o root -g root "$target_dir"
+            fi
+            printf 'file\t%s\t%s\n' "$receipt_name" "$target" >>"$receipt"
+            printf '%s' "$content" | sudo tee "$target" >/dev/null
+            sudo chown root:root "$target"
+            sudo chmod 0644 "$target"
+          }
 
-          export PATH="$shim_dir:$PATH"
+          if test -e "$containers_conf" || test -L "$containers_conf"; then
+            printf 'Refusing existing Portable Podman configuration path: %s\n' "$containers_conf" >&2
+            exit 1
+          fi
+          printf 'file\tpodman-config\t%s\n' "$containers_conf" >>"$receipt"
+          printf '%s' $'[engine]\ncgroup_manager = "systemd"\n' >"$containers_conf"
+          chmod 0600 "$containers_conf"
+
+          install_fixture_drop_in \
+            user-slice \
+            "$user_slice_drop_in" \
+            $'[Slice]\nCPUWeight=100\n'
+          install_fixture_drop_in \
+            app-slice \
+            "$app_slice_drop_in" \
+            $'[Slice]\nCPUWeight=100\n'
+          install_fixture_drop_in \
+            delegation \
+            "$delegation_drop_in" \
+            $'[Service]\nDelegate=cpu memory pids\n'
+          install_fixture_drop_in \
+            podman-service \
+            "$podman_service_drop_in" \
+            "[Service]"$'\n'"Environment=CONTAINERS_CONF=${containers_conf}"$'\n'
+
+          if [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)" != "yes" ]; then
+            printf 'linger\t%s\n' "$USER" >>"$receipt"
+            sudo loginctl enable-linger "$USER"
+          fi
+
+          sudo systemctl stop "user@${uid}.service"
+          sudo systemctl daemon-reload
+          sudo systemctl start "user@${uid}.service"
+
           export XDG_RUNTIME_DIR="$runtime_dir"
-          systemctl --user enable --now podman.socket
-          printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
-          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
-          printf 'DOCKER_HOST=unix://%s/podman/podman.sock\n' "$runtime_dir" >>"$GITHUB_ENV"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus"
+          export CONTAINERS_CONF="$containers_conf"
+          export DOCKER_HOST="unix://${runtime_dir}/podman/podman.sock"
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+            printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "$DBUS_SESSION_BUS_ADDRESS"
+            printf 'CONTAINERS_CONF=%s\n' "$CONTAINERS_CONF"
+            printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST"
+            printf 'E2E_PORTABLE_CPU_DELEGATION_RECEIPT=%s\n' "$receipt"
+          } >>"$GITHUB_ENV"
+
+          /usr/bin/systemctl --user start podman.socket
+          /usr/bin/systemctl --user is-active --quiet podman.socket
+          node --experimental-strip-types --no-warnings --input-type=module --eval '
+            const { inspectPortableCpuDelegation } = await import(
+              "./src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"
+            );
+            const result = inspectPortableCpuDelegation();
+            if (!result.ok) throw new Error(result.detail);
+            process.stdout.write(result.detail + "\n");
+          '
+          cgroup_manager="$(podman info --format '{{.Host.CgroupManager}}')"
+          if [ "$cgroup_manager" != "systemd" ]; then
+            printf 'Portable Podman must use the systemd cgroup manager; observed: %s\n' \
+              "${cgroup_manager:-empty}" >&2
+            exit 1
+          fi
           podman --version
           docker --version
-          docker --host "unix://$runtime_dir/podman/podman.sock" info
+          docker --host "$DOCKER_HOST" info
+          service_version="$(docker --host "$DOCKER_HOST" version --format '{{.Server.Version}}')"
+          if [ "$service_version" != "5.7.0" ]; then
+            printf 'Portable Podman service version mismatch: expected 5.7.0; observed: %s\n' \
+              "${service_version:-empty}" >&2
+            exit 1
+          fi
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
+
+      - name: Prove nested BuildKit on the portable Podman socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_name="nemoclaw-portable-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          build_context="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-portable-buildx.XXXXXX")"
+          build_output="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-portable-buildx-output.XXXXXX")"
+          {
+            printf 'E2E_PORTABLE_BUILDX_BUILDER=%s\n' "$builder_name"
+            printf 'E2E_PORTABLE_BUILDX_CONTEXT=%s\n' "$build_context"
+            printf 'E2E_PORTABLE_BUILDX_OUTPUT=%s\n' "$build_output"
+          } >>"$GITHUB_ENV"
+          printf 'FROM scratch\nCOPY proof.txt /proof.txt\n' >"$build_context/Dockerfile"
+          printf 'portable-buildkit-cgroup-proof\n' >"$build_context/proof.txt"
+
+          docker buildx create \
+            --name "$builder_name" \
+            --driver docker-container \
+            "$DOCKER_HOST"
+          docker buildx inspect "$builder_name" --bootstrap
+          docker buildx build \
+            --builder "$builder_name" \
+            --progress=plain \
+            --output "type=local,dest=$build_output" \
+            "$build_context"
+          grep -Fx 'portable-buildkit-cgroup-proof' "$build_output/proof.txt"
 
       - name: Exercise a portable launch through chat and permission restoration
         env:
@@ -208,8 +378,111 @@ jobs:
         if: always()
         shell: bash
         run: |
+          set -euo pipefail
+          builder_name="${E2E_PORTABLE_BUILDX_BUILDER:-}"
+          if [[ "$builder_name" =~ ^nemoclaw-portable-[0-9]+-[0-9]+$ ]]; then
+            docker buildx rm "$builder_name" || true
+          fi
+          for temporary in \
+            "${E2E_PORTABLE_BUILDX_CONTEXT:-}" \
+            "${E2E_PORTABLE_BUILDX_OUTPUT:-}"
+          do
+            if [[ "$temporary" == "${RUNNER_TEMP}/nemoclaw-portable-buildx."* ]] || \
+              [[ "$temporary" == "${RUNNER_TEMP}/nemoclaw-portable-buildx-output."* ]]; then
+              rm -rf -- "$temporary"
+            fi
+          done
+
+          rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp
+          /usr/bin/systemctl --user stop nemoclaw-openshell-gateway.service || true
+          /usr/bin/systemctl --user stop podman.socket podman.service || true
           podman system reset --force || true
-          pid_file="${XDG_RUNTIME_DIR}/nemoclaw-podman-service.pid"
-          if [[ -f "$pid_file" ]]; then
-            kill "$(<"$pid_file")" 2>/dev/null || true
+
+          uid="$(id -u)"
+          receipt="${E2E_PORTABLE_CPU_DELEGATION_RECEIPT:-${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt}"
+          containers_conf="/run/nemoclaw/portable-containers.conf"
+          delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"
+          user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+          disable_linger=0
+          restore_manager=0
+          cleanup_failed=0
+          directories=()
+          sudo systemctl stop "user@${uid}.service" || true
+
+          cleanup_fixture_drop_in() {
+            local target="$1"
+            local expected="$2"
+            if ! sudo test -e "$target" && ! sudo test -L "$target"; then
+              return 0
+            fi
+            if sudo test -L "$target" || ! sudo test -f "$target"; then
+              printf 'Refusing unexpected Portable CPU-delegation fixture path: %s\n' "$target" >&2
+              return 1
+            fi
+            if ! printf '%s' "$expected" | sudo cmp -s -- "$target" -; then
+              printf 'Refusing changed Portable CPU-delegation fixture file: %s\n' "$target" >&2
+              return 1
+            fi
+            sudo rm -f -- "$target"
+          }
+
+          if [ -f "$receipt" ]; then
+            while IFS=$'\t' read -r kind name target; do
+              if [ "$kind" = "file" ]; then
+                case "$name:$target" in
+                  "delegation:$delegation_drop_in")
+                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids\n' || cleanup_failed=1
+                    ;;
+                  "app-slice:$app_slice_drop_in"|"user-slice:$user_slice_drop_in")
+                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100\n' || cleanup_failed=1
+                    ;;
+                  "podman-service:$podman_service_drop_in")
+                    cleanup_fixture_drop_in \
+                      "$target" \
+                      "[Service]"$'\n'"Environment=CONTAINERS_CONF=${containers_conf}"$'\n' || cleanup_failed=1
+                    ;;
+                  "podman-config:$containers_conf")
+                    cleanup_fixture_drop_in "$target" $'[engine]\ncgroup_manager = "systemd"\n' || cleanup_failed=1
+                    ;;
+                  *)
+                    printf 'Refusing unexpected Portable CPU-delegation receipt: %s:%s\n' "$name" "$target" >&2
+                    cleanup_failed=1
+                    ;;
+                esac
+              elif [ "$kind" = "linger" ] && [ "$name" = "$USER" ] && [ -z "${target:-}" ]; then
+                disable_linger=1
+              elif [ "$kind" = "manager-active" ] && [ "$name" = "$uid" ] && [ -z "${target:-}" ]; then
+                restore_manager=1
+              elif [ "$kind" = "directory" ] && [ -z "${target:-}" ]; then
+                case "$name" in
+                  /etc/systemd/system/user@.service.d|/etc/systemd/user/app.slice.d|/etc/systemd/user/podman.service.d|"/etc/systemd/system/user-${uid}.slice.d")
+                    directories+=("$name")
+                    ;;
+                  *)
+                    printf 'Refusing unexpected Portable CPU-delegation directory receipt: %s\n' "$name" >&2
+                    cleanup_failed=1
+                    ;;
+                esac
+              else
+                printf 'Refusing malformed Portable CPU-delegation receipt.\n' >&2
+                cleanup_failed=1
+              fi
+            done <"$receipt"
+          fi
+          sudo systemctl daemon-reload || cleanup_failed=1
+          for directory in "${directories[@]}"; do
+            sudo rmdir -- "$directory" || cleanup_failed=1
+          done
+          if [ "$restore_manager" = "1" ]; then
+            sudo systemctl start "user@${uid}.service" || cleanup_failed=1
+          fi
+          if [ "$disable_linger" = "1" ]; then
+            sudo loginctl disable-linger "$USER" || cleanup_failed=1
+          fi
+          rm -f -- "$receipt" || cleanup_failed=1
+          if [ "$cleanup_failed" = "1" ]; then
+            printf 'Portable CPU-delegation cleanup detected invalid fixture state or a cleanup command failed.\n' >&2
+            exit 1
           fi

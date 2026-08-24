@@ -42,6 +42,8 @@ jobs:
               - '**'
               - '!**/*.md'
               - '!docs/**'
+              - '!fern/docs.yml'
+              - '!fern/assets/**'
 
   docs-only-checks:
     needs: changes
@@ -89,6 +91,9 @@ jobs:
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
+
+      - name: Validate documentation
+        run: npm run docs
 
   static-checks:
     needs: changes
@@ -250,7 +255,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Coverage startup plus the stable, duration-weighted roster can exceed
+    # the former 15-minute cap before Vitest writes its shard artifacts.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

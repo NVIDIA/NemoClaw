@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import path from "node:path";
+
 import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 
 const GATEWAY_ROUTE_LOCK_PREFIX = "gateway-route:";
+const MODEL_ROUTER_PORT_LOCK_PREFIX = "model-router-port:";
+
+export function resolveCurrentUserModelRouterLockStateDir(homeDir: string = os.homedir()): string {
+  return path.join(resolveSharedLocalAdapterStateRoot(homeDir), "state");
+}
 
 /**
  * Serializes host-side reads and writes of OpenShell's one-route-per-gateway
@@ -22,4 +31,20 @@ export function withGatewayRouteMutationLock<T>(
     operation,
     options,
   );
+}
+
+/** Serialize current-user lifecycle changes for one Model Router port across gateways. */
+export function withModelRouterPortLifecycleLock<T>(
+  port: number,
+  operation: () => Promise<T> | T,
+  options: McpLifecycleLockOptions = {},
+): Promise<T> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Model Router port must be an integer from 1 to 65535.");
+  }
+  const stateDir = options.stateDir ?? resolveCurrentUserModelRouterLockStateDir();
+  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, {
+    ...options,
+    stateDir,
+  });
 }

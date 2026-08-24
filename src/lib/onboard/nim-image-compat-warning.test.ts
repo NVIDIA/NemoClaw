@@ -55,6 +55,14 @@ describe("arm64 NIM image compatibility warning", () => {
       shouldWarnAboutArm64NimImageCompatibility({
         arch: "arm64",
         platform: "linux",
+        gpu: { platform: "n1x" },
+        nimLocalAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWarnAboutArm64NimImageCompatibility({
+        arch: "arm64",
+        platform: "linux",
         gpu: { platform: "spark" },
         nimLocalAvailable: false,
       }),

@@ -29,7 +29,7 @@ export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
 /** Docker-driver gateway compatibility container name for the default port. */
 export const BASE_GATEWAY_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
 
-function isDefaultGatewayPort(port: number): boolean {
+export function isDefaultGatewayPort(port: number): boolean {
   return port === DEFAULT_GATEWAY_PORT;
 }
 

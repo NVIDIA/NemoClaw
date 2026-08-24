@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import { isValidName } from "../../sandbox-name-contract";
 import { ROOT } from "../../state/paths";
 import type { MessagingAgentId } from "../manifest";
 import { listMessagingPolicyPresetMetadata } from "./metadata";
@@ -17,6 +18,11 @@ type PolicyPresetLocator = {
 type PolicyPresetMetadataReader = (options: {
   readonly agent?: MessagingAgentId;
 }) => readonly PolicyPresetLocator[];
+
+export type MessagingChannelPolicyLoadOptions = {
+  readonly agent?: MessagingAgentId | string | null;
+  readonly sandboxName?: string;
+};
 
 const CHANNELS_ROOT = path.join(ROOT, "src", "lib", "messaging", "channels");
 const POLICY_FILE_BY_AGENT: Readonly<Record<MessagingAgentId, string>> = {
@@ -39,7 +45,7 @@ export interface MessagingChannelPolicyResolver {
   ) => string | null;
   readonly loadMessagingChannelPolicyPreset: (
     presetName: string,
-    options?: { readonly agent?: MessagingAgentId | string | null },
+    options?: MessagingChannelPolicyLoadOptions,
   ) => string | null;
   readonly listMessagingChannelPolicyPresets: (options?: {
     readonly agent?: MessagingAgentId | string | null;
@@ -50,6 +56,15 @@ export interface MessagingChannelPolicyResolverDeps {
   readonly existsSync: (file: string) => boolean;
   readonly readFileSync: (file: string, encoding: BufferEncoding) => string;
   readonly listPresetMetadata: PolicyPresetMetadataReader;
+}
+
+export function materializeMessagingPolicySandboxName(
+  content: string,
+  sandboxName: string | null | undefined,
+): string | null {
+  if (!content.includes("{sandboxName}")) return content;
+  if (sandboxName === undefined || sandboxName === null || !isValidName(sandboxName)) return null;
+  return content.replaceAll("{sandboxName}", sandboxName);
 }
 
 function normalizeAgent(
@@ -124,13 +139,14 @@ export function createMessagingChannelPolicyResolver(
 
   function loadMessagingChannelPolicyPreset(
     presetName: string,
-    options: { readonly agent?: MessagingAgentId | string | null } = {},
+    options: MessagingChannelPolicyLoadOptions = {},
   ): string | null {
     const file = resolveMessagingChannelPolicyPresetPath(presetName, options.agent);
     if (!file) return null;
     const content = deps.readFileSync(file, "utf-8");
     const header = readPresetHeader(content);
-    return header?.name === presetName ? content : null;
+    if (header?.name !== presetName) return null;
+    return materializeMessagingPolicySandboxName(content, options.sandboxName);
   }
 
   function listMessagingChannelPolicyPresets(
@@ -172,7 +188,7 @@ export function resolveMessagingChannelPolicyPresetPath(
 
 export function loadMessagingChannelPolicyPreset(
   presetName: string,
-  options: { readonly agent?: MessagingAgentId | string | null } = {},
+  options: MessagingChannelPolicyLoadOptions = {},
 ): string | null {
   return defaultPolicyResolver.loadMessagingChannelPolicyPreset(presetName, options);
 }

@@ -26,6 +26,8 @@ import {
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import { createDockerManagedBootstrapAuthorityStore } from "./docker-authority-store";
 import type {
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome,
   ManagedBootstrapRuntimeCompatibilityLaunchInput,
   ManagedBootstrapRuntimeCreateLaunchResult,
   ManagedBootstrapRuntimeCreateLifecycle,
@@ -38,6 +40,27 @@ type SupportedBootstrapSurface = Extract<
   RuntimeProviderBootstrapSurface,
   { readonly supported: true }
 >;
+
+type CompleteOwnerCleanupInput = Readonly<{
+  providerId: string;
+  bootstrapIdentity: string;
+  handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
+  runOpenshell: NonNullable<
+    ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"]["runOpenshell"]
+  >;
+  recoverUnfinished: ManagedBootstrapRuntimeCreateLifecycle["recoverUnfinished"];
+}>;
+
+/**
+ * Retain the owner-cleanup handoff until OpenShell exposes deletion bound to a
+ * durable sandbox ID. A preceding ID lookup cannot authorize the current
+ * name-only delete because a same-name replacement can race between calls.
+ */
+export function completeDockerManagedNativeGpuFallbackOwnerCleanup(
+  input: CompleteOwnerCleanupInput,
+): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome> {
+  return Promise.resolve(input.handoff);
+}
 
 function dockerReplacementOptions(
   mode: DockerGpuPatchMode,
@@ -138,10 +161,39 @@ function createDockerLifecycle(
     metadata: {},
   } as const;
   const replacementOptions = dockerReplacementOptions(mode, input);
+  let activatedRuntimeId: string | null = null;
 
   return {
     launchArgv: input.launchArgv,
     patch,
+    inspectNativeRuntime() {
+      if (activatedRuntimeId === null) return undefined;
+      const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(
+        input.sandboxName,
+        {},
+        { expectedContainerId: activatedRuntimeId },
+      );
+      return snapshot.ok
+        ? {
+            imageId: snapshot.imageId,
+            bookkeepingImageRef: snapshot.bookkeepingImageRef,
+            stateError: snapshot.stateError,
+            nativeGpuAttachmentState: snapshot.nativeGpuAttachmentState,
+          }
+        : null;
+    },
+    async completeNativeGpuFallbackOwnerCleanup(handoff) {
+      if (handoff.sandboxName !== input.sandboxName || !input.dependencies.runOpenshell) {
+        return handoff;
+      }
+      return completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId,
+        bootstrapIdentity: input.bootstrapIdentity,
+        handoff,
+        runOpenshell: input.dependencies.runOpenshell,
+        recoverUnfinished: () => recoverManagedBootstrapTransactions(adapter),
+      });
+    },
     async recoverUnfinished() {
       return recoverManagedBootstrapTransactions(adapter);
     },
@@ -187,6 +239,7 @@ function createDockerLifecycle(
         authorityStore: input.authorityStore,
         timeoutSecs: input.timeoutSecs,
       });
+      activatedRuntimeId = activated.replacement.replacementRuntimeId;
       const launched = launchState.value;
       if (!launched) {
         await finalizeManagedBootstrapSequence(adapter, {

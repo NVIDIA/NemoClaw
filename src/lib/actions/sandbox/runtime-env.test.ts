@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+import {
+  wrapExecCommandWithRuntimeEnv,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
+} from "./runtime-env";
 
 describe("wrapExecCommandWithRuntimeEnv", () => {
   it("sources the trusted runtime env and preserves each original argv element (#4504)", () => {
@@ -118,5 +121,30 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
 
     expect(result.status).toBe(127);
     expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+  });
+
+  it("suppresses only the UNDICI-EHPA warning for OpenClaw agent commands (#8975)", () => {
+    const wrapped = wrapOpenClawAgentCommandWithRuntimeEnv([
+      "node",
+      "-e",
+      [
+        'process.stdout.write(`TOKEN=[${process.env.OPENCLAW_GATEWAY_TOKEN ?? ""}]`);',
+        'process.emitWarning("proxy warning", { code: "UNDICI-EHPA" });',
+        'process.emitWarning("other warning", { code: "NEMOCLAW-TEST" });',
+      ].join(""),
+    ]);
+    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+      encoding: "utf-8",
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("TOKEN=[]");
+    expect(result.stdout).not.toContain("test-gateway-token");
+    expect(result.stderr).not.toContain("UNDICI-EHPA");
+    expect(result.stderr).not.toContain("proxy warning");
+    expect(result.stderr).toContain("NEMOCLAW-TEST");
+    expect(result.stderr).toContain("other warning");
+    expect(result.stderr).not.toContain("test-gateway-token");
   });
 });

@@ -12,7 +12,7 @@ activation process. A controller restart can therefore re-establish or finish
 only the original process fence.
 
 PID 1 remains stopped until release completes. This blocks OpenShell SSH and
-exec admission while a root Docker exec can continue the transaction. The
+exec admission while a root provider exec can continue the transaction. The
 helper also stops ``nemoclaw-start`` and terminates every other process that
 uses the ``sandbox`` or ``gateway`` account. Activation resumes only the exact
 entrypoint, proves a fresh Hermes gateway, and freezes the resulting process
@@ -51,7 +51,6 @@ Phase = Literal["fenced", "published", "rolled-back", "activation-proven"]
 
 SCHEMA_VERSION = 1
 PLAN_SCHEMA_VERSION = 2
-SUPPORTED_PROVIDER_ID = "docker"
 SUPPORTED_STATE_ROOT = "/sandbox/.hermes"
 SUPPORTED_WRITER_ACCOUNTS = ("gateway", "sandbox")
 
@@ -106,6 +105,7 @@ STARTUP_CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v
 STARTUP_RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
+BASH_ARGV0 = (b"bash", b"/bin/bash", b"/usr/bin/bash")
 HERMES_GATEWAY_PATHS = (b"/usr/local/bin/hermes", b"/usr/local/bin/hermes.real")
 HERMES_INTERNAL_PORT = 18642
 HERMES_HEALTH_PATH = "/health"
@@ -113,6 +113,7 @@ HERMES_CONFIG_GENERATION_PATH = "/sandbox/.hermes/.config-hash"
 
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+PROVIDER_ID = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
 RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/=+\-]{0,511}\Z")
 MOUNT_NAMESPACE = re.compile(r"mnt:\[[1-9][0-9]*\]\Z")
 PID_NAMESPACE = re.compile(r"pid:\[[1-9][0-9]*\]\Z")
@@ -603,10 +604,10 @@ RELEASED_RECEIPT_KEYS = (
 )
 
 PROVIDER_HANDLE = re.compile(
-    r"docker-state-mutation-v1:([0-9a-f]{64}):([0-9a-f]{64})\Z"
+    r"([a-z][a-z0-9-]{0,62})-state-mutation-v1:([0-9a-f]{64}):([0-9a-f]{64})\Z"
 )
 ACTIVATION_PROVIDER_HANDLE = re.compile(
-    r"docker-state-mutation-activation-v1:([0-9a-f]{64}):([0-9a-f]{64})\Z"
+    r"([a-z][a-z0-9-]{0,62})-state-mutation-activation-v1:([0-9a-f]{64}):([0-9a-f]{64})\Z"
 )
 
 
@@ -689,9 +690,7 @@ def _parse_request(action: Action, raw: bytes) -> Request:
     ):
         _fail("envelope-version")
     transaction_id = _hex_digest(envelope["transactionId"], "transaction-id")
-    provider_id = _bounded_string(envelope["providerId"], SAFE_NAME, "provider-id")
-    if provider_id != SUPPORTED_PROVIDER_ID:
-        _fail("provider-unsupported")
+    provider_id = _bounded_string(envelope["providerId"], PROVIDER_ID, "provider-id")
     sandbox_name = _bounded_string(envelope["sandboxName"], SAFE_NAME, "sandbox-name")
     lifecycle_generation = _bounded_string(
         envelope["lifecycleGeneration"], RUNTIME_ID, "lifecycle-generation"
@@ -728,6 +727,12 @@ def _parse_request(action: Action, raw: bytes) -> Request:
             if action != "recover"
             else None
         )
+        if provider_handle is not None:
+            provider_match = PROVIDER_HANDLE.fullmatch(provider_handle)
+            if provider_match is None or not secrets.compare_digest(
+                provider_match.group(1), provider_id
+            ):
+                _fail("provider-handle")
         activation_provider_handle = (
             _bounded_string(
                 envelope["activationProviderHandle"],
@@ -737,6 +742,14 @@ def _parse_request(action: Action, raw: bytes) -> Request:
             if action == "release"
             else None
         )
+        if activation_provider_handle is not None:
+            activation_match = ACTIVATION_PROVIDER_HANDLE.fullmatch(
+                activation_provider_handle
+            )
+            if activation_match is None or not secrets.compare_digest(
+                activation_match.group(1), provider_id
+            ):
+                _fail("activation-provider-handle")
         completed = (
             _hex_digest(envelope["completedLedgerSha256"], "completed-ledger-digest")
             if action == "release"
@@ -1139,9 +1152,7 @@ def _validate_marker(value: object) -> dict[str, object]:
         or marker["phase"] not in PHASES
     ):
         _fail("marker-schema")
-    provider_id = _bounded_string(marker["providerId"], SAFE_NAME, "marker-schema")
-    if provider_id != SUPPORTED_PROVIDER_ID:
-        _fail("marker-schema")
+    provider_id = _bounded_string(marker["providerId"], PROVIDER_ID, "marker-schema")
     transaction_id = _hex_digest(marker["transactionId"], "marker-schema")
     sandbox_name = _bounded_string(marker["sandboxName"], SAFE_NAME, "marker-schema")
     lifecycle_generation = _bounded_string(
@@ -1258,7 +1269,7 @@ def _base_receipt(
 
 def _provider_handle(marker: dict[str, object]) -> str:
     return (
-        f"docker-state-mutation-v1:{marker['transactionId']}:"
+        f"{marker['providerId']}-state-mutation-v1:{marker['transactionId']}:"
         f"{_sha256(_json_bytes(_base_receipt(marker, 'fenced')))}"
     )
 
@@ -1280,7 +1291,7 @@ def _activation_provider_handle(marker: dict[str, object]) -> str:
         "fenceProviderHandle": _provider_handle(marker),
     }
     return (
-        f"docker-state-mutation-activation-v1:{marker['transactionId']}:"
+        f"{marker['providerId']}-state-mutation-activation-v1:{marker['transactionId']}:"
         f"{_sha256(_json_bytes(payload))}"
     )
 
@@ -2392,10 +2403,12 @@ def _is_openshell_supervisor(process: ProcessIdentity) -> bool:
 
 
 def _is_nemoclaw_start(process: ProcessIdentity, sandbox_uid: int) -> bool:
-    direct = process.command == (NEMOCLAW_START_PATH,)
+    # Docker appends image CMD arguments after ENTRYPOINT. Authenticate the
+    # fixed startup-script position, then bind the complete argv to the fence.
+    direct = bool(process.command) and process.command[0] == NEMOCLAW_START_PATH
     interpreted = bool(
-        len(process.command) == 2
-        and process.command[0].rsplit(b"/", 1)[-1] == b"bash"
+        len(process.command) >= 2
+        and process.command[0] in BASH_ARGV0
         and process.command[1] == NEMOCLAW_START_PATH
     )
     return bool(
@@ -2530,6 +2543,18 @@ def _stop_reference(reference: ProcessReference) -> None:
     _wait_for_reference_state(reference, ("T", "t"))
 
 
+def _wait_for_host_stopped_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        process = _recapture_reference(reference, "supervisor-identity-drift")
+        if process.state in ("T", "t"):
+            return process
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("supervisor-not-host-stopped")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
 def _allowed_writer_map(
     allowed: tuple[ProcessReference, ...],
 ) -> dict[int, ProcessReference]:
@@ -2650,7 +2675,12 @@ def _hold_exact_processes(
     activation: ActivationProof | None,
 ) -> None:
     _prove_fence_shape(fence, expected_mount_namespace)
-    _stop_reference(fence.supervisor)
+    # PID-namespace init accepts SIGSTOP only from an ancestor PID namespace.
+    # The provider must therefore stop the exact persisted runtime through its
+    # host-side engine authority before invoking this root helper. Keep the
+    # helper responsible for proving that boundary and for fencing every
+    # workload writer inside the already-proven private namespace.
+    _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
     if activation is not None:
         persistent = set(activation.persistent_pids)
@@ -3658,7 +3688,7 @@ def _retire_activation_tree(
 ) -> None:
     fence = _fence_from_value(marker["fence"])
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
-    _stop_reference(fence.supervisor)
+    _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
     for reference in activation.processes:
         if not _reference_is_terminated(reference):
@@ -3801,23 +3831,15 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _fail("activation-marker-invalid")
     _verify_activation_checkpoint(marker, fence, activation)
     _publish_activation_release(durable_fd, marker, fence, activation)
-    supervisor, _start = _prove_fence_shape(fence, str(marker["mountNamespace"]))
-    if supervisor.state in ("T", "t"):
-        persistent = set(activation.persistent_pids)
-        for reference in activation.processes:
-            if _reference_is_terminated(reference):
-                if reference.pid in persistent:
-                    _fail("activation-process-drift")
-                continue
-            _resume_reference(reference)
-        _resume_reference(fence.start)
-        _prove_released_activation(marker, fence, activation)
-        supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-        if supervisor.state not in ("T", "t"):
-            _fail("release-order-ambiguous")
-        _signal_exact_process(supervisor, signal.SIGCONT)
-        _wait_for_reference_running(fence.supervisor)
-        return
+    _prove_fence_shape(fence, str(marker["mountNamespace"]))
+    persistent = set(activation.persistent_pids)
+    for reference in activation.processes:
+        if _reference_is_terminated(reference):
+            if reference.pid in persistent:
+                _fail("activation-process-drift")
+            continue
+        _resume_reference(reference)
+    _resume_reference(fence.start)
     _prove_released_activation(marker, fence, activation)
 
 

@@ -72,18 +72,16 @@ describe("cleanupOrphanedGatewayContainer (#6576)", () => {
     );
   });
 
-  it("does nothing when the gateway is reusable or on the Docker-driver path", () => {
-    for (const overrides of [
-      { gatewayReuseState: "healthy" },
-      { isDockerDriverGatewayEnabled: true },
-    ]) {
+  it.each([{ gatewayReuseState: "healthy" }, { isDockerDriverGatewayEnabled: true }])(
+    "does nothing when the gateway is reusable or on the Docker-driver path [case %#]",
+    (overrides) => {
       const deps = makeDeps(overrides);
 
       cleanupOrphanedGatewayContainer(deps);
 
       expect(deps.dockerInspect).not.toHaveBeenCalled();
-    }
-  });
+    },
+  );
 
   it("does nothing when no orphaned container is present", () => {
     const deps = makeDeps({ dockerInspect: vi.fn(() => ({ status: 1 })) });

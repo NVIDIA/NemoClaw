@@ -8,6 +8,7 @@ import {
   dockerStart as defaultDockerStart,
   dockerStop as defaultDockerStop,
 } from "../adapters/docker";
+import { retryUntil } from "../core/retry";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
@@ -29,7 +30,7 @@ type DockerRenameFn = (
 type DockerRunFn = (args: readonly string[], opts?: DockerRunOptions) => DockerRunResult;
 
 const REPLACEMENT_PRESENCE_ATTEMPTS = 3;
-const REPLACEMENT_PRESENCE_RETRY_SECONDS = 0.5;
+const REPLACEMENT_PRESENCE_RETRY_MS = 500;
 
 function sleepBeforeReplacementPresenceRetry(seconds: number): void {
   if (seconds <= 0 || !Number.isFinite(seconds)) return;
@@ -77,23 +78,28 @@ function observeReplacementPresence(
 ): DockerGpuPatchRollbackOutcome["replacementPresence"] {
   const exactId = fullDockerContainerId(containerId);
   if (!exactId) return "unknown";
-  for (let attempt = 0; attempt < REPLACEMENT_PRESENCE_ATTEMPTS; attempt += 1) {
-    const result = deps.dockerRun(
-      ["ps", "-a", "--no-trunc", "--filter", `id=${exactId}`, "--format", "{{.ID}}"],
-      options,
-    );
-    if (hasZeroDockerExitStatus(result)) {
-      const ids = outputText(result.stdout)
-        .split(/\r?\n/u)
-        .map((value) => value.trim())
-        .filter(Boolean);
-      return ids.some((id) => fullDockerContainerId(id) === exactId) ? "present" : "absent";
-    }
-    if (attempt + 1 < REPLACEMENT_PRESENCE_ATTEMPTS) {
-      deps.sleep(REPLACEMENT_PRESENCE_RETRY_SECONDS);
-    }
-  }
-  return "unknown";
+  const result = retryUntil(
+    () =>
+      deps.dockerRun(
+        ["ps", "-a", "--no-trunc", "--filter", `id=${exactId}`, "--format", "{{.ID}}"],
+        options,
+      ),
+    {
+      accept: hasZeroDockerExitStatus,
+      retryDelaysMs: Array.from(
+        { length: REPLACEMENT_PRESENCE_ATTEMPTS - 1 },
+        () => REPLACEMENT_PRESENCE_RETRY_MS,
+      ),
+      sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
+    },
+  );
+  if (!hasZeroDockerExitStatus(result)) return "unknown";
+
+  const ids = outputText(result.stdout)
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return ids.some((id) => fullDockerContainerId(id) === exactId) ? "present" : "absent";
 }
 
 export function rollbackToBackupContainer(

@@ -60,17 +60,17 @@ function runRcFile(
 }
 
 describe("Hermes rc files source HERMES_HOME from proxy-env (#2376)", () => {
-  for (const rcFileName of [".bashrc", ".profile"] as const) {
-    it(`${rcFileName} exports HERMES_HOME when proxy-env exists`, () => {
-      const out = runRcFile(rcFileName, "export HERMES_HOME=/sandbox/.hermes\n");
-      expect(out).toBe("/sandbox/.hermes");
-    });
+  const rcFileNames = [".bashrc", ".profile"] as const;
 
-    it(`${rcFileName} prepends Hermes command directories to PATH`, () => {
-      const out = runRcFile(rcFileName, undefined, `printf '%s' "$PATH"`);
-      expect(out.split(":").slice(0, 2)).toEqual(["/usr/local/bin", "/opt/hermes/.venv/bin"]);
-    });
-  }
+  it.each(rcFileNames)("%s exports HERMES_HOME when proxy-env exists", (rcFileName) => {
+    const out = runRcFile(rcFileName, "export HERMES_HOME=/sandbox/.hermes\n");
+    expect(out).toBe("/sandbox/.hermes");
+  });
+
+  it.each(rcFileNames)("%s prepends Hermes command directories to PATH", (rcFileName) => {
+    const out = runRcFile(rcFileName, undefined, `printf '%s' "$PATH"`);
+    expect(out.split(":").slice(0, 2)).toEqual(["/usr/local/bin", "/opt/hermes/.venv/bin"]);
+  });
 
   it("rc sourcing is a no-op when proxy-env is absent", () => {
     const out = runRcFile(".bashrc");

@@ -209,6 +209,7 @@ export class OnboardRuntime {
     const enteredAt = this.deps.now();
     const updated = this.deps.updateSession((session) => {
       session.machine = snapshotFor(to, enteredAt, session.machine.revision + 1);
+      onboardSession.syncCheckpointMachineState(session, to, enteredAt);
       if (to === "failed") {
         session.status = "failed";
       } else if (to === "complete") {
@@ -265,6 +266,7 @@ export class OnboardRuntime {
         session.resumable = false;
         session.failure = null;
         session.machine = snapshotFor("complete", enteredAt, session.machine.revision + 1);
+        onboardSession.syncCheckpointMachineState(session, "complete", enteredAt);
         return session;
       });
     }
@@ -383,6 +385,7 @@ export class OnboardRuntime {
         recordedAt,
       });
       session.machine = snapshotFor("failed", recordedAt, session.machine.revision + 1);
+      onboardSession.syncCheckpointMachineState(session, "failed", recordedAt);
       return session;
     });
 

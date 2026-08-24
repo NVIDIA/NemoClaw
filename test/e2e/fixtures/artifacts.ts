@@ -5,7 +5,6 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import type { ExecutionEvidence } from "../registry/parity-evidence.ts";
 import { redactString } from "./redaction.ts";
 
 export type TargetContract = string | readonly string[];
@@ -138,18 +137,6 @@ export class ArtifactSink {
 
   async writeJson(relativePath: string, value: unknown): Promise<string> {
     return this.writeText(relativePath, `${JSON.stringify(value, null, 2)}\n`);
-  }
-
-  async writeExecutionEvidence(resultId: string, evidence: ExecutionEvidence): Promise<string> {
-    if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(resultId)) {
-      throw new Error(`execution result id is not artifact-safe: ${resultId}`);
-    }
-    if (resultId !== evidence.resultId) {
-      throw new Error(
-        `execution result id '${resultId}' does not match evidence result '${evidence.resultId}'`,
-      );
-    }
-    return this.writeJson(path.join("execution", `${resultId}.json`), evidence);
   }
 }
 

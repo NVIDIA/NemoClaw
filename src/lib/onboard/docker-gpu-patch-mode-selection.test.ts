@@ -54,6 +54,15 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
   });
 
+  it.each(["cdi", "gpus", "nvidia-runtime"] as const)(
+    "rejects an empty CDI identifier for the %s compatibility mode",
+    (kind) => {
+      expect(() => buildDockerGpuMode(kind, "nvidia.com/gpu=")).toThrow(
+        "must include an identifier",
+      );
+    },
+  );
+
   it("uses Jetson NVIDIA runtime args without selecting generic --gpus or CDI candidates", () => {
     expect(buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }).args).toEqual([
       "--runtime",

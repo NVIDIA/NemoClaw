@@ -13,6 +13,7 @@ export type SandboxCommandResult = {
 
 export type SandboxExecCommandOptions = {
   allowLocalDockerFallback?: boolean;
+  gatewayName?: string;
 };
 
 export type CommandTransportDependencies = {
@@ -50,6 +51,7 @@ export function executeSandboxCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
+  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): SandboxCommandResult | null {
   return deps.withPrivilegedSandboxExecutionLease(
     sandboxName,
@@ -86,7 +88,7 @@ export function executeSandboxCommandTransport(
             encoding: "utf-8",
             env: deps.buildSubprocessEnv(),
             stdio: ["ignore", "pipe", "pipe"],
-            timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+            timeout,
           },
         );
         return {
@@ -165,9 +167,20 @@ export function executeSandboxExecCommandTransport(
       const markedCommand = deps.buildSandboxExecMarkedCommand(command);
       const effectiveTimeout = resolveSandboxExecTimeout(timeout);
       try {
+        const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
         const result = spawnSync(
           deps.getOpenshellBinary(),
-          ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
+          [
+            "sandbox",
+            "exec",
+            "--name",
+            sandboxName,
+            ...gatewayArgs,
+            "--",
+            "sh",
+            "-c",
+            markedCommand,
+          ],
           {
             cwd: deps.root,
             encoding: "utf-8",

@@ -28,6 +28,10 @@ const expectedStateOrder = [
   "failed",
 ];
 
+const progressStateDefinitions = ONBOARD_MACHINE_STATE_DEFINITIONS.flatMap((definition) =>
+  "progress" in definition ? [definition] : [],
+);
+
 describe("onboard machine definition", () => {
   it("is the canonical ordered state catalog", () => {
     expect(ONBOARD_MACHINE_STATE_IDS).toEqual(expectedStateOrder);
@@ -76,16 +80,16 @@ describe("onboard machine definition", () => {
     expect(ONBOARD_SESSION_STEP_TO_MACHINE_STATE).toEqual(mappingFromDefinitions);
   });
 
-  it("keeps progress metadata attached only to state-backed steps", () => {
-    for (const definition of ONBOARD_MACHINE_STATE_DEFINITIONS) {
-      if (!("progress" in definition)) continue;
+  it.each(progressStateDefinitions)(
+    "keeps progress metadata attached to state-backed step $state",
+    (definition) => {
       expect("stepName" in definition).toBe(true);
       expect(definition.progress.total).toBe(8);
       expect(definition.progress.number).toBeGreaterThanOrEqual(1);
       expect(definition.progress.number).toBeLessThanOrEqual(definition.progress.total);
       expect(definition.progress.title).not.toHaveLength(0);
-    }
-  });
+    },
+  );
 
   it("looks up definitions by state", () => {
     expect(getOnboardMachineStateDefinition("gateway")).toMatchObject({

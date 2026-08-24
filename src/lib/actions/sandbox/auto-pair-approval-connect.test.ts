@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { performance } from "node:perf_hooks";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   runConnectAutoPairApprovalPass,
@@ -15,8 +16,14 @@ import {
 } from "./connect-autopair-budget";
 
 describe("connect auto-pair approval pass", () => {
+  beforeEach(() => {
+    performance.clearMeasures("nemoclaw.openclaw-pairing.complete-fallback");
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    performance.clearMeasures("nemoclaw.openclaw-pairing.complete-fallback");
   });
 
   it("uses the shared connect approval budget", () => {
@@ -33,6 +40,16 @@ describe("connect auto-pair approval pass", () => {
       },
       gatewayName: "nemoclaw-8091",
     });
+  });
+
+  it("records the named complete pairing fallback stage without a timing threshold (#9023)", () => {
+    const runApprovalPass = vi.fn();
+
+    runConnectAutoPairApprovalPass("alpha", "nemoclaw", runApprovalPass);
+
+    expect(
+      performance.getEntriesByName("nemoclaw.openclaw-pairing.complete-fallback"),
+    ).toHaveLength(1);
   });
 
   it("pins sandbox exec to the owning OpenShell gateway despite ambient gateway drift (#8942)", () => {

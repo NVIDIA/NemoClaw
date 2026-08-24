@@ -42,19 +42,8 @@ import http from "node:http";
 import { BlockList, isIP } from "node:net";
 import path from "node:path";
 
-import {
-  BEDROCK_RUNTIME_ADAPTER_PORT,
-  DASHBOARD_PORT,
-  DASHBOARD_PORT_RANGE_END,
-  DASHBOARD_PORT_RANGE_START,
-  GATEWAY_PORT,
-  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-  OLLAMA_PORT,
-  OLLAMA_PROXY_PORT,
-  OPENROUTER_RUNTIME_ADAPTER_PORT,
-  VLLM_PORT,
-  validateHttpsPinRuntimeAdapterPort,
-} from "../core/ports";
+import { HTTPS_PIN_RUNTIME_ADAPTER_PORT, validateRuntimeAdapterPort } from "../core/ports";
+import { retryUntilAsync } from "../core/retry";
 import { getVersion } from "../core/version";
 import { ROOT, run, runCapture } from "../runner";
 import { buildMinimalCredentialAdapterEnv } from "../subprocess-env";
@@ -843,13 +832,15 @@ async function waitForAdapterProcessExit(
 ): Promise<boolean> {
   const isRunning = options.isRunning || ((candidatePid: number) => isAdapterProcess(candidatePid));
   const sleep = options.sleep || sleepMs;
-  const attempts = options.attempts || PROCESS_EXIT_WAIT_ATTEMPTS;
+  const attempts = options.attempts ?? PROCESS_EXIT_WAIT_ATTEMPTS;
   const intervalMs = options.intervalMs || PROCESS_EXIT_WAIT_MS;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (!isRunning(pid)) return true;
-    if (attempt + 1 < attempts) await sleep(intervalMs);
-  }
-  return false;
+  if (attempts <= 0) return false;
+
+  return retryUntilAsync(() => !isRunning(pid), {
+    accept: (exited) => exited,
+    retryDelaysMs: Array.from({ length: Math.ceil(attempts) - 1 }, () => intervalMs),
+    sleep,
+  });
 }
 
 async function killStaleAdapter(): Promise<void> {
@@ -1380,11 +1371,11 @@ async function revokeRouteLocked(
   const allowedSourceCidrs = deps.readAllowedSourceCidrs();
   const authenticatedLiveAdapter = Boolean(
     controlToken &&
-      allowedSourceCidrs &&
-      (await deps.probeHealth({
-        controlToken: controlToken as string,
-        expectedSourceCidrs: allowedSourceCidrs,
-      })),
+    allowedSourceCidrs &&
+    (await deps.probeHealth({
+      controlToken: controlToken as string,
+      expectedSourceCidrs: allowedSourceCidrs,
+    })),
   );
   if (authenticatedLiveAdapter && controlToken) {
     await deps.deleteRoute(controlToken, routeId);
@@ -1464,25 +1455,6 @@ async function withAdapterLock<T>(operation: () => Promise<T>): Promise<T> {
   throw new Error("HTTPS Pin Runtime adapter startup is already in progress");
 }
 
-function validateAdapterPortConfiguration(): void {
-  validateHttpsPinRuntimeAdapterPort(
-    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
-    HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-    {
-      dashboardPort: DASHBOARD_PORT,
-      dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
-      dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
-      gatewayPort: GATEWAY_PORT,
-      vllmPort: VLLM_PORT,
-      ollamaPort: OLLAMA_PORT,
-      ollamaProxyPort: OLLAMA_PROXY_PORT,
-      bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
-      openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
-      httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-    },
-  );
-}
-
 async function findReusableAdapterControlToken(
   priorToken: string | null,
   allowedSourceCidrs: readonly string[] = ["127.0.0.1/32"],
@@ -1520,7 +1492,10 @@ async function ensureAdapterProcessLocked(options: {
   routeId: string;
   allowedSourceCidrs: string[];
 }): Promise<string> {
-  validateAdapterPortConfiguration();
+  validateRuntimeAdapterPort(
+    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+    HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  );
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
   // The authenticated, build-bound health response is stronger identity
   // evidence than a PID file. Reuse the live adapter even if its PID metadata

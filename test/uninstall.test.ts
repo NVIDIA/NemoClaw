@@ -1,11 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "../src/lib/onboard/docker-driver-gateway-config";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../src/lib/onboard/docker-driver-gateway-runtime-marker";
+import {
+  getNemoclawOpenShellGatewayUserServicePath,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+} from "../src/lib/onboard/docker-driver-gateway-service";
+import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate";
+import { createSession } from "../src/lib/state/onboard-session";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
@@ -30,7 +46,7 @@ exit 0
   }
 
   function seedPreservedState(tmp: string): string {
-    const stateDir = path.join(tmp, ".nemoclaw");
+    const stateDir = seedCompletedDefaultAuthority(tmp);
     fs.mkdirSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101"), { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"),
@@ -38,9 +54,60 @@ exit 0
     );
     fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
     fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
+    return stateDir;
+  }
+
+  function seedCompletedDefaultAuthority(
+    tmp: string,
+    source: "packaged-service" | "standalone" = "standalone",
+  ): string {
+    const stateDir = path.join(tmp, ".nemoclaw");
+    const sandboxName = "ordinary-authority";
+    const gateway = {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed" as const,
+      source,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    };
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateDir, 0o700);
+    const session = createSession({
+      agent: "openclaw",
+      sandboxName,
+      metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
+    });
+    session.status = "complete";
+    session.resumable = false;
+    session.machine = { ...session.machine, state: "complete", revision: 1 };
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session, { profile: "default" }),
+      sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
+      gatewayAuthority: { kind: "selected", value: gateway },
+    };
+    fs.writeFileSync(path.join(stateDir, "onboard-session.json"), `${JSON.stringify(session)}\n`, {
+      mode: 0o600,
+    });
     fs.writeFileSync(
       path.join(stateDir, "sandboxes.json"),
-      JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+      `${JSON.stringify({
+        defaultSandbox: sandboxName,
+        sandboxes: {
+          [sandboxName]: {
+            name: sandboxName,
+            agent: null,
+            dashboardPort: null,
+            gatewayName: gateway.gatewayName,
+            gatewayPort: gateway.gatewayPort,
+            lifecycleGeneration: "ordinary-authority-generation",
+            openshellDriver: "docker",
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
     );
     return stateDir;
   }
@@ -63,11 +130,126 @@ exit 0
         ...sanitizedParentEnv(),
         HOME: tmp,
         PATH: `${path.join(tmp, "bin")}:/usr/bin:/bin`,
+        XDG_BIN_HOME: path.join(tmp, ".local", "bin"),
+        XDG_CONFIG_HOME: path.join(tmp, ".config"),
         NEMOCLAW_NODE: process.execPath,
         TMPDIR: tmp,
         ...extraEnv,
       },
     });
+  }
+
+  function writeManagedGatewayConfig(tmp: string): string {
+    const stateDir = path.join(tmp, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    fs.writeFileSync(
+      path.join(stateDir, "openshell-gateway.toml"),
+      buildDockerDriverGatewayConfigToml(
+        {
+          OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+          OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+          OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        },
+        "/usr/bin/openshell-sandbox",
+        jwtBundle,
+        gatewayIdForStateDir(stateDir),
+      ),
+      { mode: 0o600 },
+    );
+    return stateDir;
+  }
+
+  function startManagedGatewayProcess(tmp: string): ChildProcess {
+    const stateDir = writeManagedGatewayConfig(tmp);
+    const processScript = path.join(tmp, "managed-gateway-process.mjs");
+    fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
+    const child = spawn(process.execPath, [processScript, "--name", "nemoclaw", "--port", "8080"], {
+      env: {
+        ...sanitizedParentEnv(),
+        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+      },
+      stdio: "ignore",
+    });
+    const childPid =
+      child.pid ??
+      (() => {
+        throw new Error("managed gateway fixture did not start");
+      })();
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), `${String(childPid)}\n`, {
+      mode: 0o600,
+    });
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+      desiredEnv: {},
+      endpoint: "https://127.0.0.1:8080",
+      pid: childPid,
+    });
+    return child;
+  }
+
+  function startPackagedGatewayProcess(
+    tmp: string,
+    fakeBin: string,
+  ): {
+    child: ChildProcess;
+    servicePath: string;
+    stateDir: string;
+    systemctlCalls: string;
+  } {
+    const stateDir = writeManagedGatewayConfig(tmp);
+    const gatewayBinDir = path.join(tmp, ".local", "bin");
+    const gatewayBin = path.join(gatewayBinDir, "openshell-gateway");
+    const processScript = path.join(tmp, "packaged-gateway-process.mjs");
+    fs.mkdirSync(gatewayBinDir, { recursive: true });
+    fs.symlinkSync(process.execPath, gatewayBin);
+    fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
+    const child = spawn(gatewayBin, [processScript], {
+      env: {
+        ...sanitizedParentEnv(),
+        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+      },
+      stdio: "ignore",
+    });
+    const childPid =
+      child.pid ??
+      (() => {
+        throw new Error("packaged gateway fixture did not start");
+      })();
+    const servicePath = getNemoclawOpenShellGatewayUserServicePath(tmp, { HOME: tmp });
+    fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+    fs.writeFileSync(
+      servicePath,
+      `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n[Service]\nExecStart=${gatewayBin} ${processScript}\n`,
+    );
+    const systemctlCalls = path.join(tmp, "systemctl-calls");
+    fs.writeFileSync(
+      path.join(fakeBin, "systemctl"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${systemctlCalls}'
+case "$*" in
+  "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart")
+    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }'
+    ;;
+  "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID")
+    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }' 'ActiveState=active' 'MainPID=${String(childPid)}'
+    ;;
+  "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value")
+    printf '%s\\n' '${String(childPid)}'
+    ;;
+  "--user disable --now ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}")
+    :
+    ;;
+  "--user daemon-reload")
+    :
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    return { child, servicePath, stateDir, systemctlCalls };
   }
 
   it("exits 0 and shows usage for --help", () => {
@@ -109,6 +291,7 @@ exit 0
   it("skips the confirmation prompt and completes successfully for --yes", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));
+    seedCompletedDefaultAuthority(tmp);
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
@@ -158,16 +341,18 @@ exit 0
     }
   }, 60_000);
 
-  it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", () => {
+  it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
     const fakeBin = path.join(tmp, "bin");
     writeFakeTools(fakeBin);
+    const managedGateway = startManagedGatewayProcess(tmp);
     fs.writeFileSync(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 case "$*" in
+  "status -g nemoclaw") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
   "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
-  "sandbox delete my-assistant")
+  "sandbox delete -g nemoclaw my-assistant")
     printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2
     exit 1
     ;;
@@ -189,7 +374,10 @@ exit 0
       }),
     );
     try {
-      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
+      await once(managedGateway, "spawn");
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
+        NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
+      });
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
@@ -197,13 +385,102 @@ exit 0
       expect(output).not.toMatch(/Selected gateway cleanup was incomplete/);
       expect(output).not.toMatch(/Uninstall completed with errors/);
     } finally {
+      managedGateway.kill("SIGKILL");
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }, 60_000);
 
+  it.runIf(process.platform === "linux")(
+    "uninstalls the scoped package-managed gateway without standalone runtime files",
+    async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-packaged-gateway-"));
+      const fakeBin = path.join(tmp, "bin");
+      writeFakeTools(fakeBin);
+      const { child, servicePath, stateDir, systemctlCalls } = startPackagedGatewayProcess(
+        tmp,
+        fakeBin,
+      );
+      const openshellCalls = path.join(tmp, "openshell-calls");
+      fs.writeFileSync(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${openshellCalls}'
+case "$*" in
+  "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
+esac
+exit 0
+`,
+        { mode: 0o755 },
+      );
+      const registryRoot = seedCompletedDefaultAuthority(tmp, "packaged-service");
+      const registryPath = path.join(registryRoot, "sandboxes.json");
+      const registry = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
+        sandboxes: Record<string, unknown>;
+      };
+      registry.sandboxes.sibling = {
+        gatewayName: "nemoclaw-9124",
+        gatewayPort: 9124,
+        name: "sibling",
+      };
+      fs.writeFileSync(registryPath, `${JSON.stringify(registry)}\n`, { mode: 0o600 });
+
+      try {
+        await once(child, "spawn");
+        expect(fs.existsSync(path.join(stateDir, "openshell-gateway.pid"))).toBe(false);
+        const result = runUninstall(tmp, ["--yes"]);
+        const output = `${result.stdout}${result.stderr}`;
+
+        expect(result.status, output).toBe(0);
+        const openshellInvocations = fs.readFileSync(openshellCalls, "utf-8");
+        expect(openshellInvocations).toContain("sandbox delete -g nemoclaw ordinary-authority");
+        expect(openshellInvocations).not.toMatch(
+          /sandbox delete .*nemoclaw-9124|sandbox delete .*sibling/,
+        );
+        const preservedRegistry = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
+          sandboxes: Record<string, unknown>;
+        };
+        expect(preservedRegistry.sandboxes.sibling).toEqual({
+          gatewayName: "nemoclaw-9124",
+          gatewayPort: 9124,
+          name: "sibling",
+        });
+        const gatewayList = spawnSync(
+          path.join(fakeBin, "openshell"),
+          ["gateway", "list", "-o", "json"],
+          { encoding: "utf-8" },
+        );
+        expect(gatewayList.status, gatewayList.stderr).toBe(0);
+        expect(JSON.parse(gatewayList.stdout) as Array<{ name: string }>).toContainEqual({
+          name: "nemoclaw-9124",
+        });
+        const serviceInvocations = fs.readFileSync(systemctlCalls, "utf-8");
+        expect(serviceInvocations).toContain(
+          `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart`,
+        );
+        expect(serviceInvocations).toContain(
+          `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID`,
+        );
+        expect(serviceInvocations).toContain(
+          `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value`,
+        );
+        expect(serviceInvocations).toContain(
+          `--user disable --now ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`,
+        );
+        expect(serviceInvocations).toContain("--user daemon-reload");
+        expect(output).not.toContain("selected gateway PID file is missing or invalid");
+        expect(fs.existsSync(servicePath)).toBe(false);
+      } finally {
+        child.kill("SIGKILL");
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
   it("uses NemoHermes branding for --yes when Hermes is active", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));
+    seedCompletedDefaultAuthority(tmp);
     try {
       const result = runUninstall(tmp, ["--yes"], { NEMOCLAW_AGENT: "hermes" });
 

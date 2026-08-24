@@ -4,6 +4,7 @@
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
 import { resolveGatewayName } from "../onboard/gateway-binding";
 import { resolveGatewayCredentialMutationAuthority } from "../onboard/gateway-teardown-authority";
 
@@ -29,7 +30,7 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   const action = kind === "query" ? "query" : "reach";
   return [
     `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`,
-    `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
+    `  ${gatewayStartGuidance(resolveGatewayName(GATEWAY_PORT))}`,
   ];
 }
 

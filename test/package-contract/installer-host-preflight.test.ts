@@ -32,16 +32,25 @@ function runInstallerHostAdmissionTest(
     runtime: string;
     hasNestedOverlayConflict?: boolean;
     isUnsupportedRuntime?: boolean;
+    additionalFindingIds?: string[];
+    unknownCapabilityIds?: string[];
   },
   forcedRejection?: { findingIds: string[]; capabilityIds: string[] },
+  options: {
+    experimentalProfile?: string;
+    gatewayManagementMode?: string;
+    portableProfileArtifact?: "present" | "missing";
+  } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
   const fakeBin = path.join(tmp, "bin");
   const sourceRoot = path.join(tmp, "source");
   const onboardDir = path.join(sourceRoot, "dist", "lib", "onboard");
+  const experimentalDir = path.join(onboardDir, "experimental");
   const readinessDir = path.join(sourceRoot, "dist", "lib", "readiness");
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(onboardDir, { recursive: true });
+  fs.mkdirSync(experimentalDir, { recursive: true });
   fs.mkdirSync(readinessDir, { recursive: true });
 
   fs.writeFileSync(
@@ -59,8 +68,25 @@ exports.planHostAdvisories = () => [];
   );
   fs.writeFileSync(
     path.join(onboardDir, "gateway-management.js"),
-    `exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });\n`,
+    `const mode = process.env.TEST_GATEWAY_MANAGEMENT_MODE;
+exports.loadGatewayManagementDeclaration = () => ({
+  ok: true,
+  declaration: mode ? { mode } : null,
+});
+`,
   );
+  const portableProfileArtifacts =
+    options.portableProfileArtifact === "missing"
+      ? []
+      : [
+          [
+            path.join(experimentalDir, "portable-profile.js"),
+            `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
+          ] as const,
+        ];
+  for (const [artifactPath, contents] of portableProfileArtifacts) {
+    fs.writeFileSync(artifactPath, contents);
+  }
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
@@ -80,7 +106,10 @@ exports.planHostAdvisories = () => [];
       summary: "The detected container runtime is unsupported.",
     });
   }
-  return { findings, host };
+  for (const id of host.additionalFindingIds || []) {
+    findings.push({ id, severity: "blocking", summary: "Blocking finding: " + id });
+  }
+  return { findings, capabilityIds: host.unknownCapabilityIds || [], host };
 };
 `,
   );
@@ -92,21 +121,54 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     return { admitted: false, reasonIds: [], ...forcedRejection, waivedFindingIds: [] };
   }
   const findingIds = report.findings
-    .filter((finding) =>
-      finding.id !== "host.docker.storage_incompatible" || !options.allowStorageRemediation
-    )
+    .filter((finding) => {
+      if (
+        finding.id === "host.docker.runtime_unsupported" &&
+        options.allowUnsupportedRuntime
+      ) return false;
+      if (
+        finding.id === "host.docker.storage_incompatible" &&
+        options.allowStorageRemediation
+      ) return false;
+      if (
+        options.allowPortableHostPreparation &&
+        (finding.id === "host.docker.daemon_unreachable" ||
+          finding.id === "host.docker.storage_incompatible")
+      ) return false;
+      return true;
+    })
     .map((finding) => finding.id);
-  return findingIds.length === 0
-    ? { admitted: true, waivedFindingIds: ["host.docker.storage_incompatible"] }
-    : { admitted: false, reasonIds: [], findingIds, capabilityIds: [], waivedFindingIds: [] };
+  const capabilityIds = report.capabilityIds.filter(
+    (id) =>
+      !options.allowPortableHostPreparation ||
+      (id !== "host.docker.daemon_reachable" &&
+        id !== "host.docker.runtime_supported" &&
+        id !== "host.docker.storage_compatible")
+  );
+  return findingIds.length === 0 && capabilityIds.length === 0
+    ? { admitted: true, waivedFindingIds: [] }
+    : { admitted: false, reasonIds: [], findingIds, capabilityIds, waivedFindingIds: [] };
 };
 `,
   );
-  fs.writeFileSync(
-    path.join(onboardDir, "gateway-management.js"),
-    `exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });\n`,
-  );
   writeNodeStub(fakeBin);
+
+  const {
+    NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
+    TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
+    ...inheritedEnv
+  } = process.env;
+  const childEnv: NodeJS.ProcessEnv = {
+    ...inheritedEnv,
+    HOME: tmp,
+    INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    SOURCE_ROOT: sourceRoot,
+    ...(options.experimentalProfile
+      ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
+      : {}),
+    TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
+  };
 
   const result = spawnSync(
     "bash",
@@ -121,13 +183,7 @@ run_installer_host_preflight
     {
       cwd: tmp,
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        SOURCE_ROOT: sourceRoot,
-      },
+      env: childEnv,
     },
   );
 
@@ -145,7 +201,21 @@ describe("installer host preflight package contract", () => {
     expect(output).not.toMatch(/Host preflight found issues/);
   });
 
-  it("prints the blocking readiness finding when no advisory action exists", () => {
+  it("admits an unsupported runtime for the explicit portable profile (#9007)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+      },
+      undefined,
+      { experimentalProfile: "portable" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Host preflight found issues/);
+  });
+
+  it("rejects the same unsupported runtime without the portable profile (#9007)", () => {
     const { output, result } = runInstallerHostAdmissionTest({
       runtime: "podman",
       isUnsupportedRuntime: true,
@@ -154,6 +224,57 @@ describe("installer host preflight package contract", () => {
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues/);
     expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+      },
+      undefined,
+      { experimentalProfile: "portable", portableProfileArtifact: "missing" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it.each([
+    ["daemon reachability", "host.docker.daemon_unreachable", undefined],
+    ["storage compatibility", "host.docker.storage_incompatible", "externally-supervised"],
+    ["GPU prerequisites", "host.gpu.container_toolkit_missing", undefined],
+    ["platform qualification", "host.platform.unsupported", undefined],
+    ["an injected finding", "host.test.blocked", undefined],
+  ])("rejects %s blockers for the explicit portable profile (#9007)", (_, findingId, mode) => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+        additionalFindingIds: [findingId],
+      },
+      undefined,
+      { experimentalProfile: "portable", gatewayManagementMode: mode },
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain(findingId);
+  });
+
+  it("rejects an unknown required capability for the explicit portable profile (#9007)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+        unknownCapabilityIds: ["host.docker.runtime_supported"],
+      },
+      undefined,
+      { experimentalProfile: "portable" },
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("host.docker.runtime_supported");
   });
 
   it("prints only stable unknown finding and required-capability diagnostics", () => {

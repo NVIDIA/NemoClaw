@@ -8,14 +8,21 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
-import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
+import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
-const META_JOBS = new Set(["release-qualification", "relevant-e2e", "report-to-pr", "scorecard"]);
+const META_JOBS = new Set([
+  "native-runtime-qualification-podman-toolchain",
+  "native-runtime-qualification-producer-plan",
+  "release-qualification",
+  "relevant-e2e",
+  "report-to-pr",
+  "scorecard",
+]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
@@ -24,16 +31,23 @@ const DOWNLOAD_ARTIFACT_ACTION =
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
+const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
+const PUBLICATION_REUSE_CONDITION = "${{ steps.publication_mode.outputs.reuse == '1' }}";
+const PUBLICATION_REQUIRED_OR_REUSE_CONDITION =
+  "${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
+    "reuse=0",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
     "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     "    required=1",
     "    ;;",
-    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
+    "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
     "    required=0",
+    "    reuse=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -41,12 +55,19 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    ;;",
     "esac",
     'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
+    'printf \'reuse=%s\\n\' "${reuse}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
 const GENERIC_GITHUB_WRITE_SURFACE =
   /github\s*(?:(?:\?\.|\.)\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s+(?:[A-Za-z_$][\w$]*\s*=\s*github\b|\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github(?:\.rest)?\b)|\bfetch\b|\bgh\s+api\b/u;
+const GH_API_WRITE_METHOD =
+  /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
+const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
+  "native-runtime-qualification-producer-plan",
+  "native-runtime-qualification-producer-aggregate",
+]);
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
@@ -56,9 +77,11 @@ const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
 type WorkflowStep = {
   "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
   with?: Record<string, unknown>;
 };
@@ -70,6 +93,7 @@ type WorkflowJob = {
   if?: string;
   name?: unknown;
   needs?: unknown;
+  outputs?: Record<string, unknown>;
   permissions?: WorkflowPermissions;
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
@@ -214,7 +238,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pr_number",
     "checkout_sha",
     "checkout_repository",
-    "review_reason",
     "base_sha",
     "workflow_sha",
     "correlation_id",
@@ -246,9 +269,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push("Manual PR E2E concurrency must not cancel an active Jetson dispatch");
+    errors.push(
+      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+    );
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
@@ -256,40 +281,43 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authenticationIndex = steps.findIndex(
     (step) => step.name === "Authenticate manual PR dispatch",
   );
-  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const checkoutIndex = steps.findIndex((step) => step.name === "Check out E2E candidate");
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
+  const credentialAuthorizationIndex = steps.findIndex(
+    (step) => step.name === "Authorize E2E credentials",
+  );
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   if (
     authenticationIndex < 0 ||
     checkoutIndex < 0 ||
     validationIndex < 0 ||
+    credentialAuthorizationIndex < 0 ||
     prepareIndex < 0 ||
     authenticationIndex >= checkoutIndex ||
     checkoutIndex >= validationIndex ||
-    validationIndex >= prepareIndex
+    validationIndex >= credentialAuthorizationIndex ||
+    credentialAuthorizationIndex >= prepareIndex
   ) {
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
 
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
-  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR authentication must be activated only by checkout_sha");
+  if (
+    authentication.id !== "candidate_authorization" ||
+    authentication.if !==
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
+  ) {
+    errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
-    ACTOR: "${{ github.actor }}",
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
-    REVIEW_REASON: "${{ inputs.review_reason }}",
-    RUN_ATTEMPT: "${{ github.run_attempt }}",
-    TARGETS: "${{ inputs.targets }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -299,55 +327,127 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
-  const acceptedJobCases = [
-    "::false:false",
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false:false`),
-    ":jetson-nvmap-gpu:false:true",
-  ].join(" | ");
-  const acceptedNames = [
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
-    "jetson-nvmap-gpu with its dispatch flag",
-  ];
-  const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == "refs/heads/main"',
-    '"$RUN_ATTEMPT" == "1"',
+    '"$WORKFLOW_REF" == refs/heads/*',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
-    '"$REVIEW_REASON" =~ ^[[:print:]]+$',
-    "${#REVIEW_REASON} >= 10",
-    "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
-    "Manual PR E2E requires a repository maintainer or administrator",
-    `${acceptedJobCases}) ;;`,
-    `Manual PR E2E accepts only empty selectors, ${acceptedJobNames}`,
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
+    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
+    '"$INCLUDE_LAUNCHABLE" == "true"',
+    '",${JOBS}," == *",staging-brev-launchable,"*',
+    '",${JOBS}," == *",staging-brev-launchable-identity,"*',
+    "Launchable identity smoke runs only against trusted main",
+    '"$nvidia_owned" == "true"',
+    "Launchable PR E2E requires an NVIDIA-owned source repository",
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
+    "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
+    `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
+    `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    "nvidia_owned=false",
+    "nvidia_owned=true",
+    `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
   }
 
+  const qualificationPlanName = "native-runtime-qualification-producer-plan";
+  const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
+  const trustedMainPlanCondition =
+    "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+  if (qualificationPlan.if !== trustedMainPlanCondition) {
+    errors.push("Native runtime qualification producer plan must execute only from trusted main");
+  }
+  for (const jobName of [
+    "native-runtime-qualification-podman-toolchain",
+    "native-runtime-qualification-producer",
+    "native-runtime-qualification-producer-aggregate",
+  ]) {
+    if (!needs(workflow.jobs[jobName] ?? {}).includes(qualificationPlanName)) {
+      errors.push(`${jobName} must depend on the trusted-main qualification producer plan`);
+    }
+  }
+
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
-  if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR checkout validation must be activated only by checkout_sha");
+  if (
+    validation.if !==
+    "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}"
+  ) {
+    errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
+  if (
+    validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
+  ) {
+    errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
+  }
   for (const fragment of [
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
+    "pull request base repository changed before execution",
+    "pull request base branch changed before execution",
     "checkout_repository changed before execution",
     "checkout_sha changed before execution",
     "base_sha changed before execution",
+    '"$NVIDIA_OWNED" == "true"',
+    "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
+    }
+  }
+
+  const credentialAuthorization =
+    credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
+  if (
+    matrixJob.outputs?.e2e_credentials_allowed !== "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    credentialAuthorization.id !== "e2e_credentials" ||
+    credentialAuthorization.if !==
+      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+    credentialAuthorization.shell !== "bash"
+  ) {
+    errors.push("Manual PR credential authorization must expose only the authorization result");
+  }
+  const expectedCredentialAuthorizationEnvironment = {
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    NVIDIA_OWNED: "${{ steps.candidate_authorization.outputs.nvidia_owned }}",
+    REF: "${{ github.ref }}",
+    WORKFLOW_REPOSITORY: "${{ github.repository }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
+  };
+  if (!isDeepStrictEqual(credentialAuthorization.env, expectedCredentialAuthorizationEnvironment)) {
+    errors.push(
+      "Manual PR credential authorization must bind the workflow and checkout identities",
+    );
+  }
+  const authorizationSource = String(credentialAuthorization.run ?? "");
+  for (const fragment of [
+    '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$NVIDIA_OWNED" == "true"',
+    '"$EVENT_NAME" == "workflow_dispatch"',
+    '"$REF" == refs/heads/*',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+    '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "credentials_allowed=false",
+    "credentials_allowed=true",
+    'printf \'allowed=%s\\n\' "$credentials_allowed" >> "$GITHUB_OUTPUT"',
+  ]) {
+    if (!authorizationSource.includes(fragment)) {
+      errors.push(`Manual PR credential authorization must retain ${fragment}`);
     }
   }
 
@@ -357,6 +457,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "hermes-gpu-startup" &&
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedE2ePlannerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted E2E planner" &&
+        step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedReportHelperCheckout =
         jobName === "report-to-pr" &&
@@ -371,17 +476,24 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out the E2E result evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
-        jobName === "staging-brev-launchable" &&
-        step.name === "Checkout trusted Launchable lane" &&
+        ((jobName === "staging-brev-launchable" &&
+          step.name === "Checkout trusted Launchable lane") ||
+          (jobName === "staging-brev-launchable-identity" &&
+            step.name === "Checkout trusted Launchable identity lane")) &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
-        step.if === PUBLICATION_REQUIRED_CONDITION &&
-        step.with?.ref === "${{ github.sha }}";
+        step.if === PUBLICATION_REQUIRED_OR_REUSE_CONDITION &&
+        step.with?.ref === "${{ inputs.checkout_sha || github.sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedManagedImageMultiarchResolverCheckout =
+        jobName === "managed-image-multiarch-startup" &&
+        step.name === "Checkout trusted Hermes resolver" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedLlamaCppPlanCheckout =
@@ -399,17 +511,63 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out trusted Jetson controller" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedOpenShellDevToolingCheckout =
+        ["mcp-bridge-dev", "openshell-dev-artifact"].includes(jobName) &&
+        step.name === "Checkout trusted OpenShell dev tooling" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
+        step.with?.path === ".trusted-openshell-dev-artifact";
+      const nativeRuntimeQualificationCheckout =
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Podman source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "cade97a52ebdf9dbf9e81de8009015776837a074" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Netavark source" &&
+          step.with?.repository === "containers/netavark" &&
+          step.with?.ref === "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" &&
+          step.with?.path === ".netavark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Aardvark DNS source" &&
+          step.with?.repository === "containers/aardvark-dns" &&
+          step.with?.ref === "cd7417681229219059939bdd9f0b3bd9ac9abb08" &&
+          step.with?.path === ".aardvark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-producer-plan" &&
+          step.name === "Check out the trusted qualification producer" &&
+          step.with?.ref === "${{ github.workflow_sha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the trusted qualification harness" &&
+          step.with?.ref === "${{ matrix.source.workflowSha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the candidate commit" &&
+          step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
+          step.with?.ref === "${{ matrix.source.candidateSha }}") ||
+        (jobName === "native-runtime-qualification-producer-aggregate" &&
+          step.name === "Check out the qualification aggregator" &&
+          step.with?.repository === "${{ github.repository }}" &&
+          step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
+        trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
         trustedReleaseQualificationCheckout ||
         trustedRelevantE2eCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
+        trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
-        trustedJetsonControllerCheckout;
+        trustedJetsonControllerCheckout ||
+        nativeRuntimeQualificationCheckout ||
+        trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
@@ -422,7 +580,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         !trustedCheckout &&
         step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
       ) {
-        errors.push(`${jobName} checkout must use the selected PR head repository`);
+        errors.push(`${jobName} checkout must use the selected PR source repository`);
       }
     }
   }
@@ -434,6 +592,12 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const expectedJob = {
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
+    outputs: {
+      dcode_base_contract:
+        "${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}",
+      dcode_base_ref:
+        "${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}",
+    },
     permissions: {
       actions: "read",
       contents: "read",
@@ -453,30 +617,83 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         name: "Check out trusted E2E workflow",
-        if: PUBLICATION_REQUIRED_CONDITION,
+        if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ github.sha }}",
+          ref: "${{ inputs.checkout_sha || github.sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
       },
       {
         name: "Set up Node for publication verification",
-        if: PUBLICATION_REQUIRED_CONDITION,
+        if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         with: {
           "node-version": 22,
         },
       },
       {
+        id: "publication",
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
-          EXPECTED_SHA: "${{ github.sha }}",
+          EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
         },
-        run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+        shell: "bash",
+        run: [
+          "set -euo pipefail",
+          "export GITHUB_REF=refs/heads/main",
+          'export GITHUB_SHA="$EXPECTED_SHA"',
+          "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+          "",
+        ].join("\n"),
+      },
+      {
+        name: "Download immutable Deep Agents Code base contract",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
+      },
+      {
+        name: "Download reused Deep Agents Code base contract",
+        if: PUBLICATION_REUSE_CONDITION,
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_RUN_ATTEMPT: "1",
+          PUBLICATION_RUN_ID: "32544159037",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
+      },
+      {
+        id: "validate_dcode_base",
+        name: "Validate immutable Deep Agents Code base",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
+      },
+      {
+        id: "validate_reused_dcode_base",
+        name: "Validate reused Deep Agents Code base",
+        if: PUBLICATION_REUSE_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_RUN_ATTEMPT: "1",
+          PUBLICATION_RUN_ID: "32544159037",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },
     ],
   };
@@ -486,8 +703,53 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
     );
   }
-  if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
-    errors.push("generate-matrix must wait for base-image-publication");
+  const matrix = workflow.jobs["generate-matrix"] ?? {};
+  if (needs(matrix).includes("base-image-publication")) {
+    errors.push("generate-matrix must not wait for base-image-publication");
+  }
+  const matrixOutputs = matrix.outputs ?? {};
+  if ("dcode_base_contract" in matrixOutputs || "dcode_base_ref" in matrixOutputs) {
+    errors.push("generate-matrix must not relay Deep Agents Code base outputs");
+  }
+  const live = workflow.jobs.live ?? {};
+  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
+    errors.push("live E2E must wait for matrix generation and base-image publication");
+  }
+  if (
+    live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
+    "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
+  ) {
+    errors.push("live DCode must use the selected immutable base reference");
+  }
+  const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const upload = findStep(live, "Upload E2E artifacts");
+  const uploadPaths = String(upload.with?.path ?? "")
+    .split("\n")
+    .map((path) => path.trim())
+    .filter(Boolean);
+  const liveSteps = live.steps ?? [];
+  if (
+    evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
+    evidence.env?.BASE_CONTRACT !==
+      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
+    !String(evidence.run ?? "").includes("dcode-base-image.json") ||
+    liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    !String(upload.with?.path ?? "").includes("dcode-base-image.json")
+  ) {
+    errors.push("live DCode must record its immutable base contract before E2E execution");
+  }
+  if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload cold-onboard performance evidence");
+  }
+  if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
+    errors.push("staging-brev-launchable must wait only for generate-matrix");
+  }
+  if (
+    !sameMembers(needs(workflow.jobs["staging-brev-launchable-identity"] ?? {}), [
+      "generate-matrix",
+    ])
+  ) {
+    errors.push("staging-brev-launchable-identity must wait only for generate-matrix");
   }
   return errors;
 }
@@ -614,6 +876,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   if (
     steps.length !== 2 ||
     steps[0] !== checkout ||
+    steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout.with?.["persist-credentials"] !== false ||
     checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
@@ -732,6 +995,21 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       name === "scorecard"
         ? jobSource.replace(/\bfetch\s*\(\s*webhookUrl\s*,/u, "validatedSlackFetch(")
         : jobSource;
+    const trustedQualificationReadJob = NATIVE_RUNTIME_QUALIFICATION_READ_JOBS.has(name);
+    if (
+      trustedQualificationReadJob &&
+      (!isDeepStrictEqual(permissions, {
+        actions: "read",
+        contents: "read",
+        "pull-requests": "read",
+      }) ||
+        GH_API_WRITE_METHOD.test(jobSource))
+    ) {
+      errors.push(`${name} must limit GitHub API access to the reviewed read-only contract`);
+    }
+    const sourceWithoutReviewedReads = trustedQualificationReadJob
+      ? sourceWithoutSlackPublisher.replace(/\bgh\s+api\b/gu, "validatedGhRead")
+      : sourceWithoutSlackPublisher;
 
     if (
       ISSUE_API_REFERENCE.test(jobSource) ||
@@ -740,7 +1018,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
     ) {
       errors.push(`${name} must not mutate GitHub issues`);
     }
-    if (GENERIC_GITHUB_WRITE_SURFACE.test(sourceWithoutSlackPublisher)) {
+    if (GENERIC_GITHUB_WRITE_SURFACE.test(sourceWithoutReviewedReads)) {
       errors.push(`${name} must not use unvalidated generic write surfaces`);
     }
   }
@@ -831,7 +1109,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorPushSummaries",
+    "scripts/scorecard/analyze-sandbox-phase-tail.mts",
+    "sandboxPhaseTail.readCurrentSandboxPhaseTailSample",
+    "currentSandboxPhaseTail",
+    "runtimeHistory.loadPriorPushHistory",
     "core.summary",
     "scorecardData",
     "slackData",

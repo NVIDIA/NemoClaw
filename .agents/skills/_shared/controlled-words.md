@@ -341,7 +341,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `contributor` | Technical noun | A person or agent that proposes or authors a repository change. | developer, submitter |
 | `docs build` | Technical noun | The repository command and result that validate and render the documentation source. | docs test, site build |
 | `documentation-only PR` | Technical noun | A PR whose diff changes explanatory documentation but no executable or behavior-affecting source. | docs PR when scope is not clear |
-| `documentation writer review` | Technical noun | The required review that determines documentation impact for a code change and checks changed explanatory text against repository writing and documentation rules. | docs review, writing pass |
+| `documentation writer review` | Technical noun | The independent review that checks a workflow-produced documentation candidate or direct documentation-only change against repository writing and documentation rules. | docs review, writing pass |
 | `E2E test` | Technical noun | A test that exercises a complete user journey across integrated components. | integration test when the full journey is not exercised |
 | `evidence` | Technical noun | A reproducible result or artifact tied to the revision, environment, and claim it supports. | proof without the supporting result, observation |
 | `feature branch` | Technical noun | A non-default Git branch that contains one proposed change. | working branch, PR branch before a PR exists |

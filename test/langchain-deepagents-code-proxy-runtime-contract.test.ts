@@ -136,47 +136,46 @@ function validateLoginProxyContract(
 }
 
 describe("Deep Agents Code login-shell proxy contract", () => {
-  it("sources normalized proxy values and rejects runtime metadata drift (#6191)", () => {
-    const managedProxy = "http://10.200.0.1:3128";
-    const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
-    expect(validateLoginProxyContract(managedProxy, managedNoProxy)).toBe("pass");
-    for (const runtimeEnvMetadata of [
-      "symlink",
-      "writable",
-      "wrong-user",
-      "wrong-owner",
-      "root-user",
-    ] as const) {
+  it.each(
+    ["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const,
+  )(
+    "sources normalized proxy values and rejects runtime metadata drift [%s] (#6191)",
+    (runtimeEnvMetadata) => {
+      const managedProxy = "http://10.200.0.1:3128";
+      const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
+      expect(validateLoginProxyContract(managedProxy, managedNoProxy)).toBe("pass");
+
       expect(
         validateLoginProxyContract(managedProxy, managedNoProxy, managedProxy, runtimeEnvMetadata),
       ).toBe("fail");
-    }
-    expect(validateLoginProxyContract(managedProxy, `${managedNoProxy},inference.local`)).toBe(
-      "fail",
-    );
-    expect(
-      validateLoginProxyContract(
-        "http://corp-user:corp-password@proxy.example:8080",
-        managedNoProxy,
-      ),
-    ).toBe("fail");
-    expect(
-      validateLoginProxyContract(managedProxy, managedNoProxy, "http://other-proxy.example:3128"),
-    ).toBe("fail");
-    expect(
-      validateLoginProxyContract(
-        "http://attacker-proxy.internal:9999",
-        "localhost,127.0.0.1,::1,attacker-proxy.internal",
-      ),
-    ).toBe("fail");
-    expect(
-      validateLoginProxyContract(
-        managedProxy,
-        managedNoProxy,
-        managedProxy,
-        "valid",
-        "socks5://all-user:all-password@all-proxy.example:1080",
-      ),
-    ).toBe("fail");
-  });
+
+      expect(validateLoginProxyContract(managedProxy, `${managedNoProxy},inference.local`)).toBe(
+        "fail",
+      );
+      expect(
+        validateLoginProxyContract(
+          "http://corp-user:corp-password@proxy.example:8080",
+          managedNoProxy,
+        ),
+      ).toBe("fail");
+      expect(
+        validateLoginProxyContract(managedProxy, managedNoProxy, "http://other-proxy.example:3128"),
+      ).toBe("fail");
+      expect(
+        validateLoginProxyContract(
+          "http://attacker-proxy.internal:9999",
+          "localhost,127.0.0.1,::1,attacker-proxy.internal",
+        ),
+      ).toBe("fail");
+      expect(
+        validateLoginProxyContract(
+          managedProxy,
+          managedNoProxy,
+          managedProxy,
+          "valid",
+          "socks5://all-user:all-password@all-proxy.example:1080",
+        ),
+      ).toBe("fail");
+    },
+  );
 });

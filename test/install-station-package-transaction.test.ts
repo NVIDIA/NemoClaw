@@ -428,11 +428,11 @@ install_packages
       },
     ];
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const { result, output } = validateSimulation(scenario.plan);
       expect(result.status, `${scenario.plan}\n${output}`).not.toBe(0);
       expect(output).toContain(scenario.message);
-    }
+    });
   });
 
   it("allows the approved DKMS transition and genuinely new dependencies in simulation", () => {
@@ -523,11 +523,11 @@ install_packages
       },
     ];
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const { result, output } = validatePreinstallPlan(targets, scenario.plan);
       expect(result.status, `${scenario.plan}\n${output}`).not.toBe(0);
       expect(output).toContain(scenario.message);
-    }
+    });
   });
 
   it("emits a noexec-safe root-hook command bound to its target manifest", () => {

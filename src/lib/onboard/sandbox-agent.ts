@@ -149,9 +149,12 @@ export interface PromptSandboxNameDeps {
 }
 
 export function createPromptValidatedSandboxName(deps: PromptSandboxNameDeps) {
-  return async function promptValidatedSandboxName(agent: AgentDefinition | null = null) {
+  return async function promptValidatedSandboxName(
+    agent: AgentDefinition | null = null,
+    previousName: string | null = null,
+  ) {
     const MAX_ATTEMPTS = 3;
-    const defaultSandboxName = getSandboxPromptDefault(agent);
+    const defaultSandboxName = previousName ?? getSandboxPromptDefault(agent);
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const nameAnswer = await deps.promptOrDefault(
         `  Sandbox name (${NAME_ALLOWED_FORMAT}) [${defaultSandboxName}]: `,

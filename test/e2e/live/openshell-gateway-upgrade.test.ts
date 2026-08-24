@@ -75,7 +75,7 @@ const OLD_INSTALLER_SHA256 =
   process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
   "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.101";
+const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.106";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -429,17 +429,17 @@ function expectStatePreservedAcrossUpgrade(
   legacy: OpenClawStateContract,
   upgraded: OpenClawStateContract,
 ): void {
-  expect(upgraded.placeholderEnvKeys).toContain("COMPATIBLE_API_KEY");
+  expect(legacy.placeholderEnvKeys).toContain("COMPATIBLE_API_KEY");
+  expect(upgraded.placeholderEnvKeys).toEqual([]);
 
-  // This custom-provider fixture sets COMPATIBLE_API_KEY, not
-  // NVIDIA_INFERENCE_API_KEY, so v0.0.89 intentionally does not create the
-  // NVIDIA auth-profile keyRef. Preserve any references the frozen runtime
-  // does emit without inventing one for this route.
+  // The current rebuild intentionally omits COMPATIBLE_API_KEY from its host
+  // environment. After trusted post-restore finalization (#9946), the
+  // credential remains gateway-held instead of being projected back into the
+  // sandbox environment. The upgraded agent turn below proves that the exact
+  // credential still reaches the compatible endpoint. Preserve any key refs
+  // the frozen runtime emitted without inventing one for this route.
   for (const keyRefId of legacy.keyRefIds) {
     expect(upgraded.keyRefIds).toContain(keyRefId);
-  }
-  for (const envKey of legacy.placeholderEnvKeys) {
-    expect(upgraded.placeholderEnvKeys).toContain(envKey);
   }
 }
 

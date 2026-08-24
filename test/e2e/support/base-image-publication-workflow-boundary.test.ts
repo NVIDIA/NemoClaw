@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   type OperationsWorkflow,
@@ -24,7 +25,9 @@ type MutableStep = {
 };
 
 type MutableJob = Record<string, unknown> & {
+  env?: Record<string, unknown>;
   needs?: unknown;
+  outputs?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
   steps?: MutableStep[];
 };
@@ -54,6 +57,13 @@ function gateSteps(value: MutableWorkflow): MutableStep[] {
   return required(
     value.jobs["base-image-publication"]?.steps,
     "base-image-publication test fixture is missing steps",
+  );
+}
+
+function gateStep(value: MutableWorkflow, name: string): MutableStep {
+  return required(
+    gateSteps(value).find((step) => step.name === name),
+    `base-image-publication test fixture is missing step ${name}`,
   );
 }
 
@@ -90,20 +100,44 @@ function runClassifier(environment: {
 }
 
 describe("base-image publication workflow boundary (#7372)", () => {
-  it.each([
-    ["push to main", "push", "", "1"],
-    ["manual main", "workflow_dispatch", "", "1"],
-    ["controller-selected PR", "workflow_dispatch", "a".repeat(40), "0"],
-  ])("classifies %s without executing untrusted code (#7372)", (_case, eventName, checkoutSha, required) => {
-    expect(
-      runClassifier({
-        checkoutSha,
-        eventName,
-        ref: "refs/heads/main",
-        repository: "NVIDIA/NemoClaw",
-      }),
-    ).toEqual({ output: `required=${required}\n`, status: 0 });
+  it("keeps Launchable off the base-image publication critical path", () => {
+    const value = workflow();
+
+    expect(validate(value)).toEqual([]);
   });
+
+  it.each([
+    ["push to main", "push", "", "refs/heads/main", "1", "0"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "1", "0"],
+    [
+      "controller-selected PR",
+      "workflow_dispatch",
+      "a".repeat(40),
+      "refs/heads/candidate",
+      "0",
+      "1",
+    ],
+    [
+      "pinned a4f9b59 diagnostic",
+      "workflow_dispatch",
+      "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
+      "refs/heads/candidate",
+      "0",
+      "1",
+    ],
+  ])(
+    "classifies %s without executing untrusted code (#7372)",
+    (_case, eventName, checkoutSha, ref, required, reuse) => {
+      expect(
+        runClassifier({
+          checkoutSha,
+          eventName,
+          ref,
+          repository: "NVIDIA/NemoClaw",
+        }),
+      ).toEqual({ output: `required=${required}\nreuse=${reuse}\n`, status: 0 });
+    },
+  );
 
   it.each([
     ["a fork", "push", "", "refs/heads/main", "attacker/NemoClaw"],
@@ -116,9 +150,12 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "refs/heads/main",
       "NVIDIA/NemoClaw",
     ],
-  ])("rejects %s instead of skipping the gate (#7372)", (_case, eventName, checkoutSha, ref, repository) => {
-    expect(runClassifier({ checkoutSha, eventName, ref, repository }).status).not.toBe(0);
-  });
+  ])(
+    "rejects %s instead of skipping the gate (#7372)",
+    (_case, eventName, checkoutSha, ref, repository) => {
+      expect(runClassifier({ checkoutSha, eventName, ref, repository }).status).not.toBe(0);
+    },
+  );
 
   const mutations: Array<[string, (value: MutableWorkflow) => void]> = [
     ["runner size", (value) => (value.jobs["base-image-publication"]["runs-on"] = "self-hosted")],
@@ -142,7 +179,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
     [
       "classifier outcome",
       (value) => {
-        gateSteps(value)[0].run = gateSteps(value)[0].run!.replace("required=0", "required=1");
+        gateSteps(value)[0].run = gateSteps(value)[0].run!.replace("required=1", "required=0");
       },
     ],
     ["checkout condition", (value) => (gateSteps(value)[1].if = "${{ always() }}")],
@@ -160,13 +197,91 @@ describe("base-image publication workflow boundary (#7372)", () => {
       (value) => (gateSteps(value)[3].env!.EXPECTED_SHA = "${{ inputs.checkout_sha }}"),
     ],
     [
+      "managed-image publication requirement",
+      (value) => (gateSteps(value)[3].env!.REQUIRE_MANAGED_IMAGE_PUBLICATION = "0"),
+    ],
+    [
       "verifier command",
       (value) => {
         gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
       },
     ],
+    [
+      "contract download command",
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").run =
+          "node unreviewed.mts"),
+    ],
+    [
+      "contract run binding",
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").env![
+          "PUBLICATION_RUN_ID"
+        ] = "${{ github.run_id }}"),
+    ],
+    [
+      "contract validation",
+      (value) =>
+        (gateStep(value, "Validate immutable Deep Agents Code base").run =
+          "node tools/e2e/dcode-base-image-contract.mts contract.json"),
+    ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    ["fanout dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
+    [
+      "matrix publication dependency",
+      (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
+    ],
+    ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
+    [
+      "Launchable publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
+    [
+      "Launchable identity publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable-identity"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
+    [
+      "matrix base output",
+      (value) => {
+        (value.jobs["generate-matrix"].outputs as Record<string, unknown>).dcode_base_ref =
+          "${{ inputs.base_ref }}";
+      },
+    ],
+    [
+      "live mutable base",
+      (value) => {
+        value.jobs.live.env!.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF =
+          "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest";
+      },
+    ],
+    [
+      "live base evidence ordering",
+      (value) => {
+        const steps = value.jobs.live.steps!;
+        const evidence = steps.find(
+          (step) => step.name === "Record immutable Deep Agents Code base evidence",
+        )!;
+        steps.splice(steps.indexOf(evidence), 1);
+        steps.push(evidence);
+      },
+    ],
+    [
+      "live base evidence upload",
+      (value) => {
+        const upload = value.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+        upload.with!.path = String(upload.with!.path).replace(
+          "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json\n",
+          "",
+        );
+      },
+    ],
   ];
 
   it.each(mutations)("rejects %s drift (#7372)", (_case, mutate) => {

@@ -3,7 +3,11 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  SandboxEntry,
+  SandboxHostLocalInferenceProvenance,
+  SandboxWorkloadReceipt,
+} from "../../state/registry/types";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
@@ -18,6 +22,8 @@ export type OpenshellCaptureResult = {
 };
 export type SandboxRecord = {
   name: string;
+  createdAt?: string;
+  pendingRouteReservation?: true;
   agent?: string | null;
   baselineExclusionTransition?: {
     id: string;
@@ -50,6 +56,14 @@ export type SandboxRecord = {
   observabilityEnabled?: boolean;
   provider?: string | null;
   model?: string | null;
+  endpointUrl?: string | null;
+  endpointSource?: SandboxEntry["endpointSource"];
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  lifecycleGeneration?: string;
+  lifecycleLiveIdentityFingerprint?: string;
+  hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -74,10 +88,19 @@ export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
-    status: 0,
-    output: "",
-  };
+  const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+  const sandboxName = String(args.at(-1) ?? "sandbox");
+  const result =
+    responses[command] ??
+    (command === "sandbox get"
+      ? {
+          status: 0,
+          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+        }
+      : {
+          status: 0,
+          output: "",
+        });
   return captureOpenshellStreams(args, result);
 }
 
@@ -127,6 +150,7 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const assertHermesPortableCommandUnavailableMock = vi.fn();
 export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
   schemaVersion: 1 as const,
   backupPath: "/tmp/backup-alpha",
@@ -166,7 +190,7 @@ export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const stopNimContainerMock = vi.fn();
 export const stopNimContainerByNameMock = vi.fn();
-export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const parseLiveSandboxNamesMock = vi.fn((_output: string) => new Set(["alpha"]));
 export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
@@ -177,7 +201,10 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   }),
 );
 export const registerSandboxMock = vi.fn();
+export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
+export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
+export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
@@ -253,6 +280,11 @@ vi.mock("../../runner", () => ({
   validateName: vi.fn((value: string) => value),
 }));
 
+vi.mock("../../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: assertHermesPortableCommandUnavailableMock,
+}));
+
 vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: parseLiveSandboxNamesMock,
 }));
@@ -296,13 +328,17 @@ vi.mock("../../state/registry", () => ({
   getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
   getSandbox: getSandboxMock,
+  isRouteOnlySandboxReservation: (entry: SandboxRecord) =>
+    entry.pendingRouteReservation === true && entry.createdAt === undefined,
   listSandboxes: () => ({
     sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
     defaultSandbox: "alpha",
   }),
   registerSandbox: registerSandboxMock,
-  removeSandbox: vi.fn(),
+  reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
+  removeSandbox: removeSandboxMock,
   updateSandbox: updateSandboxMock,
+  finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
 }));
 
 vi.mock("../../state/sandbox", () => ({
@@ -338,6 +374,7 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
+  assertHermesPortableCommandUnavailableMock.mockReset();
   captureSnapshotRestoreAuthorityMock.mockReturnValue({
     schemaVersion: 1,
     backupPath: "/tmp/backup-alpha",
@@ -375,8 +412,11 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
+  removeSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
-  updateSandboxMock.mockReset();
+  updateSandboxMock.mockReset().mockReturnValue(true);
+  finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

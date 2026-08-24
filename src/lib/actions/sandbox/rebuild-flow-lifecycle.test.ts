@@ -7,12 +7,33 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   originalSandboxName,
+  portableAgentLifecycle,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
+
+  it("rejects schema-5 before rebuild effects and rechecks under the lifecycle lock (#9203)", async () => {
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("schema-5 appeared");
+      });
+    const harness = createRebuildFlowHarness();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("schema-5 appeared");
+
+    expect(guard).toHaveBeenNthCalledWith(1, "alpha", "sandbox:rebuild");
+    expect(guard).toHaveBeenNthCalledWith(2, "alpha", "sandbox:rebuild");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
 
   it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
     const harness = createRebuildFlowHarness({
@@ -48,7 +69,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
+      backupPolicyPresets: ["npm", "bad", "throw", "mcp-bridge-github"],
+      sandboxEntry: {
+        policies: ["npm", "mcp-bridge-github"],
+        policyPresetsFinalized: true,
+        policyTier: "balanced",
+      },
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -63,7 +89,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ captureStateFile: expect.any(Function) }),
+    );
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
     expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
@@ -78,6 +107,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         nonInteractive: true,
         recreateSandbox: true,
         authoritativeResumeConfig: true,
+        rebuildPolicyPresets: ["npm", "bad", "throw"],
         autoYes: true,
       }),
     );
@@ -116,13 +146,19 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "mcp-bridge-github");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
       policies: ["npm", "bad", "throw"],
       policyTier: "balanced",
       policyPresetsFinalized: true,
     });
-    expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
+    expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw doctor --fix",
+      300_000,
+      { allowLocalDockerFallback: false },
+    );
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
@@ -390,9 +426,9 @@ network_policies:
     );
     expect(harness.session.toolDisclosure).toBe("direct");
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-    for (const [, update] of harness.registryUpdateSpy.mock.calls) {
+    harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
-    }
+    });
   });
 
   it("relocks as absent and keeps the journaled row when replacement creation fails (#7734)", async () => {

@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { isDeepStrictEqual } from "node:util";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
+import {
+  confirmHostLocalInferenceAuthority,
+  type PreparedHostLocalInferenceAuthority,
+  prepareHostLocalInferenceAuthority,
+} from "../../../onboard/runtime-provider/host-local-inference-lifecycle";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
@@ -16,17 +22,21 @@ import {
   prepareSandboxRuntimeRestore,
 } from "./provider-lifecycle";
 
-interface ManagedRestoreAuthorityDependencies {
+interface ProviderRestoreAuthorityDependencies {
   readonly getSandbox: (sandboxName: string) => SandboxEntry | null;
   readonly requireProvider: (sandbox: SandboxEntry) => RuntimeProviderBundle;
   readonly captureContentAuthority: typeof sandboxState.captureSnapshotRestoreAuthority;
+  readonly prepareHostLocalInference: typeof prepareHostLocalInferenceAuthority;
+  readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly restore: typeof sandboxState.restoreRecreatedSandboxState;
 }
 
-const defaultDependencies: Omit<ManagedRestoreAuthorityDependencies, "getSandbox"> = {
+const defaultDependencies: Omit<ProviderRestoreAuthorityDependencies, "getSandbox"> = {
   requireProvider: (sandbox) =>
     requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES),
   captureContentAuthority: (...args) => sandboxState.captureSnapshotRestoreAuthority(...args),
+  prepareHostLocalInference: prepareHostLocalInferenceAuthority,
+  confirmHostLocalInference: confirmHostLocalInferenceAuthority,
   restore: (...args) => sandboxState.restoreRecreatedSandboxState(...args),
 };
 
@@ -38,21 +48,21 @@ function failure(error: unknown): sandboxState.RestoreResult {
     failedDirs: ["manifest"],
     restoredFiles: [],
     failedFiles: [],
-    error: `Cannot restore managed snapshot authority: ${detail}.`,
+    error: `Cannot restore provider snapshot authority: ${detail}.`,
   };
 }
 
 /**
- * Restore a rebuild backup through the same provider and content authority
- * boundary as an explicit snapshot restore. Legacy/custom-image manifests
- * retain their existing state-only path.
+ * Restore a rebuild backup through its provider runtime and content authority.
+ * Legacy/custom-image manifests without provider-backed state retain the
+ * existing state-only path.
  */
 export function restoreRecreatedSandboxStateWithManagedAuthority(
   sandboxName: string,
   manifest: sandboxState.RebuildManifest,
   options: sandboxState.RecreatedSandboxRestoreOptions,
-  overrides: Pick<ManagedRestoreAuthorityDependencies, "getSandbox"> &
-    Partial<Omit<ManagedRestoreAuthorityDependencies, "getSandbox">>,
+  overrides: Pick<ProviderRestoreAuthorityDependencies, "getSandbox"> &
+    Partial<Omit<ProviderRestoreAuthorityDependencies, "getSandbox">>,
 ): sandboxState.RestoreResult {
   const dependencies = { ...defaultDependencies, ...overrides };
   let snapshotProfile;
@@ -65,14 +75,16 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
   } catch (error) {
     return failure(error);
   }
-  if (!snapshotProfile) {
+  const hostLocalInferenceReceipt = manifest.hostLocalInferenceReceipt;
+  if (!snapshotProfile && typeof hostLocalInferenceReceipt !== "string") {
     return dependencies.restore(sandboxName, manifest.backupPath, options);
   }
-  if (!manifest.runtimeSnapshot) {
+  if (snapshotProfile && !manifest.runtimeSnapshot) {
     return failure("managed snapshot is missing provider runtime authority");
   }
 
-  let prepared: PreparedSandboxRuntimeRestore;
+  let preparedRuntime: PreparedSandboxRuntimeRestore | null = null;
+  let preparedHostLocal: PreparedHostLocalInferenceAuthority | null = null;
   let providerId: string;
   let contentAuthority: sandboxState.SnapshotRestoreAuthority;
   try {
@@ -80,25 +92,45 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
     if (!target) throw new Error(`target '${sandboxName}' is not registered`);
     const provider = dependencies.requireProvider(target);
     providerId = provider.identity.id;
-    const profileRestore = prepareManagedSnapshotProfileRestore(
-      {
-        sandboxName: manifest.sandboxName,
-        agentType: manifest.agentType,
-        workload: manifest.workload,
-      },
-      target,
-      provider,
-    );
-    if (!profileRestore) throw new Error("managed profile restore authority is missing");
+    if (snapshotProfile) {
+      const profileRestore = prepareManagedSnapshotProfileRestore(
+        {
+          sandboxName: manifest.sandboxName,
+          agentType: manifest.agentType,
+          workload: manifest.workload,
+        },
+        target,
+        provider,
+      );
+      if (!profileRestore) throw new Error("managed profile restore authority is missing");
+      preparedRuntime = prepareSandboxRuntimeRestore(
+        provider,
+        target,
+        manifest.runtimeSnapshot!,
+        profileRestore.providerRestoreAuthority,
+      );
+    }
+    if (typeof hostLocalInferenceReceipt === "string") {
+      if (
+        !isDeepStrictEqual(
+          target.hostLocalInferenceProvenance,
+          manifest.hostLocalInferenceProvenance,
+        )
+      ) {
+        throw new Error("snapshot inference provenance differs from the target lifecycle");
+      }
+      preparedHostLocal = dependencies.prepareHostLocalInference(
+        provider,
+        target,
+        hostLocalInferenceReceipt,
+      );
+      if (!preparedHostLocal) {
+        throw new Error("snapshot inference receipt has no common lifecycle authority");
+      }
+    }
     const captured = dependencies.captureContentAuthority(manifest.backupPath, manifest);
     if (!captured) throw new Error("selected snapshot content changed during restore preflight");
     contentAuthority = captured;
-    prepared = prepareSandboxRuntimeRestore(
-      provider,
-      target,
-      manifest.runtimeSnapshot,
-      profileRestore.providerRestoreAuthority,
-    );
   } catch (error) {
     return failure(error);
   }
@@ -113,22 +145,39 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
       if (provider.identity.id !== providerId) {
         throw new Error(`target '${sandboxName}' runtime provider changed before restore`);
       }
-      const profileRestore = prepareManagedSnapshotProfileRestore(
-        {
-          sandboxName: manifest.sandboxName,
-          agentType: manifest.agentType,
-          workload: manifest.workload,
-        },
-        current,
-        provider,
-      );
-      if (!profileRestore) throw new Error("managed profile restore authority is missing");
-      prepared = prepareSandboxRuntimeRestore(
-        provider,
-        current,
-        prepared.source,
-        profileRestore.providerRestoreAuthority,
-      );
+      if (snapshotProfile) {
+        const profileRestore = prepareManagedSnapshotProfileRestore(
+          {
+            sandboxName: manifest.sandboxName,
+            agentType: manifest.agentType,
+            workload: manifest.workload,
+          },
+          current,
+          provider,
+        );
+        if (!profileRestore) throw new Error("managed profile restore authority is missing");
+        if (!preparedRuntime) throw new Error("managed runtime restore authority is missing");
+        preparedRuntime = prepareSandboxRuntimeRestore(
+          provider,
+          current,
+          preparedRuntime.source,
+          profileRestore.providerRestoreAuthority,
+        );
+      }
+      if (typeof hostLocalInferenceReceipt === "string") {
+        if (!preparedHostLocal) {
+          throw new Error("host-local inference restore authority is missing");
+        }
+        if (
+          !isDeepStrictEqual(
+            current.hostLocalInferenceProvenance,
+            manifest.hostLocalInferenceProvenance,
+          )
+        ) {
+          throw new Error("snapshot inference provenance changed before restore");
+        }
+        dependencies.confirmHostLocalInference(provider, current, preparedHostLocal);
+      }
     },
   });
   if (!restore.success) return restore;
@@ -140,7 +189,10 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
     if (provider.identity.id !== providerId) {
       throw new Error(`target '${sandboxName}' runtime provider changed during restore`);
     }
-    confirmSandboxRuntimeRestore(provider, current, prepared);
+    if (preparedRuntime) confirmSandboxRuntimeRestore(provider, current, preparedRuntime);
+    if (preparedHostLocal) {
+      dependencies.confirmHostLocalInference(provider, current, preparedHostLocal);
+    }
     return restore;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -148,7 +200,7 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
       ...restore,
       success: false,
       error:
-        `State was restored, but managed runtime proof failed: ${detail}. ` +
+        `State was restored, but provider runtime proof failed: ${detail}. ` +
         `Retry this exact snapshot after the runtime stabilizes.`,
     };
   }

@@ -49,9 +49,9 @@ describe("trusted Hermes swap workflow boundary", () => {
     );
 
     const value = workflow();
-    value.jobs["token-rotation"]!.steps.unshift({ ...swapStep(value, "hermes-e2e") });
+    value.jobs["messaging-providers"]!.steps.unshift({ ...swapStep(value, "hermes-e2e") });
     expect(validateTrustedHermesSwapWorkflow(value)).toContain(
-      "token-rotation job must not provision trusted Hermes swap",
+      "messaging-providers job must not provision trusted Hermes swap",
     );
   });
 });

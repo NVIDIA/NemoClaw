@@ -11,6 +11,7 @@ const FAKE = {
   openai: "sk-" + "abc123def456ghi789jkl012mno",
   openaiProject: "sk-proj-" + "abc123_def456-ghi789_jkl012-mno345",
   github: "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn",
+  githubFineGrained: "github_pat_" + "ABCDEFGHIJKLMNO_PQRSTUVWXYZabc",
   aws: "AKIA" + "IOSFODNN7EXAMPLE",
   slack: "xoxb-" + "123456789-abcdefghij",
   slackApp: "xapp-" + "1-A0000-12345-abcdef",
@@ -50,6 +51,12 @@ describe("scanForSecrets", () => {
 
     it("detects a GitHub personal access token", () => {
       const matches = scanForSecrets(`token: ${FAKE.github}`);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].pattern).toBe("GitHub token");
+    });
+
+    it("detects an underscore-bearing fine-grained GitHub personal access token", () => {
+      const matches = scanForSecrets(`token: ${FAKE.githubFineGrained}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("GitHub token");
     });

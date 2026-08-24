@@ -41,11 +41,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, ValidationError
 
 PINNED_VERSIONS = {
-    "deepagents-code": "0.1.34",
-    "deepagents": "0.7.0a6",
-    "langchain": "1.3.11",
-    "langchain-core": "1.4.8",
-    "langgraph": "1.2.6",
+    "deepagents-code": "0.1.55",
+    "deepagents": "0.7.5",
+    "langchain": "1.3.14",
+    "langchain-core": "1.5.3",
+    "langgraph": "1.2.10",
 }
 
 
@@ -572,6 +572,31 @@ def _validate_bounded_catalog_and_provider_native_tools() -> None:
     assert core_request.tools[0] is oversized_core
     assert core_request.tools[1] is unserializable_core
 
+    projected_tool = {
+        "type": "function",
+        "function": {
+            "name": "fake_fake_echo",
+            "description": "Returns an authenticated MCP proof token",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    projected_middleware = ProgressiveToolDisclosureMiddleware(
+        registered_tools=[projected_tool]
+    )
+    projected_result = projected_middleware._search_tools(  # noqa: SLF001
+        "AuThEnTiCaTeD McP",
+        _RuntimeProbe([projected_middleware.tools[0]]),
+    )
+    assert projected_result.update["discovered_tools"] == ["fake_fake_echo"]
+    assert "- fake_fake_echo:" in projected_result.update["messages"][0].content
+    projected_request = projected_middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(
+            [projected_tool, projected_middleware.tools[0]],
+            {"discovered_tools": ["fake_fake_echo"]},
+        )
+    )
+    assert projected_tool in projected_request.tools
+
     duplicate_first = {
         "type": "function",
         "function": {
@@ -745,6 +770,7 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
             "progressive",
             [regular_a, regular_b],
             [],
+            [],
         ),
         "regular_mcp": (
             "progressive",
@@ -761,6 +787,7 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
                     ),
                 )
             ],
+            [],
         ),
         "cross_mcp": (
             "progressive",
@@ -778,10 +805,12 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
                 )
                 for server in ("alpha", "alpha_beta")
             ],
+            [],
         ),
         "reserved_progressive": (
             "progressive",
             [reserved_regular],
+            [],
             [],
         ),
         "reserved_mcp": (
@@ -799,16 +828,34 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
                     ),
                 )
             ],
+            [],
         ),
         "duplicate_direct": (
             "direct",
             [regular_a, regular_b],
+            [],
             [],
         ),
         "reserved_direct": (
             "direct",
             [collision_tool("execute", "reserved-direct")],
             [],
+            [],
+        ),
+        "duplicate_loaded_mcp": (
+            "direct",
+            [],
+            [],
+            [
+                collision_tool("loaded_duplicate", "loaded-a"),
+                collision_tool("loaded_duplicate", "loaded-b"),
+            ],
+        ),
+        "reserved_loaded_mcp": (
+            "direct",
+            [],
+            [],
+            [collision_tool("execute", "reserved-loaded")],
         ),
     }
     original_cli_factory = agent_module._nemoclaw_original_create_cli_agent
@@ -823,7 +870,7 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
     previous = os.environ.get("NEMOCLAW_TOOL_DISCLOSURE")
     try:
         errors: dict[str, str] = {}
-        for label, (mode, tools, info) in collision_cases.items():
+        for label, (mode, tools, info, mcp_tools) in collision_cases.items():
             os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = mode
             try:
                 create_cli_agent(
@@ -831,6 +878,7 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
                     assistant_id="callable-namespace-validator",
                     tools=tools,
                     mcp_server_info=info,
+                    mcp_tools=mcp_tools,
                 )
             except RuntimeError as exc:
                 errors[label] = str(exc)
@@ -853,6 +901,9 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
     assert "reserved name 'search_tools'" in errors["reserved_mcp"]
     assert "multiple registered implementations" in errors["duplicate_direct"]
     assert "reserved name 'execute'" in errors["reserved_direct"]
+    assert "multiple loaded MCP implementations" in errors["duplicate_loaded_mcp"]
+    assert "loaded MCP tool[0]" in errors["reserved_loaded_mcp"]
+    assert "reserved name 'execute'" in errors["reserved_loaded_mcp"]
 
 
 def _validate_direct_mode_execution() -> None:
@@ -863,6 +914,18 @@ def _validate_direct_mode_execution() -> None:
         """Return a direct-mode proof through the standard executor stack."""
         executions.append(value)
         return "direct-proof"
+
+    # Match the exact metadata shape emitted by the pinned MCP wrapper. Without
+    # coherent read-only hints, the headless MCP guard correctly rejects this
+    # fixture before the direct executor can prove the disclosure mode.
+    direct_probe.metadata = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "direct-runtime-validator",
+    }
 
     info = MCPServerInfo(
         name="direct-runtime-validator",
@@ -891,6 +954,7 @@ def _validate_direct_mode_execution() -> None:
                 enable_memory=False,
                 enable_skills=False,
                 enable_shell=False,
+                mcp_tools=[direct_probe],
                 mcp_server_info=[info],
             )
             agent.invoke(
@@ -1001,6 +1065,15 @@ def _validate_local_subagent_isolation() -> None:
         """Return an isolated probe capability."""
         return "isolated-proof"
 
+    isolated_probe.metadata = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "runtime-validator",
+    }
+
     model = ScriptedModel(scenario="subagent")
     info = MCPServerInfo(
         name="runtime-validator",
@@ -1024,6 +1097,7 @@ def _validate_local_subagent_isolation() -> None:
             enable_memory=False,
             enable_skills=False,
             enable_shell=False,
+            mcp_tools=[isolated_probe],
             mcp_server_info=[info],
         )
         agent.invoke(

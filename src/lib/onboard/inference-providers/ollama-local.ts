@@ -4,6 +4,7 @@
 // Ollama local inference provider setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
+import { normalizeHostLocalOllamaModelRef } from "../runtime-provider/host-local-inference";
 import type { OllamaDeps, SetupInferenceResult } from "./types";
 
 export async function setupOllamaLocalInference(
@@ -29,6 +30,7 @@ export async function setupOllamaLocalInference(
     getOllamaProxyToken,
     persistAndProbeOllamaProxy,
     localInference,
+    providerOwnedInferenceProof,
     OLLAMA_PROXY_CREDENTIAL_ENV,
     exitProcess,
     error,
@@ -68,6 +70,14 @@ export async function setupOllamaLocalInference(
       return exitProcess(1);
     }
   }
+  // Prove the model on the endpoint being recorded, not only on the host-side
+  // daemon every check above resolves through. Those are two different Ollama
+  // processes when WSL and Windows each run one (#9454).
+  const sandboxModel = localInference.validateSandboxFacingOllamaModel(model);
+  if (!sandboxModel.ok) {
+    error(`  ${sandboxModel.message}`);
+    return exitProcess(1);
+  }
   const baseUrl = getLocalProviderBaseUrl(provider);
   let ollamaCredential = "ollama";
   if (frontOllamaWithProxy) {
@@ -103,12 +113,26 @@ export async function setupOllamaLocalInference(
   if (await applyLocalInferenceRoute("ollama-local", model)) {
     return { done: true, result: { retry: "selection" } };
   }
-  log(`  Priming Ollama model: ${model}`);
-  run(getOllamaWarmupCommand(model), { ignoreError: true });
-  const probe = localInference.validateOllamaModelWithToolsOverride(model, allowToolsIncompatible);
-  if (!probe.ok) {
-    error(`  ${probe.message}`);
-    return exitProcess(1);
+  if (providerOwnedInferenceProof) {
+    if (
+      providerOwnedInferenceProof.protocol !== "openai-chat-completions" ||
+      providerOwnedInferenceProof.model !== normalizeHostLocalOllamaModelRef(model) ||
+      providerOwnedInferenceProof.toolCallingRequired !== !allowToolsIncompatible
+    ) {
+      error("  Provider-owned Ollama proof does not match the accepted model capability request.");
+      return exitProcess(1);
+    }
+  } else {
+    log(`  Priming Ollama model: ${model}`);
+    run(getOllamaWarmupCommand(model), { ignoreError: true });
+    const probe = localInference.validateOllamaModelWithToolsOverride(
+      model,
+      allowToolsIncompatible,
+    );
+    if (!probe.ok) {
+      error(`  ${probe.message}`);
+      return exitProcess(1);
+    }
   }
   // Do not mutate ~/.nemoclaw/credentials.json here: local Ollama now uses
   // OLLAMA_PROXY_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available

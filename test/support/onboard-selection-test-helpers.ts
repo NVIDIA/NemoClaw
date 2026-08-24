@@ -114,7 +114,7 @@ const pullLog = ${JSON.stringify(pullLog)};
 let listAttempts = 0;
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
   if (cmd.includes("ollama list")) return ${listResult};
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";

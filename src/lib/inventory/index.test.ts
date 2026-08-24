@@ -237,11 +237,9 @@ describe("inventory commands", () => {
     expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
   });
 
-  it("keeps a created sandbox with a lingering pending reservation flag (#7609)", async () => {
+  it("hides a created pending sandbox until lifecycle finalization (#9733)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
-        // createdAt is set, so this is a real sandbox — the filter must NOT hide
-        // it just because the reservation flag was not cleared.
         sandboxes: [
           {
             name: "created",
@@ -257,7 +255,7 @@ describe("inventory commands", () => {
       loadLastSession: () => null,
     });
 
-    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["created"]);
+    expect(inventory.sandboxes).toEqual([]);
   });
 
   it("hides route-only reservations from status output too (#7609)", () => {
@@ -269,6 +267,13 @@ describe("inventory commands", () => {
             provider: "nvidia-prod",
             model: "m",
             pendingRouteReservation: true,
+          },
+          {
+            name: "created-pending",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+            createdAt: "2026-01-01T00:00:00Z",
           },
           { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
         ],
@@ -335,6 +340,107 @@ describe("inventory commands", () => {
       { name: "blank-model", provider: "nvidia-prod", model: null },
       { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
     ]);
+  });
+
+  it("reports schema-5 phase without ambient global probes", () => {
+    const getLiveInference = vi.fn();
+    const getGatewayHealth = vi.fn();
+    const getServiceStatuses = vi.fn();
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            agent: "hermes",
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getHermesPortablePhase: () => "configuring",
+      getHermesPortableHostAuthorityCount: () => 1,
+      getLiveInference,
+      getGatewayHealth,
+      getServiceStatuses,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes[0]).toMatchObject({
+      agent: "hermes",
+      name: "alpha",
+      phase: "configuring",
+    });
+    expect(report.liveInference).toBeNull();
+    expect(report.gatewayHealth).toBeNull();
+    expect(report.services).toEqual([]);
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayHealth).not.toHaveBeenCalled();
+    expect(getServiceStatuses).not.toHaveBeenCalled();
+  });
+
+  it("renders schema-5 phase without sessions, services, messaging, or logs", () => {
+    const lines: string[] = [];
+    const effects = {
+      getLiveInference: vi.fn(),
+      getActiveSessionCount: vi.fn(),
+      getGatewayHealth: vi.fn(),
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps: vi.fn(),
+      checkMessagingBridgeHealth: vi.fn(),
+      readGatewayLog: vi.fn(),
+    };
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", agent: "hermes", provider: "ollama", model: "qwen3-vl:4b" }],
+        defaultSandbox: "alpha",
+      }),
+      getHermesPortablePhase: () => "active",
+      getHermesPortableHostAuthorityCount: () => 1,
+      ...effects,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      agent: hermes  phase: active");
+    expect(Object.values(effects).every((effect) => effect.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("fails before ambient probes when a schema-5 phase has no registry row", () => {
+    const getLiveInference = vi.fn();
+    const showServiceStatus = vi.fn();
+    expect(() =>
+      showStatusCommand({
+        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+        getHermesPortableHostAuthorityCount: () => 1,
+        getHermesPortablePhase: vi.fn(),
+        getLiveInference,
+        showServiceStatus,
+      }),
+    ).toThrow("without an exact registry row");
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(showServiceStatus).not.toHaveBeenCalled();
+  });
+
+  it("fails before ambient probes when schema-5 registry agreement is rejected", () => {
+    const getLiveInference = vi.fn();
+    const getGatewayAuthority = vi.fn();
+    expect(() =>
+      getStatusReport({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", agent: "hermes" }],
+          defaultSandbox: "alpha",
+        }),
+        getHermesPortableHostAuthorityCount: () => 1,
+        getHermesPortablePhase: () => {
+          throw new Error("registry row disagreement");
+        },
+        getLiveInference,
+        getGatewayAuthority,
+        showServiceStatus: vi.fn(),
+      }),
+    ).toThrow("registry row disagreement");
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayAuthority).not.toHaveBeenCalled();
   });
 
   it("omits invalid configured inference fields from status text", () => {
@@ -1173,6 +1279,7 @@ describe("inventory commands", () => {
           state: "named_unreachable",
           reason: "host port held or container not running",
         }),
+        getGatewayStartGuidance: () => "Start the gateway with its lifecycle owner.",
         log: (message = "") => lines.push(message),
       });
 
@@ -1181,6 +1288,7 @@ describe("inventory commands", () => {
           l.includes("gateway: down [named_unreachable] (host port held or container not running)"),
         ),
       ).toBe(true);
+      expect(lines).toContain("    Start the gateway with its lifecycle owner.");
       expect(process.exitCode).toBe(1);
     } finally {
       process.exitCode = previousExitCode;

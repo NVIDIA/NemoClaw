@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
+import { MIN_OLLAMA_VERSION } from "../src/lib/inference/ollama-version.js";
 import { testTimeout } from "./helpers/timeouts";
 
 const OLLAMA_AUTOSTART_TEST_TIMEOUT_MS = testTimeout(60_000);
@@ -197,6 +198,12 @@ runner.runCapture = (command) => {
   // return empty so ensureOllamaLoopbackSystemdOverride takes the
   // "not-applicable" branch.
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "";
+  if (cmd.includes("ollama --version")) {
+    return ${JSON.stringify(`ollama version is ${MIN_OLLAMA_VERSION}`)};
+  }
+  if (cmd.includes("/api/version")) {
+    return ${JSON.stringify(JSON.stringify({ version: MIN_OLLAMA_VERSION }))};
+  }
   if (cmd.includes("command -v") && cmd.includes("\"$1\"")) {
     // hostCommandExists uses: sh -c 'command -v "$1"' -- <name>. The argv
     // contains the literal '"$1"' marker.

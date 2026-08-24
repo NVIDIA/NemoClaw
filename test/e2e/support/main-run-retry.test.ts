@@ -48,12 +48,10 @@ function job(attempt: number, conclusion = "success") {
 function setup(options: { attempt: number; conclusion: string; latestRunId?: number }) {
   const requests: Array<{ method: string; path: string }> = [];
   const run = sourceRun(options.attempt, options.conclusion);
-  const request = async (path: string, init?: { method?: "GET" | "POST" }) => {
+  const request = async (path: string, init?: { method?: "GET" }) => {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
     switch (true) {
-      case method === "POST":
-        return undefined;
       case path.endsWith(`/actions/runs/${RUN_ID}`):
         return run;
       case path.includes(`/actions/workflows/${WORKFLOW_ID}/runs?`):
@@ -92,33 +90,21 @@ async function evaluate(options: { attempt: number; conclusion: string; latestRu
 }
 
 describe("main E2E retry controller", () => {
-  it.each([1, 2])("requests failed-job rerun after attempt %s fails", async (attempt) => {
-    const { evidence, requests } = await evaluate({ attempt, conclusion: "failure" });
+  it.each([1, 2, 3])(
+    "retains failed attempt %s without requesting a broad rerun",
+    async (attempt) => {
+      const { evidence, requests } = await evaluate({ attempt, conclusion: "failure" });
 
-    expect(E2E_MAX_RETRIES).toBe(2);
-    expect(E2E_MAX_ATTEMPTS).toBe(3);
-    expect(evidence).toMatchObject({
-      action: "retry-requested",
-      flaky: false,
-      sourceAttempt: attempt,
-    });
-    expect(requests).toContainEqual({
-      method: "POST",
-      path: `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs`,
-    });
-    expect(
-      requests.some(
-        (request) => request.path === `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun`,
-      ),
-    ).toBe(false);
-  });
-
-  it("stops after the third failed attempt", async () => {
-    const { evidence, requests } = await evaluate({ attempt: 3, conclusion: "failure" });
-
-    expect(evidence.action).toBe("failed-after-retries");
-    expect(requests.some((request) => request.method === "POST")).toBe(false);
-  });
+      expect(E2E_MAX_RETRIES).toBe(0);
+      expect(E2E_MAX_ATTEMPTS).toBe(3);
+      expect(evidence).toMatchObject({
+        action: "failed-no-retry",
+        flaky: false,
+        sourceAttempt: attempt,
+      });
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+    },
+  );
 
   it("reports a successful retry as flaky and sums runner minutes across attempts", async () => {
     const { evidence, requests } = await evaluate({ attempt: 2, conclusion: "success" });
@@ -166,7 +152,7 @@ describe("main E2E retry controller", () => {
   it("rejects manual workflow runs", async () => {
     const fixture = setup({ attempt: 1, conclusion: "failure" });
     const originalRequest = fixture.request;
-    const request = async (path: string, init?: { method?: "GET" | "POST" }) => {
+    const request = async (path: string, init?: { method?: "GET" }) => {
       const response = await originalRequest(path, init);
       return path.endsWith(`/actions/runs/${RUN_ID}`)
         ? { ...(response as Record<string, unknown>), event: "workflow_dispatch" }
@@ -185,7 +171,7 @@ describe("main E2E retry controller", () => {
   });
   it("rejects a truncated attempt job listing", async () => {
     const fixture = setup({ attempt: 1, conclusion: "failure" });
-    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+    const request = async (path: string, init?: { method?: "GET" }) =>
       path.includes("/attempts/1/jobs")
         ? { total_count: 2, jobs: [job(1, "failure")] }
         : fixture.request(path, init);
@@ -203,7 +189,7 @@ describe("main E2E retry controller", () => {
 
   it("rejects an unbounded job name before evidence serialization", async () => {
     const fixture = setup({ attempt: 1, conclusion: "failure" });
-    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+    const request = async (path: string, init?: { method?: "GET" }) =>
       path.includes("/attempts/1/jobs")
         ? { total_count: 1, jobs: [{ ...job(1, "failure"), name: "x".repeat(257) }] }
         : fixture.request(path, init);
@@ -221,7 +207,7 @@ describe("main E2E retry controller", () => {
 
   it("rejects an empty successful attempt job listing", async () => {
     const fixture = setup({ attempt: 1, conclusion: "success" });
-    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+    const request = async (path: string, init?: { method?: "GET" }) =>
       path.includes("/attempts/1/jobs")
         ? { total_count: 0, jobs: [] }
         : fixture.request(path, init);

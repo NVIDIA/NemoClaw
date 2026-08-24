@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ManagedStartupAgent } from "../../src/lib/onboard/managed-startup/profile.ts";
+import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 
-export const PROTECTED_MANAGED_IMAGE_AGENTS = [
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-] as const satisfies readonly ManagedStartupAgent[];
+const BASE_REPOSITORIES: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze({
+  openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+  hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+  "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+});
+
+export const PROTECTED_MANAGED_IMAGE_AGENTS = Object.freeze(
+  Object.keys(BASE_REPOSITORIES),
+) as readonly ShippedManagedImageAgent[];
 
 export const PROTECTED_MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID = "managed-image-multiarch-startup" as const;
@@ -17,7 +21,7 @@ export const PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH =
 export type ProtectedManagedImagePlatform = (typeof PROTECTED_MANAGED_IMAGE_PLATFORMS)[number];
 
 export type ProtectedManagedImageContract = {
-  readonly agent: ManagedStartupAgent;
+  readonly agent: ShippedManagedImageAgent;
   readonly baseReference: string;
   readonly digest: string;
   readonly localContentId: string;
@@ -26,7 +30,7 @@ export type ProtectedManagedImageContract = {
 };
 
 export type ProtectedManagedImageActivation = {
-  readonly agents: readonly ManagedStartupAgent[];
+  readonly agents: readonly ShippedManagedImageAgent[];
   readonly contractVersion: 1;
   readonly jobId: typeof PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
   readonly platforms: readonly ProtectedManagedImagePlatform[];
@@ -65,11 +69,6 @@ const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 export const PROTECTED_MANAGED_IMAGE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const PROTECTED_MANAGED_IMAGE_COHORT_PATTERN =
   /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
-const BASE_REPOSITORIES: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze({
-  openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
-  hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
-  "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-});
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -116,7 +115,7 @@ function parseEntry(
   exactKeys(entry);
   if (
     typeof entry.agent !== "string" ||
-    !PROTECTED_MANAGED_IMAGE_AGENTS.includes(entry.agent as ManagedStartupAgent)
+    !PROTECTED_MANAGED_IMAGE_AGENTS.includes(entry.agent as ShippedManagedImageAgent)
   ) {
     throw new Error("protected managed-image contract entry has an invalid agent");
   }
@@ -135,7 +134,7 @@ function parseEntry(
   if (entry.reference !== `${expectedRepository}@${entry.digest}`) {
     throw new Error("protected managed-image contract entry is not the exact agent digest");
   }
-  const basePrefix = `${BASE_REPOSITORIES[entry.agent as ManagedStartupAgent]}@`;
+  const basePrefix = `${BASE_REPOSITORIES[entry.agent as ShippedManagedImageAgent]}@`;
   if (
     typeof entry.baseReference !== "string" ||
     !entry.baseReference.startsWith(basePrefix) ||
@@ -144,7 +143,7 @@ function parseEntry(
     throw new Error("protected managed-image contract entry has an invalid base reference");
   }
   return {
-    agent: entry.agent as ManagedStartupAgent,
+    agent: entry.agent as ShippedManagedImageAgent,
     baseReference: entry.baseReference,
     digest: entry.digest,
     localContentId: entry.localContentId,
@@ -260,7 +259,7 @@ export function parseProtectedManagedImageEvidence(
     throw new Error("protected managed-image evidence must directly run every contract");
   }
   const contractByAgent = new Map(contracts.map((contract) => [contract.agent, contract]));
-  const seenAgents = new Set<ManagedStartupAgent>();
+  const seenAgents = new Set<ShippedManagedImageAgent>();
   const directRuns = evidence.directRuns.map((value): ProtectedManagedImageDirectRun => {
     const directRun = record(value);
     requireExactKeys(
@@ -270,7 +269,7 @@ export function parseProtectedManagedImageEvidence(
     );
     const contract =
       typeof directRun.agent === "string"
-        ? contractByAgent.get(directRun.agent as ManagedStartupAgent)
+        ? contractByAgent.get(directRun.agent as ShippedManagedImageAgent)
         : undefined;
     if (
       !contract ||

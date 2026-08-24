@@ -18,6 +18,7 @@ export interface GatewayCallOptions {
   sandboxName: string;
   method: GatewayAdminMethod;
   params: unknown;
+  exit?: (code: number) => never;
 }
 
 export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPayload> {
@@ -163,13 +164,17 @@ function isSupportedGatewayAdminMethod(method: string): method is GatewayAdminMe
  * A missing entry is rejected, and registry read errors propagate, because an
  * unknown agent identity cannot authorize an OpenClaw admin RPC.
  */
-function resolveSandboxAgent(sandboxName: string, method: GatewayAdminMethod): string {
+function resolveSandboxAgent(
+  sandboxName: string,
+  method: GatewayAdminMethod,
+  exit: (code: number) => never,
+): string {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {
     console.error(
       `  Refusing to invoke '${method}' for sandbox '${sandboxName}': it has no registry entry, so NemoClaw cannot confirm that it uses the OpenClaw agent.`,
     );
-    process.exit(1);
+    exit(1);
   }
   return sandbox.agent === undefined || sandbox.agent === null ? OPENCLAW_AGENT_ID : sandbox.agent;
 }
@@ -187,6 +192,7 @@ function refuseUnsupportedSandboxAgent(
   sandboxName: string,
   agent: string,
   method: GatewayAdminMethod,
+  exit: (code: number) => never,
 ): never {
   console.error(
     `  Refusing to invoke '${method}' for sandbox '${sandboxName}': it uses the '${agent}' agent, which does not expose the OpenClaw gateway admin RPCs. These commands only support the OpenClaw agent.`,
@@ -199,7 +205,7 @@ function refuseUnsupportedSandboxAgent(
     );
     console.error(`  Delete a Hermes session with: ${cliName} ${sandboxName} sessions delete <id>`);
   }
-  process.exit(1);
+  exit(1);
 }
 
 function redactedGatewayOutput(output: string): string {
@@ -241,16 +247,17 @@ function captureGatewayCall(opts: GatewayCallOptions) {
 export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPayload>(
   opts: GatewayCallOptions,
 ): GatewayCallResult<T> {
+  const exit = opts.exit ?? process.exit;
   if (!isSupportedGatewayAdminMethod(opts.method)) {
     console.error(
       `  Refusing unsupported OpenClaw gateway admin RPC method '${opts.method}' for sandbox '${opts.sandboxName}'.`,
     );
-    process.exit(1);
+    exit(1);
   }
 
-  const agent = resolveSandboxAgent(opts.sandboxName, opts.method);
+  const agent = resolveSandboxAgent(opts.sandboxName, opts.method, exit);
   if (agent !== OPENCLAW_AGENT_ID) {
-    refuseUnsupportedSandboxAgent(opts.sandboxName, agent, opts.method);
+    refuseUnsupportedSandboxAgent(opts.sandboxName, agent, opts.method, exit);
   }
 
   // Drain allowlisted CLI/webchat pairing or scope-upgrade requests before
@@ -274,7 +281,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
     if (diagnosticOutput.trim())
       console.error(`  ${redactedGatewayOutput(diagnosticOutput.trim())}`);
     console.error(`  Verify the gateway is reachable: \`${CLI_NAME} ${opts.sandboxName} status\`.`);
-    process.exit(1);
+    exit(1);
   }
 
   const stdout = result.stdout ?? result.output;
@@ -283,7 +290,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
     console.error(`  Could not parse gateway call response for '${opts.method}'.`);
     if (diagnosticOutput.trim())
       console.error(`  ${redactedGatewayOutput(diagnosticOutput.trim())}`);
-    process.exit(1);
+    return exit(1);
   }
   return { payload, rawOutput: stdout, diagnosticOutput: redactedGatewayOutput(diagnosticOutput) };
 }

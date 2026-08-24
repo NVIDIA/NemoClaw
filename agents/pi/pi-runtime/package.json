@@ -1,0 +1,14 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "name": "nemoclaw-pi-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locked production dependency graph for the Pi runtime",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

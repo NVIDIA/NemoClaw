@@ -4,10 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { redactSensitiveText } from "../../security/redact";
 import {
   addOnboardMachineEventListener,
   emitOnboardMachineEvent,
+  redactSensitiveText,
   sanitizeOnboardMachineEventMetadata,
   type OnboardMachineEvent,
   type OnboardMachineEventListener,

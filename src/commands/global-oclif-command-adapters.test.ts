@@ -16,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   runInferenceSet: vi.fn(),
   runOnboardAction: vi.fn(),
   runUpgradeSandboxesAction: vi.fn(),
+  assertNoHermesPortableHostAuthority: vi.fn(),
+  withPortableHostFence: vi.fn(
+    async (homeOrOperation: string | (() => unknown), operation?: () => unknown) =>
+      (typeof homeOrOperation === "function" ? homeOrOperation : operation)?.(),
+  ),
   showStatusCommand: vi.fn(),
   onboardRuntimeDeps: { googlechatTunnelRuntime: {} },
 }));
@@ -40,6 +45,13 @@ vi.mock("../lib/actions/global", () => ({
   runGarbageCollectImagesAction: mocks.runGarbageCollectImagesAction,
   runOnboardAction: mocks.runOnboardAction,
   runUpgradeSandboxesAction: mocks.runUpgradeSandboxesAction,
+}));
+
+vi.mock("../lib/state/portable-uninstall-retirement", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertNoHermesPortableHostAuthority: mocks.assertNoHermesPortableHostAuthority,
+  withCurrentPortableHostFence: mocks.withPortableHostFence,
+  withPortableHostFence: mocks.withPortableHostFence,
 }));
 
 vi.mock("../lib/cli/onboard-runtime-deps", () => ({
@@ -88,6 +100,7 @@ const rootDir = process.cwd();
 describe("global oclif command adapters", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
     mocks.buildListCommandDeps.mockReturnValue({ getLiveInference: vi.fn() });
     mocks.buildStatusCommandDeps.mockReturnValue({ statusDeps: true });
     mocks.getSandboxInventory.mockResolvedValue({ sandboxes: [] });
@@ -111,6 +124,11 @@ describe("global oclif command adapters", () => {
   it("runs list through inventory helpers", async () => {
     await ListCommand.run([], rootDir);
 
+    expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+    expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+      expect.any(String),
+      "list",
+    );
     expect(mocks.buildListCommandDeps).toHaveBeenCalledWith();
     expect(mocks.getSandboxInventory).toHaveBeenCalledWith({
       getLiveInference: expect.any(Function),
@@ -170,6 +188,8 @@ describe("global oclif command adapters", () => {
   it("runs status through status helpers", async () => {
     await StatusCommand.run([], rootDir);
 
+    expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+    expect(mocks.assertNoHermesPortableHostAuthority).not.toHaveBeenCalled();
     expect(mocks.buildStatusCommandDeps).toHaveBeenCalledWith(rootDir);
     expect(mocks.showStatusCommand).toHaveBeenCalledWith({ statusDeps: true });
   });
@@ -213,6 +233,40 @@ describe("global oclif command adapters", () => {
       yes: false,
     });
   });
+
+  it.each([
+    [
+      "list",
+      () => ListCommand.run([], rootDir),
+      [mocks.buildListCommandDeps, mocks.getSandboxInventory],
+    ],
+    ["inference:get", () => InferenceGetCommand.run([], rootDir), [mocks.runInferenceGet]],
+    [
+      "upgrade-sandboxes",
+      () => UpgradeSandboxesCommand.run(["--check"], rootDir),
+      [mocks.runUpgradeSandboxesAction],
+    ],
+  ] as const)(
+    "rejects %s under the host fence before any action (#9203)",
+    async (commandId, run, effects) => {
+      mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+        throw new Error(
+          `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
+        );
+      });
+
+      await expect(run()).rejects.toThrow(
+        `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists`,
+      );
+
+      expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+      expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+        expect.any(String),
+        commandId,
+      );
+      expect(effects.every((effect) => effect.mock.calls.length === 0)).toBe(true);
+    },
+  );
 
   it("maps onboard-family flags directly into the shared typed action", async () => {
     await OnboardCliCommand.run(["--name", "alpha", "--resume"], rootDir);
@@ -272,6 +326,11 @@ describe("global oclif command adapters", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await InferenceGetCommand.run(["--json"], rootDir);
+      expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+      expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+        expect.any(String),
+        "inference:get",
+      );
       expect(mocks.runInferenceGet).toHaveBeenCalledWith({ quiet: true });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
         provider: "nvidia-prod",

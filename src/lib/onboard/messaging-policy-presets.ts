@@ -93,6 +93,26 @@ export function allMessagingChannelPolicyPresets(channels: string[] | null | und
   return all;
 }
 
+/**
+ * Name the channels a set of preset names carries network egress for. The
+ * applied preset list outlives the messaging plan that justified it, so a
+ * caller holding only preset names can still ask whether the host still
+ * configures the channel behind each one.
+ */
+export function messagingChannelsForPolicyPresets(
+  presetNames: string[] | null | undefined,
+): string[] {
+  const presets = new Set(normalizedNames(presetNames));
+  if (presets.size === 0) return [];
+  const channels: string[] = [];
+  for (const [channel, channelPresets] of Object.entries(ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL)) {
+    if (channelPresets.some((preset) => presets.has(preset.trim().toLowerCase()))) {
+      channels.push(channel);
+    }
+  }
+  return channels;
+}
+
 export function pruneDisabledMessagingPolicyPresets(
   selectedPresets: string[],
   disabledChannels: string[] | null | undefined,

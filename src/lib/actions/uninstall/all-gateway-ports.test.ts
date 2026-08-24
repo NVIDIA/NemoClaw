@@ -30,7 +30,7 @@ afterEach(() => {
 function sweepDeps(overrides: AllGatewayPortsDeps = {}) {
   const error = vi.fn();
   const runPortPass = vi.fn((_port: number) => 0);
-  const runSelectedPass = vi.fn((_options: UninstallRunOptions, _deps: UninstallRunDeps) => ({
+  const runSelectedPass = vi.fn(async (_options: UninstallRunOptions, _deps: UninstallRunDeps) => ({
     exitCode: 0,
   }));
   const deps: AllGatewayPortsDeps = {
@@ -56,10 +56,10 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(allGatewayPortsRequested(flag, env as NodeJS.ProcessEnv)).toBe(expected);
   });
 
-  it("uninstalls each other gateway port in ascending order and the current port last", () => {
+  it("uninstalls each other gateway port in ascending order and the current port last", async () => {
     const { deps, runPortPass, runSelectedPass } = sweepDeps();
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result.exitCode).toBe(0);
     expect(result.ports).toEqual([9000, 18080, 8080]);
@@ -67,32 +67,35 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(runSelectedPass).toHaveBeenCalledTimes(1);
   });
 
-  it("forces confirmation-free child passes after one whole-host confirmation", () => {
+  it("forces confirmation-free child passes after one whole-host confirmation", async () => {
     const { deps, runSelectedPass } = sweepDeps({ readLine: () => "y" });
 
-    runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
+    await runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
 
     expect(runSelectedPass.mock.calls[0]?.[0]).toMatchObject({
       assumeYes: true,
     });
   });
 
-  it("does not run any pass when the whole-host confirmation is declined", () => {
+  it("does not run any pass when the whole-host confirmation is declined", async () => {
     const { deps, runPortPass, runSelectedPass } = sweepDeps({
       readLine: () => "n",
     });
 
-    const result = runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
+    const result = await runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
 
     expect(result.exitCode).toBe(0);
     expect(runPortPass).not.toHaveBeenCalled();
     expect(runSelectedPass).not.toHaveBeenCalled();
   });
 
-  it("rejects a mismatched gateway check before any port pass", () => {
+  it("rejects a mismatched gateway check before any port pass", async () => {
     const { deps, error, runPortPass, runSelectedPass } = sweepDeps();
 
-    const result = runUninstallAllGatewayPorts({ ...OPTIONS, gatewayName: "nemoclaw-9000" }, deps);
+    const result = await runUninstallAllGatewayPorts(
+      { ...OPTIONS, gatewayName: "nemoclaw-9000" },
+      deps,
+    );
 
     expect(result).toEqual({ exitCode: 1, ports: [] });
     expect(runPortPass).not.toHaveBeenCalled();
@@ -100,13 +103,13 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Refusing to uninstall gateway"));
   });
 
-  it("reports a failed port pass and still finishes the remaining ports", () => {
+  it("reports a failed port pass and still finishes the remaining ports", async () => {
     const failingPortPass = vi.fn((port: number) => (port === 9000 ? 1 : 0));
     const { deps, error, runSelectedPass } = sweepDeps({
       runPortPass: failingPortPass,
     });
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result.exitCode).toBe(1);
     expect(failingPortPass.mock.calls.map(([port]) => port)).toEqual([9000, 18080]);
@@ -114,27 +117,27 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("9000"));
   });
 
-  it("carries a failed port into the final pass so shared cleanup stays scoped (#7791)", () => {
+  it("carries a failed port into the final pass so shared cleanup stays scoped (#7791)", async () => {
     const { deps, runSelectedPass } = sweepDeps({
       runPortPass: vi.fn((port: number) => (port === 9000 ? 1 : 0)),
     });
 
-    runUninstallAllGatewayPorts(OPTIONS, deps);
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({
       retainedGatewayPorts: [9000],
     });
   });
 
-  it("returns nonzero when the final pass still observes another gateway environment", () => {
+  it("returns nonzero when the final pass still observes another gateway environment", async () => {
     const { deps, error } = sweepDeps({
-      runSelectedPass: vi.fn(() => ({
+      runSelectedPass: vi.fn(async () => ({
         exitCode: 0,
         otherGatewayEnvironmentsRemain: true,
       })),
     });
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
@@ -142,10 +145,10 @@ describe("uninstall across every gateway port (#7791)", () => {
     );
   });
 
-  it("retains no port for the final pass when every other port uninstalled", () => {
+  it("retains no port for the final pass when every other port uninstalled", async () => {
     const { deps, runSelectedPass } = sweepDeps();
 
-    runUninstallAllGatewayPorts(OPTIONS, deps);
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({
       requireCompleteGatewayProcessCleanup: true,
@@ -153,12 +156,12 @@ describe("uninstall across every gateway port (#7791)", () => {
     });
   });
 
-  it("runs a single scoped pass when no other gateway port exists", () => {
+  it("runs a single scoped pass when no other gateway port exists", async () => {
     const { deps, runPortPass, runSelectedPass } = sweepDeps({
       listGatewayPorts: () => [8080],
     });
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result.ports).toEqual([8080]);
     expect(runPortPass).not.toHaveBeenCalled();
@@ -174,20 +177,20 @@ describe("uninstall across every gateway port (#7791)", () => {
     const sharedStateDir = path.join(home, ".nemoclaw");
     const selectedStateDir = path.join(sharedStateDir, "gateways", "9123");
     const apiKeyPath = path.join(sharedStateDir, "dual-station-vllm-api-key");
-    fs.mkdirSync(selectedStateDir, { recursive: true });
+    fs.mkdirSync(selectedStateDir, { mode: 0o700, recursive: true });
     fs.writeFileSync(path.join(selectedStateDir, "selected-only"), "remove me\n");
     fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
 
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
       vi.resetModules();
-      const { runUninstallAllGatewayPorts: runNonDefaultSweep } = await import(
-        "./all-gateway-ports"
-      );
-      const result = runNonDefaultSweep(OPTIONS, {
+      const { runUninstallAllGatewayPorts: runNonDefaultSweep } =
+        await import("./all-gateway-ports");
+      const result = await runNonDefaultSweep(OPTIONS, {
         commandExists: () => true,
         env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
         existsSync: fs.existsSync,
+        hasPortableRuntimeCleanup: () => false,
         home,
         isTty: false,
         kill: () => true,
@@ -229,16 +232,16 @@ describe("uninstall across every gateway port (#7791)", () => {
     }
   });
 
-  it("returns nonzero when an undiscovered environment remains after the only selected pass", () => {
+  it("returns nonzero when an undiscovered environment remains after the only selected pass", async () => {
     const { deps, error } = sweepDeps({
       listGatewayPorts: () => [8080],
-      runSelectedPass: vi.fn(() => ({
+      runSelectedPass: vi.fn(async () => ({
         exitCode: 0,
         otherGatewayEnvironmentsRemain: true,
       })),
     });
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
@@ -246,19 +249,82 @@ describe("uninstall across every gateway port (#7791)", () => {
     );
   });
 
-  it("fails without uninstalling anything when the gateway ports cannot be enumerated", () => {
+  it("fails without uninstalling anything when the gateway ports cannot be enumerated", async () => {
     const { deps, error, runPortPass, runSelectedPass } = sweepDeps({
       listGatewayPorts: () => {
         throw new Error("gateways/ is a symbolic link");
       },
     });
 
-    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
 
     expect(result).toEqual({ exitCode: 1, ports: [] });
     expect(runPortPass).not.toHaveBeenCalled();
     expect(runSelectedPass).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("symbolic link"));
+  });
+
+  it("awaits the selected pass when no sibling gateway exists (#9189)", async () => {
+    let finish!: () => void;
+    const selected = vi.fn(
+      () =>
+        new Promise<{ exitCode: number }>((resolve) => (finish = () => resolve({ exitCode: 0 }))),
+    );
+    const { deps, runPortPass } = sweepDeps({
+      listGatewayPorts: () => [8080],
+      runSelectedPass: selected,
+    });
+    let completed = false;
+    const pending = runUninstallAllGatewayPorts(OPTIONS, deps).then((result) => {
+      completed = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    expect(selected).toHaveBeenCalledOnce();
+    expect(runPortPass).not.toHaveBeenCalled();
+    expect(completed).toBe(false);
+    finish();
+    await expect(pending).resolves.toEqual({ exitCode: 0, ports: [8080] });
+  });
+
+  it("finishes child passes before the awaited selected pass and retains failures (#9189)", async () => {
+    const order: string[] = [];
+    const { deps } = sweepDeps({
+      runPortPass: (port) => {
+        order.push(`child:${String(port)}`);
+        return port === 9000 ? 1 : 0;
+      },
+      runSelectedPass: async (_options, selectedDeps) => {
+        order.push(`selected:${selectedDeps.retainedGatewayPorts?.join(",")}`);
+        await Promise.resolve();
+        order.push("selected:done");
+        return { exitCode: 0 };
+      },
+    });
+
+    await expect(runUninstallAllGatewayPorts(OPTIONS, deps)).resolves.toMatchObject({
+      exitCode: 1,
+    });
+    expect(order).toEqual(["child:9000", "child:18080", "selected:9000", "selected:done"]);
+  });
+
+  it("maps a selected-pass rejection to exit 1 without a follow-on pass (#9189)", async () => {
+    const selected = vi.fn(async () => {
+      throw new Error("host fence release failed");
+    });
+    const { deps, error, runPortPass } = sweepDeps({
+      listGatewayPorts: () => [8080],
+      runSelectedPass: selected,
+    });
+
+    await expect(runUninstallAllGatewayPorts(OPTIONS, deps)).resolves.toEqual({
+      exitCode: 1,
+      ports: [8080],
+    });
+    expect(selected).toHaveBeenCalledOnce();
+    expect(runPortPass).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("host fence release failed"));
   });
 
   it("binds each child pass to its own gateway port and drops the sweep request", () => {

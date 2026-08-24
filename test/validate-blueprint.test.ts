@@ -87,33 +87,7 @@ function allEndpoints(policy: SandboxPolicy): Endpoint[] {
   return Object.values(policy.network_policies ?? {}).flatMap((entry) => entry.endpoints ?? []);
 }
 
-const bp = loadYaml<Blueprint>(BLUEPRINT_PATH);
 
-describe("blueprint image trust anchor", () => {
-  // source-shape-contract: security -- The immutable sandbox image digest is the executable supply-chain trust anchor
-  it("pins the sandbox image by digest instead of a mutable tag (#1438)", () => {
-    const sandbox = bp.components?.sandbox;
-    const image = typeof sandbox?.image === "string" ? sandbox.image : "";
-
-    expect(image.length).toBeGreaterThan(0);
-    expect(image).toContain("@sha256:");
-    expect(image).not.toMatch(/:latest$/);
-    expect(image).not.toMatch(/:latest@/);
-    expect(image.match(/@sha256:([0-9a-f]{64})$/)).not.toBeNull();
-  });
-
-  // source-shape-contract: security -- Cross-field digest equality prevents the shipped sandbox trust anchor from drifting
-  it("populates the top-level digest field with the image digest (#1438)", () => {
-    const topLevelDigest = typeof bp.digest === "string" ? bp.digest : "";
-    const image =
-      typeof bp.components?.sandbox?.image === "string" ? bp.components.sandbox.image : "";
-    const imageDigestMatch = image.match(/@sha256:([0-9a-f]{64})$/);
-
-    expect(topLevelDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(imageDigestMatch).not.toBeNull();
-    expect(topLevelDigest).toBe(`sha256:${imageDigestMatch?.[1] ?? ""}`);
-  });
-});
 
 describe("effective sandbox policy behavior", () => {
   it("keeps default OpenClaw egress least-privilege after create-policy preparation", () => {

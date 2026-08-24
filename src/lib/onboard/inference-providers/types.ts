@@ -253,6 +253,13 @@ export type OllamaDeps = CommonDeps & {
       model: string,
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
+    validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
+  };
+  /** Exact provider-owned proof used instead of legacy host warmup/probes. */
+  providerOwnedInferenceProof?: {
+    readonly protocol: "openai-chat-completions";
+    readonly model: string;
+    readonly toolCallingRequired: boolean;
   };
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
 };

@@ -211,6 +211,20 @@ function mergeOccupiedPorts(
   return forwardOccupied;
 }
 
+/** Host-wide registry view shared by the allocator and the persisted-port lookup. */
+function listHostRegistrySandboxes(): { sandboxes: SandboxRegistryEntry[] } {
+  return {
+    sandboxes: listHostGatewayRegistryEntries(process.env.HOME || os.homedir()).map(
+      ({ entry, gatewayPort }) => ({
+        name: entry.name,
+        dashboardPort: entry.dashboardPort,
+        hermesApiPort: entry.hermesApiPort,
+        scopeGatewayPort: gatewayPort,
+      }),
+    ),
+  };
+}
+
 /**
  * Build a cross-gateway occupancy map (port → owning sandbox name) from the
  * persisted sandbox registries, excluding the current sandbox only in the
@@ -231,18 +245,7 @@ function getRegistryOccupiedPorts(
   listSandboxesFn?: ListSandboxesFn,
 ): Map<string, string> {
   const occupied = new Map<string, string>();
-  const list =
-    listSandboxesFn ??
-    (() => ({
-      sandboxes: listHostGatewayRegistryEntries(process.env.HOME || os.homedir()).map(
-        ({ entry, gatewayPort }) => ({
-          name: entry.name,
-          dashboardPort: entry.dashboardPort,
-          hermesApiPort: entry.hermesApiPort,
-          scopeGatewayPort: gatewayPort,
-        }),
-      ),
-    }));
+  const list = listSandboxesFn ?? listHostRegistrySandboxes;
   for (const entry of list().sandboxes) {
     if (
       entry.name === currentSandboxName &&
@@ -274,6 +277,27 @@ export function getRegistryOccupiedDashboardPorts(
     (entry) => entry.dashboardPort,
     listSandboxesFn,
   );
+}
+
+/**
+ * Dashboard port recorded in the registry for one sandbox on the selected
+ * gateway. The onboard resume path skips sandbox creation, which is the step
+ * that normally publishes the created sandbox's port through `CHAT_UI_URL`,
+ * so finalization re-reads the port that onboarding persisted (#8214).
+ * Returns null when the entry has no positive integer port. (#8970)
+ */
+export function getPersistedDashboardPort(
+  currentSandboxName: string,
+  listSandboxesFn?: ListSandboxesFn,
+): number | null {
+  const list = listSandboxesFn ?? listHostRegistrySandboxes;
+  for (const entry of list().sandboxes) {
+    if (entry.name !== currentSandboxName) continue;
+    if (entry.scopeGatewayPort !== undefined && entry.scopeGatewayPort !== GATEWAY_PORT) continue;
+    const port = entry.dashboardPort;
+    if (typeof port === "number" && Number.isInteger(port) && port > 0) return port;
+  }
+  return null;
 }
 
 /**
@@ -586,9 +610,9 @@ export async function withDashboardPortReservationScope<T>(
 ): Promise<T> {
   const scope: DashboardPortReservationScope = {
     current: null,
-    async release() {
-      const reservation = this.current;
-      this.current = null;
+    release: async () => {
+      const reservation = scope.current;
+      scope.current = null;
       await reservation?.release();
     },
   };
@@ -603,11 +627,13 @@ interface DashboardPortScopedSandboxEntryPointDeps<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeContext,
   ComputePlan,
 > {
   createBaseImageResolutionContext(): BaseImageResolutionContext;
   createSandboxWithBaseImageResolution(
     baseImageResolutionContext: BaseImageResolutionContext,
+    portableRuntimeContext: PortableRuntimeContext,
     computePlan: ComputePlan,
     managedWorkloadRebuild: null,
     temporaryManagedRuntime: boolean,
@@ -615,6 +641,7 @@ interface DashboardPortScopedSandboxEntryPointDeps<
     dashboardPortReservationScope: DashboardPortReservationScope,
     ...args: Args
   ): Promise<Result>;
+  resolvePortableRuntimeContext(): PortableRuntimeContext;
   resolveComputePlan(): ComputePlan;
 }
 
@@ -622,12 +649,14 @@ export function createDashboardPortScopedSandboxEntryPoints<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeContext,
   ComputePlan,
 >(
   deps: DashboardPortScopedSandboxEntryPointDeps<
     Args,
     Result,
     BaseImageResolutionContext,
+    PortableRuntimeContext,
     ComputePlan
   >,
 ): {
@@ -639,6 +668,7 @@ export function createDashboardPortScopedSandboxEntryPoints<
     return withDashboardPortReservationScope((dashboardPortReservationScope) =>
       deps.createSandboxWithBaseImageResolution(
         deps.createBaseImageResolutionContext(),
+        deps.resolvePortableRuntimeContext(),
         computePlan,
         null,
         temporaryManagedRuntime,

@@ -86,12 +86,13 @@ describe("prelaunchReapFailureMessage (#5968)", () => {
     expect(prelaunchReapFailureMessage(emptyResult({ stopped: [10] }))).toBeNull();
   });
 
-  it("describes the unreaped gateway pids and a remediation scoped to those pids", () => {
+  it("requires fresh identity proof for unreaped gateway pids", () => {
     const message = prelaunchReapFailureMessage(emptyResult({ failed: [321, 654] }));
     expect(message).toContain("321, 654");
-    // Scoped to the matched pids, never a host-wide `pkill -f openshell-gateway`.
-    expect(message).toContain("sudo kill -9 321 654");
-    expect(message).not.toContain("pkill");
+    expect(message).toContain("Do not signal a PID from this saved output");
+    expect(message).toContain("live process owner and command line");
+    expect(message).toContain("PID file, runtime marker, and loaded sandbox namespace");
+    expect(message).not.toContain("kill -9");
   });
 });
 

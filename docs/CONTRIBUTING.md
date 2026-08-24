@@ -6,11 +6,17 @@
 # Contributing to NemoClaw Documentation
 
 This guide owns the public-facing documentation procedure and rules for NemoClaw.
-If you change code that affects user-facing behavior, update the relevant docs in the same PR.
+Code-changing pull requests (PRs) may defer public `docs/**`, `fern/docs.yml`, and `fern/assets/**` updates to `Docs / Post-Merge Catch-Up`.
+The workflow maintains one cumulative draft documentation PR for merged changes after the latest release tag.
+The PR title names the next patch tag after that release tag.
+The PR body names both tags and explains the development and release-cutoff procedures.
+Each later push to `main` that changes a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**` refreshes the same PR with an independently reviewed cumulative patch.
+The publisher fast-forwards the branch and stops if a person changes the branch or PR metadata.
+The publisher never force-pushes.
 
 ## When to Update Docs
 
-Update documentation when your change:
+The post-merge workflow updates documentation when a merged change:
 
 - Adds, removes, or renames a CLI command or flag.
 - Changes default behavior or configuration.
@@ -84,7 +90,11 @@ Fern publishes Markdown routes for AI agents from the same source pages.
 
 The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
-Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
+The end-of-day flow merges the planned release entry.
+A docs-only merge does not start another catch-up run. The tag skill shows the latest cumulative
+docs PR, its automated coverage point, later commits and PRs, review and check state, changed paths,
+and open managed docs PRs. The maintainer then decides whether to proceed, request another docs PR,
+or stop tagging.
 
 For each release:
 
@@ -98,8 +108,7 @@ For each release:
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
 
-Run `npx vitest run test/changelog-docs.test.ts` and `npm run docs` before opening the pre-tag
-release-note docs PR.
+Follow [Doc-Only PR Verification](#doc-only-pr-verification) after adding or changing the release entry.
 
 ## Publishing Docs
 
@@ -176,6 +185,8 @@ Update `docs/index.yml` when navigation, slugs, or page placement changes.
 If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
 Treat `<AgentOnly>` as a build-time directive rather than a React component, and do not import it from `AgentGuide.tsx`.
 Put each opening and closing tag at the first column on its own line, and do not nest the blocks.
+Keep a section heading inside the `<AgentOnly>` block that holds its body, or the heading renders in every variant with nothing beneath it.
+The sync command fails when a generated variant leaves a heading without content.
 The generated pages must contain only statically resolved content, with no `AgentGuide` imports or runtime agent components.
 
 Before review, render every guide variant that uses a changed shared page.
@@ -373,16 +384,11 @@ Remove them during review.
 1. Create a branch following the project convention.
 2. Make your changes.
 3. Build locally with `npm run docs` and verify the output.
-4. Open a PR with `docs:` as the conventional commit type.
+4. Have a separate documentation writer review the completed diff against this guide and `WRITING.md`.
+5. Open a PR with `docs:` as the conventional commit type.
 
 ```text
 docs: update quickstart for new onboard wizard
-```
-
-If your doc change accompanies a code change, include both in the same PR and use the code change's commit type:
-
-```text
-feat(cli): add policy-add command
 ```
 
 ## Reviewing Doc PRs

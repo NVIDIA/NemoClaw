@@ -16,6 +16,7 @@ import {
   listBuiltInMessagingChannelManifests,
   listMessagingChannelsWithoutCredentials,
   listMessagingConfigEnvKeys,
+  listMessagingCredentialEnvAssignments,
   listMessagingPackageInstallSpecs,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
@@ -42,6 +43,7 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat",
     ]);
   });
 
@@ -70,6 +72,34 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp", "googlechat"]);
   });
 
+  it("derives credential environment assignments from manifest render metadata", () => {
+    expect(
+      listMessagingCredentialEnvAssignments({ agent: "hermes" })
+        .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+        .map(({ channelId, sourceEnvKey, targetEnvKey }) => ({
+          channelId,
+          sourceEnvKey,
+          targetEnvKey,
+        })),
+    ).toEqual([
+      {
+        channelId: "wechat",
+        sourceEnvKey: "WECHAT_BOT_TOKEN",
+        targetEnvKey: "WEIXIN_TOKEN",
+      },
+      {
+        channelId: "teams",
+        sourceEnvKey: "MSTEAMS_APP_PASSWORD",
+        targetEnvKey: "TEAMS_CLIENT_SECRET",
+      },
+    ]);
+    expect(
+      listMessagingCredentialEnvAssignments({ agent: "openclaw" }).filter(
+        ({ channelId }) => channelId === "teams",
+      ),
+    ).toEqual([]);
+  });
+
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
@@ -95,6 +125,8 @@ describe("built-in messaging channel metadata", () => {
       "GOOGLECHAT_AUDIENCE",
       "GOOGLECHAT_APP_PRINCIPAL",
       "GOOGLECHAT_ALLOWED_USERS",
+      "GOOGLE_CHAT_PROJECT_ID",
+      "GOOGLE_CHAT_SUBSCRIPTION_NAME",
     ]);
     expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -184,6 +216,27 @@ describe("built-in messaging channel metadata", () => {
         agents: ["hermes"],
         manager: "hermes-uv-pip",
         spec: "aiohttp==3.14.3",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGooglePubsubPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-cloud-pubsub==2.39.0",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGoogleApiClientPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-api-python-client==2.194.0",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGoogleAuthPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-auth==2.55.1",
       },
     ]);
   });

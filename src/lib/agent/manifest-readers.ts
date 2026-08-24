@@ -364,10 +364,14 @@ export function readMcpCapability(record: ManifestRecord): AgentMcpCapability {
   };
 }
 
-export function loadManifestRecord(manifestPath: string): ManifestRecord {
-  const parsed = yaml.load(fs.readFileSync(manifestPath, "utf8"));
+export function parseManifestRecord(source: string, label: string): ManifestRecord {
+  const parsed = yaml.load(source);
   if (!isManifestRecord(parsed)) {
-    throw new Error(`Agent manifest must be a YAML object: ${manifestPath}`);
+    throw new Error(`Agent manifest must be a YAML object: ${label}`);
   }
   return parsed;
+}
+
+export function loadManifestRecord(manifestPath: string): ManifestRecord {
+  return parseManifestRecord(fs.readFileSync(manifestPath, "utf8"), manifestPath);
 }

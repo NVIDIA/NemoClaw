@@ -25,6 +25,8 @@ const ISO = "2026-01-01T00:00:00.000Z";
 function baseCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "s1",
     machineState: "sandbox",
     updatedAt: ISO,
@@ -150,28 +152,134 @@ describe("checkpoint schema inspection", () => {
     expect(result).toEqual({ status: "loaded", checkpoint });
   });
 
-  it("migrates a valid v2 checkpoint with no recreate journal", () => {
+  it("round-trips the single portable profile and current-user Podman authority", () => {
+    const checkpoint = baseCheckpoint({
+      profile: { kind: "selected", value: "portable" },
+      runtimeAuthority: {
+        kind: "selected",
+        value: {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid: 1000,
+          homeDir: "/home/alice",
+          configHome: "/home/alice/.config",
+          runtimeDir: "/run/user/1000",
+          socketPath: "/run/user/1000/podman/podman.sock",
+        },
+      },
+    });
+
+    expect(inspectCheckpoint(serializeCheckpoint(checkpoint))).toEqual({
+      status: "loaded",
+      checkpoint,
+    });
+  });
+
+  it("rejects a portable configuration root outside the canonical OS home (#9035)", () => {
+    const checkpoint = baseCheckpoint({
+      profile: { kind: "selected", value: "portable" },
+      runtimeAuthority: {
+        kind: "selected",
+        value: {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid: 1000,
+          homeDir: "/home/alice",
+          configHome: "/srv/alice-config",
+          runtimeDir: "/run/user/1000",
+          socketPath: "/run/user/1000/podman/podman.sock",
+        },
+      },
+    });
+
+    expect(inspectCheckpoint(serializeCheckpoint(checkpoint))).toEqual({ status: "corrupt" });
+  });
+
+  it.each([
+    {
+      label: "default profile with selected runtime authority",
+      mutate: (checkpoint: Record<string, unknown>) => {
+        checkpoint.runtimeAuthority = {
+          kind: "selected",
+          value: {
+            schemaVersion: 1,
+            kind: "podman",
+            ownership: "current-user",
+            uid: 1000,
+            homeDir: "/home/alice",
+            configHome: "/home/alice/.config",
+            runtimeDir: "/run/user/1000",
+            socketPath: "/run/user/1000/podman/podman.sock",
+          },
+        };
+      },
+    },
+    {
+      label: "portable profile without runtime authority",
+      mutate: (checkpoint: Record<string, unknown>) => {
+        checkpoint.profile = { kind: "selected", value: "portable" };
+      },
+    },
+    {
+      label: "socket outside the recorded runtime root",
+      mutate: (checkpoint: Record<string, unknown>) => {
+        checkpoint.profile = { kind: "selected", value: "portable" };
+        checkpoint.runtimeAuthority = {
+          kind: "selected",
+          value: {
+            schemaVersion: 1,
+            kind: "podman",
+            ownership: "current-user",
+            uid: 1000,
+            homeDir: "/home/alice",
+            configHome: "/home/alice/.config",
+            runtimeDir: "/run/user/1000",
+            socketPath: "/run/user/10000/podman.sock",
+          },
+        };
+      },
+    },
+    {
+      label: "unknown nested key",
+      mutate: (checkpoint: Record<string, unknown>) => {
+        checkpoint.sandboxIdentity = {
+          kind: "selected",
+          value: { name: "my-sandbox", agent: "openclaw", unexpected: true },
+        };
+      },
+    },
+    {
+      label: "unknown effect group",
+      mutate: (checkpoint: Record<string, unknown>) => {
+        checkpoint.effectGroups = { unexpected_effect: { completedAt: ISO, fingerprint: "x" } };
+      },
+    },
+  ])("rejects invalid v4 cross-field authority: $label", ({ mutate }) => {
+    const serialized = serializeCheckpoint(baseCheckpoint());
+    mutate(serialized);
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it("classifies a v2 checkpoint as legacy without inventing runtime authority", () => {
     const serialized = serializeCheckpoint(baseCheckpoint());
     serialized.schemaVersion = 2;
     delete serialized.sandboxRecreate;
 
     const result = inspectCheckpoint(serialized);
 
-    expect(result).toMatchObject({ status: "migrated", fromVersion: 2 });
-    expect(result.status === "migrated" && result.checkpoint.sandboxRecreate).toBeNull();
+    expect(result).toEqual({ status: "legacy", foundVersion: 2 });
   });
 
-  it("migrates a valid v1 checkpoint with an unset gateway authority", () => {
+  it("classifies a v1 checkpoint as legacy without inventing runtime authority", () => {
     const serialized = serializeCheckpoint(baseCheckpoint());
     serialized.schemaVersion = 1;
     delete serialized.gatewayAuthority;
 
     const result = inspectCheckpoint(serialized);
 
-    expect(result).toMatchObject({ status: "migrated", fromVersion: 1 });
-    expect(result.status === "migrated" && result.checkpoint.gatewayAuthority).toEqual(
-      decisionUnset(),
-    );
+    expect(result).toEqual({ status: "legacy", foundVersion: 1 });
   });
 
   it("round-trips a selected externally supervised gateway authority", () => {
@@ -219,16 +327,13 @@ describe("checkpoint schema inspection", () => {
     });
   });
 
-  it("loads an older recreate journal without a source workload receipt", () => {
+  it("rejects a current recreate journal without its source workload receipt", () => {
     const serialized = serializedRecreateCheckpoint();
     delete (serialized.sandboxRecreate as Record<string, unknown>).sourceWorkload;
 
     const result = inspectCheckpoint(serialized);
 
-    expect(result.status).toBe("loaded");
-    expect(
-      result.status === "loaded" && result.checkpoint.sandboxRecreate?.sourceWorkload,
-    ).toBeNull();
+    expect(result).toEqual({ status: "corrupt" });
   });
 
   it("rejects a source-workload cleanup receipt whose reference does not match its image", () => {

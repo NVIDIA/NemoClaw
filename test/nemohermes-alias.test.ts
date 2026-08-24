@@ -120,27 +120,20 @@ describe("nemohermes alias", () => {
     expect(out).toContain("nemohermes");
   });
 
-  it("nemoclaw onboard --agent hermes keeps the nemoclaw CLI name in suggestions (#3358)", () => {
-    // Regression for NVB#6165494 / issue #3358: a user who launches via
-    // `nemoclaw` (with --agent hermes or NEMOCLAW_AGENT=hermes) should never
-    // see `nemohermes` suggested back as the command to run, because they may
-    // not have the alias installed on PATH.
+  it("nemoclaw onboard --agent hermes uses an agent-neutral no-session diagnostic (#9035)", () => {
     const { code, out } = runNemoClaw(
       "onboard --agent hermes --resume --non-interactive --yes-i-accept-third-party-software",
     );
     expect(code).toBe(1);
-    expect(out).toContain("nemoclaw onboard");
-    expect(out).not.toMatch(/\bnemohermes\b/);
+    expect(out.trim()).toBe("No resumable onboarding session was found.");
   });
 
-  it("NEMOCLAW_AGENT=hermes nemoclaw also keeps the nemoclaw CLI name (#3358)", () => {
-    // The exact repro path reported by NV QA on Brev v0.0.38.
+  it("NEMOCLAW_AGENT=hermes uses an agent-neutral no-session diagnostic (#9035)", () => {
     const { code, out } = runNemoClaw(
       "onboard --resume --non-interactive --yes-i-accept-third-party-software",
       { NEMOCLAW_AGENT: "hermes" },
     );
     expect(code).toBe(1);
-    expect(out).toContain("nemoclaw onboard");
-    expect(out).not.toMatch(/\bnemohermes\b/);
+    expect(out.trim()).toBe("No resumable onboarding session was found.");
   });
 });

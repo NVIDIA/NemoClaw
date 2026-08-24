@@ -271,6 +271,7 @@ export function createDirectSetupInferenceHarnessFactory(
     const errors: string[] = [];
     const logs: string[] = [];
     const updateSandbox = vi.fn(() => true);
+    const unloadOllamaModels = vi.fn();
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
     const runOpenshell: DirectRunOpenshell = (args, runOptions = {}) => {
@@ -350,6 +351,13 @@ export function createDirectSetupInferenceHarnessFactory(
       exitProcess: (code: number): never => {
         throw Object.assign(new Error(`EXIT_CALLED:${code}`), { code });
       },
+      // #9110: neutralize the GPU-release seams so harness consumers backed by
+      // the production defaults never read the developer's real registry or
+      // curl a live Ollama daemon.
+      getSandbox: () => null,
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      unloadOllamaModels,
+      withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
     });
     return {
@@ -358,6 +366,7 @@ export function createDirectSetupInferenceHarnessFactory(
       logs,
       runOpenshell,
       setupInference,
+      unloadOllamaModels,
       updateSandbox,
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,

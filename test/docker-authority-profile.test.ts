@@ -66,7 +66,15 @@ describe("Docker authority readiness", () => {
         assess: () => host(runtime),
         architecture: "arm64",
         now: () => NOW,
-        detectGpu: () => ({ count: 1, platform: "spark", type: "nvidia" }),
+        detectGpu: () => ({
+          count: 1,
+          platform: "spark",
+          type: "nvidia",
+          totalMemoryMB: 128 * 1024,
+          availableMemoryMB: 128 * 1024,
+          perGpuMB: 128 * 1024,
+          unifiedMemory: true,
+        }),
         detectNvidiaDriverVersion: () => "580.65.06",
         collectPlatformIdentity: () => ({
           nvidiaPlatform: "spark",

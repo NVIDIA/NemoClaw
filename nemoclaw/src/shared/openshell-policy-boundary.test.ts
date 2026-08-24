@@ -101,25 +101,34 @@ describe("canonical OpenShell policy boundary", () => {
     });
   });
 
-  it("rejects missing, diagnostic, malformed, scalar, and unmarked policy output", () => {
-    for (const raw of ["", "Version: 1\n---", "error: gateway unavailable"]) {
+  it.each(["", "Version: 1\n---", "error: gateway unavailable"])(
+    "rejects output without a policy: %j",
+    (raw) => {
       expect(() => parseOpenShellPolicy(raw)).toThrow(/does not contain a policy/);
-    }
+    },
+  );
+
+  it("rejects malformed and scalar policy output", () => {
     expect(() => parseOpenShellPolicy("version: [unterminated")).toThrow(/not valid YAML/);
     expect(() => parseOpenShellPolicy("---\nscalar")).toThrow(/must be a YAML mapping/);
-    for (const raw of [
-      "version: 1\nnetwork_policies: invalid",
-      "version: 1\nnetwork_policies: []",
-      "version: 1\nnetwork_policies: null",
-    ]) {
-      expect(() => parseOpenShellPolicy(raw)).toThrow(/network_policies must be a YAML mapping/);
-    }
-    for (const raw of [
-      'version: "1"\nnetwork_policies: {}',
-      "version: 1.5\nnetwork_policies: {}",
-    ]) {
+  });
+
+  it.each([
+    "version: 1\nnetwork_policies: invalid",
+    "version: 1\nnetwork_policies: []",
+    "version: 1\nnetwork_policies: null",
+  ])("rejects a non-mapping network_policies value: %j", (raw) => {
+    expect(() => parseOpenShellPolicy(raw)).toThrow(/network_policies must be a YAML mapping/);
+  });
+
+  it.each(['version: "1"\nnetwork_policies: {}', "version: 1.5\nnetwork_policies: {}"])(
+    "rejects a non-integer policy version: %j",
+    (raw) => {
       expect(() => parseOpenShellPolicy(raw)).toThrow(/version must be a positive integer/);
-    }
+    },
+  );
+
+  it("rejects unmarked future output", () => {
     expect(() => parseOpenShellPolicy("FutureKey: value")).toThrow(/does not contain a policy/);
   });
 
@@ -144,10 +153,14 @@ describe("canonical OpenShell policy boundary", () => {
     });
   });
 
-  it("leaves non-composed mappings unchanged and rejects malformed YAML", () => {
-    for (const policy of ["version: 1", "version: 1\nnetwork_policies:\n  safe: {}"]) {
+  it.each(["version: 1", "version: 1\nnetwork_policies:\n  safe: {}"])(
+    "leaves the non-composed mapping %j unchanged",
+    (policy) => {
       expect(stripProviderComposedPolicies(policy)).toBe(policy);
-    }
+    },
+  );
+
+  it("rejects malformed YAML while stripping composed policies", () => {
     expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(/invalid YAML/);
   });
 });

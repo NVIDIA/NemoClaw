@@ -196,6 +196,45 @@ describe("Docker GPU patch diagnostics", () => {
     expect(result.headline).toContain("Provisioning");
   });
 
+  it("assigns OpenShell lifecycle ownership when a healthy container remains in Deleting (#9531)", () => {
+    const result = classify(
+      failureSnapshot("Deleting", {
+        Status: "running",
+        Running: true,
+        ExitCode: 0,
+        Health: { Status: "healthy" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "sandbox_deleting_phase",
+      headline:
+        "OpenShell kept the sandbox in Deleting after the replacement container became healthy.",
+      summaryLines: expect.arrayContaining([
+        "sandbox_phase=Deleting",
+        "patched_container_status=running",
+        "patched_container_running=true",
+        "patched_container_exit_code=0",
+        "patched_container_health=healthy",
+        "lifecycle_authority=openshell",
+      ]),
+      hints: [
+        "OpenShell owns the sandbox lifecycle phase. NemoClaw does not accept Docker container health as lifecycle success.",
+      ],
+    });
+  });
+
+  it.each([
+    ["health is not healthy", { ...RUNNING, Health: { Status: "starting" } }],
+    ["container is not running", { Status: "exited", Running: false, ExitCode: 0 }],
+    ["container state is incomplete", RUNNING],
+  ])("does not assign OpenShell lifecycle ownership when %s (#9531)", (_case, state) => {
+    const result = classify(failureSnapshot("Deleting", state));
+
+    expect(result.kind).not.toBe("sandbox_deleting_phase");
+    expect(result.summaryLines).not.toContain("lifecycle_authority=openshell");
+  });
+
   it("prefers supervisor_unreachable over proof_failure when the sandbox is non-live but non-terminal", () => {
     const result = classify(
       failureSnapshot("Provisioning"),

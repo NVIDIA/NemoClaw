@@ -31,13 +31,26 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
   });
 
-  it("patches every 0.1.34 mutation and credential boundary idempotently", () => {
+  it.each([
+    'args.sandbox = "none"',
+    "args.no_mcp = not has_managed_mcp",
+    "args.mcp_config = managed_mcp_config if has_managed_mcp else None",
+    "args.shell_allow_list = None",
+    'getattr(args, "update", False)',
+    'getattr(args, "auto_update", False)',
+    'getattr(args, "install", None)',
+    'getattr(args, "model_params", None)',
+    'getattr(args, "interpreter_tools", None)',
+    'getattr(args, "auto_approve", False)',
+    "_nemoclaw_assert_safe_runtime()",
+    'os.environ.pop("PYTHONPATH", None)',
+  ])("patches every 0.1.55 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
 
     const packageDir = path.join(tempDir, "deepagents_code");
-    for (const relativePath of [
+    [
       "main.py",
       "__main__.py",
       "app.py",
@@ -58,32 +71,17 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "_server_config.py",
       "mcp_tools.py",
       "subagents.py",
-      "hooks.py",
+      "hooks/legacy.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
-    ]) {
+    ].forEach((relativePath) => {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
-    }
+    });
+    expect(fs.existsSync(path.join(packageDir, "hooks.py"))).toBe(false);
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
-    for (const expected of [
-      'args.sandbox = "none"',
-      "args.no_mcp = not has_managed_mcp",
-      "args.mcp_config = managed_mcp_config if has_managed_mcp else None",
-      "args.shell_allow_list = None",
-      'getattr(args, "update", False)',
-      'getattr(args, "auto_update", False)',
-      'getattr(args, "install", None)',
-      'getattr(args, "model_params", None)',
-      'getattr(args, "interpreter_tools", None)',
-      'getattr(args, "auto_approve", False)',
-      "_nemoclaw_assert_safe_runtime()",
-      'os.environ.pop("PYTHONPATH", None)',
-    ]) {
-      expect(main).toContain(expected);
-    }
+    expect(main).toContain(expected);
   });
-
   it.each([
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
@@ -105,7 +103,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
-    ["app", "app.py", "_nemoclaw_original_on_auto_approve_enabled"],
+    ["app", "app.py", "async def _nemoclaw_on_auto_approve_enabled"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
@@ -113,17 +111,14 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", relativePath);
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # corrupt`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`Managed package ${boundary} patch is incomplete`);
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it.each([
     ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["def managed_auto_approval_enabled() -> bool:"],
@@ -133,23 +128,19 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const invalidConfig = path.join(tempDir, "invalid-mcp.json");
     fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
-
     const result = spawnSync(
       "python3",
       [
@@ -204,6 +195,7 @@ else:
     ["--interpreter-t=execute"],
     ["-y"],
     ["--auto-approve"],
+    ["--yolo"],
     ["--acp"],
     ["--startup-cmd", "touch /tmp/unsafe"],
     ["--startup-cmd=touch /tmp/unsafe"],
@@ -219,27 +211,26 @@ else:
     expect(`${result.stdout}\n${result.stderr}`).toContain("disabled in NemoClaw-managed");
   });
 
-  it.each([
-    ["-y"],
-    ["--auto-approve"],
-  ])("preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)", (...args) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
-    const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
-      env: {
-        PATH: process.env.PATH,
-        PYTHONPATH: tempDir,
-        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
-      },
-      encoding: "utf8",
-    });
+  it.each([["-y"], ["--auto-approve"]])(
+    "preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)",
+    (...args) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
+      writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+      const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+        },
+        encoding: "utf8",
+      });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
-    expect(result.stderr).toContain("Auto-approval is enabled for this thread");
-    expect(result.stderr).toContain("shell commands");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
+      expect(result.stderr).toContain("Auto-approval is enabled for this thread");
+    },
+  );
 
   it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
     const tempDir = createPackageFixture();
@@ -313,10 +304,11 @@ check("disabled", False)
     expect(result.stderr).toContain("capability contents are invalid");
   });
 
-  it("preserves ordinary direct-module and read-only tools execution", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const args of [[], ["tools", "list"], ["tools", "help"]]) {
+  it.each([[[]], [["tools", "list"]], [["tools", "help"]]] as const)(
+    "preserves ordinary direct-module and read-only tools execution for argv %#",
+    (args) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
       const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
         env: {
           PATH: process.env.PATH,
@@ -326,25 +318,26 @@ check("disabled", False)
         encoding: "utf8",
       });
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("managed-posture-ok");
-    }
-  });
+      expect(result.stdout).toContain(
+        "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+      );
+    },
+  );
 
-  it("rejects direct-module runtime credentials before settings bootstrap", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const [name, value] of [
-      ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
-      ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
-      ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
-      ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      // A plain OTLP endpoint URL is allowed (#6466); credential-bearing forms
-      // (embedded userinfo, structured key blob) are still refused.
-      ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
-      ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
-      ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
-    ]) {
+  it.each([
+    ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
+    ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
+    ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
+    ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
+    ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
+    ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
+    ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
+  ] as const)(
+    "rejects direct-module runtime credential in %s before settings bootstrap",
+    (name, value) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
       const result = spawnSync("python3", ["-m", "deepagents_code"], {
         env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
         encoding: "utf8",
@@ -352,8 +345,8 @@ check("disabled", False)
 
       expect(result.status, `${name} was allowed`).not.toBe(0);
       expect(result.stderr).toContain(`runtime environment variable ${name}`);
-    }
-  });
+    },
+  );
 
   it.each([
     ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
@@ -373,30 +366,30 @@ check("disabled", False)
     expect(result.stderr).not.toContain(value);
   });
 
-  it("allows the managed OTLP collector URL in the direct-module runtime (#6466)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
-      for (const value of [
+  it.each(
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"].flatMap((name) =>
+      [
         "http://host.openshell.internal:4318",
         "http://host.openshell.internal:4318/v1/traces",
         "http://host.openshell.internal",
-      ]) {
-        const result = spawnSync("python3", ["-m", "deepagents_code"], {
-          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
-          encoding: "utf8",
-        });
-        expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain("managed-posture-ok");
-      }
-    }
-  });
-
-  it("rejects fail-open OTLP endpoint values in the direct-module runtime (#6538)", () => {
+      ].map((value) => ({ name, value })),
+    ),
+  )("allows managed OTLP collector URL candidate %# for $name (#6466)", ({ name, value }) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
-    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
-      for (const value of [
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+      encoding: "utf8",
+    });
+    expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(
+      "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+    );
+  });
+
+  it.each(
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"].flatMap((name) =>
+      [
         "https://collector.example.com:4318",
         "http://evil.host.openshell.internal:4318",
         "http://host.openshell.internal.evil.com",
@@ -410,15 +403,17 @@ check("disabled", False)
         "http://héllo:4318",
         "http://",
         `http://host.openshell.internal:4318/p${"a".repeat(3000)}`,
-      ]) {
-        const result = spawnSync("python3", ["-m", "deepagents_code"], {
-          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
-          encoding: "utf8",
-        });
-        expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
-        expect(result.stderr).toContain(`runtime environment variable ${name}`);
-      }
-    }
+      ].map((value) => ({ name, value })),
+    ),
+  )("rejects fail-open OTLP endpoint candidate %# for $name (#6538)", ({ name, value }) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+      encoding: "utf8",
+    });
+    expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+    expect(result.stderr).toContain(`runtime environment variable ${name}`);
   });
 
   it("allows only scoped managed credential-shaped runtime values", () => {
@@ -444,10 +439,16 @@ check("disabled", False)
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok");
+    expect(result.stdout).toContain(
+      "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+    );
   });
 
-  it("accepts only exact same-name OpenShell credential placeholders", () => {
+  it.each([
+    "openshell:resolve:env:GITHUB_MCP_TOKEN",
+    "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
+    `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
+  ])("accepts exact same-name OpenShell credential placeholder candidate %#", (value) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const run = (name: string, value: string) =>
@@ -456,24 +457,25 @@ check("disabled", False)
         encoding: "utf8",
       });
 
-    for (const value of [
-      "openshell:resolve:env:GITHUB_MCP_TOKEN",
-      "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
-      `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
-    ]) {
-      const result = run("GITHUB_MCP_TOKEN", value);
-      expect(result.status, result.stderr).toBe(0);
-    }
+    const result = run("GITHUB_MCP_TOKEN", value);
+    expect(result.status, result.stderr).toBe(0);
+  });
 
-    for (const [name, value] of [
-      ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
-      ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
-      ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
-    ]) {
-      const result = run(name, value);
-      expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
-      expect(result.stderr).toContain("invalid OpenShell credential placeholder");
-    }
+  it.each([
+    ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
+    ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
+    ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
+  ] as const)("rejects mismatched OpenShell credential placeholder candidate %#", (name, value) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const run = (candidateName: string, candidateValue: string) =>
+      spawnSync("python3", ["-m", "deepagents_code"], {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
+        encoding: "utf8",
+      });
+    const result = run(name, value);
+    expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+    expect(result.stderr).toContain("invalid OpenShell credential placeholder");
   });
 
   it("loads only strict HTTPS-only managed MCP configuration", () => {
@@ -516,7 +518,7 @@ check("disabled", False)
     expect(valid.status, valid.stderr).toBe(0);
     expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
 
-    for (const config of [
+    [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
       { mcpServers: { github: validServer }, ui: { theme: "dark" } },
       {
@@ -576,10 +578,10 @@ check("disabled", False)
           Array.from({ length: 65 }, (_, index) => [`server${index}`, validServer]),
         ),
       },
-    ]) {
+    ].forEach((config) => {
       const result = validate(config);
       expect(result.status, JSON.stringify(config)).not.toBe(0);
-    }
+    });
 
     const badMode = validate({ mcpServers: { github: validServer } }, 0o644);
     expect(badMode.status).not.toBe(0);
@@ -632,9 +634,9 @@ check("disabled", False)
     expect(symlinked.status).not.toBe(0);
   });
 
-  it.runIf(process.platform === "linux")(
-    "passes sealed and anonymous MCP snapshots through ServerProcess restart",
-    () => {
+  it.runIf(process.platform === "linux").each(["sealed-memfd", "anonymous-otmpfile"] as const)(
+    "passes sealed and anonymous MCP snapshots through ServerProcess restart [%s]",
+    (snapshotKind) => {
       const tempDir = createPackageFixture();
       patchFixture(tempDir);
       const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
@@ -649,14 +651,14 @@ check("disabled", False)
           },
         },
       };
-      for (const snapshotKind of ["sealed-memfd", "anonymous-otmpfile"] as const) {
-        fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
 
-        const result = spawnSync(
-          "python3",
-          [
-            "-c",
-            `
+      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          `
 import asyncio
 import errno
 import fcntl
@@ -707,7 +709,7 @@ child = (
     "import json, os; from deepagents_code.mcp_tools import load_mcp_config; "
     "config = load_mcp_config(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']); "
     "assert 'NEMOCLAW_DCODE_MCP_BINDING' not in os.environ; "
-    "print(json.dumps(config), end='')"
+    "print(json.dumps({'config': config, 'session_id': os.getsid(0)}), end='')"
 )
 def server_for_path(config_path):
     env = os.environ.copy()
@@ -769,30 +771,33 @@ for descriptor in (unsealed_descriptor, empty_descriptor, oversized_descriptor):
 print(json.dumps({
     "path": snapshot_path,
     "kind": binding["kind"],
+    "parent_session_id": os.getsid(0),
     "outputs": [json.loads(output) for output in server.outputs],
 }))
 `,
-            configPath,
-            snapshotKind,
-          ],
-          {
-            cwd: tempDir,
-            env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-            encoding: "utf8",
-          },
-        );
+          configPath,
+          snapshotKind,
+        ],
+        {
+          cwd: tempDir,
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+          encoding: "utf8",
+        },
+      );
 
-        expect(result.status, result.stderr).toBe(0);
-        const proof = JSON.parse(result.stdout) as {
-          path: string;
-          kind: string;
-          outputs: unknown[];
-        };
-        expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
-        expect(proof.kind).toBe(snapshotKind);
-        expect(proof.outputs).toEqual([managedConfig, managedConfig]);
-        expect(result.stdout).not.toContain("attacker");
-      }
+      expect(result.status, result.stderr).toBe(0);
+      const proof = JSON.parse(result.stdout) as {
+        path: string;
+        kind: string;
+        parent_session_id: number;
+        outputs: Array<{ config: unknown; session_id: number }>;
+      };
+      expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
+      expect(proof.kind).toBe(snapshotKind);
+      expect(proof.outputs.map(({ config }) => config)).toEqual([managedConfig, managedConfig]);
+      const childSessions = proof.outputs.map(({ session_id }) => session_id);
+      expect(childSessions).not.toContain(proof.parent_session_id);
+      expect(result.stdout).not.toContain("attacker");
     },
   );
 
@@ -877,7 +882,7 @@ async def validate():
     instance._auto_approve = True
     instance._status_bar.set_auto_approve(enabled=True)
     instance._session_state.auto_approve = True
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is False
     assert instance._auto_approve is False
     assert instance._status_bar.auto_approve is False
     assert instance._session_state.auto_approve is False
@@ -1233,17 +1238,20 @@ spec.loader.exec_module(progressive_disclosure_harness)
 progressive_disclosure_harness._install_stubs()
 
 from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.approval_mode import ApprovalMode
 from deepagents_code.client import non_interactive
 from deepagents_code.tui.widgets.approval import ApprovalMenu
 
 WARNING = "Tool calls, including shell commands, may execute without further confirmation"
 
 def set_auto(instance, enabled):
+    mode = ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL
+    instance._approval_mode = mode
     instance._auto_approve = enabled
-    instance._status_bar.set_auto_approve(enabled=enabled)
     instance._session_state.auto_approve = enabled
 
 def assert_auto(instance, enabled):
+    assert instance._approval_mode is (ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL)
     assert instance._auto_approve is enabled
     assert instance._status_bar.auto_approve is enabled
     assert instance._session_state.auto_approve is enabled
@@ -1289,7 +1297,7 @@ async def validate():
     instance = app.DeepAgentsApp()
 
     set_auto(instance, False)
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is True
     assert_auto(instance, True)
     assert WARNING in instance.notifications[-1][0]
 
@@ -1304,6 +1312,7 @@ async def validate():
     assert len(instance.notifications) == warning_count + 1
 
     approval = ApprovalMenu()
+    assert approval._options[1][0] == "Auto-approve for this thread (a)"
     approval._handle_selection(1)
     assert approval.decisions == [("auto_approve_all", None)]
     assert approval.notifications == []
@@ -1421,7 +1430,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.34");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.55");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");
@@ -1468,7 +1477,6 @@ print("managed-auto-approval-ok")
     });
     expect(redirectLimitResult.status).not.toBe(0);
     expect(redirectLimitResult.stderr).toContain("_MAX_FETCH_REDIRECTS");
-
     const missingValidationError = createPackageFixture();
     const missingValidationErrorPath = path.join(
       missingValidationError,

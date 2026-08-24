@@ -50,7 +50,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -74,7 +77,11 @@ import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
 } from "./registry/runtime-snapshot.js";
-import type { SandboxEntry, SandboxWorkloadReceipt } from "./registry/types.js";
+import type {
+  SandboxEntry,
+  SandboxHostLocalInferenceProvenance,
+  SandboxWorkloadReceipt,
+} from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
@@ -91,6 +98,8 @@ export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
   "custom-image OpenClaw plugin provenance is missing or invalid";
 export const MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
   "managed snapshot restore requires exact content and runtime authority";
+export const HOST_LOCAL_INFERENCE_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
+  "host-local inference snapshot restore requires exact content and runtime authority";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -143,6 +152,10 @@ export interface RebuildManifest {
    * snapshot. Older and explicit Dockerfile snapshots omit this field.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Exact provider-neutral authority for out-of-sandbox inference. */
+  hostLocalInferenceReceipt?: string;
+  /** Explicit hidden-lifecycle provenance paired with the exact receipt. */
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -157,12 +170,20 @@ export interface BackupOptions {
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
+  hostLocalInferenceReceipt?: string;
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /**
    * Internal publication fence for provider-backed backups. The callback
    * runs after data capture and sanitization but before the manifest becomes
    * visible to restore and rebuild flows.
    */
   validateBeforePublish?: () => void;
+  /**
+   * Internal capture path for a declared state file that the sandbox-user SSH
+   * transport cannot read. The caller must independently enforce path,
+   * identity, and stable-read constraints before returning bytes.
+   */
+  captureStateFile?: StateFileCapture;
 }
 
 export interface InstanceBackup {
@@ -179,6 +200,19 @@ export interface StateFileSpec {
   path: string;
   strategy: StateFileStrategy;
 }
+
+export interface StateFileCaptureRequest {
+  sandboxName: string;
+  dir: string;
+  spec: StateFileSpec;
+}
+
+export type StateFileCaptureResult =
+  | { outcome: "backed_up"; data: Buffer }
+  | { outcome: "missing" }
+  | { outcome: "failed"; error?: string; unreachable?: boolean };
+
+export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -327,6 +361,26 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       : cloneSandboxRuntimeSnapshot(value.runtimeSnapshot);
   const workload =
     value.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(value.workload as never);
+  const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
+    value.hostLocalInferenceReceipt as string | null | undefined,
+  );
+  const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+    value.hostLocalInferenceProvenance,
+  );
+  const validHostLocalInferenceProvenance = (() => {
+    if (value.hostLocalInferenceProvenance === undefined) return true;
+    if (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
+      return false;
+    try {
+      registry.requireSandboxHostLocalInferenceProvenance(
+        hostLocalInferenceProvenance,
+        hostLocalInferenceReceipt,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   return (
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
@@ -357,6 +411,9 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
     (value.runtimeSnapshot === undefined || runtimeSnapshot !== undefined) &&
     (value.workload === undefined || workload !== undefined) &&
+    (value.hostLocalInferenceReceipt === undefined ||
+      (typeof hostLocalInferenceReceipt === "string" && hostLocalInferenceReceipt.length > 0)) &&
+    validHostLocalInferenceProvenance &&
     (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
@@ -717,21 +774,42 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
+    // would otherwise survive only as `cause` and never reach the operator. (#8202)
+    const prerequisite =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
+    const validatedSnapshotPath =
+      error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
-        cause: cleanupError,
-      });
+      const retainedPath =
+        validatedSnapshotPath === null
+          ? ""
+          : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
+        {
+          cause: new AggregateError(
+            [error, cleanupError],
+            "Snapshot sanitization and backup cleanup both failed",
+          ),
+        },
+      );
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      const retainedPath = validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
-      cause: error,
-    });
+    throw new Error(
+      `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -1047,6 +1125,7 @@ function backupStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  captureFallback?: StateFileCapture,
 ): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
@@ -1058,8 +1137,25 @@ function backupStateFile(
 
   if (result.status === 2) return { outcome: "missing", unreachable: false };
   const emptySqliteBackup = spec.strategy === "sqlite_backup" && result.stdout?.length === 0;
-  if (result.status !== 0 || result.error || result.signal || !result.stdout || emptySqliteBackup) {
+  let captured: StateFileCaptureResult | null = null;
+  if (result.status === 1 && !result.error && !result.signal && captureFallback !== undefined) {
+    try {
+      captured = captureFallback({ sandboxName, dir, spec });
+    } catch (error) {
+      captured = {
+        outcome: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (captured?.outcome === "missing") return { outcome: "missing", unreachable: false };
+  const capturedData = captured?.outcome === "backed_up" ? captured.data : null;
+  if (
+    (result.status !== 0 || result.error || result.signal || !result.stdout || emptySqliteBackup) &&
+    capturedData === null
+  ) {
     const detail =
+      (captured?.outcome === "failed" ? captured.error : undefined) ||
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal
@@ -1068,7 +1164,12 @@ function backupStateFile(
           ? "empty output"
           : `exit ${String(result.status)}`);
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
-    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
+    return {
+      outcome: "failed",
+      unreachable:
+        (captured?.outcome === "failed" && captured.unreachable === true) ||
+        isSshTransportFailure(result),
+    };
   }
 
   const localPath = path.join(backupPath, spec.path);
@@ -1076,7 +1177,7 @@ function backupStateFile(
   rejectSymlinksOnPath(parent);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   rejectSymlinksOnPath(localPath);
-  writeFileSync(localPath, result.stdout);
+  writeFileSync(localPath, capturedData ?? result.stdout);
   chmodSync(localPath, 0o600);
   return { outcome: "backed_up", unreachable: false };
 }
@@ -1097,6 +1198,8 @@ export { isSshTransportFailure };
 function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
   readonly workload?: SandboxWorkloadReceipt;
+  readonly hostLocalInferenceReceipt?: string;
+  readonly hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   readonly error?: string;
 } {
   const runtimeSnapshot =
@@ -1105,11 +1208,36 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
       : cloneSandboxRuntimeSnapshot(options.runtimeSnapshot);
   const workload =
     options.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(options.workload);
+  const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
+    options.hostLocalInferenceReceipt,
+  );
+  const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+    options.hostLocalInferenceProvenance,
+  );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
     return { error: "snapshot runtime state is invalid or cannot be represented" };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
+  }
+  if (
+    options.hostLocalInferenceReceipt !== undefined &&
+    typeof hostLocalInferenceReceipt !== "string"
+  ) {
+    return { error: "snapshot host-local inference authority is invalid" };
+  }
+  if (options.hostLocalInferenceProvenance !== undefined) {
+    if (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string") {
+      return { error: "snapshot host-local inference provenance is invalid" };
+    }
+    try {
+      registry.requireSandboxHostLocalInferenceProvenance(
+        hostLocalInferenceProvenance,
+        hostLocalInferenceReceipt,
+      );
+    } catch {
+      return { error: "snapshot host-local inference provenance is invalid" };
+    }
   }
   if (workload?.kind === "managed-image" && runtimeSnapshot === undefined) {
     return { error: "managed snapshot is missing provider runtime state" };
@@ -1117,6 +1245,8 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   return {
     ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
     ...(workload === undefined ? {} : { workload }),
+    ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
   };
 }
 
@@ -1419,9 +1549,20 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       if (existingDirs.length === 0) {
         _log("No state dirs found in sandbox (all empty)");
       } else {
-        // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
-        // files inside state dirs. A compromised agent could plant a symlink like
+        // NC-2227-04: Pre-backup audit — reject symlinks and special files
+        // inside state dirs. A compromised agent could plant a symlink like
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+        //
+        // Multiply-linked regular files are collected for observability but do
+        // not reject the backup (#9314). The archive command below uses
+        // `--hard-dereference`, so every included path is stored and restored
+        // as a plain regular file. It offers no exfiltration path the audit
+        // could close, because an agent that can create a hard link inside a
+        // state dir can equally `cp` the same bytes there, and a copy is an
+        // ordinary regular file this audit never sees. Rejecting hard links
+        // only broke legitimate installs: package managers hard-link from
+        // their cache, so every Hermes sandbox that lazily installed a
+        // dependency failed its pre-upgrade backup.
         //
         // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
         // empty for non-symlinks but always present, so the field count is
@@ -1467,6 +1608,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         if (auditOutput.length > 0) {
           const allEntries = auditOutput.split("\n").filter((l) => l.length > 0);
           const whitelisted: string[] = [];
+          const hardLinked: string[] = [];
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
           for (const entry of allEntries) {
@@ -1481,6 +1623,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               : absPath;
             if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) {
               whitelisted.push(entry);
+            } else if (type === "f") {
+              // The audit's `find` only emits regular files through its
+              // `-links +1` branch, so a reported `f` row is a hard link.
+              // Recorded, not rejected — see the rationale above (#9314).
+              hardLinked.push(entry);
             } else {
               violations.push(entry);
             }
@@ -1490,8 +1637,13 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
             );
           }
+          if (hardLinked.length > 0) {
+            _log(
+              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+            );
+          }
           if (violations.length > 0) {
-            // Non-whitelisted symlinks / hard links / special files — reject
+            // Non-whitelisted symlinks / special files — reject
             _log(
               `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
             );
@@ -1502,17 +1654,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               failedDirs: [...existingDirs],
               backedUpFiles,
               failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
             };
           }
         }
-        _log("Pre-backup audit passed — no unsafe symlinks, hard links, or special files found");
+        _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
         // Download via SSH+tar
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
         // now agent-writable and co-located with config — a compromised agent
         // could create symlinks to exfiltrate config contents via backup.
-        const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
+        //
+        // `--hard-dereference` archives each multiply-linked path as its own
+        // regular file. Without it `tar` emits a hard-link record for the second
+        // and later paths sharing an inode, and `safeTarExtract` rejects those
+        // records — so a state dir holding two links to one inode would pass the
+        // audit and then fail while unpacking (#9314). It also keeps the archive
+        // self-describing: every entry restores as a plain file, matching what
+        // the audit now accepts. Note this is about links *within* the archived
+        // tree; a link whose other end lives outside it (a package manager
+        // linking out of its cache) already archives as a plain file.
+        const tarCmd = `tar --hard-dereference -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
         let downloadedTarDir: string | undefined;
         let downloadedTarPath: string;
@@ -1628,7 +1790,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
 
     for (const spec of stateFiles) {
-      const result = backupStateFile(configFile, sandboxName, dir, spec, backupPath);
+      const result = backupStateFile(
+        configFile,
+        sandboxName,
+        dir,
+        spec,
+        backupPath,
+        options.captureStateFile,
+      );
       if (result.outcome === "backed_up") {
         backedUpFiles.push(spec.path);
       } else if (result.outcome === "failed") {
@@ -1956,11 +2125,13 @@ function restoreSandboxStateInternal(
       error,
     };
   };
-  if (
-    manifest.workload?.kind === "managed-image" &&
-    (!options.authority || !options.validateBeforeMutation)
-  ) {
-    return failRestoreContract(MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+  if (!options.authority || !options.validateBeforeMutation) {
+    if (manifest.workload?.kind === "managed-image") {
+      return failRestoreContract(MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+    }
+    if (typeof manifest.hostLocalInferenceReceipt === "string") {
+      return failRestoreContract(HOST_LOCAL_INFERENCE_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+    }
   }
   if (options.targetAgentType !== manifest.agentType) {
     return failRestoreContract(
@@ -2393,6 +2564,12 @@ function readManifest(backupPath: string): RebuildManifest | null {
         : cloneSandboxRuntimeSnapshot(manifest.runtimeSnapshot);
     const workload =
       manifest.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(manifest.workload);
+    const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
+      manifest.hostLocalInferenceReceipt,
+    );
+    const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+      manifest.hostLocalInferenceProvenance,
+    );
     return {
       ...manifest,
       dir,
@@ -2402,6 +2579,8 @@ function readManifest(backupPath: string): RebuildManifest | null {
       blueprintDigest: manifest.blueprintDigest ?? null,
       ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
       ...(workload === undefined ? {} : { workload }),
+      ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
+      ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     };
   } catch {
     return null;

@@ -18,6 +18,7 @@ import path from "node:path";
 import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import { isDefaultGatewayPort } from "./gateway-binding";
 import {
   isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
@@ -137,7 +138,9 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       gatewayName,
       gatewayPort,
       declaration: loaded.declaration,
-      hasPackagedService: (deps.hasOpenShellGatewayUserService ?? hasOpenShellGatewayUserService)(),
+      hasPackagedService:
+        isDefaultGatewayPort(gatewayPort) &&
+        (deps.hasOpenShellGatewayUserService ?? hasOpenShellGatewayUserService)(),
     });
   }
 

@@ -39,6 +39,9 @@ const requireFromHere = createRequire(import.meta.url);
 const { createInferenceSelectionValidationHelpers } = requireFromHere(
   path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
 );
+const { MIN_OLLAMA_VERSION } = requireFromHere(
+  path.join(REPO_ROOT, "src", "lib", "inference", "ollama-version.ts"),
+);
 const localInference = requireFromHere(path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"));
 
 function assertStrictPayload(payload) {
@@ -273,6 +276,9 @@ runner.runShell = () => ({ status: 0 });
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v") && cmd.includes("ollama")) return "";
+  if (cmd.includes("/api/version")) {
+    return JSON.stringify({ version: "${MIN_OLLAMA_VERSION}" });
+  }
   if (cmd.includes("/api/tags")) {
     return JSON.stringify({ models: [{ name: "mock-tool-model" }] });
   }

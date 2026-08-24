@@ -34,11 +34,13 @@ export default class SandboxStatusCommand extends NemoClawCommand {
       const report = await getSandboxStatusReport(args.sandboxName);
       if (
         !report.found ||
-        report.gatewayState !== "present" ||
-        report.rpcIssue ||
-        report.failureLayer ||
-        isInferenceHealthFailing(report.inferenceHealth) ||
-        report.terminalRuntimeHealth?.kind === "degraded"
+        ("portableLifecyclePhase" in report
+          ? report.portableLifecyclePhase !== "active"
+          : report.gatewayState !== "present" ||
+            report.rpcIssue ||
+            report.failureLayer ||
+            isInferenceHealthFailing(report.inferenceHealth) ||
+            report.terminalRuntimeHealth?.kind === "degraded")
       ) {
         process.exitCode = 1;
       }

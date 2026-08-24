@@ -9,6 +9,7 @@ import {
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
+import { withSandboxLifecycleLockSync } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -27,6 +28,44 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
+function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
+  const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
+    unloadOllamaModels: (onlyModels?: readonly string[]) => void;
+  };
+  unloadOllamaModels(onlyModels);
+}
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
+ *
+ * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
+ * the model stayed loaded until Ollama's own idle TTL expired. Best-effort:
+ * the sandbox is already stopped by this point, so GPU cleanup must never
+ * change the exit code.
+ */
+function unloadOllamaModelsBestEffort(sandbox: registry.SandboxEntry, deps: SandboxStopDeps): void {
+  if (!sandbox.provider?.includes("ollama")) return;
+  try {
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ??
+      (require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy"))
+        .withOllamaModelOwnershipLock;
+    const exclusivelyHeldOllamaModel =
+      deps.exclusivelyHeldOllamaModel ??
+      (
+        require("../../inference/ollama/model-ownership") as typeof import("../../inference/ollama/model-ownership")
+      ).exclusivelyHeldOllamaModel;
+    withOwnershipLock(() => {
+      const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+      const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
+      if (!model) return;
+      (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+    });
+  } catch {
+    /* Best-effort: a failed unload must not fail the stop. */
+  }
+}
+
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
 export interface SandboxStopDeps {
@@ -35,6 +74,11 @@ export interface SandboxStopDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
+  listSandboxes?: typeof registry.listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  exclusivelyHeldOllamaModel?: typeof import("../../inference/ollama/model-ownership").exclusivelyHeldOllamaModel;
+  withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
+  withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -46,6 +90,15 @@ export interface SandboxStopDeps {
 export function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
+): SandboxLifecycleResult {
+  return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
+    stopSandboxWithinLifecycleFence(sandboxName, deps),
+  );
+}
+
+function stopSandboxWithinLifecycleFence(
+  sandboxName: string,
+  deps: SandboxStopDeps,
 ): SandboxLifecycleResult {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
@@ -85,6 +138,17 @@ export function stopSandbox(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+  if ("hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true) {
+    log(
+      outcome.state === "already-stopped"
+        ? `  Sandbox '${sandboxName}' is already stopped.`
+        : `  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`,
+    );
+    log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
+    return { exitCode: 0 };
+  }
+
+  unloadOllamaModelsBestEffort(resolved.sandbox, deps);
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);

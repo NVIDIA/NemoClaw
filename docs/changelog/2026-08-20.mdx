@@ -1,0 +1,84 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.113
+
+NemoClaw v0.0.113 improves sandbox and onboarding recovery across interactive connections, Hermes, Portable, policy changes, and local adapters.
+It adds experimental Hermes Google Chat support while keeping the service-account private key outside the sandbox.
+It also changes the Google Gemini default, strengthens managed image publication, and improves E2E diagnostics.
+
+- Interactive `connect` now releases the lifecycle lock before it waits for the shell, so other commands can use the same sandbox during the session.
+  An explicit sandbox start tolerates a bounded initial OpenShell `Error` phase while the sandbox returns to `Ready`.
+  Hermes onboarding probes the API port recorded for the sandbox, and onboarding bounds each sandbox readiness observation.
+  Non-interactive inference validation failures exit nonzero and preserve the onboarding session when abort cleanup completes.
+  Portable onboarding uses `10.87.0.0/24` for its sandbox network and preserves credential-redacted image-pull diagnostics.
+  Experimental NemoCUA now uses the standard lifecycle for terminal agents with an operator-prepared sandbox image.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
+  Related changes: [PR #9657](https://github.com/NVIDIA/NemoClaw/pull/9657), [PR #9755](https://github.com/NVIDIA/NemoClaw/pull/9755), [PR #9747](https://github.com/NVIDIA/NemoClaw/pull/9747), [PR #9758](https://github.com/NVIDIA/NemoClaw/pull/9758), [PR #9745](https://github.com/NVIDIA/NemoClaw/pull/9745), [PR #9715](https://github.com/NVIDIA/NemoClaw/pull/9715), [PR #9714](https://github.com/NVIDIA/NemoClaw/pull/9714), and [PR #9723](https://github.com/NVIDIA/NemoClaw/pull/9723).
+- Policy changes now preserve the authoritative OpenShell exit status and leave rejected or unconfirmed mutations out of NemoClaw state.
+  Invalid interactive preset input now exits nonzero without applying a preset.
+  The Hermes tool gateway broker refuses a healthy listener unless the recorded live process is the NemoClaw broker.
+  Shields commands can recover expired timer state, and full uninstall stops verified NemoClaw-owned Bedrock Runtime adapters before it removes their lifecycle evidence.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+  Related changes: [PR #9238](https://github.com/NVIDIA/NemoClaw/pull/9238), [PR #9751](https://github.com/NVIDIA/NemoClaw/pull/9751), [PR #9593](https://github.com/NVIDIA/NemoClaw/pull/9593), [PR #9749](https://github.com/NVIDIA/NemoClaw/pull/9749), and [PR #9576](https://github.com/NVIDIA/NemoClaw/pull/9576).
+- No-authentication OpenAI-compatible endpoint examples now bind the backend to loopback behind NemoClaw's token-protected proxy.
+  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
+  Related change: [PR #9759](https://github.com/NVIDIA/NemoClaw/pull/9759).
+- Linux Ollama service repair proves the systemd user, executable, and ELF interpreter before restart and limits automatic mode repair to the installer-owned executable.
+  LangChain Deep Agents Code launch readiness accepts OpenRouter's HTTP 404 response for `/v1/models` only after an inference request for the recorded model succeeds.
+  Fixed-profile vLLM installation accepts a model selector only when the serving catalog resolves it to the matching recipe.
+  For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Recover and Rebuild Sandboxes](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+  Related changes: [PR #9735](https://github.com/NVIDIA/NemoClaw/pull/9735), [PR #9838](https://github.com/NVIDIA/NemoClaw/pull/9838), and [PR #9839](https://github.com/NVIDIA/NemoClaw/pull/9839).
+- Google Gemini onboarding now offers and defaults to `gemini-3.6-flash` while retaining manual model entry.
+  Failed Bedrock Runtime adapter startup now removes its process and stale state.
+  Managed MCP add operations republish the credential-free provider revision after delayed credential absence and require a fresh projected revision before commit.
+  Regression evidence now requires exactly one credential refresh across concurrent add operations.
+  Managed llama.cpp publication can create its GitHub Container Registry package during the first platform publish and validates the two-platform candidate against exact platform manifests.
+  Managed Hermes images include and validate the frozen `agent-client-protocol` package required by the existing `hermes-acp` entry point, but this release does not add an Agent Client Protocol (ACP) session workflow.
+  For more information, refer to [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini) and [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers).
+  Related changes: [PR #9640](https://github.com/NVIDIA/NemoClaw/pull/9640), [PR #9769](https://github.com/NVIDIA/NemoClaw/pull/9769), [PR #9771](https://github.com/NVIDIA/NemoClaw/pull/9771), [PR #9772](https://github.com/NVIDIA/NemoClaw/pull/9772), [PR #9794](https://github.com/NVIDIA/NemoClaw/pull/9794), [PR #9766](https://github.com/NVIDIA/NemoClaw/pull/9766), and [PR #9795](https://github.com/NVIDIA/NemoClaw/pull/9795).
+- Experimental Google Chat support now includes Hermes.
+  Hermes pulls events from a configured Google Cloud Pub/Sub subscription and sends replies through the Google Chat API.
+  OpenShell keeps the service-account private key outside the sandbox and replaces the in-sandbox credential placeholder at the approved request boundary.
+  For more information, refer to [Manage Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/manage-messaging-channels).
+  Related change: [PR #9393](https://github.com/NVIDIA/NemoClaw/pull/9393).
+- E2E support now preserves final-handoff diagnostics, stops scheduling later inference-routing tests after the first failure, and shortens token-rotation coverage without removing its credential checks.
+  It completes Portable fixture cleanup before it publishes an injected failure record, reports each Launchable provenance mismatch, and retries one exact protected BuildKit transport failure only after the revision tag is confirmed absent.
+  PR Review Advisor now reports all actionable submission validation errors together so its single repair attempt can address them.
+  Related changes: [PR #9559](https://github.com/NVIDIA/NemoClaw/pull/9559), [PR #9713](https://github.com/NVIDIA/NemoClaw/pull/9713), [PR #9752](https://github.com/NVIDIA/NemoClaw/pull/9752), [PR #9757](https://github.com/NVIDIA/NemoClaw/pull/9757), [PR #9765](https://github.com/NVIDIA/NemoClaw/pull/9765), and [PR #9767](https://github.com/NVIDIA/NemoClaw/pull/9767).
+
+## v0.0.112
+
+NemoClaw v0.0.112 strengthens managed local inference across vLLM, llama.cpp, Ollama, and routed provider recovery.
+It improves Portable and sandbox lifecycle recovery, MCP credential republishing, messaging continuity, and Shields ownership cleanup.
+It also tightens release provenance, E2E qualification, contributor review automation, and dependency compatibility.
+
+- Managed vLLM now validates a running server against the requested serving profile, model, reasoning mode, and configured ports before reuse, and it can resume an interrupted installation without losing the selected provider state.
+  The managed catalog owns the vLLM profiles, adds Linux AMD64 Muse and Lightning options, refreshes llama.cpp image pins, and removes the retired DeepSeek V4 Pro menu entry.
+  Managed llama.cpp preserves authority across resume, authenticates its bridge, bounds DGX Spark request bodies, publishes its owned image, and attaches to servers that omit `/props` model aliases.
+  For more information, refer to [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+  Related changes: [PR #9537](https://github.com/NVIDIA/NemoClaw/pull/9537), [PR #9545](https://github.com/NVIDIA/NemoClaw/pull/9545), [PR #9589](https://github.com/NVIDIA/NemoClaw/pull/9589), [PR #9626](https://github.com/NVIDIA/NemoClaw/pull/9626), [PR #9633](https://github.com/NVIDIA/NemoClaw/pull/9633), [PR #9636](https://github.com/NVIDIA/NemoClaw/pull/9636), [PR #9653](https://github.com/NVIDIA/NemoClaw/pull/9653), [PR #9655](https://github.com/NVIDIA/NemoClaw/pull/9655), [PR #9656](https://github.com/NVIDIA/NemoClaw/pull/9656), [PR #9660](https://github.com/NVIDIA/NemoClaw/pull/9660), [PR #9669](https://github.com/NVIDIA/NemoClaw/pull/9669), [PR #9670](https://github.com/NVIDIA/NemoClaw/pull/9670), [PR #9675](https://github.com/NVIDIA/NemoClaw/pull/9675), [PR #9695](https://github.com/NVIDIA/NemoClaw/pull/9695), [PR #9706](https://github.com/NVIDIA/NemoClaw/pull/9706), and [PR #9708](https://github.com/NVIDIA/NemoClaw/pull/9708).
+- Ollama validation now proves the requested model through the sandbox endpoint, runs Portable instances under Podman, bounds WSL host discovery, and avoids installing a Linux systemd override for Windows-host Ollama during resume.
+  Onboarding requires a healthy Model Router endpoint before accepting it, settles OpenClaw pairing after route changes, preserves provider state after Docker recreation, and distinguishes upstream credential rejection from a broken sandbox route.
+  The Ollama installer also validates downloads before execution.
+  For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #9483](https://github.com/NVIDIA/NemoClaw/pull/9483), [PR #9495](https://github.com/NVIDIA/NemoClaw/pull/9495), [PR #9632](https://github.com/NVIDIA/NemoClaw/pull/9632), [PR #9650](https://github.com/NVIDIA/NemoClaw/pull/9650), [PR #9672](https://github.com/NVIDIA/NemoClaw/pull/9672), [PR #9692](https://github.com/NVIDIA/NemoClaw/pull/9692), [PR #9697](https://github.com/NVIDIA/NemoClaw/pull/9697), [PR #9703](https://github.com/NVIDIA/NemoClaw/pull/9703), and [PR #9722](https://github.com/NVIDIA/NemoClaw/pull/9722).
+- Sandbox lifecycle operations now create the Portable network before host aliases, keep its host-gateway subnet separate, preserve Docker authority across terminal sessions, and recreate a gateway when its Docker network is missing.
+  Onboarding reports progress during cold base-image pulls, honors credential retry navigation, diagnoses OpenShell deletion handoffs, validates retired gateway evidence, and migrates Hermes dashboard state before checking gateway health.
+  Tunnel status resolves the default sandbox, launch aligns its forwarded ports, uninstall accepts the default OpenClaw session and hosts with no Portable-owned resource, and failed llama.cpp cleanup remains resumable.
+  MCP credentials and provider reservations are republished after policy binding, while Shields recovery can reclaim a dead lifecycle owner without treating a reused process ID as authoritative.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #9240](https://github.com/NVIDIA/NemoClaw/pull/9240), [PR #9534](https://github.com/NVIDIA/NemoClaw/pull/9534), [PR #9578](https://github.com/NVIDIA/NemoClaw/pull/9578), [PR #9597](https://github.com/NVIDIA/NemoClaw/pull/9597), [PR #9607](https://github.com/NVIDIA/NemoClaw/pull/9607), [PR #9641](https://github.com/NVIDIA/NemoClaw/pull/9641), [PR #9647](https://github.com/NVIDIA/NemoClaw/pull/9647), [PR #9665](https://github.com/NVIDIA/NemoClaw/pull/9665), [PR #9666](https://github.com/NVIDIA/NemoClaw/pull/9666), [PR #9671](https://github.com/NVIDIA/NemoClaw/pull/9671), [PR #9678](https://github.com/NVIDIA/NemoClaw/pull/9678), [PR #9681](https://github.com/NVIDIA/NemoClaw/pull/9681), [PR #9712](https://github.com/NVIDIA/NemoClaw/pull/9712), [PR #9720](https://github.com/NVIDIA/NemoClaw/pull/9720), [PR #9721](https://github.com/NVIDIA/NemoClaw/pull/9721), [PR #9724](https://github.com/NVIDIA/NemoClaw/pull/9724), and [PR #9729](https://github.com/NVIDIA/NemoClaw/pull/9729).
+- Voice sessions now preserve conversation context across sequential turns, and reused messaging onboarding accepts the schema-owned Microsoft Teams webhook field without rejecting its managed plan.
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+  Related changes: [PR #9412](https://github.com/NVIDIA/NemoClaw/pull/9412) and [PR #9654](https://github.com/NVIDIA/NemoClaw/pull/9654).
+- PR Review Advisor now uses a two-turn atomic review, requires design blockers to reduce the proposed change, removes completed rollout compatibility, accepts a repaired same-turn submission, and reduces review protocol failures.
+  Related changes: [PR #9590](https://github.com/NVIDIA/NemoClaw/pull/9590), [PR #9631](https://github.com/NVIDIA/NemoClaw/pull/9631), [PR #9645](https://github.com/NVIDIA/NemoClaw/pull/9645), [PR #9652](https://github.com/NVIDIA/NemoClaw/pull/9652), and [PR #9690](https://github.com/NVIDIA/NemoClaw/pull/9690).
+- Release automation now attests production-image requests with the immutable semver tag and full source commit, tolerates an initially empty tag history, and preserves exact-sha local registry authority during E2E runs.
+  E2E support verifies cloud-check wiring, Portable Podman selection, managed-inference catalog compilation, DCode model selection, supervised dashboard recovery, Windows path oracles, llama.cpp bridge cleanup, and fail-closed handling of unscripted onboarding prompts.
+  Dependency maintenance updates OpenShell to `0.0.106`, LangChain Deep Agents Code to `0.1.55`, `actions/setup-go` to `7.0.0`, and the grouped CodeQL actions.
+  Related changes: [PR #8620](https://github.com/NVIDIA/NemoClaw/pull/8620), [PR #9192](https://github.com/NVIDIA/NemoClaw/pull/9192), [PR #9493](https://github.com/NVIDIA/NemoClaw/pull/9493), [PR #9605](https://github.com/NVIDIA/NemoClaw/pull/9605), [PR #9663](https://github.com/NVIDIA/NemoClaw/pull/9663), [PR #9676](https://github.com/NVIDIA/NemoClaw/pull/9676), [PR #9677](https://github.com/NVIDIA/NemoClaw/pull/9677), [PR #9683](https://github.com/NVIDIA/NemoClaw/pull/9683), [PR #9684](https://github.com/NVIDIA/NemoClaw/pull/9684), [PR #9686](https://github.com/NVIDIA/NemoClaw/pull/9686), [PR #9688](https://github.com/NVIDIA/NemoClaw/pull/9688), [PR #9689](https://github.com/NVIDIA/NemoClaw/pull/9689), [PR #9691](https://github.com/NVIDIA/NemoClaw/pull/9691), [PR #9694](https://github.com/NVIDIA/NemoClaw/pull/9694), [PR #9699](https://github.com/NVIDIA/NemoClaw/pull/9699), [PR #9702](https://github.com/NVIDIA/NemoClaw/pull/9702), [PR #9704](https://github.com/NVIDIA/NemoClaw/pull/9704), [PR #9711](https://github.com/NVIDIA/NemoClaw/pull/9711), and [PR #9725](https://github.com/NVIDIA/NemoClaw/pull/9725).
+- Documentation catch-up aligns local inference, sandbox and MCP operations, troubleshooting, supported preset examples, contribution intake, and environment-variable guidance with the shipped behavior.
+  Related changes: [PR #9543](https://github.com/NVIDIA/NemoClaw/pull/9543), [PR #9642](https://github.com/NVIDIA/NemoClaw/pull/9642), [PR #9664](https://github.com/NVIDIA/NemoClaw/pull/9664), [PR #9667](https://github.com/NVIDIA/NemoClaw/pull/9667), [PR #9674](https://github.com/NVIDIA/NemoClaw/pull/9674), [PR #9687](https://github.com/NVIDIA/NemoClaw/pull/9687), and [PR #9693](https://github.com/NVIDIA/NemoClaw/pull/9693).

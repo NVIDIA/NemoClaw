@@ -44,21 +44,22 @@ describe("key-allowlist state-file merge", () => {
     );
   });
 
-  it("rejects symlinked and hard-linked current configs through the production command", () => {
-    const backup = stringify({ ui: { show_scrollbar: true } });
-    const current = generatedCurrent({
-      models: { default: "openai:nvidia/new-model" },
-      update: { check: false, auto_update: false },
-    });
+  it.each(["symlink", "hardlink"] as const)(
+    "rejects symlinked and hard-linked current configs through the production command [%s]",
+    (currentLink) => {
+      const backup = stringify({ ui: { show_scrollbar: true } });
+      const current = generatedCurrent({
+        models: { default: "openai:nvidia/new-model" },
+        update: { check: false, auto_update: false },
+      });
 
-    for (const currentLink of ["symlink", "hardlink"] as const) {
       const result = runProductionCommand(backup, current, { currentLink });
 
       expect(result.status, currentLink).not.toBe(0);
       expect(result.current, currentLink).toBe(current);
       expect(result.currentTarget, currentLink).toBe(current);
-    }
-  });
+    },
+  );
 
   it("rejects a symlink in a config parent ancestor through the production command", () => {
     const backup = stringify({ ui: { show_scrollbar: true } });
@@ -74,14 +75,15 @@ describe("key-allowlist state-file merge", () => {
     expect(result.current).toBe(current);
   });
 
-  it("rejects symlink, hardlink, and inode swaps of its private stage before replacement", () => {
-    const backup = stringify({ ui: { show_scrollbar: true } });
-    const current = generatedCurrent({
-      models: { default: "openai:nvidia/new-model" },
-      update: { check: false, auto_update: false },
-    });
+  it.each(["symlink", "hardlink", "regular"] as const)(
+    "rejects symlink, hardlink, and inode swaps of its private stage before replacement [%s]",
+    (kind) => {
+      const backup = stringify({ ui: { show_scrollbar: true } });
+      const current = generatedCurrent({
+        models: { default: "openai:nvidia/new-model" },
+        update: { check: false, auto_update: false },
+      });
 
-    for (const kind of ["symlink", "hardlink", "regular"] as const) {
       const result = runProductionCommand(backup, current, { script: stageSwapScript(kind) });
 
       expect(result.status, kind).not.toBe(0);
@@ -92,8 +94,8 @@ describe("key-allowlist state-file merge", () => {
         result.entries.some((entry) => entry.startsWith(".nemoclaw-restore-merged.")),
         kind,
       ).toBe(true);
-    }
-  });
+    },
+  );
 
   it("refuses to replace a current config whose inode changes after validation", () => {
     const current = generatedCurrent({

@@ -51,7 +51,15 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
 
 export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
   return {
-    runOpenshell: vi.fn(() => ({ status: 0 })),
+    runOpenshell: vi.fn((args: string[]) =>
+      args[0] === "sandbox" && args[1] === "get"
+        ? {
+            status: 0,
+            stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+            stderr: "",
+          }
+        : { status: 0, stdout: "", stderr: "" },
+    ),
     runCaptureOpenshell: vi.fn(() => "alpha Ready"),
     sleep: vi.fn(),
     openshellArgv: vi.fn((args: string[]) => ["openshell", ...args]),
@@ -62,6 +70,7 @@ export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
+    replacementRuntimeId: vi.fn(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),

@@ -194,18 +194,18 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "ready",
-    "not_ready",
-  ] as const)("throws before backup access when a %s same-name sandbox reports no OpenShell Id (#7736)", (state) => {
-    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+  it.each(["ready", "not_ready"] as const)(
+    "throws before backup access when a %s same-name sandbox reports no OpenShell Id (#7736)",
+    (state) => {
+      process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
 
-    expect(() => select({ observation: { state, liveIdentityFingerprint: null } })).toThrow(
-      /reports no OpenShell Id/,
-    );
-    expect(getLatestBackupSpy).not.toHaveBeenCalled();
-    expect(note).not.toHaveBeenCalled();
-  });
+      expect(() => select({ observation: { state, liveIdentityFingerprint: null } })).toThrow(
+        /reports no OpenShell Id/,
+      );
+      expect(getLatestBackupSpy).not.toHaveBeenCalled();
+      expect(note).not.toHaveBeenCalled();
+    },
+  );
 
   it("throws before backup access when the source registry row changed (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
@@ -249,23 +249,23 @@ describe("selectPreUpgradeBackupForCreate", () => {
       currentEntry: null,
       error: /source registry row is absent/,
     },
-  ] as const)("rejects a source registry row that $change after journal proof capture (#7736)", ({
-    currentEntry,
-    error,
-  }) => {
-    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-    const onProofRequested = vi.fn();
-    const readRegistryEntry = vi.fn(() => currentEntry);
+  ] as const)(
+    "rejects a source registry row that $change after journal proof capture (#7736)",
+    ({ currentEntry, error }) => {
+      process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+      const onProofRequested = vi.fn();
+      const readRegistryEntry = vi.fn(() => currentEntry);
 
-    expect(() => select({ onProofRequested, readRegistryEntry })).toThrow(error);
-    expect(onProofRequested).toHaveBeenCalledTimes(1);
-    expect(readRegistryEntry).toHaveBeenCalledTimes(1);
-    expect(onProofRequested.mock.invocationCallOrder[0]).toBeLessThan(
-      readRegistryEntry.mock.invocationCallOrder[0],
-    );
-    expect(getLatestBackupSpy).not.toHaveBeenCalled();
-    expect(note).not.toHaveBeenCalled();
-  });
+      expect(() => select({ onProofRequested, readRegistryEntry })).toThrow(error);
+      expect(onProofRequested).toHaveBeenCalledTimes(1);
+      expect(readRegistryEntry).toHaveBeenCalledTimes(1);
+      expect(onProofRequested.mock.invocationCallOrder[0]).toBeLessThan(
+        readRegistryEntry.mock.invocationCallOrder[0],
+      );
+      expect(getLatestBackupSpy).not.toHaveBeenCalled();
+      expect(note).not.toHaveBeenCalled();
+    },
+  );
 
   it("throws before backup access when the transaction records another sandbox (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
@@ -504,13 +504,14 @@ describe("installerRestoreOnRecreateFromEnv", () => {
     expect(installerRestoreOnRecreateFromEnv({})).toBe(false);
   });
 
-  it("returns false when the sentinel is set to any value other than '1'", () => {
-    for (const value of ["", "0", "true", "yes"]) {
+  it.each(["", "0", "true", "yes"])(
+    "returns false when the sentinel is set to any value other than '1' [case %#]",
+    (value) => {
       expect(
         installerRestoreOnRecreateFromEnv({
           NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: value,
         }),
       ).toBe(false);
-    }
-  });
+    },
+  );
 });

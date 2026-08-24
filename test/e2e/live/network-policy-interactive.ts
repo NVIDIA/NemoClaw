@@ -1,17 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Trust boundary: the Expect program receives only a numeric preset index
-// parsed from NemoClaw's own numbered menu plus the literal confirmation Y.
-// No dispatch input, secret, or other user-controlled text enters the script.
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+
+// Trust boundary: the Expect program receives a fixture-owned preset name.
+// It compares that name with NemoClaw's rendered menu entries before it sends
+// the matching numeric index and the literal confirmation Y.
 // Exit codes: 2=preset timeout, 3=preset EOF, 4=confirmation timeout,
-// 5=confirmation EOF, and 6=post-confirmation timeout.
+// 5=confirmation EOF, 6=post-confirmation timeout, and
+// 7=requested preset absent from menu.
 export const POLICY_ADD_EXPECT_SCRIPT = String.raw`
 set timeout 60
+match_max 20000
 spawn env NEMOCLAW_NON_INTERACTIVE= node $env(NEMOCLAW_E2E_CLI) $env(NEMOCLAW_E2E_SANDBOX) policy-add
 expect {
   -glob "*Choose preset*" {
-    send -- "$env(NEMOCLAW_E2E_PRESET_NUM)\r"
+    set preset_number ""
+    foreach line [split $expect_out(buffer) "\n"] {
+      if {[regexp {^[[:space:]]*([0-9]+)\)[[:space:]]+[●○][[:space:]]+([^[:space:]]+)} $line -> candidate_number candidate_name] && $candidate_name eq $env(NEMOCLAW_E2E_PRESET)} {
+        set preset_number $candidate_number
+        break
+      }
+    }
+    if {$preset_number eq ""} {
+      puts stderr "requested policy preset was not present in the interactive menu"
+      exit 7
+    }
+    send -- "$preset_number\r"
   }
   timeout {
     puts stderr "timed out waiting for the policy preset prompt"
@@ -46,18 +62,27 @@ set wait_result [wait]
 exit [lindex $wait_result 3]
 `;
 
-export function findPolicyPresetNumber(output: string, preset: string): string | null {
-  const escapedPreset = preset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^\\s*(\\d+)\\)\\s+(?:[●○]\\s+)?${escapedPreset}(?:\\s|$)`, "m").exec(
-    output,
-  );
-  return match?.[1] ?? null;
+export interface RunInteractivePolicyAddOptions {
+  artifactName: string;
+  cliEntrypoint: string;
+  env: NodeJS.ProcessEnv;
+  preset: string;
+  sandboxName: string;
+  timeoutMs: number;
 }
 
-export function requirePolicyPresetNumber(output: string, preset: string): string {
-  const presetNumber = findPolicyPresetNumber(output, preset);
-  if (!presetNumber) {
-    throw new Error(`preset ${preset} not found in interactive policy-add list: ${output}`);
-  }
-  return presetNumber;
+export function runInteractivePolicyAdd(
+  host: Pick<HostCliClient, "command">,
+  options: RunInteractivePolicyAddOptions,
+): Promise<ShellProbeResult> {
+  return host.command("expect", ["-c", POLICY_ADD_EXPECT_SCRIPT], {
+    artifactName: options.artifactName,
+    env: {
+      ...options.env,
+      NEMOCLAW_E2E_CLI: options.cliEntrypoint,
+      NEMOCLAW_E2E_PRESET: options.preset,
+      NEMOCLAW_E2E_SANDBOX: options.sandboxName,
+    },
+    timeoutMs: options.timeoutMs,
+  });
 }

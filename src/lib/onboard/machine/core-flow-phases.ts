@@ -17,19 +17,19 @@ import {
   type OnboardFlowContext,
 } from "./flow-context";
 import { createProviderInferencePhase, createSandboxPhase } from "./flow-phases/provider-sandbox";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
-import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
 } from "./prerequisite-repair";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
-import { runOnboardSequenceWithRunner, type OnboardSequencePhase } from "./sequence-runner";
+import { type OnboardSequencePhase, runOnboardSequenceWithRunner } from "./sequence-runner";
 import type { OnboardMachineState } from "./types";
 
 export { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
@@ -67,6 +67,8 @@ export interface SandboxOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   gatewayName: string;
+  /** Internal schema-5 lifecycle selection from the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
 
@@ -75,6 +77,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
@@ -146,6 +149,7 @@ export function createProviderInferenceOnboardFlowPhase<
       fresh: context.fresh,
       session: context.session,
       gpu: context.gpu,
+      gpuPassthrough: context.gpuPassthrough,
       sandboxName: context.sandboxName,
       requestedSandboxName: context.requestedSandboxName,
       agent: context.agent,
@@ -195,6 +199,9 @@ export function createProviderInferenceOnboardFlowPhase<
           providerInferenceResult.compatibleEndpointReasoningEffort,
         nimContainer: providerInferenceResult.nimContainer,
         webSearchConfig: providerInferenceResult.webSearchConfig,
+        hostLocalInferenceRouteOnly: providerInferenceResult.hostLocalInferenceRouteOnly,
+        hostLocalInferenceSandboxProofAuthority:
+          providerInferenceResult.hostLocalInferenceSandboxProofAuthority,
       }),
       result: providerInferenceResult.stateResults,
     };
@@ -220,6 +227,7 @@ export function createSandboxOnboardFlowPhase<
       resume: context.resume,
       fresh: context.fresh,
       gatewayName: options.gatewayName,
+      hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
 
@@ -229,6 +237,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
+      rebuildPolicyPresets: options.rebuildPolicyPresets,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
@@ -248,6 +257,7 @@ export function createSandboxOnboardFlowPhase<
       sandboxGpuConfig: context.sandboxGpuConfig,
       hermesToolGateways: context.hermesToolGateways,
       hermesAuthMethod: context.hermesAuthMethod,
+      hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
       controlUiPort: options.controlUiPort,
       rootDir: options.rootDir,
       env: options.env,
@@ -258,6 +268,7 @@ export function createSandboxOnboardFlowPhase<
       context: mergeSandboxCreatedContext(context, {
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
+        recreateJournalHandoff: Boolean(options.recreateJournalTargetIntentFingerprint),
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,

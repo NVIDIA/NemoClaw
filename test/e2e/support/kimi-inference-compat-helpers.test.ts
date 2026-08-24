@@ -157,8 +157,8 @@ describe("Kimi inference compatibility mode selection", () => {
     });
   });
 
-  it("rejects unsafe or malformed source commands in both mock and public trajectory summaries", () => {
-    for (const sourceCommands of [
+  it.each(
+    [
       ["hostname; date; uptime"],
       ["hostname | date"],
       ["hostname $(date)"],
@@ -167,7 +167,10 @@ describe("Kimi inference compatibility mode selection", () => {
       ["cat < /etc/passwd"],
       ["whoami"],
       [null],
-    ]) {
+    ].map((sourceCommands) => [sourceCommands] as const),
+  )(
+    "rejects unsafe or malformed source commands in both mock and public trajectory summaries [case %#]",
+    (sourceCommands) => {
       expect(() =>
         assertKimiTrajectorySummary({
           errors: [],
@@ -181,6 +184,6 @@ describe("Kimi inference compatibility mode selection", () => {
           toolMetasCount: 1,
         }),
       ).toThrow();
-    }
-  });
+    },
+  );
 });

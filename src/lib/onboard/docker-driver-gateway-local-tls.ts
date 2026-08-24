@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 
-// See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
+// See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
 
 const REQUIRED_SERVER_DNS_SANS = ["host.openshell.internal", "localhost"];

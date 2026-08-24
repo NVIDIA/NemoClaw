@@ -9,7 +9,10 @@ import { defineConfig, defineProject } from "vitest/config";
 import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
-import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
+import {
+  resolveCliCoverageShardScheduling,
+  resolveIntegrationProjectScheduling,
+} from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
@@ -21,8 +24,14 @@ const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundary.cts");
+const canonicalCredentialFilterBoundary = path.resolve(
+  "nemoclaw/src/shared/credential-filter-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
+);
+const canonicalPrivateNetworksBoundary = path.resolve(
+  "nemoclaw/src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
 const canonicalSnapshotSanitizerBoundary = path.resolve(
@@ -37,8 +46,16 @@ const canonicalSourceAliases = [
     replacement: canonicalBannerBoundary,
   },
   {
+    find: /^.*credential-filter-boundary\.cjs$/,
+    replacement: canonicalCredentialFilterBoundary,
+  },
+  {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*private-networks-boundary\.cjs$/,
+    replacement: canonicalPrivateNetworksBoundary,
   },
   {
     find: /^.*sandbox-name\.cjs$/,
@@ -81,6 +98,15 @@ const controlledNonLiveEnv = {
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const isolatedTestStateSetup = "test/helpers/isolate-test-state.ts";
 const pluginVitestProject = defineProject(pluginVitestProjectOptions);
+// Pull-request jobs execute the base branch's trusted composite action, so an
+// action change in a PR cannot constrain that PR's own Vitest workers. Apply a
+// bounded cap from the validated shard environment instead; this is shared by the
+// trusted PR action and the main-branch action.
+const cliCoverageShardScheduling = resolveCliCoverageShardScheduling({
+  isCi,
+  cliShard: process.env.CLI_SHARD,
+  cliShardCount: process.env.CLI_SHARD_COUNT,
+});
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -90,6 +116,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    ...cliCoverageShardScheduling,
     globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [
       {
@@ -164,6 +191,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
@@ -176,6 +204,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
@@ -187,6 +216,11 @@ export default defineConfig({
           ...vitestStateIsolation,
           name: "installer-integration",
           alias: canonicalSourceAliases,
+          // Installer fixtures spawn nested shell, Node, Python, and SSH
+          // processes. Use the same bounded scheduling as the other process
+          // fixtures so CI cannot turn a transient spawn failure into a
+          // fail-closed single-host result.
+          ...integrationProjectScheduling,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
           include: [
@@ -196,6 +230,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
@@ -208,6 +243,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],

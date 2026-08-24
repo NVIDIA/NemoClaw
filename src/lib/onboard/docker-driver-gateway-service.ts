@@ -26,7 +26,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2";
+  "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -686,6 +686,23 @@ export function hasOpenShellGatewayUserService(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): boolean {
   return resolveOpenShellGatewayUserService(opts) !== null;
+}
+
+/**
+ * Stop command for whichever service manager owns the gateway on this host, or
+ * null when no managed service owns it and NemoClaw runs the gateway standalone.
+ *
+ * The resolver picks the upstream package unit, the NemoClaw unit, or the
+ * Homebrew formula, so a caller that prints a stop command must ask for the
+ * resolved name instead of deriving one from the platform (#8797).
+ */
+export function getOpenShellGatewayServiceStopCommand(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): string | null {
+  const service = resolveOpenShellGatewayUserService(opts);
+  if (!service) return null;
+  const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
+  return `${prefix} ${service.serviceName}`;
 }
 
 function userManagerLooksUnavailable(reason: string): boolean {

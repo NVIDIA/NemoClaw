@@ -26,17 +26,20 @@
  * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
  * its own connection and return the pending-scope failure it is trying to
- * resolve. The sourced runtime environment makes the list call inspect the
- * same live gateway through local loopback. For a restored pairing-only clone,
- * the approval child drops config/shared-auth overrides, pins the clone's
- * loopback URL, and accepts only its descriptor-backed identity and pairing
- * snapshots. The reviewed dist patch uses only the descriptor-backed
- * pairing token for the pinned loopback gateway and disables pathname-backed
- * stored authentication for that exact self-repair shape. It requires a
- * matching live preflight before one canonical approval, then synchronizes the
- * rotated token into the clone's client-auth store. Remove this compatibility
- * path when OpenClaw can complete scope upgrades natively through device-token
- * auth using operator.pairing.
+ * resolve. The sourced runtime environment identifies the live gateway.
+ * Ordinary list and approval children drop shared-auth overrides after pairing
+ * so they use the CLI device credential. For a restored pairing-only clone,
+ * the approval child also pins the clone's loopback URL and accepts only its
+ * descriptor-backed identity and pairing snapshots. The reviewed dist patch
+ * uses only the descriptor-backed pairing token for the pinned loopback
+ * gateway and disables pathname-backed stored authentication for that exact
+ * self-repair shape. It requires a matching live preflight before one canonical
+ * approval. The canonical writer binds the authenticated token to the paired
+ * and stored-auth before-images, then journals pending, paired, and stored-auth
+ * publication together. The wrapper verifies the resulting transition and
+ * rewrites the same rotated token to the clone's client-auth store. Remove this
+ * compatibility path when OpenClaw can complete scope upgrades natively
+ * through device-token auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -54,6 +57,8 @@ import {
   CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S,
   CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } from "./connect-autopair-budget";
+import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 // Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
 // shell/python startup slack fits inside the outer spawnSync cap, so a wedged
@@ -65,6 +70,12 @@ export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
 const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
+const PORTABLE_PAIRING_APPROVAL_MARKER = "__NEMOCLAW_PORTABLE_PAIRING_APPROVAL__=";
+const PORTABLE_PAIRING_SHA256_RE = /^[a-f0-9]{64}$/u;
+const PORTABLE_PAIRING_APPROVAL_MAX_OUTPUT_BYTES = 4 * 1_024;
+const PORTABLE_PAIRING_PRODUCER_TIMEOUT_MS = 30_000;
+const PORTABLE_PAIRING_PENDING_ATTEMPTS = 5;
+const PORTABLE_PAIRING_LIST_TIMEOUT_S = 2;
 
 const CONNECT_AUTO_PAIR_BUDGET = {
   maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
@@ -284,6 +295,7 @@ def exit_with_receipt(receipt):
         approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
         approve_env['OPENCLAW_NO_RESPAWN'] = '1'
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
@@ -298,9 +310,11 @@ def exit_with_receipt(receipt):
         )
     else:
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
     : `approve_env = gateway_approval_env(os.environ)
     approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+    approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
     approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`;
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
@@ -545,10 +559,14 @@ else:
 pending = list(local_pending_by_id.values())
 `
     : `
+list_env = gateway_approval_env(os.environ)
+list_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+list_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
+        capture_output=True, text=True, timeout=${listTimeoutS}, env=list_env,
     )
 except subprocess.TimeoutExpired:
     ${exitWithReceipt("list-timeout")}
@@ -1163,8 +1181,261 @@ export function runConnectAutoPairApprovalPass(
       return;
     }
   }
-  runApprovalPass(sandboxName, {
-    budget: CONNECT_AUTO_PAIR_BUDGET,
-    gatewayName: owningGatewayName,
-  });
+  const startedAt = performance.now();
+  try {
+    runApprovalPass(sandboxName, {
+      budget: CONNECT_AUTO_PAIR_BUDGET,
+      gatewayName: owningGatewayName,
+    });
+  } finally {
+    try {
+      performance.measure("nemoclaw.openclaw-pairing.complete-fallback", {
+        start: startedAt,
+        end: performance.now(),
+      });
+    } catch {
+      // Performance measurements never control the complete pairing pass.
+    }
+  }
+}
+
+export type PortableOpenClawPairingApprovalReceipt =
+  | "approved"
+  | "ambiguous"
+  | "no-request"
+  | "rejected"
+  | "unavailable";
+
+function fixedPortableApprovalReceipt(receipt: PortableOpenClawPairingApprovalReceipt): string {
+  return `print(${JSON.stringify(`${PORTABLE_PAIRING_APPROVAL_MARKER}${receipt}`)})`;
+}
+
+export function parsePortableOpenClawPairingApprovalReceipt(
+  output: string,
+): PortableOpenClawPairingApprovalReceipt | null {
+  const lines = output.trimEnd().split(/\r?\n/u);
+  const markerLines = lines.filter((line) => line.startsWith(PORTABLE_PAIRING_APPROVAL_MARKER));
+  if (markerLines.length !== 1 || lines.at(-1) !== markerLines[0]) return null;
+  const receipt = markerLines[0]!.slice(PORTABLE_PAIRING_APPROVAL_MARKER.length);
+  return ["approved", "ambiguous", "no-request", "rejected", "unavailable"].includes(receipt)
+    ? (receipt as PortableOpenClawPairingApprovalReceipt)
+    : null;
+}
+
+export function buildPortableOpenClawPairingApprovalScript(
+  approvalPolicyModuleB64: string,
+  expectedDeviceIdentitySha256: string,
+): string {
+  if (
+    !approvalPolicyModuleB64 ||
+    Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64 ||
+    !PORTABLE_PAIRING_SHA256_RE.test(expectedDeviceIdentitySha256)
+  ) {
+    throw new Error("Portable OpenClaw pairing approval inputs are invalid.");
+  }
+  return `
+${buildTrustedProxyEnvSourceShell()}
+command -v openclaw >/dev/null 2>&1 || { printf '%s\\n' '${PORTABLE_PAIRING_APPROVAL_MARKER}unavailable'; exit 0; }
+command -v python3 >/dev/null 2>&1 || { printf '%s\\n' '${PORTABLE_PAIRING_APPROVAL_MARKER}unavailable'; exit 0; }
+OPENCLAW_BIN="$(command -v openclaw)" \\
+NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} \\
+NEMOCLAW_EXPECTED_DEVICE_IDENTITY_SHA256=${shellQuote(expectedDeviceIdentitySha256)} \\
+python3 - <<'PYAPPROVE'
+import base64
+import hashlib
+import json
+import os
+import re
+import subprocess
+import time
+
+OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+EXPECTED_IDENTITY = os.environ.get('NEMOCLAW_EXPECTED_DEVICE_IDENTITY_SHA256', '')
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+REQUEST_SCOPE_SHAPES = {
+    frozenset({'operator.write'}),
+    frozenset({'operator.pairing', 'operator.write'}),
+}
+
+try:
+    policy_source = base64.b64decode(
+        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
+    ).decode('utf-8')
+    policy_globals = {}
+    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
+    approval_request_decision = policy_globals['approval_request_decision']
+    gateway_approval_env = policy_globals['gateway_approval_env']
+except Exception:
+    ${fixedPortableApprovalReceipt("unavailable")}
+    raise SystemExit(0)
+
+pending = []
+for pending_attempt in range(${PORTABLE_PAIRING_PENDING_ATTEMPTS}):
+    try:
+        listed = subprocess.run(
+            [OPENCLAW, 'devices', 'list', '--json'],
+            capture_output=True, text=True, timeout=${PORTABLE_PAIRING_LIST_TIMEOUT_S},
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        ${fixedPortableApprovalReceipt("unavailable")}
+        raise SystemExit(0)
+    if listed.returncode != 0 or not listed.stdout.strip():
+        ${fixedPortableApprovalReceipt("unavailable")}
+        raise SystemExit(0)
+    try:
+        data = json.loads(listed.stdout)
+    except ValueError:
+        ${fixedPortableApprovalReceipt("unavailable")}
+        raise SystemExit(0)
+    if not isinstance(data, dict) or not isinstance(data.get('pending'), list):
+        ${fixedPortableApprovalReceipt("unavailable")}
+        raise SystemExit(0)
+    pending = data['pending']
+    if pending:
+        break
+    if pending_attempt + 1 < ${PORTABLE_PAIRING_PENDING_ATTEMPTS}:
+        time.sleep(1)
+if not pending:
+    ${fixedPortableApprovalReceipt("no-request")}
+    raise SystemExit(0)
+if len(pending) != 1 or not isinstance(pending[0], dict):
+    ${fixedPortableApprovalReceipt("rejected")}
+    raise SystemExit(0)
+request = pending[0]
+request_id = request.get('requestId')
+device_id = request.get('deviceId')
+public_key = request.get('publicKey')
+scopes = request.get('scopes')
+identity = hashlib.sha256(json.dumps({
+    'deviceId': device_id,
+    'publicKey': public_key,
+}, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+decision = approval_request_decision(request)
+if (
+    not isinstance(request_id, str)
+    or not REQUEST_ID_RE.fullmatch(request_id)
+    or not isinstance(device_id, str)
+    or not device_id
+    or not isinstance(public_key, str)
+    or not public_key
+    or 'publicKeyPem' in request
+    or identity != EXPECTED_IDENTITY
+    or request.get('clientId') != 'cli'
+    or request.get('clientMode') != 'cli'
+    or request.get('role') != 'operator'
+    or not isinstance(request.get('roles'), list)
+    or request.get('roles') != ['operator']
+    or not isinstance(scopes, list)
+    or len(scopes) != len(set(scopes))
+    or frozenset(scopes) not in REQUEST_SCOPE_SHAPES
+    or 'requestedScopes' in request
+    or request.get('isRepair') is not True
+    or not isinstance(decision, dict)
+    or decision.get('allowed') is not True
+):
+    ${fixedPortableApprovalReceipt("rejected")}
+    raise SystemExit(0)
+
+approve_env = gateway_approval_env(os.environ)
+approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
+approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
+try:
+    approved = subprocess.run(
+        [OPENCLAW, 'devices', 'approve', request_id, '--json'],
+        capture_output=True, text=True, timeout=${CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S},
+        env=approve_env,
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    ${fixedPortableApprovalReceipt("ambiguous")}
+    raise SystemExit(0)
+${fixedPortableApprovalReceipt("approved")} if approved.returncode == 0 else ${fixedPortableApprovalReceipt("ambiguous")}
+PYAPPROVE
+exit 0
+`;
+}
+
+/** Run the canonical request producer once; all command output remains in the sandbox. */
+export function runPortableOpenClawPairingRequestProducer(
+  sandboxName: string,
+  gatewayName: string,
+  execDeps?: AutoPairApprovalExecDeps,
+): void {
+  const script = `
+${buildTrustedProxyEnvSourceShell()}
+command -v openclaw >/dev/null 2>&1 || exit 0
+NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  openclaw agent --agent main -m "ping" \\
+  --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true
+exit 0
+`;
+  const deps =
+    execDeps ??
+    (() => {
+      const { getOpenshellBinary } =
+        require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+      return { getOpenshellBinary, spawnSync };
+    })();
+  try {
+    deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
+      {
+        cwd: ROOT,
+        env: process.env,
+        input: script,
+        encoding: "utf8",
+        stdio: ["pipe", "ignore", "ignore"],
+        timeout: PORTABLE_PAIRING_PRODUCER_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    // The strict approval and final observation classify producer failure.
+  }
+}
+
+/** Invoke at most one canonical `openclaw devices approve` command. */
+export function runPortableOpenClawPairingApproval(
+  sandboxName: string,
+  gatewayName: string,
+  expectedDeviceIdentitySha256: string,
+  execDeps?: AutoPairApprovalExecDeps,
+): PortableOpenClawPairingApprovalReceipt {
+  const approvalPolicy = readAutoPairApprovalPolicyModule();
+  if (!approvalPolicy) return "unavailable";
+  let script: string;
+  try {
+    script = buildPortableOpenClawPairingApprovalScript(
+      Buffer.from(approvalPolicy, "utf8").toString("base64"),
+      expectedDeviceIdentitySha256,
+    );
+  } catch {
+    return "unavailable";
+  }
+  const deps =
+    execDeps ??
+    (() => {
+      const { getOpenshellBinary } =
+        require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+      return { getOpenshellBinary, spawnSync };
+    })();
+  try {
+    const result = deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
+      {
+        cwd: ROOT,
+        env: process.env,
+        input: script,
+        encoding: "utf8",
+        maxBuffer: PORTABLE_PAIRING_APPROVAL_MAX_OUTPUT_BYTES,
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+      },
+    );
+    if (result.error || result.signal || result.status !== 0) return "ambiguous";
+    return parsePortableOpenClawPairingApprovalReceipt(String(result.stdout ?? "")) ?? "ambiguous";
+  } catch {
+    return "ambiguous";
+  }
 }

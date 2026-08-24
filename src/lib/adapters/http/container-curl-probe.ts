@@ -6,10 +6,14 @@ import {
   type SpawnSyncReturns,
   spawnSync,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
+const MAX_CONTAINER_CURL_STDOUT_BYTES = 8 * 1024 * 1024 + 256;
+const HTTP_STATUS_MARKER_PREFIX = "\n__NEMOCLAW_CONTAINER_HTTP_STATUS_";
 
 type CurlProbeSpawn = (
   command: string,
@@ -30,6 +34,47 @@ function curlOutputPath(args: readonly string[]): string {
   return outputPath;
 }
 
+function prepareContainerArgs(args: readonly string[]): {
+  args: string[];
+  outputPath: string;
+  statusMarker: string;
+} {
+  const outputPath = curlOutputPath(args);
+  const outputIndex = args.indexOf("-o");
+  const containerArgs = [...args.slice(0, outputIndex), ...args.slice(outputIndex + 2)];
+  const writeOutIndex = containerArgs.indexOf("-w");
+  if (writeOutIndex < 0 || containerArgs[writeOutIndex + 1] !== "%{http_code}") {
+    throw new Error("container curl probe requires the HTTP status write-out");
+  }
+  const statusMarker = `${HTTP_STATUS_MARKER_PREFIX}${randomUUID()}__:`;
+  containerArgs[writeOutIndex + 1] = `${statusMarker}%{http_code}`;
+  return { args: containerArgs, outputPath, statusMarker };
+}
+
+function splitContainerOutput(
+  stdout: string,
+  statusMarker: string,
+): { body: string; httpStatus: string } {
+  const markerIndex = stdout.lastIndexOf(statusMarker);
+  if (markerIndex < 0) {
+    throw new Error("container curl probe did not return the HTTP status write-out");
+  }
+  const httpStatus = stdout.slice(markerIndex + statusMarker.length).trim();
+  if (!/^\d{3}$/.test(httpStatus)) {
+    throw new Error("container curl probe returned an invalid HTTP status write-out");
+  }
+  return { body: stdout.slice(0, markerIndex), httpStatus };
+}
+
+function writeProbeOutput(outputPath: string, body: string): void {
+  const fileDescriptor = fs.openSync(outputPath, "wx", 0o600);
+  try {
+    fs.writeFileSync(fileDescriptor, body, "utf8");
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+}
+
 /** Run a credential-free curl probe from Docker Desktop's network context. */
 export function createContainerCurlProbeSpawn(
   spawnSyncImpl: CurlProbeSpawn = spawnSync,
@@ -46,23 +91,18 @@ export function createContainerCurlProbeSpawn(
     ) {
       throw new Error("container curl probe does not accept credential config files");
     }
-    const outputPath = curlOutputPath(args);
-    const outputDir = path.dirname(outputPath);
-    const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-    const gid = typeof process.getgid === "function" ? process.getgid() : 0;
-    return spawnSyncImpl(
+    // Docker Desktop containers may not share the WSL filesystem that owns this temporary path.
+    // Capture the response on stdout so the host process writes the body to the WSL file.
+    const prepared = prepareContainerArgs(args);
+    const result = spawnSyncImpl(
       "docker",
-      [
-        "run",
-        "--rm",
-        "--user",
-        `${uid}:${gid}`,
-        "--volume",
-        `${outputDir}:${outputDir}`,
-        CONTAINER_REACHABILITY_IMAGE,
-        ...args,
-      ],
-      options,
+      ["run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...prepared.args],
+      { ...options, maxBuffer: options.maxBuffer ?? MAX_CONTAINER_CURL_STDOUT_BYTES },
     );
+    if (result.error || result.status !== 0) return result;
+
+    const output = splitContainerOutput(String(result.stdout || ""), prepared.statusMarker);
+    writeProbeOutput(prepared.outputPath, output.body);
+    return { ...result, stdout: output.httpStatus };
   };
 }

@@ -33,6 +33,9 @@ function runHandoffScenario(scenario: HandoffScenario): HandoffResult {
   const sessionPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
   );
+  const checkpointPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
+  );
   const initialFlowPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
   );
@@ -42,6 +45,7 @@ function runHandoffScenario(scenario: HandoffScenario): HandoffResult {
     `
 const initialFlow = require(${initialFlowPath});
 const onboardSession = require(${sessionPath});
+const { deriveCheckpointFromSession } = require(${checkpointPath});
 const scenario = ${JSON.stringify(scenario)};
 const stopAtInitialFlow = new Error("stop at initial onboarding flow");
 let flowCalls = 0;
@@ -54,14 +58,16 @@ initialFlow.runInitialOnboardFlowSlice = async () => {
 };
 
 if (scenario === "prepared") {
-  onboardSession.saveSession(onboardSession.createSession({
+  const session = onboardSession.createSession({
     mode: "non-interactive",
     agent: "langchain-deepagents-code",
     sandboxName: "prepared-dcode",
     provider: "compatible-endpoint",
     model: "nvidia/nemotron-3-super-120b-a12b",
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-  }));
+  });
+  session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
+  onboardSession.saveSession(session);
 }
 
 process.env.OPENSHELL_GATEWAY = "ambient-other-gateway";

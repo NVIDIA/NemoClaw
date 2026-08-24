@@ -440,6 +440,160 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects dependency caching before trusted installation (#9051)", () => {
+    const workflow = workflowFixture();
+    const setupNode = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Set up Node.js for trusted OpenShell verification",
+    );
+    setupNode.with = { ...setupNode.with, "package-manager-cache": true };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
+    );
+  });
+
+  it("rejects package manager probes after candidate checkout (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    const setupNode = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Set up Node.js for trusted OpenShell verification",
+    );
+    const [movedSetupNode] = steps.splice(steps.indexOf(setupNode), 1);
+    const candidateCheckoutIndex = steps.findIndex((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    steps.splice(candidateCheckoutIndex + 1, 0, movedSetupNode!);
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
+    );
+  });
+
+  it("rejects candidate execution before trusted development installation (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    const candidateCheckoutIndex = steps.findIndex((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    steps.splice(candidateCheckoutIndex + 1, 0, {
+      name: "Execute candidate CLI before trusted installation",
+      run: "node bin/nemoclaw.js --version",
+    });
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
+  });
+
+  it("rejects candidate execution embedded in the trusted development installer (#9051)", () => {
+    const workflow = workflowFixture();
+    const install = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Install immutable OpenShell dev artifact",
+    );
+    install.run = `bash test/e2e/setup-mcp-test-tls.sh\n${install.run ?? ""}`;
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
+  });
+
+  it("rejects candidate-controlled process hooks in the trusted development job (#9051)", () => {
+    const workflow = workflowFixture();
+    const job = workflow.jobs["mcp-bridge-dev"];
+    expect(job).toBeDefined();
+    job!.env = {
+      ...job!.env,
+      NODE_OPTIONS: "--require=./candidate-preload.cjs",
+    };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
+    );
+  });
+
+  it("rejects candidate-controlled process hooks in the workflow environment (#9051)", () => {
+    const workflow = workflowFixture() as Workflow & { env?: Record<string, string> };
+    workflow.env = {
+      ...workflow.env,
+      NODE_OPTIONS: "--require=./candidate-preload.cjs",
+    };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "workflow must not set process startup hooks before CLI artifact restore",
+    );
+  });
+
+  it("scans the complete job for process hooks when trusted installation is missing (#9051)", () => {
+    const workflow = workflowFixture();
+    const job = workflow.jobs["mcp-bridge-dev"];
+    const steps = job.steps!;
+    job.steps = steps.filter(
+      (step) => step.name !== "Install immutable OpenShell dev artifact",
+    );
+    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
+    prepare.env = { NODE_OPTIONS: "--require=./candidate-preload.cjs" };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+      ]),
+    );
+  });
+
+  it("rejects skipping the trusted development installer (#9051)", () => {
+    const workflow = workflowFixture();
+    const install = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Install immutable OpenShell dev artifact",
+    );
+    install.if = "${{ false }}";
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
+  });
+
+  it("rejects skipping post-install dependency preparation (#9051)", () => {
+    const workflow = workflowFixture();
+    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
+    prepare.if = "${{ false }}";
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
+    );
+  });
+
+  it("rejects removing post-install dependency preparation and candidate CLI restore (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    workflow.jobs["mcp-bridge-dev"].steps = steps.filter(
+      (step) =>
+        step.name !== "Prepare E2E workspace" &&
+        step.name !== "Restore exact-commit CLI artifact",
+    );
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must verify and restore the exact CLI artifact exactly once",
+    );
+  });
+
+  it("rejects removing the trusted development consumer job (#9051)", () => {
+    const workflow = workflowFixture();
+    delete workflow.jobs["mcp-bridge-dev"];
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "workflow is missing required CLI artifact consumer mcp-bridge-dev",
+    );
+  });
+
   it("reports both an unreadable action and a missing producer", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-missing-action-"));
     try {

@@ -93,7 +93,11 @@ function findMatchingPreset(
 }
 
 function isVerified(preset: PolicyContextPreset): boolean {
-  return preset.verification === "verified" || preset.verification === "gateway-only";
+  return (
+    preset.verification === "verified" ||
+    preset.verification === "gateway-only" ||
+    preset.verification === "agent-base"
+  );
 }
 
 function verificationNote(preset: PolicyContextPreset): string {

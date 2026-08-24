@@ -26,8 +26,8 @@ afterEach(() => {
   restoreProofEnv();
 });
 
-describe("exact-main selected-driver config proof boundary", () => {
-  it("does not inject driver config outside the explicit candidate-main lane", async () => {
+describe("OpenShell driver configuration for main-branch E2E", () => {
+  it("does nothing when the driver configuration check is disabled", async () => {
     delete process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV];
     const add = vi.fn();
 
@@ -38,7 +38,7 @@ describe("exact-main selected-driver config proof boundary", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
-  it("injects only the reviewed structured tmpfs config on sandbox create", () => {
+  it("adds the tmpfs driver configuration only to sandbox create", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-main-driver-wrapper-"));
     const delegate = path.join(fixture, "openshell-real");
     fs.writeFileSync(delegate, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", {
@@ -97,7 +97,7 @@ describe("exact-main selected-driver config proof boundary", () => {
     }
   });
 
-  it("preserves production driver config when the wrapper only delegates capabilities", () => {
+  it("passes through an existing driver configuration unchanged", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-main-pass-through-"));
     const delegate = path.join(fixture, "openshell-real");
     fs.writeFileSync(delegate, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", {
@@ -128,7 +128,7 @@ describe("exact-main selected-driver config proof boundary", () => {
     }
   });
 
-  it("expects graceful gateway recovery to remount tmpfs while retaining durable state", () => {
+  it("expects gateway restart to empty tmpfs and preserve persistent files", () => {
     const source = fs.readFileSync(
       path.join("test", "e2e", "live", "openshell-exact-main-driver-config.ts"),
       "utf8",

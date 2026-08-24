@@ -12,6 +12,10 @@ set -euo pipefail
 # are removed on any exit path (set -e, unhandled signal, unexpected error).
 _cleanup_pids=()
 _cleanup_files=()
+# Bind the portable installer's temporary Docker CLI selector so only that
+# exact value can be removed from the Hermes onboarding child.
+unset _PORTABLE_INSTALLER_DOCKER_HOST
+_PORTABLE_INSTALLER_DOCKER_HOST=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -173,12 +177,16 @@ resolve_stamped_version() {
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
-  git init --quiet "$dest"
-  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-    error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
-  fi
-  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  (
+    # Git applies the process umask when it creates the authoritative source checkout.
+    umask 022
+    git init --quiet "$dest"
+    git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
+      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    fi
+    git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -206,10 +214,13 @@ fi
 # ---------------------------------------------------------------------------
 info() { printf "${C_CYAN}[INFO]${C_RESET}  %s\n" "$*"; }
 warn() { printf "${C_YELLOW}[WARN]${C_RESET}  %s\n" "$*"; }
-error() {
+error_with_status() {
+  local status="$1"
+  shift
   printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2
-  exit 1
+  exit "$status"
 }
+error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 resolve_nemoclaw_gateway_port() {
@@ -227,7 +238,7 @@ resolve_nemoclaw_gateway_port() {
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
   case "$port" in
-    8000 | 8081 | 11434 | 11435 | 11436 | 11437)
+    8000 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438)
       error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
       ;;
   esac
@@ -927,7 +938,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
-  printf "    NEMOCLAW_NO_EXPRESS=1         Skip express install prompt on supported platforms\n"
+  printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
   printf "                                  Create one at https://huggingface.co/settings/tokens and export it before curl | bash.\n"
@@ -1264,7 +1275,7 @@ _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # preserved). The final summary must not claim those sandboxes were recovered.
 _PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
-# OpenShell v0.0.101 routes sandbox and workspace identities through labels
+# OpenShell v0.0.106 routes sandbox and workspace identities through labels
 # capped at 19 characters. Keep this installer-only raw-registry preflight in
 # sync with NAME_MAX_LENGTH in nemoclaw/src/shared/sandbox-name.cts. The
 # current CLI cannot be prepared safely until legacy names are checked.
@@ -2167,8 +2178,8 @@ install_nodejs() {
   elif command_exists shasum; then
     actual_hash="$(shasum -a 256 "$nvm_tmp" | awk '{print $1}')"
   else
-    warn "No SHA-256 tool found — skipping nvm integrity check"
-    actual_hash="$NVM_SHA256" # allow execution
+    rm -f "$nvm_tmp"
+    error "No SHA-256 tool available (sha256sum/shasum)"
   fi
   if [[ "$actual_hash" != "$NVM_SHA256" ]]; then
     rm -f "$nvm_tmp"
@@ -2457,7 +2468,12 @@ finish_nemoclaw_install() {
       [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
     fi
     if [[ "$openshell_install_status" -ne 0 ]]; then
-      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+      local retry_gateway_port retry_gateway_port_env=""
+      retry_gateway_port="$(resolve_nemoclaw_gateway_port)"
+      if [ "$retry_gateway_port" -ne 8080 ]; then
+        retry_gateway_port_env="NEMOCLAW_GATEWAY_PORT=${retry_gateway_port} "
+      fi
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
     fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
@@ -2935,7 +2951,7 @@ require_openshell_compatible_sandbox_names() {
 
   cat <<EOF
 
-  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.101:
+  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.106:
 EOF
   while IFS= read -r sandbox_name; do
     [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
@@ -2957,7 +2973,7 @@ EOF
   ' "$incompatible_json")
   cat <<EOF
 
-  OpenShell 0.0.101 caps routed sandbox names at
+  OpenShell 0.0.106 caps routed sandbox names at
   ${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH} characters and rejects consecutive
   hyphens. Current NemoClaw names must use 1-${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH}
   lowercase letters, numbers, and single internal hyphens, starting with a
@@ -2973,7 +2989,7 @@ EOF
   OpenShell runtime and gateway before migrating the sandbox state.
 
 EOF
-  error "OpenShell 0.0.101 upgrade blocked by incompatible existing sandbox names."
+  error "OpenShell 0.0.106 upgrade blocked by incompatible existing sandbox names."
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -3323,6 +3339,57 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+
+# Check whether sudo can run without prompting. If it cannot, validate the
+# user's credentials through a terminal. Print the non-prompting sudo invocation
+# that the caller must use.
+#
+# `sudo -v` validates the user's credentials rather than a specific command, so
+# on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
+# a NOPASSWD drop-in it still demands a password even though `sudo <command>`
+# runs passwordless. Callers with no terminal to answer that prompt — the deploy
+# notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
+#
+# A successful `sudo -n true` probe proves only that sudo can run `true` without
+# prompting at that moment. It does not establish that the later systemctl,
+# mkdir, or nvidia-ctk commands can run without prompting. Every later command
+# therefore uses `sudo -n` and establishes its own authorization without
+# another prompt. After an answered `sudo -v`, the credential timestamp lets
+# those exact commands run noninteractively. If sudoers does not retain the
+# timestamp, the command fails instead of prompting again.
+#
+# Terminal availability follows the installer's existing model — stdin when it
+# is a TTY, else /dev/tty when it can be opened — so the documented
+# `curl … | bash` install still prompts instead of skipping the repair.
+# The printed invocation is this function's only stdout; anything else it emits
+# must go to stderr or the caller would run it as a command.
+authorize_sudo() {
+  if sudo -n true >/dev/null 2>&1; then
+    printf 'sudo -n'
+    return 0
+  fi
+  if installer_non_interactive \
+    && [ "${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" != "prompt" ]; then
+    return 1
+  fi
+  if [ -t 0 ]; then
+    sudo -v >&2 || return 1
+    printf 'sudo -n'
+    return 0
+  fi
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; validating sudo credentials through /dev/tty..." >&2
+    if ! sudo -v <&3 >&2; then
+      exec 3<&-
+      return 1
+    fi
+    exec 3<&-
+    printf 'sudo -n'
+    return 0
+  fi
+  return 1
+}
+
 repair_installer_stale_nvidia_cdi_spec() {
   local flagged_file="${1:-}"
   local service_spec_path="/var/run/cdi/nvidia.yaml"
@@ -3340,13 +3407,14 @@ repair_installer_stale_nvidia_cdi_spec() {
     return 0
   fi
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
   if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
     && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
@@ -3423,13 +3491,14 @@ repair_installer_nvidia_cdi_spec() {
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
 
   local cdi_list_output=""
@@ -3468,6 +3537,7 @@ repair_installer_nvidia_cdi_spec() {
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
+  local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
@@ -3488,6 +3558,16 @@ run_installer_host_preflight() {
       const hostReadinessPath = process.argv[2];
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
+      const portableProfilePath = process.argv[5];
+      let explicitlySelectedPortableProfile = false;
+      try {
+        const portableProfile = require(portableProfilePath);
+        if (typeof portableProfile.isPortableExperimentalProfile === "function") {
+          explicitlySelectedPortableProfile = Boolean(
+            portableProfile.isPortableExperimentalProfile()
+          );
+        }
+      } catch {}
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
@@ -3512,7 +3592,7 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime: false,
+          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3584,7 +3664,7 @@ run_installer_host_preflight() {
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
   )"; then
     status=0
   else
@@ -3865,20 +3945,41 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
+  fi
+
+  local invoke_bin="$cli_invoke"
+  local -a invoke_args=("${onboard_cmd[@]}")
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" &&
+    "${NEMOCLAW_AGENT:-openclaw}" == "hermes" &&
+    -n "$_PORTABLE_INSTALLER_DOCKER_HOST" &&
+    "${DOCKER_HOST:-}" == "$_PORTABLE_INSTALLER_DOCKER_HOST" ]]; then
+    invoke_bin="/usr/bin/env"
+    invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
+  fi
+
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+      "$invoke_bin" "${invoke_args[@]}" || status=$?
   elif [ -t 0 ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+      "$invoke_bin" "${invoke_args[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
+      "$invoke_bin" "${invoke_args[@]}" <&3 || status=$?
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
   return "$status"
+}
+
+fail_onboarding() {
+  local status="${1:-1}"
+  if [ "$status" -ne 130 ]; then
+    status=1
+  fi
+  error_with_status "$status" "Onboarding did not complete successfully."
 }
 
 station_express_receipt_retirement_pending() {
@@ -3961,7 +4062,7 @@ ensure_docker() {
     info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
     local docker_tmp
     docker_tmp="$(mktemp)"
-    if ! curl -fsSL https://get.docker.com -o "$docker_tmp"; then
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' https://get.docker.com -o "$docker_tmp"; then
       rm -f "$docker_tmp"
       error "Failed to download the Docker convenience script from https://get.docker.com"
     fi
@@ -4038,6 +4139,12 @@ ensure_docker() {
             printf -v cmd '%s %q' "$cmd" "$arg"
           done
         fi
+        # Station Express selects or restores its mode before this re-exec. The
+        # child treats the derived provider as explicit intent, so remove it.
+        # The child restores the saved mode and derives the provider again.
+        if [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
+          unset NEMOCLAW_PROVIDER
+        fi
         exec sg docker -c "$cmd"
       fi
     fi
@@ -4084,6 +4191,7 @@ prepare_portable_experimental_runtime_override() {
     /*) export DOCKER_HOST="unix://${podman_socket}" ;;
     *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
   esac
+  _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
 }
@@ -4103,10 +4211,10 @@ is_wsl_host() {
   return 1
 }
 
-# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback)
-# and Windows WSL from the host environment. Echoes "DGX Spark",
-# "DGX Station", "Windows WSL", or empty. Used to gate the express install
-# prompt; only platforms with a known sensible default are offered.
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback),
+# N1x from its protected FastOS and PCI identity, and Windows WSL from the host
+# environment. Used to gate the express install prompt; only platforms with an
+# accepted default are offered.
 is_station_gb300_product() {
   local product=${1:-}
   [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
@@ -4117,6 +4225,138 @@ classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+N1X_FASTOS_RELEASE_MAX_BYTES=4096
+
+n1x_fastos_release_path() {
+  printf "/etc/fastos-release"
+}
+
+n1x_pci_devices_path() {
+  printf "/sys/bus/pci/devices"
+}
+
+n1x_fastos_release_metadata_is_trusted() {
+  local metadata=${1:-}
+  local file_mode_hex="" uid="" gid="" mode="" size="" device="" inode=""
+  IFS=: read -r file_mode_hex uid gid mode size device inode <<<"$metadata"
+  [[ "$file_mode_hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+  (((16#$file_mode_hex & 16#f000) == 16#8000)) || return 1
+  [[ "$uid" = "0" && "$gid" = "0" ]] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ && "$size" =~ ^[0-9]+$ ]] || return 1
+  ((10#$size > 0 && 10#$size <= N1X_FASTOS_RELEASE_MAX_BYTES)) || return 1
+  ((8#$mode & 022)) && return 1
+  [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ ]]
+}
+
+n1x_fastos_release_contents_are_valid() {
+  local contents=${1:-}
+  local line="" name_count=0
+  [[ "$contents" != *$'\r'* ]] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      NAME=*) return 1 ;;
+    esac
+  done <<<"$contents"
+  [ "$name_count" -eq 1 ]
+}
+
+n1x_opened_fastos_release_has_nul() {
+  local bytes=""
+  command -v od >/dev/null 2>&1 || return 2
+  bytes="$(LC_ALL=C od -An -v -tx1 -N $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)" \
+    || return 2
+  case " $bytes " in
+    *" 00 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+n1x_fastos_release_is_trusted() {
+  local marker="" before="" opened="" after="" contents=""
+  marker="$(n1x_fastos_release_path)"
+  [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  before="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || return 1
+  n1x_fastos_release_metadata_is_trusted "$before" || return 1
+  exec 9<"$marker" || return 1
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  if [ "$before" != "$opened" ] || [ "$before" != "$after" ]; then
+    exec 9<&-
+    return 1
+  fi
+  if n1x_opened_fastos_release_has_nul; then
+    exec 9<&-
+    return 1
+  elif [ "$?" -ne 1 ]; then
+    exec 9<&-
+    return 1
+  fi
+  exec 9<&-
+  exec 9<"$marker" || return 1
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  if [ "$before" != "$opened" ] || [ "$before" != "$after" ]; then
+    exec 9<&-
+    return 1
+  fi
+  contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
+  exec 9<&-
+  [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
+  n1x_fastos_release_contents_are_valid "$contents"
+}
+
+n1x_pci_identity_is_valid() {
+  local vendor="" device="" pci_class=""
+  vendor="$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  device="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  pci_class="$(printf "%s" "${3:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$vendor" = "0x10de" && "$device" = "0x2e2a" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
+}
+
+n1x_has_pci_gpu() {
+  local pci_root="" pci_device="" vendor="" device="" pci_class="" scanned=0
+  pci_root="$(n1x_pci_devices_path)"
+  [ -d "$pci_root" ] || return 1
+  for pci_device in "$pci_root"/*; do
+    [ -d "$pci_device" ] || continue
+    ((scanned += 1))
+    [ "$scanned" -le 256 ] || return 1
+    vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
+    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
+    pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
+    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+      continue
+    fi
+    vendor="${vendor//[[:space:]]/}"
+    device="${device//[[:space:]]/}"
+    pci_class="${pci_class//[[:space:]]/}"
+    n1x_pci_identity_is_valid "$vendor" "$device" "$pci_class" && return 0
+  done
+  return 1
+}
+
+is_n1x_host() {
+  [ "$(uname -s 2>/dev/null)" = "Linux" ] || return 1
+  case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) ;;
+    *) return 1 ;;
+  esac
+  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
 }
 
 detect_express_platform() {
@@ -4151,6 +4391,10 @@ detect_express_platform() {
         fi
         ;;
     esac
+    return
+  fi
+  if is_n1x_host; then
+    printf "N1x"
     return
   fi
   case "$model" in
@@ -4952,9 +5196,9 @@ activate_express_install() {
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         if [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ] \
-          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_PORT:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] \
           || [ -n "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" ]; then
-          error "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides."
+          error "The fixed DGX Spark vLLM profile does not accept provider, model, or serve-argument overrides."
         fi
         unset NEMOCLAW_PROVIDER
         export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
@@ -4966,6 +5210,11 @@ activate_express_install() {
           export NEMOCLAW_VLLM_MODEL
         fi
       fi
+      ;;
+    "N1x")
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      unset NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE NEMOCLAW_LOCAL_MODEL_RUNTIME
+      export NEMOCLAW_PROVIDER=install-vllm
       ;;
     "DGX Station")
       export NEMOCLAW_STATION_EXPRESS=1
@@ -5049,7 +5298,7 @@ station_managed_dual_head_running() {
     "$running" == "true" &&
     "$managed" == "true" &&
     "$role" == "head" &&
-    "$schema" == "2" &&
+    ("$schema" == "2" || "$schema" == "3") &&
     "$cluster" =~ ^[a-f0-9]{64}$ &&
     "$launch_contract" =~ ^[a-f0-9]{64}$ &&
     "$api_fingerprint" =~ ^[a-f0-9]{64}$ &&
@@ -5091,7 +5340,7 @@ ensure_station_express_host() {
     # the post-Node coordinator revalidates the reciprocal physical pair before
     # the existing lifecycle is allowed to reuse it.
     _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=1
-    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation."
+    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation, including any required launch-schema replacement."
     return 0
   fi
   if station_dual_model_requested && station_migratable_legacy_single_head_running; then
@@ -5319,7 +5568,7 @@ ensure_station_express_pair() {
         export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No trusted reciprocal dual-DGX Station pair was detected; using the existing single-Station Ultra recipe."
+      info "No eligible reciprocal dual-DGX Station pair is available; using the existing single-Station Ultra recipe."
       ;;
     ready)
       [ "$status" -eq 0 ] \
@@ -5385,8 +5634,8 @@ prepare_installer_host() {
   ensure_openshell_build_deps
 }
 
-# Prompt the user to opt into express install on supported platforms. Sets the
-# non-interactive + provider/model env vars when accepted. Skipped when
+# Prompt the user to opt into express install on qualified platforms or the
+# Deferred N1x preview. Sets non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
 # no TTY.
 describe_express_install() {
@@ -5402,7 +5651,7 @@ describe_express_install() {
     "DGX Spark")
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         inference_summary="Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile"
-        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before starting its managed container."
+        inference_disclosure="The serving catalog owns the model, image, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model and serve-argument overrides before starting its managed container. NEMOCLAW_VLLM_PORT may override the host listener."
       elif [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
@@ -5413,6 +5662,11 @@ describe_express_install() {
         inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
         inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
       fi
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      ;;
+    "N1x")
+      inference_summary="managed local vLLM with Qwen3.6 35B-A3B NVFP4"
+      inference_disclosure="N1x Express is a Deferred preview pending a physical NemoClaw Express E2E run; accepting this prompt is explicit preview intent, not a supported-platform claim. The N1x profile uses one host and does not activate DGX Spark cluster discovery or fixed catalog behavior. Managed vLLM pulls the pinned image and model only after the existing CUDA and CDI readiness checks pass."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
@@ -5493,7 +5747,11 @@ describe_express_install() {
       ;;
   esac
 
-  printf "  Express install will configure %s.\n" "$inference_summary"
+  if [ "$platform" = "N1x" ]; then
+    printf "  The Deferred N1x preview will configure %s.\n" "$inference_summary"
+  else
+    printf "  Express install will configure %s.\n" "$inference_summary"
+  fi
   if [ -n "$inference_disclosure" ]; then
     printf "  %s\n" "$inference_disclosure"
   fi
@@ -5550,9 +5808,12 @@ maybe_offer_express_install() {
   if [ -z "$platform" ]; then
     return 0
   fi
-  # On a supported platform but a skip condition applies — explain why so
+  # On a detected Express platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    if [ "$platform" = "N1x" ] && [ "${NEMOCLAW_PROVIDER:-}" != "install-vllm" ]; then
+      error "N1x onboarding currently requires explicit Deferred managed-vLLM preview intent. Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+    fi
     if [ "$platform" = "DGX Station" ]; then
       station_dual_pair_resume_pending \
         && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
@@ -5562,6 +5823,9 @@ maybe_offer_express_install() {
     return 0
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
+      error "N1x onboarding currently accepts only the Deferred managed-vLLM preview. Set NEMOCLAW_PROVIDER=install-vllm or use another host for provider ${NEMOCLAW_PROVIDER}."
+    fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
       # preparation boundary without forcing the rest of the express policy.
@@ -5597,7 +5861,11 @@ maybe_offer_express_install() {
       return 0
     fi
     describe_express_install "$platform"
-    printf "  Run express install with these settings? [Y/n]: "
+    if [ "$platform" = "N1x" ]; then
+      printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    else
+      printf "  Run express install with these settings? [Y/n]: "
+    fi
     if ! IFS= read -r reply; then
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
         fail_force_station_terminal_required
@@ -5615,7 +5883,11 @@ maybe_offer_express_install() {
       return 0
     fi
     describe_express_install "$platform"
-    printf "  Run express install with these settings? [Y/n]: "
+    if [ "$platform" = "N1x" ]; then
+      printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    else
+      printf "  Run express install with these settings? [Y/n]: "
+    fi
     if ! IFS= read -r reply <&3; then
       exec 3<&-
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
@@ -5634,13 +5906,43 @@ maybe_offer_express_install() {
   reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
   case "$reply" in
     "" | y | yes)
-      info "Using express install for ${platform}."
+      if [ "$platform" = "N1x" ]; then
+        info "Using the Deferred N1x preview."
+      else
+        info "Using express install for ${platform}."
+      fi
       activate_express_install "$platform"
       ;;
     *)
+      if [ "$platform" = "N1x" ]; then
+        error "N1x onboarding currently requires the Deferred managed-vLLM preview. Re-run the installer and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+      fi
       info "Skipping express install. Continuing with interactive flow."
       ;;
   esac
+}
+
+# The qualification runner calls these phases without starting onboarding.
+# ---------------------------------------------------------------------------
+install_nemoclaw_before_onboarding() {
+  _INSTALL_START=$SECONDS
+  bash "${SCRIPT_DIR}/setup-jetson.sh"
+
+  step 1 "Node.js"
+  install_nodejs
+  ensure_supported_runtime
+  resolve_pending_express_wsl_provider
+  ensure_station_express_pair
+
+  step 2 "${_CLI_DISPLAY} CLI"
+  # Ollama and vLLM install/upgrade and model pulls are owned by
+  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
+  # install.sh stays focused on dependency setup.
+  fix_npm_permissions
+  preinstall_backup_and_retire_legacy_gateway
+  install_nemoclaw
+  verify_nemoclaw
+  require_reportable_openshell_version
 }
 
 # Main
@@ -5738,12 +6040,6 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  if [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ] \
-    && [ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" = "vllm" ] \
-    && [ -n "${NEMOCLAW_VLLM_PORT:-}" ]; then
-    error "The vLLM local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT."
-  fi
-
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -5788,7 +6084,7 @@ main() {
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
 
-  # Offer express install on supported platforms (DGX Spark / Station / WSL).
+  # Offer express install on accepted platforms (DGX Spark / Station / N1x / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
@@ -5796,24 +6092,7 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
-  _INSTALL_START=$SECONDS
-  bash "${SCRIPT_DIR}/setup-jetson.sh"
-
-  step 1 "Node.js"
-  install_nodejs
-  ensure_supported_runtime
-  resolve_pending_express_wsl_provider
-  ensure_station_express_pair
-
-  step 2 "${_CLI_DISPLAY} CLI"
-  # Ollama and vLLM install/upgrade and model pulls are owned by
-  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
-  # install.sh stays focused on dependency setup.
-  fix_npm_permissions
-  preinstall_backup_and_retire_legacy_gateway
-  install_nemoclaw
-  verify_nemoclaw
-  require_reportable_openshell_version
+  install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls
@@ -5852,13 +6131,13 @@ main() {
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || error "Onboarding did not complete successfully."
+          run_onboard || fail_onboarding "$?"
           ONBOARD_RAN=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || error "Onboarding did not complete successfully."
+        run_onboard || fail_onboarding "$?"
         ONBOARD_RAN=true
         restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
       fi
@@ -5909,7 +6188,7 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { 
   if [[ -z "${BASH_SOURCE[0]:-}" ]] && [[ -z "${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
     _installer_url="${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
     if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
-      && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
+      && curl -fsSL --proto '=https' --proto-redir '=https' "$_installer_url" -o "$_staged" 2>/dev/null \
       && [[ -s "$_staged" ]] \
       && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
       && bash -n "$_staged" 2>/dev/null; then

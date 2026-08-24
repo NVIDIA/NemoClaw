@@ -419,7 +419,8 @@ export async function installSandboxSkill(
     if (failed.length > 0) {
       console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
       printSkillUploadFailureHint(sandboxName);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
 
@@ -445,7 +446,8 @@ export async function installSandboxSkill(
         `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
           (paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   } finally {
     tmpSshConfig.cleanup();

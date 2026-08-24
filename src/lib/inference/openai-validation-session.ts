@@ -7,6 +7,7 @@ import {
   createValidationSession,
   type ValidationSessionOptions,
 } from "../adapters/http/validation-session";
+import { retryUntilAsync } from "../core/retry";
 import { addTraceEvent, withTraceSpan } from "../trace";
 import type { TrustedPrivateEndpointCapability } from "./endpoint-ssrf-preflight";
 import {
@@ -192,36 +193,31 @@ async function requestWithHttpRetry(
   request: () => Promise<CurlProbeResult>,
   retryTransientHttp = true,
 ): Promise<CurlProbeResult> {
-  let result = await request();
-  let attempt = 1;
-  addTraceEvent("probe_result", {
-    attempt,
-    ok: result.ok,
-    http_status: result.httpStatus,
-    curl_status: result.curlStatus,
-  });
-  for (const delayMs of RETRY_DELAYS_MS) {
-    if (
-      !retryTransientHttp ||
-      result.curlStatus !== 0 ||
-      !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)
-    ) {
-      break;
-    }
-    console.log(
-      `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
-    );
-    await waitForRetry(delayMs);
-    attempt += 1;
-    result = await request();
-    addTraceEvent("probe_result", {
-      attempt,
-      ok: result.ok,
-      http_status: result.httpStatus,
-      curl_status: result.curlStatus,
-    });
-  }
-  return result;
+  return retryUntilAsync(
+    async (attempt) => {
+      const result = await request();
+      addTraceEvent("probe_result", {
+        attempt,
+        ok: result.ok,
+        http_status: result.httpStatus,
+        curl_status: result.curlStatus,
+      });
+      return result;
+    },
+    {
+      accept: (result) =>
+        !retryTransientHttp ||
+        result.curlStatus !== 0 ||
+        !RETRIABLE_HTTP_STATUSES.has(result.httpStatus),
+      retryDelaysMs: RETRY_DELAYS_MS,
+      onRetry: (result, delayMs) => {
+        console.log(
+          `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
+      },
+      sleep: waitForRetry,
+    },
+  );
 }
 
 function shouldUseLegacyForModel(model: string): boolean {
@@ -250,8 +246,10 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     return deps.legacyProbe(endpointUrl, model, apiKey, options);
   }
   // Custom-endpoint SSRF preflight pins approved addresses through curl's
-  // reviewed --resolve boundary. Keep that security path authoritative until
-  // native address pinning has equivalent end-to-end rebinding coverage.
+  // reviewed --resolve boundary. This #6661 migration fallback is bounded to
+  // the native-session rollout: remove it once the native transport can enforce
+  // the exact preflight address set and the caller-level rebinding test passes
+  // with legacyProbe unavailable.
   if (
     (options.pinnedAddresses && options.pinnedAddresses.length > 0) ||
     options.trustedPrivateCapability
@@ -267,6 +265,9 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
   if (!session) return deps.legacyProbe(endpointUrl, model, apiKey, options);
 
   const baseUrl = endpointUrl.replace(/\/+$/, "");
+  // Preserve curl diagnostics during the #6661 migration only. Remove this
+  // replay once native proxy, CA, streaming, and terminal-failure parity is
+  // complete and the public-helper migration tests pass without legacyProbe.
   const nativeFailureFallback = async (reason: string): Promise<OpenAiValidationResult> => {
     addTraceEvent("validation_transport_fallback", { reason });
     session.close();

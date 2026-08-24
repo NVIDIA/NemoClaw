@@ -39,20 +39,18 @@ describe("baseline exclusion supported-feature disclosure (#7178)", () => {
     );
   });
 
-  it.each(BASELINES)("defines an impact for every excludable $agent baseline entry", ({
-    agent,
-    path,
-  }) => {
-    const content = fs.readFileSync(path, "utf8");
-    const excludableKeys = listBaselineEntryKeys(content).filter(
-      (key) => !isProtectedBaselineExclusionKey(key),
-    );
+  it.each(BASELINES)(
+    "defines an impact for every excludable $agent baseline entry",
+    ({ agent, path }) => {
+      const content = fs.readFileSync(path, "utf8");
+      const excludableKeys = listBaselineEntryKeys(content).filter(
+        (key) => !isProtectedBaselineExclusionKey(key),
+      );
 
-    expect(excludableKeys).not.toHaveLength(0);
-    for (const key of excludableKeys) {
-      expect(getBaselineExclusionFeatureImpact(agent, key), `${agent}:${key}`).not.toBeNull();
-    }
-  });
+      expect(excludableKeys).not.toHaveLength(0);
+      expect(excludableKeys.every((key) => !(getBaselineExclusionFeatureImpact(agent, key) === null))).toBe(true);
+    },
+  );
 
   it("returns no disclosure for an unreviewed baseline entry", () => {
     expect(getBaselineExclusionFeatureImpact("hermes", "future_entry")).toBeNull();

@@ -10,6 +10,22 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  V0099_ASSET_DIGESTS,
+  V0099_CHECKSUM_MANIFESTS,
+  V00101_ASSET_DIGESTS,
+  V00101_CHECKSUM_MANIFESTS,
+  V00101_SANDBOX_BUILD_DIGESTS,
+  V00103_ASSET_DIGESTS,
+  V00103_CHECKSUM_MANIFESTS,
+  V00103_SANDBOX_BUILD_DIGESTS,
+  V00103_SUPERVISOR_MANIFEST_DIGEST,
+  V00106_ASSET_DIGESTS,
+  V00106_CHECKSUM_MANIFESTS,
+  V00106_SANDBOX_BUILD_DIGESTS,
+  V00106_SUPERVISOR_MANIFEST_DIGEST,
+} from "./helpers/openshell-release-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
@@ -17,6 +33,10 @@ const INSTALLER_TEMPLATE = fs.readFileSync(
 );
 const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
+  "utf8",
+);
+const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
   "utf8",
 );
 const ASSET_DIGESTS = new Map([
@@ -56,10 +76,7 @@ const ASSET_DIGESTS = new Map([
 ]);
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
-const V00101_SANDBOX_BUILD_DIGESTS = [
-  "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
-  "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",
-] as const;
+const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"c".repeat(64)}`;
 const SYNTHETIC_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
 const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
@@ -88,6 +105,7 @@ type FixtureMode =
   | "brev-mismatch"
   | "brev-sha-command-bypass"
   | "complete"
+  | "complete-multiple-installer-versions"
   | "duplicate-brev-pin"
   | "duplicate-installer-pin"
   | "failure"
@@ -134,10 +152,12 @@ type FixtureMode =
   | "pr-parser-bypass"
   | "brev-stable-version-drift"
   | "runtime-consumers-newer-than-tables"
+  | "reviewed-release-cohorts"
+  | "reviewed-release-cohorts-url-drift"
+  | "secondary-installer-version-mismatch"
   | "symlink-installer-input"
   | "symlink-scripts-parent"
-  | "duplicate-trusted-formula"
-  | "trusted-sandbox-alternate-version"
+  | "duplicate-trusted-release"
   | "trusted-formula-mismatch";
 type PinFormatting =
   | "canonical"
@@ -350,6 +370,68 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
 };
 
+function addInstallerReleaseTable(
+  source: string,
+  version: string,
+  assetDigests: ReadonlyMap<string, string>,
+): string {
+  const functionStart = source.indexOf("openshell_pinned_sha256() {");
+  const fallback = "    *)\n      return 1\n      ;;";
+  const fallbackStart = source.indexOf(fallback, functionStart);
+  expect(functionStart, "installer pin function start").not.toBe(-1);
+  expect(fallbackStart, "installer pin function fallback").not.toBe(-1);
+  const cases = INSTALLER_ASSETS.map((asset) => {
+    const digest = assetDigests.get(asset) ?? "missing";
+    return `    v${version}:${asset})
+      printf '%s\\n' "${digest}"
+      ;;`;
+  }).join("\n");
+  return `${source.slice(0, fallbackStart)}${cases}\n${source.slice(fallbackStart)}`;
+}
+
+function applyReviewedReleaseCohorts(source: string): string {
+  const currentComment = `# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# nine mappings, and scripts/check-installer-hash.sh compares them with the
+# GitHub release API on every PR, main push, weekly run, and manual dispatch.
+# removalCondition: remove these entries only when NemoClaw drops that
+# supported release or replaces them with independently verified newer pins.`;
+  const reviewedComment = `# OpenShell 0.0.101 is the supported product cohort. OpenShell 0.0.106 is the
+# qualification-only cohort. The base-trusted verifier validates each complete
+# nine-asset release cohort independently against GitHub release metadata.
+# removalCondition: remove a cohort when its product support or qualification
+# ends, or replace it with an independently verified release cohort.`;
+  expect(source.includes(currentComment) || source.includes(reviewedComment)).toBe(true);
+  return addInstallerReleaseTable(
+    source.replace(currentComment, reviewedComment),
+    "0.0.106",
+    V00106_ASSET_DIGESTS,
+  );
+}
+
+INSTALLER_MUTATIONS["reviewed-release-cohorts"] = applyReviewedReleaseCohorts;
+INSTALLER_MUTATIONS["reviewed-release-cohorts-url-drift"] = (source) =>
+  applyReviewedReleaseCohorts(source).replace(
+    "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name",
+    "https://attacker.invalid/openshell/${RELEASE_TAG}/$name",
+  );
+
+for (const mode of [
+  "complete-multiple-installer-versions",
+  "secondary-installer-version-mismatch",
+] as const) {
+  INSTALLER_MUTATIONS[mode] = (source) => {
+    const withSecondRelease = addInstallerReleaseTable(source, "0.0.106", V00106_ASSET_DIGESTS);
+    return mode === "secondary-installer-version-mismatch"
+      ? withSecondRelease.replace(
+          `v0.0.106:${ASSETS[0]})
+      printf '%s\\n' "${V00106_ASSET_DIGESTS.get(ASSETS[0]) ?? "missing"}"`,
+          `v0.0.106:${ASSETS[0]})
+      printf '%s\\n' "${"0".repeat(64)}"`,
+        )
+      : withSecondRelease;
+  };
+}
+
 type InputMutationContext = {
   blueprint: string;
   brevInstaller: string;
@@ -419,162 +501,87 @@ a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108  openshell-gate
 `,
   ],
 ]);
-const V0099_CHECKSUM_MANIFESTS = new Map([
-  [
-    "openshell-checksums-sha256.txt",
-    `35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c  openshell-x86_64-unknown-linux-musl.tar.gz
-d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279  openshell-aarch64-unknown-linux-musl.tar.gz
-e31cac5360e2adf3c971d5742a516626c58acf2fd3db4dcb0e45804def3dc844  openshell-aarch64-apple-darwin.tar.gz
-6f1f0a7a524850edddba52aa233eb53233ad77b9b85a8eee1bdd004e2ace8b6e  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
-4cb1dba9f29fec3111a7858f1bb4f9344d321ce7aa080c6e4ab0e69e8f2761fa  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
-195f865d304518cbf2270bf7d54326390fd0755692a2856ae7c5e7a9f6e38a99  openshell-driver-vm-aarch64-apple-darwin.tar.gz
-0d22a9cac0ca7d080c95ea032df81af382d8889149d959f5c547cf00c05a5918  openshell_0.0.99-1_amd64.deb
-33a9031a57f006e1ed4c0b409aa07a0b4246ee655eec51e74dc872b5f2ec7cc6  openshell_0.0.99-1_arm64.deb
-91e2fc11e09eb4bc4c52e2d512b10224f5e025bda7366c313739bc8301108125  openshell-0.0.99-1.fc44.aarch64.rpm
-5625914d36939bb02a0e1b6564067c1fc4efd429145ffc4691edbe1ca13dc490  openshell-0.0.99-1.fc44.x86_64.rpm
-68aa1f07b36ff10cdce89b3d6b75f0ebaeac1d063e382d7d234488ec4533ab06  openshell-gateway-0.0.99-1.fc44.aarch64.rpm
-f91ed9de71e51c6365e5c934225833b9d8a4cd3b62da8060919fc7993fe7d6b9  openshell-gateway-0.0.99-1.fc44.x86_64.rpm
-f7db8eb284fa0815c0ab375016def8524873ee033049940f071ffef4d0c1a61e  openshell-0.0.99-py3-none-macosx_13_0_arm64.whl
-b06e062563201d4f98a87e8de23e10e40733b548e12891623982ca5b120bccf2  openshell-0.0.99-py3-none-manylinux_2_39_aarch64.whl
-72f8f14c304f5da233755ae285ee8c4c19aaf7fb7b40b14f6c6b17ef9752141f  openshell-0.0.99-py3-none-manylinux_2_39_x86_64.whl
-`,
-  ],
-  [
-    "openshell-gateway-checksums-sha256.txt",
-    `640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
-3a5d3092ae34356beb0ff2a920f9a87af4233c7a1086a53cd9429d48358f5c09  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
-4340619292ecb565f90eb2250db504baa37dd410361b366b42e174d34512cb6c  openshell-gateway-aarch64-apple-darwin.tar.gz
-`,
-  ],
-  [
-    "openshell-sandbox-checksums-sha256.txt",
-    `84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
-c758e7dc2b8c904baa01e2ccce0f08daf96ede0c648478b23346d8c4dd16f432  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
-`,
-  ],
-]);
-const V0099_ASSET_DIGESTS = new Map([
-  ...[...V0099_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
-    contents
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const [digest, asset] = line.split(/\s+/);
-        return [asset, digest] as const;
-      }),
-  ),
-  ["openshell.rb", "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"],
-]);
-const V00101_CHECKSUM_MANIFESTS = new Map([
-  [
-    "openshell-checksums-sha256.txt",
-    `7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913  openshell-x86_64-unknown-linux-musl.tar.gz
-b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296  openshell-aarch64-unknown-linux-musl.tar.gz
-9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881  openshell-aarch64-apple-darwin.tar.gz
-087c261d1594aace6f179710f07406bc03163aa37f1c87b8290eeb21ee81352f  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
-670039e6f973e35f7eac98b1e34ffdcdfcda7f094019bdec02007b4c0eaa0a43  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
-a7bf38218aa6c85ed73217b501f9fa44c32861fd48aa4a9141aa1fe478b7dc5b  openshell-driver-vm-aarch64-apple-darwin.tar.gz
-4b8e3deb2d3a4ec7b6fd05fbeaee58dfafc670a629077c3d80e85882211abddd  openshell_0.0.101-1_amd64.deb
-0087dab1206c8dbdec455ae65434b881033757b2a094ecf3a6f416c81057aeee  openshell_0.0.101-1_arm64.deb
-49be637bf2792910ae6f551f770de44ed869d10f28363236de0a96e4d093213b  openshell-0.0.101-1.fc44.aarch64.rpm
-e77a96379dce740b11bbec969cc4c9ba6959129af21673346978d5ed20fa3127  openshell-0.0.101-1.fc44.x86_64.rpm
-5fa81231f790de65b61421c96b3bd8ebdc8dff5cb1915bfbfdd20b9f26f8d3f4  openshell-gateway-0.0.101-1.fc44.aarch64.rpm
-45b7e3d1909e25db7324a9569e9fc3f372e43045a2fd2bc8df6d780e00b21161  openshell-gateway-0.0.101-1.fc44.x86_64.rpm
-a05a7379d6d7f329c3e3fd109af85a9b61184173dd41589e48e2dfff9c02a3d0  openshell-0.0.101-py3-none-macosx_13_0_arm64.whl
-8c86d18a23ade9650d1c616ada7c3f2df28ed839e9fdc29368d2573064a63a7d  openshell-0.0.101-py3-none-manylinux_2_39_aarch64.whl
-ae36a8001bceb7366f184b7b69d0d9d7f7b3a6b95d952d616ece4ff229fc0dcd  openshell-0.0.101-py3-none-manylinux_2_39_x86_64.whl
-`,
-  ],
-  [
-    "openshell-gateway-checksums-sha256.txt",
-    `eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
-ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
-0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14  openshell-gateway-aarch64-apple-darwin.tar.gz
-`,
-  ],
-  [
-    "openshell-sandbox-checksums-sha256.txt",
-    `953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
-c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
-`,
-  ],
-]);
-const V00101_ASSET_DIGESTS = new Map([
-  ...[...V00101_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
-    contents
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const [digest, asset] = line.split(/\s+/);
-        return [asset, digest] as const;
-      }),
-  ),
-  ["openshell.rb", "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"],
-]);
 const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_CHECKSUM_MANIFESTS],
   ["0.0.101", V00101_CHECKSUM_MANIFESTS],
+  ["0.0.103", V00103_CHECKSUM_MANIFESTS],
+  ["0.0.106", V00106_CHECKSUM_MANIFESTS],
 ]);
 const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_ASSET_DIGESTS],
   ["0.0.101", V00101_ASSET_DIGESTS],
+  ["0.0.103", V00103_ASSET_DIGESTS],
+  ["0.0.106", V00106_ASSET_DIGESTS],
 ]);
-const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
-  "allowlisted-alternate-version": (source) => {
-    const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
-      .map(
-        ([manifest, contents]) =>
-          `  "9.9.9|${manifest}|${createHash("sha256").update(contents).digest("hex")}"`,
-      )
-      .join("\n");
-    const manifests = source.replace(
-      "readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n",
-      `readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n${alternateEntries}\n`,
-    );
-    const formula = manifests.replace(
-      "readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n",
-      `readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n  "9.9.9|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v9.9.9/openshell.rb|${FORMULA_DIGEST}"\n`,
-    );
-    expect(manifests !== source && formula !== manifests, "alternate anchors").toBe(true);
-    return formula;
+const trustAlternateRelease = (source: string): string => {
+  const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
+  const manifests = [...CHECKSUM_MANIFESTS.entries()]
+    .map(
+      ([asset, contents]) => `      {
+        asset: "${asset}",
+        sha256: "${createHash("sha256").update(contents).digest("hex")}",
+      },`,
+    )
+    .join("\n");
+  const marker = "const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [\n";
+  const result = source.replace(
+    marker,
+    `${marker}  {
+    brevTemplateSha256: [
+      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "${FORMULA_DIGEST}",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v9.9.9/openshell.rb",
+    },
+    installerTemplateSha256: [
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
+    manifests: [
+${manifests}
+    ],
+    sandboxBuilds: [
+      { required: false, sha256: "${digests[0]}" },
+      { required: false, sha256: "${digests[1]}" },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "${SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST}",
+      required: false,
+      runtimeTemplateSha256: [
+        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
+      ],
+    },
+    version: "9.9.9",
   },
-  "duplicate-trusted-formula": (source) =>
-    source.replace(
-      "readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n",
-      `readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n  "0.0.72|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb|${FORMULA_DIGEST}"\n`,
-    ),
+`,
+  );
+  expect(result, "alternate release trust anchor").not.toBe(source);
+  return result;
+};
+const removeFirstReleaseFormula = (source: string): string =>
+  source.replace(
+    /    formula: \{\n      asset: "openshell\.rb",\n      sha256: "[a-f0-9]{64}",\n      url: "https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.72\/openshell\.rb",\n    \},/u,
+    "    formula: undefined as never,",
+  );
+const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "allowlisted-alternate-version": trustAlternateRelease,
+  "duplicate-trusted-release": (source) =>
+    source.replace('    version: "0.0.82",', '    version: "0.0.72",'),
   "incomplete-trusted-allowlist": (source) =>
     source.replace(
-      /^\s*"0\.0\.72\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
+      /      \{\n        asset: "openshell-sandbox-checksums-sha256\.txt",\n        sha256: "d38507501338576437cf3e554df71fefe927dc0d72758f88e260069527ed9ccc",\n      \},/u,
       "",
     ),
-  "malformed-trusted-formula": (source) =>
-    source.replace(`v0.0.72/openshell.rb|${FORMULA_DIGEST}`, "v0.0.72/openshell.rb|invalid"),
+  "malformed-trusted-formula": (source) => source.replace(FORMULA_DIGEST, "invalid"),
   "mismatched-trusted-formula-url": (source) =>
     source.replace(
       "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
       "https://attacker.invalid/openshell.rb",
     ),
-  "missing-trusted-formula": (source) =>
-    source.replace(
-      /^\s*"0\.0\.72\|openshell\.rb\|https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.72\/openshell\.rb\|[a-f0-9]{64}"\s*$/m,
-      "",
-    ),
+  "missing-trusted-formula": removeFirstReleaseFormula,
   "trusted-formula-mismatch": (source) => source.replace(FORMULA_DIGEST, "0".repeat(64)),
-};
-const trustAlternateSandboxBuilds = (source: string): string => {
-  const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
-  return source.replace(
-    "const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [\n",
-    `const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [
-  { required: false, sha256: "${digests[0]}", version: "9.9.9" },
-  { required: false, sha256: "${digests[1]}", version: "9.9.9" },
-`,
-  );
-};
-const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
-  "allowlisted-alternate-version": trustAlternateSandboxBuilds,
-  "trusted-sandbox-alternate-version": trustAlternateSandboxBuilds,
 };
 const tempDirs: string[] = [];
 
@@ -645,6 +652,62 @@ function replacePinFunction(
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
+function addV00106OperationalTrust(source: string): string {
+  const withIdentityCheck = source.replace(
+    "pinned_sandbox_build_version() {",
+    `is_pinned_openshell_v00106_linux_x86_64_install() {
+  local openshell_bin="$1"
+  local gateway_bin="$2"
+  local sandbox_bin="$3"
+  local openshell_sha gateway_sha sandbox_sha
+
+  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] || return 1
+  openshell_sha="$(file_sha256 "$openshell_bin")" || return 1
+  gateway_sha="$(file_sha256 "$gateway_bin")" || return 1
+  sandbox_sha="$(file_sha256 "$sandbox_bin")" || return 1
+  [ "$openshell_sha" = "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59" ] \\
+    && [ "$gateway_sha" = "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c" ] \\
+    && [ "$sandbox_sha" = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8" ]
+}
+
+pinned_sandbox_build_version() {`,
+  );
+  const capabilityMarker = "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.";
+  const result = withIdentityCheck.replace(
+    capabilityMarker,
+    `  # The v0.0.106 release binaries are stripped and no longer retain every
+  # source-level capability marker used by the development-build fallback
+  # below. Accept only the reviewed executable byte identities as the stable
+  # release capability proof; arbitrary binaries that merely report 0.0.106
+  # must still pass the fail-closed marker checks.
+  if is_pinned_openshell_v00106_linux_x86_64_install \\
+    "$openshell_bin" "$gateway_bin" "$sandbox_bin"; then
+    return 0
+  fi
+
+${capabilityMarker}`,
+  );
+  expect(withIdentityCheck, "v0.0.106 executable identity helper").not.toBe(source);
+  expect(result, "v0.0.106 capability proof").not.toBe(withIdentityCheck);
+  return result;
+}
+
+function removeV00106OperationalTrust(source: string): string {
+  const identityStart = source.indexOf("is_pinned_openshell_v00106_linux_x86_64_install() {");
+  const sandboxStart = source.indexOf("pinned_sandbox_build_version() {", identityStart);
+  expect([identityStart, sandboxStart], "v0.0.106 helper boundaries").not.toContain(-1);
+  const withoutIdentity = `${source.slice(0, identityStart)}${source.slice(sandboxStart)}`;
+  const capabilityStart = withoutIdentity.indexOf(
+    "  # The v0.0.106 release binaries are stripped and no longer retain every",
+  );
+  const fallbackStart = withoutIdentity.indexOf(
+    "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.",
+    capabilityStart,
+  );
+  expect([capabilityStart, fallbackStart], "v0.0.106 proof boundaries").not.toContain(-1);
+  return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
+}
+
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = INSTALLER_TEMPLATE.replace(
     /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
@@ -661,25 +724,35 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
     "openshell_checksum_line() {",
     pinFunction,
   );
-  const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
-  const sandboxFunctionEnd = withPinFunction.indexOf(
+  const operationalTemplate =
+    openshellVersion === "0.0.106"
+      ? withPinFunction.includes("is_pinned_openshell_v00106_linux_x86_64_install() {")
+        ? withPinFunction
+        : addV00106OperationalTrust(withPinFunction)
+      : removeV00106OperationalTrust(withPinFunction);
+  const sandboxFunctionStart = operationalTemplate.indexOf("pinned_sandbox_build_version() {");
+  const sandboxFunctionEnd = operationalTemplate.indexOf(
     "\ncomponent_build_version() {",
     sandboxFunctionStart,
   );
   expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
   expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
-  const sandboxFunction = withPinFunction.slice(sandboxFunctionStart, sandboxFunctionEnd);
+  const sandboxFunction = operationalTemplate.slice(sandboxFunctionStart, sandboxFunctionEnd);
   const hasSandboxBuild = sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   const selectedDigests =
     openshellVersion === "0.0.101"
       ? V00101_SANDBOX_BUILD_DIGESTS
-      : openshellVersion === "9.9.9"
-        ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
-        : undefined;
+      : openshellVersion === "0.0.103"
+        ? V00103_SANDBOX_BUILD_DIGESTS
+        : openshellVersion === "0.0.106"
+          ? V00106_SANDBOX_BUILD_DIGESTS
+          : openshellVersion === "9.9.9"
+            ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
+            : undefined;
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
-    ? withPinFunction
-    : addSandboxBuildPins(withPinFunction, openshellVersion, selectedDigests!);
+    ? operationalTemplate
+    : addSandboxBuildPins(operationalTemplate, openshellVersion, selectedDigests!);
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
@@ -693,6 +766,32 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
     "openshell_checksum_line() {",
     pinFunction,
   );
+}
+
+function renderSupervisorRuntime(openshellVersion: string): string {
+  const hasManifestIdentity = SUPERVISOR_RUNTIME_TEMPLATE.includes(
+    `  "${openshellVersion}": "sha256:`,
+  );
+  const manifestDigest =
+    openshellVersion === "0.0.103"
+      ? V00103_SUPERVISOR_MANIFEST_DIGEST
+      : openshellVersion === "0.0.106"
+        ? V00106_SUPERVISOR_MANIFEST_DIGEST
+        : openshellVersion === "9.9.9"
+          ? SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST
+          : undefined;
+  expect(
+    hasManifestIdentity || manifestDigest,
+    `supervisor fixture ${openshellVersion}`,
+  ).toBeTruthy();
+  return hasManifestIdentity
+    ? SUPERVISOR_RUNTIME_TEMPLATE
+    : SUPERVISOR_RUNTIME_TEMPLATE.replace(
+        "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
+        `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+  "${openshellVersion}": "${manifestDigest}",
+`,
+      );
 }
 
 function createFixture(
@@ -712,6 +811,7 @@ function createFixture(
   fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
     recursive: true,
   });
+  fs.mkdirSync(path.join(fixtureRoot, "src/lib/onboard"), { recursive: true });
   const checker = fs.readFileSync(
     path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
     "utf8",
@@ -725,6 +825,10 @@ function createFixture(
   fs.writeFileSync(
     path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml"),
     `max_openshell_version: "${openshellVersion}"\n`,
+  );
+  fs.writeFileSync(
+    path.join(fixtureRoot, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+    renderSupervisorRuntime(openshellVersion),
   );
   fs.writeFileSync(
     path.join(scriptsDir, "install-openshell.sh"),
@@ -766,6 +870,22 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
+  *releases/download/v0.0.106/*)
+    case "\${url##*/}" in
+      openshell-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell-gateway-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell-sandbox-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell.rb)
+        printf '%s\n' '# OpenShell v0.0.106 formula fixture' >"$output"
+        ;;
+    esac
+    ;;
   *releases/download/v${openshellVersion}/*)
     case "\${NEMOCLAW_TEST_CURL_MODE}" in
       failure) exit 22 ;;
@@ -806,7 +926,13 @@ case "\${1:-}" in
   */openshell.rb)
     case "\${NEMOCLAW_TEST_CURL_MODE:-}" in
       formula-mismatch | formula-self-authorized) digest='${"0".repeat(64)}' ;;
-      *) digest='${assetDigests.get(FORMULA_ASSET)}' ;;
+      *)
+        if grep -q 'OpenShell v0.0.106' "$1"; then
+          digest='${V00106_ASSET_DIGESTS.get(FORMULA_ASSET)}'
+        else
+          digest='${assetDigests.get(FORMULA_ASSET)}'
+        fi
+        ;;
     esac
     printf '%s  %s\\n' "$digest" "$1"
     ;;
@@ -858,11 +984,6 @@ function runFixture(
       : fs.readFileSync(targetChecker, "utf8"),
   );
   const checker = trustedChecker ? trustedCheckerPath : targetChecker;
-  const checkerSource = fs.readFileSync(checker, "utf8");
-  const mutateChecker = CHECKER_MUTATIONS[mode];
-  const checkerResult = mutateChecker?.(checkerSource) ?? checkerSource;
-  expect(checkerResult === checkerSource, `checker ${mode}`).toBe(mutateChecker === undefined);
-  fs.writeFileSync(checker, checkerResult);
   const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
   const blueprint = path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml");
   const installerSource = fs.readFileSync(installer, "utf8");
@@ -895,12 +1016,64 @@ function runFixture(
   });
 }
 
+function expectTrustedRelease(
+  result: ReturnType<typeof runFixture>,
+  version: string,
+  manifests: ReadonlyMap<string, string>,
+  assets: ReadonlyMap<string, string>,
+): void {
+  expect(result.status, result.stdout).toBe(0);
+  expect(result.stdout).toContain(`Checking OpenShell v${version} release assets`);
+  manifests.forEach((contents, manifest) => {
+    const digest = createHash("sha256").update(contents).digest("hex");
+    expect(result.stdout).toContain(`OK: ${manifest} (${digest})`);
+  });
+  expect(result.stdout).toContain(`OK: installer openshell.rb (${assets.get(FORMULA_ASSET)})`);
+  expect(result.stdout).toContain("All installer hashes are current");
+}
+
 describe("installer hash verification", () => {
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("verifies each complete installer release table independently", () => {
+    const result = runFixture("complete-multiple-installer-versions", undefined, true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("accepts the reviewed product and qualification release cohorts", () => {
+    const result = runFixture("reviewed-release-cohorts", "0.0.101", true);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("rejects download drift from the reviewed release cohorts", () => {
+    const result = runFixture("reviewed-release-cohorts-url-drift", "0.0.101", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when a secondary installer release pin differs from its manifest", () => {
+    const result = runFixture("secondary-installer-version-mismatch", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      `installer ${ASSETS[0]} does not match exactly one v0.0.106 checksum entry`,
+    );
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("verifies the pinned Homebrew formula", () => {
@@ -911,57 +1084,28 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("rejects drift from the reviewed Homebrew trust transition", () => {
-    const result = runFixture("installer-homebrew-trust-transition-drift", undefined, true);
+  it.each([
+    "installer-homebrew-trust-transition-drift",
+    "installer-homebrew-trust-transition-stable-leak",
+    "installer-homebrew-trust-transition-complete-current",
+    "installer-homebrew-untrust-cleanup-drift",
+  ] as const)("rejects Homebrew trust-transition drift in %s", (mode) => {
+    const result = runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("rejects the prior template that leaves stable formula trust behind", () => {
-    const result = runFixture("installer-homebrew-trust-transition-stable-leak", undefined, true);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("installer operational template is not base-trusted");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
-
-  it("rejects the legacy installer template after completing the trust transition (#7451)", () => {
-    const legacy = runFixture(
-      "installer-homebrew-trust-transition-complete-current",
-      undefined,
-      true,
-    );
-
-    expect(legacy.status).toBe(1);
-    expect(legacy.stdout).toContain("installer operational template is not base-trusted");
-  });
-
-  it("rejects cleanup that deletes the formula after untrust fails", () => {
-    const result = runFixture("installer-homebrew-untrust-cleanup-drift", undefined, true);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("installer operational template is not base-trusted");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
-
-  it("fails closed when the Homebrew formula digest does not match", () => {
-    const result = runFixture("formula-mismatch", undefined, true);
+  it.each([
+    ["formula-mismatch", "does not match the base-trusted"],
+    ["formula-pin-mismatch", "pin does not match the base-trusted"],
+  ] as const)("fails closed for %s", (mode, diagnostic) => {
+    const result = runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "STALE: installer openshell.rb does not match the base-trusted v0.0.72 formula digest",
-    );
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
-
-  it("fails closed when the installer formula pin differs from the base-trusted digest", () => {
-    const result = runFixture("formula-pin-mismatch", undefined, true);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain(
-      "STALE: installer openshell.rb pin does not match the base-trusted v0.0.72 formula digest",
+      `STALE: installer openshell.rb ${diagnostic} v0.0.72 formula digest`,
     );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -986,42 +1130,17 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("accepts the allowlisted OpenShell 0.0.99 release manifests (#8499)", () => {
-    const result = runFixture("complete", "0.0.99", true);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Checking OpenShell v0.0.99 release assets");
-    expect(result.stdout).toContain(
-      "OK: openshell-checksums-sha256.txt (ea3e2c1a583e5ea00332c3b65a18068bd1f9b090f7ff0f5e24b29762cfc3b4c7)",
-    );
-    expect(result.stdout).toContain(
-      "OK: openshell-gateway-checksums-sha256.txt (7f84f728412548720c8ef51993c58414c4f04598451c282b26ead233185e40c5)",
-    );
-    expect(result.stdout).toContain(
-      "OK: openshell-sandbox-checksums-sha256.txt (9e67af6bab9f975432a1045fcfea5ab182ab585b17886c8c290c1eb77232b87a)",
-    );
-    expect(result.stdout).toContain("All installer hashes are current");
-  });
-
-  it("accepts the reviewed OpenShell 0.0.101 release manifests (#8598)", () => {
-    const result = runFixture("complete", "0.0.101", true);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
-    expect(result.stdout).toContain(
-      "OK: openshell-checksums-sha256.txt (9c90869d00b109b5ac1062b1a9808a592c2311d3c0c4926bae44d136b979d8a9)",
-    );
-    expect(result.stdout).toContain(
-      "OK: openshell-gateway-checksums-sha256.txt (dcb3f1917713bf2a8e8e1803ac42c5e39d9dd41e644136b05def32b077082777)",
-    );
-    expect(result.stdout).toContain(
-      "OK: openshell-sandbox-checksums-sha256.txt (d16f7d369c54d74d36c7df036565267a960e7ce6fb143012fe9d77f257d6e8b3)",
-    );
-    expect(result.stdout).toContain(
-      "OK: installer openshell.rb (87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2)",
-    );
-    expect(result.stdout).toContain("All installer hashes are current");
-  });
+  it.each([
+    ["0.0.99", V0099_CHECKSUM_MANIFESTS, V0099_ASSET_DIGESTS],
+    ["0.0.101", V00101_CHECKSUM_MANIFESTS, V00101_ASSET_DIGESTS],
+    ["0.0.103", V00103_CHECKSUM_MANIFESTS, V00103_ASSET_DIGESTS],
+    ["0.0.106", V00106_CHECKSUM_MANIFESTS, V00106_ASSET_DIGESTS],
+  ] as const)(
+    "accepts the complete trusted OpenShell %s release identity",
+    (version, manifests, assets) => {
+      expectTrustedRelease(runFixture("complete", version, true), version, manifests, assets);
+    },
+  );
 
   it("selects a second complete trusted release from the allowlist", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
@@ -1031,27 +1150,24 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("fails closed when the derived release is not allowlisted", () => {
-    const result = runFixture("trusted-sandbox-alternate-version", "9.9.9", true);
+  it("fails closed when the derived release has no base-trusted release record", () => {
+    const result = runFixture("complete", "9.9.9", true);
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain(
-      "OpenShell v9.9.9 is not in the trusted release-manifest allowlist",
-    );
+    expect(result.stdout).toContain("OpenShell v9.9.9 is not in the base-trusted release records");
     expect(result.stdout).not.toContain("Checking OpenShell v9.9.9 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("requires the trusted allowlist prerequisite before a newer pin PR", () => {
-    // The first invocation deliberately keeps both trusted identity sets in
-    // their old base state while the separate target tree selects 9.9.9. The
-    // target cannot authorize itself. The second invocation models both trust
-    // prerequisites already present in base code; only then may the otherwise
-    // identical pin tree pass.
+  it("requires the trusted release-record prerequisite before a newer pin PR", () => {
+    // The first invocation keeps the base trust records unchanged while the
+    // separate target tree selects 9.9.9. The target cannot authorize itself.
+    // The second models the complete trust prerequisite already present in
+    // base code; only then may the otherwise identical pin tree pass.
     const beforePrerequisite = runFixture("complete", "9.9.9", true);
     expect(beforePrerequisite.status).toBe(1);
     expect(beforePrerequisite.stdout).toContain(
-      "no base-trusted standalone sandbox binary identities exist for release 9.9.9",
+      "OpenShell v9.9.9 is not in the base-trusted release records",
     );
     expect(beforePrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
 
@@ -1062,42 +1178,48 @@ describe("installer hash verification", () => {
     expect(afterPrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
   });
 
-  it("fails closed when an allowlisted release lacks all three manifest digests", () => {
+  it("fails closed when a trusted release record lacks all three manifest digests", () => {
     const result = runFixture("incomplete-trusted-allowlist", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "OpenShell v0.0.72 does not have exactly three trusted release-manifest digests",
+      "OpenShell v0.0.72 must have exactly three trusted release-manifest digests",
     );
     expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it.each([
-    "missing-trusted-formula",
-    "duplicate-trusted-formula",
-  ] as const)("fails closed when an allowlisted release has an invalid formula trust cardinality: %s", (mode) => {
-    const result = runFixture(mode, undefined, true);
+  it("fails closed when a trusted release record lacks its formula identity", () => {
+    const result = runFixture("missing-trusted-formula", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("trusted OpenShell v0.0.72 formula record is invalid");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when trusted release records contain a duplicate version", () => {
+    const result = runFixture("duplicate-trusted-release", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "OpenShell v0.0.72 does not have exactly one trusted openshell.rb digest",
+      "trusted OpenShell release records contain duplicate versions: 0.0.72",
     );
     expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it.each([
-    "malformed-trusted-formula",
-    "mismatched-trusted-formula-url",
-  ] as const)("fails closed when a trusted formula allowlist tuple is invalid: %s", (mode) => {
-    const result = runFixture(mode, undefined, true);
+  it.each(["malformed-trusted-formula", "mismatched-trusted-formula-url"] as const)(
+    "fails closed when a trusted formula record is invalid: %s",
+    (mode) => {
+      const result = runFixture(mode, undefined, true);
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("trusted OpenShell formula allowlist is invalid");
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("trusted OpenShell v0.0.72 formula record is invalid");
+      expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
 
   it("fails closed when the live formula differs from its trusted release digest", () => {
     const result = runFixture("trusted-formula-mismatch", undefined, true);
@@ -1200,12 +1322,9 @@ describe("installer hash verification", () => {
     ],
     [
       "multiple-installer-versions",
-      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",
+      `installer pin table for 0.0.72 must contain the exact consumed asset set; missing=[${ASSETS[0]}]`,
     ],
-    [
-      "mismatched-table-versions",
-      "installer and Brev launchable pin tables must use the same release version, found 0.0.72, 0.0.73",
-    ],
+    ["mismatched-table-versions", "installer pin table has no assets for selected release 0.0.73"],
   ] as const)("fails closed for %s", (mode, diagnostic) => {
     const result = runFixture(mode, undefined, true);
 
@@ -1259,16 +1378,16 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it.each([
-    "missing-brev-pin",
-    "duplicate-brev-pin",
-  ] as const)("fails closed when the pull-request tree has a %s", (mode) => {
-    const result = runFixture(mode, undefined, true);
+  it.each(["missing-brev-pin", "duplicate-brev-pin"] as const)(
+    "fails closed when the pull-request tree has a %s",
+    (mode) => {
+      const result = runFixture(mode, undefined, true);
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
 
   it("fails closed when the installer pin table contains a duplicate asset", () => {
     const result = runFixture("duplicate-installer-pin", undefined, true);

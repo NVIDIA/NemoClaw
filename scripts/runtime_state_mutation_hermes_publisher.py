@@ -12,7 +12,7 @@ shields transaction already shipped in the image.
 
 The publisher keeps a root-only journal beside the controller marker.  The
 journal binds the provider nonce and complete canonical plan before the Hermes
-guard begins, so a lost Docker exec response can resume only the same
+guard begins, so a lost provider exec response can resume only the same
 transaction.  A successful retry independently verifies the top-level
 config/hash projection and every selector in the installed state-lock plan.
 """
@@ -56,6 +56,7 @@ MAX_GUARD_STATE_BYTES = 4 * 1024 * 1024
 MAX_GUARD_OUTPUT_BYTES = 16 * 1024
 GUARD_TIMEOUT_SECONDS = 13 * 60
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
+POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z")
 BEGIN_OUTPUT = re.compile(r"lock_token=([0-9a-f]{64}) original_locked=([01])\n?\Z")
 PHASES = frozenset(
     {
@@ -123,6 +124,12 @@ def _exact_record(value: object, keys: tuple[str, ...], code: str) -> dict[str, 
 
 def _hex(value: object, code: str) -> str:
     if not isinstance(value, str) or HEX_64.fullmatch(value) is None:
+        _fail(code)
+    return value
+
+
+def _positive_decimal(value: object, code: str) -> str:
+    if not isinstance(value, str) or POSITIVE_DECIMAL.fullmatch(value) is None:
         _fail(code)
     return value
 
@@ -283,7 +290,18 @@ def _normalize_marker(marker: object, posture: str) -> dict[str, object]:
     nonce = _hex(marker.get("nonce"), "publisher-marker-invalid")
     plan_sha256 = _hex(marker.get("planSha256"), "publisher-marker-invalid")
     projection_sha256 = _hex(marker.get("projectionSha256"), "publisher-marker-invalid")
-    if marker.get("providerId") != "docker" or marker.get("stateRoot") != HERMES_DIR:
+    state_root_device = _positive_decimal(
+        marker.get("stateRootDevice"), "publisher-marker-invalid"
+    )
+    state_root_inode = _positive_decimal(
+        marker.get("stateRootInode"), "publisher-marker-invalid"
+    )
+    provider_id = marker.get("providerId")
+    if (
+        not isinstance(provider_id, str)
+        or re.fullmatch(r"[a-z][a-z0-9-]{0,62}", provider_id) is None
+        or marker.get("stateRoot") != HERMES_DIR
+    ):
         _fail("publisher-marker-invalid")
     target = marker.get("target")
     rollback = marker.get("rollback")
@@ -378,6 +396,8 @@ def _normalize_marker(marker: object, posture: str) -> dict[str, object]:
         "nonce": nonce,
         "planSha256": plan_sha256,
         "projectionSha256": projection_sha256,
+        "stateRootDevice": state_root_device,
+        "stateRootInode": state_root_inode,
         "target": target,
         "rollback": rollback,
         "plan": plan_text,
@@ -385,10 +405,13 @@ def _normalize_marker(marker: object, posture: str) -> dict[str, object]:
     return {
         "binding": binding,
         "bindingSha256": hashlib.sha256(_canonical(binding)).hexdigest(),
+        "providerId": provider_id,
         "transactionId": transaction_id,
         "nonce": nonce,
         "planSha256": plan_sha256,
         "projectionSha256": projection_sha256,
+        "stateRootDevice": state_root_device,
+        "stateRootInode": state_root_inode,
         "target": target,
         "rollback": rollback,
         "posture": posture,
@@ -667,7 +690,12 @@ def _guard_arguments(*values: str) -> list[str]:
     return list(values)
 
 
-def _begin_guard(posture: str, rollback_posture: str) -> str:
+def _begin_guard(
+    posture: str,
+    rollback_posture: str,
+    state_root_device: str,
+    state_root_inode: str,
+) -> str:
     output = _run_guard(
         "begin-shields-transition",
         _guard_arguments(
@@ -679,6 +707,10 @@ def _begin_guard(posture: str, rollback_posture: str) -> str:
             posture,
             "--rollback-shields-mode",
             rollback_posture,
+            "--expected-hermes-device",
+            state_root_device,
+            "--expected-hermes-inode",
+            state_root_inode,
         ),
     )
     matched = BEGIN_OUTPUT.fullmatch(output)
@@ -975,7 +1007,12 @@ def _continue_forward(
     guard_state = _matching_guard_token(directory_fd, posture, rollback_posture)
     if phase == "intent":
         if guard_state is None:
-            token = _begin_guard(posture, rollback_posture)
+            token = _begin_guard(
+                posture,
+                rollback_posture,
+                str(normalized["stateRootDevice"]),
+                str(normalized["stateRootInode"]),
+            )
         else:
             token, guard_phase = guard_state
             if guard_phase not in (

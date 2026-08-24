@@ -5,7 +5,22 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+// Type-only: the vllm-storage value exports pull in the Docker adapter chain,
+// whose module initialization probes `docker version` and rewrites
+// DOCKER_HOST/DOCKER_CONTEXT. This module stays import-side-effect free (see
+// createModelRouterCommandProvisioner's docstring), so the storage probes are
+// injected through ModelRouterCommandDeps instead of imported as values.
+import type { StorageProbeResult } from "../inference/vllm-storage";
+
 const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
+
+// The Model Router venv installs torch, transformers, and litellm[proxy] —
+// ~2.1 GiB of packages on disk once installed (#8973). Require that footprint
+// plus a wheel-download/staging allowance up front so pip does not die
+// mid-install with `[Errno 28] No space left on device` and strand a partial
+// venv on a nearly-full filesystem.
+const MODEL_ROUTER_VENV_REQUIRED_BYTES = 3n * 1024n ** 3n;
+const MIB_BYTES = 1024n ** 2n;
 const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   ".git",
   ".hg",
@@ -45,6 +60,16 @@ export type ModelRouterCommandDeps = {
   packageVersion: () => string;
   log?: (message: string) => void;
   sourceFingerprint?: (routerDir: string) => string | null;
+  /**
+   * Disk-capacity collaborators. Production uses probeHostStorage,
+   * measureReclaimableDirectorySizeBytes, and formatStorageBytes from
+   * vllm-storage.
+   * These are required so this module remains import-pure and tests cannot
+   * read capacity from the host filesystem.
+   */
+  probeStorage: (targetPath: string, source: string) => StorageProbeResult;
+  measureDirectorySize: (targetPath: string) => bigint;
+  formatStorageBytes: (bytes: bigint) => string;
 };
 
 export type ModelRouterCommandProvisioner = {
@@ -185,6 +210,39 @@ export function createModelRouterCommandProvisioner(
     return installed !== null && installed.startsWith("install:");
   };
 
+  // Block venv creation when verified capacity is too low, instead of letting
+  // pip fail during installation with `[Errno 28]` and no guidance (#8973).
+  // `reclaimableVenvDir` is an existing venv that this install will replace.
+  // Its current footprint counts toward usable capacity because replacement
+  // removes it before creating the new environment.
+  const assertVenvDiskSpace = (reclaimableVenvDir: string | null): void => {
+    // The probe requires an absolute path. Resolve the supported relative
+    // NEMOCLAW_MODEL_ROUTER_VENV value so capacity is checked at its intended
+    // location.
+    const probe = deps.probeStorage(path.resolve(paths.venvDir), "Model Router venv");
+    if (!probe.ok) {
+      // Continue when the filesystem does not report capacity, matching the
+      // managed-vLLM storage guard's unverifiable-capacity behavior.
+      (deps.log ?? console.log)(
+        `  Continuing because free disk space for the Model Router environment could not be verified (${probe.reason}).`,
+      );
+      return;
+    }
+    const reclaimableBytes = reclaimableVenvDir ? deps.measureDirectorySize(reclaimableVenvDir) : 0n;
+    const availableBytes = probe.capacity.availableBytes + reclaimableBytes;
+    if (availableBytes >= MODEL_ROUTER_VENV_REQUIRED_BYTES) return;
+    // State the shortfall in MiB: near the threshold both sides round to the
+    // same "3 GiB" and the message would otherwise read as a contradiction.
+    const shortfallMib =
+      (MODEL_ROUTER_VENV_REQUIRED_BYTES - availableBytes + MIB_BYTES - 1n) / MIB_BYTES;
+    throw new Error(
+      `Model Router installation needs at least ${deps.formatStorageBytes(MODEL_ROUTER_VENV_REQUIRED_BYTES)} of free or reclaimable capacity ` +
+        `at ${probe.capacity.path} (~2.1 GiB of Python packages plus download staging), but only ` +
+        `${deps.formatStorageBytes(availableBytes)} is available. ` +
+        `Free at least ${String(shortfallMib)} MiB, then run \`nemoclaw onboard --resume\`.`,
+    );
+  };
+
   const initializeModelRouterSubmodule = (): void => {
     if (isModelRouterPackageReady(paths.routerDir)) return;
     if (
@@ -224,6 +282,9 @@ export function createModelRouterCommandProvisioner(
     const allowReplaceExistingVenv =
       path.resolve(paths.venvDir) === path.resolve(paths.defaultVenvDir) ||
       readModelRouterInstalledFingerprint(paths.venvDir) !== null;
+    assertVenvDiskSpace(
+      allowReplaceExistingVenv && fs.existsSync(paths.venvDir) ? paths.venvDir : null,
+    );
     const venvPython = deps.prepareModelRouterVenv({
       venvDir: paths.venvDir,
       allowReplaceExisting: allowReplaceExistingVenv,

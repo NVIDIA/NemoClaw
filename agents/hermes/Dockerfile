@@ -6,9 +6,12 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
+# BuildKit supplies this automatic platform argument. The Portable staged
+# context pins its accepted x86_64 target because Podman does not supply it.
+ARG TARGETARCH
 
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
@@ -69,6 +72,7 @@ RUN set -eu; \
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -77,6 +81,9 @@ COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependen
 FROM scratch AS hermes-agent-payload
 
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+# Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
+# __init__.py.
+COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
@@ -96,6 +103,7 @@ FROM scratch AS hermes-runtime-payload
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
@@ -119,7 +127,7 @@ COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-ti
 COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
 COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY scripts/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py
 COPY scripts/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py
@@ -135,26 +143,57 @@ COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-herm
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
 
-# Fetch the exact managed Teams capability wheels outside RUN instructions so
+# Fetch the exact managed capability wheels outside RUN instructions so
 # both the standard build and the protected --network none rebuild install the
 # reviewed union from immutable inputs rather than a reusable networked layer.
 FROM scratch AS hermes-managed-teams-common-wheels
 
-ADD --chmod=0444 --checksum=sha256:db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c https://files.pythonhosted.org/packages/3a/d4/3c4205258642035d160c09f598a302260776dcb6d5bdf659eea7c6066d5e/microsoft_teams_apps-2.0.13.4-py3-none-any.whl /microsoft_teams_apps-2.0.13.4-py3-none-any.whl
-ADD --chmod=0444 --checksum=sha256:0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d https://files.pythonhosted.org/packages/f4/09/8efc1f9a7ee3ef87d2f394b39355d884e76f35d9871a72530d2a8deab325/microsoft_teams_api-2.0.15-py3-none-any.whl /microsoft_teams_api-2.0.15-py3-none-any.whl
-ADD --chmod=0444 --checksum=sha256:e2b0257d9b8782830df61eb6aa993a1ddc0349daddd845739da45d2a29a0c44b https://files.pythonhosted.org/packages/7d/b8/c4e5df0f6797363ff8a431bcee1a51a7d8b6fe2e5d4cac21a6bd58e9f50f/microsoft_teams_cards-2.0.15-py3-none-any.whl /microsoft_teams_cards-2.0.15-py3-none-any.whl
-ADD --chmod=0444 --checksum=sha256:c61057695b9f1a97de9b6f54f0c66206903f56c22427b0bca31e0fc34da49311 https://files.pythonhosted.org/packages/8d/91/01e6aeddd78639c74489c24785f2cec0f842ba16f3b594db202386bd721d/microsoft_teams_common-2.0.15-py3-none-any.whl /microsoft_teams_common-2.0.15-py3-none-any.whl
-ADD --chmod=0444 --checksum=sha256:dd17e95a7c71bce75e8108113438ba7c4a086b3bcad4f57a8c09b7af3d753c2d https://files.pythonhosted.org/packages/94/b0/d807279f4b55d16d1f120d5ac4344c6e39b56732e2a224d40bded7fd67ad/msal-1.37.0-py3-none-any.whl /msal-1.37.0-py3-none-any.whl
+ADD --checksum=sha256:db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c https://files.pythonhosted.org/packages/3a/d4/3c4205258642035d160c09f598a302260776dcb6d5bdf659eea7c6066d5e/microsoft_teams_apps-2.0.13.4-py3-none-any.whl /microsoft_teams_apps-2.0.13.4-py3-none-any.whl
+ADD --checksum=sha256:0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d https://files.pythonhosted.org/packages/f4/09/8efc1f9a7ee3ef87d2f394b39355d884e76f35d9871a72530d2a8deab325/microsoft_teams_api-2.0.15-py3-none-any.whl /microsoft_teams_api-2.0.15-py3-none-any.whl
+ADD --checksum=sha256:e2b0257d9b8782830df61eb6aa993a1ddc0349daddd845739da45d2a29a0c44b https://files.pythonhosted.org/packages/7d/b8/c4e5df0f6797363ff8a431bcee1a51a7d8b6fe2e5d4cac21a6bd58e9f50f/microsoft_teams_cards-2.0.15-py3-none-any.whl /microsoft_teams_cards-2.0.15-py3-none-any.whl
+ADD --checksum=sha256:c61057695b9f1a97de9b6f54f0c66206903f56c22427b0bca31e0fc34da49311 https://files.pythonhosted.org/packages/8d/91/01e6aeddd78639c74489c24785f2cec0f842ba16f3b594db202386bd721d/microsoft_teams_common-2.0.15-py3-none-any.whl /microsoft_teams_common-2.0.15-py3-none-any.whl
+ADD --checksum=sha256:dd17e95a7c71bce75e8108113438ba7c4a086b3bcad4f57a8c09b7af3d753c2d https://files.pythonhosted.org/packages/94/b0/d807279f4b55d16d1f120d5ac4344c6e39b56732e2a224d40bded7fd67ad/msal-1.37.0-py3-none-any.whl /msal-1.37.0-py3-none-any.whl
+
+# Google Chat needs the google SDKs, which Hermes does not package: its
+# pyproject declares no google_chat extra, and `_load_google_modules()`
+# imports pubsub, googleapiclient, and grpc all-or-nothing even in REST-pull
+# mode. Vendor only what the base venv lacks; uv satisfies the rest from the
+# installed distributions.
+ADD --checksum=sha256:cdf9c67e7ca2402d86ccbfde5f2503fc83e3cc3f58cc78456ae96cad24a6d2de https://files.pythonhosted.org/packages/bc/c1/a8a92ae1bc4b1a8f804c776d7d3f0c771b78a62c3ad4df1be41b3fd8c767/google_api_core-2.34.0-py3-none-any.whl /google_api_core-2.34.0-py3-none-any.whl
+ADD --checksum=sha256:61eaaac3b8fc8fdf11c08af87abc3d1342d1b37319cc1b57405f86ef7697e717 https://files.pythonhosted.org/packages/b0/34/5a624e49f179aa5b0cb87b2ce8093960299030ff40423bfbde09360eb908/google_api_python_client-2.194.0-py3-none-any.whl /google_api_python_client-2.194.0-py3-none-any.whl
+ADD --checksum=sha256:eada68dfd52b3b81191827601e2a0c3fa12540c818534b630ddc5355769c3995 https://files.pythonhosted.org/packages/e8/1d/f6d3ca1ad0725f2e08a1c6915640748a52de2e66596160a4d53b010cccf0/google_auth-2.55.1-py3-none-any.whl /google_auth-2.55.1-py3-none-any.whl
+ADD --checksum=sha256:67088a8387dc3f66016a690634f1cb9b7a48a31406f8998e088efc64203e7a12 https://files.pythonhosted.org/packages/68/8a/96410d0c3e02b584d1e7f5d4000b2e1710855650b226cd0601f2b154940a/google_auth_httplib2-0.4.1-py3-none-any.whl /google_auth_httplib2-0.4.1-py3-none-any.whl
+ADD --checksum=sha256:7210d691a46d7a66559696899ebe6eb731e63de29b624964b3be4dd2d12d3e19 https://files.pythonhosted.org/packages/93/20/dd0b27d4ad4577c062e77ff968ca3e2d404186cd78c8a2a53a0ef5fe5389/google_cloud_pubsub-2.39.0-py3-none-any.whl /google_cloud_pubsub-2.39.0-py3-none-any.whl
+ADD --checksum=sha256:28a1934bcd33b9c9da66ac301a0a4227e3367f095a17d0375cb98f0a09d93b79 https://files.pythonhosted.org/packages/9a/51/186c02b8549b69ccda44429cf6ff5081e4b61a602ddfe6a8020d1be31d1b/googleapis_common_protos-1.75.1-py3-none-any.whl /googleapis_common_protos-1.75.1-py3-none-any.whl
+ADD --checksum=sha256:0f5e680b20aa0a9441e68c769da04d94d70fca4e43751a82d8abb8aa6a7181ca https://files.pythonhosted.org/packages/84/ab/be3ad0d46cffe35fd1e7cc3f9947edd6cb3c552229de3be2742f15f7ea47/grpc_google_iam_v1-0.14.5-py3-none-any.whl /grpc_google_iam_v1-0.14.5-py3-none-any.whl
+ADD --checksum=sha256:f6a838a7c5fb84ae98833ec0ef81ed438c26e11e54b2ddb8e92ad328c861de69 https://files.pythonhosted.org/packages/d6/00/73204406228cf989bea6b0fd9fe4702fab49a8a152a0c6f90856dadb6ac7/grpcio_status-1.83.0-py3-none-any.whl /grpcio_status-1.83.0-py3-none-any.whl
+ADD --checksum=sha256:dc6705cacdf3fb0a2aba7629fa33c90fd93e30035db0c157325826be177e4816 https://files.pythonhosted.org/packages/33/a0/550eec327e5f5c7b732531c489f5307efec41f047b0d703bd4ca1e5ad2db/httplib2-0.32.0-py3-none-any.whl /httplib2-0.32.0-py3-none-any.whl
+ADD --checksum=sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef https://files.pythonhosted.org/packages/ca/6f/a04e900f465ff3221ccc395522503e2d10e79fa21f2723c8e177aae1e0d1/opentelemetry_api-1.44.0-py3-none-any.whl /opentelemetry_api-1.44.0-py3-none-any.whl
+ADD --checksum=sha256:df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad https://files.pythonhosted.org/packages/e7/23/ff077e61886ee020a17ce9c8b6fa11c601c8d8345b09ea24f605445df62a/opentelemetry_sdk-1.44.0-py3-none-any.whl /opentelemetry_sdk-1.44.0-py3-none-any.whl
+ADD --checksum=sha256:1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb https://files.pythonhosted.org/packages/a6/0e/49df70d9b81fb5cbae4bbf2a49d865b09bcbcbc4eb53f5851b1027738d78/opentelemetry_semantic_conventions-0.65b0-py3-none-any.whl /opentelemetry_semantic_conventions-0.65b0-py3-none-any.whl
+ADD --checksum=sha256:dc76880b8ee951cca002098574376cf71e055f9f16d9ba6570fb8a06f726d281 https://files.pythonhosted.org/packages/61/3a/cfee3c50294f55a2f0f9575052dec2c2a48891ad4b1c2a133b05a87026cd/proto_plus-1.28.3-py3-none-any.whl /proto_plus-1.28.3-py3-none-any.whl
+ADD --checksum=sha256:4bc97768d8fe4ad6743c8a19403e314511ed9f6d13205b687e52421c023ac1b9 https://files.pythonhosted.org/packages/19/c7/5f7c636ec43e0c545e28d1f1db71990108306f7bdcb89f069ba97e428e7f/protobuf-7.35.1-py3-none-any.whl /protobuf-7.35.1-py3-none-any.whl
+ADD --checksum=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl /pyasn1-0.6.4-py3-none-any.whl
+ADD --checksum=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl /pyasn1_modules-0.4.2-py3-none-any.whl
+ADD --checksum=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl /pyparsing-3.3.2-py3-none-any.whl
+ADD --checksum=sha256:962201ba1c4edcab02e60f9a0d3821e82dfc5d2d6662a21abd533879bdb8a686 https://files.pythonhosted.org/packages/a9/99/3ae339466c9183ea5b8ae87b34c0b897eda475d2aec2307cae60e5cd4f29/uritemplate-4.2.0-py3-none-any.whl /uritemplate-4.2.0-py3-none-any.whl
 
 FROM hermes-managed-teams-common-wheels AS hermes-managed-teams-amd64-wheels
 
-ADD --chmod=0444 --checksum=sha256:10e481880b307a6a438c1cc7b0a1fa8754247239ef5a2e8fe82bd8a1e76e7682 https://files.pythonhosted.org/packages/68/20/fc1812f20ec75af2d4b5e391e93f15621af3102da46142e26177eb506b32/dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+ADD --checksum=sha256:10e481880b307a6a438c1cc7b0a1fa8754247239ef5a2e8fe82bd8a1e76e7682 https://files.pythonhosted.org/packages/68/20/fc1812f20ec75af2d4b5e391e93f15621af3102da46142e26177eb506b32/dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+ADD --checksum=sha256:7bd82671b39065ba18cd536e9cd45b27ff649053f81ddd2c6a966d595067080f https://files.pythonhosted.org/packages/e8/c0/539fe0832f2dd6500a28f5263071623fb34e8d4867aec632ccf81bd21156/grpcio-1.83.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl /grpcio-1.83.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 
 FROM hermes-managed-teams-common-wheels AS hermes-managed-teams-arm64-wheels
 
-ADD --chmod=0444 --checksum=sha256:e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521 https://files.pythonhosted.org/packages/32/ab/b1e1826aacc37d07ba0101230de7b5cbbb5ac6364b78ca3957f0a90d6a51/dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+ADD --checksum=sha256:e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521 https://files.pythonhosted.org/packages/32/ab/b1e1826aacc37d07ba0101230de7b5cbbb5ac6364b78ca3957f0a90d6a51/dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+ADD --checksum=sha256:10b3fa0475eb572c9a81a6fe37fa16a9c500c0c91cfc148cac15692b7e3c2867 https://files.pythonhosted.org/packages/b0/e8/d0389e09cd6b4c4d3089b92967ae4e3ffd64795bd349bf2f85cd6656d3da/grpcio-1.83.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl /grpcio-1.83.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
 
 FROM scratch AS hermes-managed-teams-0-wheels
+
+# Keep the selected wheel stage non-empty for classic Dockerfile builders when
+# the managed capability union is disabled. The marker is removed after the
+# selected stage is copied into the final image.
+COPY --from=hermes-wrapper-payload /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json /.empty
 
 # hadolint ignore=DL3006
 FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels
@@ -235,14 +274,12 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     && rm /scripts/hermes-security-dependencies.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
-# base freshness. Reassert the idempotent npm-private node-tar fix here. When
-# onboarding supplied a corporate CA, use it for the registry-backed download.
-RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
-      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
-      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
-    fi; \
-    node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
-      --npm-root /usr/local/lib/node_modules/npm
+# base freshness. Reassert the idempotent npm-private node-tar fix from the
+# locked cache seed so protected rebuilds remain network-disabled.
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+      --npm-root /usr/local/lib/node_modules/npm \
+      --archive /tmp/nemoclaw-bundled-npm-tar.tgz
 
 # Reassert the npm-private brace-expansion fix for the exact final filesystem.
 # When onboarding supplied a corporate CA, use it for the registry-backed
@@ -276,13 +313,12 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
-# Managed MCP requires the packaged Hermes client surface. A published base can
-# carry the expected Hermes version while still having been built without the
-# optional `mcp` dependency group, in which case Hermes silently disables both
-# MCP discovery and Streamable HTTP support. This is a build-time import guard;
-# the live MCP E2E proves authenticated HTTPS execution through OpenShell.
-RUN /opt/hermes/.venv/bin/python -c \
-    'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+# Managed MCP and ACP require their packaged Hermes client surfaces. A
+# published base can carry the expected Hermes version while omitting either
+# optional dependency group. This is a build-time package/import guard; live
+# protocol behavior remains a separate E2E concern.
+RUN /opt/hermes/.venv/bin/python -I -c \
+    'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit("Hermes ACP SDK version is unavailable"); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit("Hermes MCP Streamable HTTP runtime is unavailable")'
 
 RUN chmod -R a+rX /opt/hermes/.venv \
     && test -r /opt/hermes/.venv/pyvenv.cfg \
@@ -370,12 +406,13 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
-    && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
+    && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
+        /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=89f530da6a8296c8bab449a2a324d8efedca1a90b04a5e0f57cf9203ed2011cd
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=521756ea979d58df44d52b7fc1c2f062a11db397835b925f15bc0265e33e48ea
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -456,13 +493,13 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 555 /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py \
-    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
+    && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
-    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json \
+    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
     && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py", run_name="nemoclaw_runtime_state_mutation_control_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py", run_name="nemoclaw_runtime_state_mutation_publisher_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py", run_name="nemoclaw_runtime_state_mutation_gate_probe"); runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
@@ -633,6 +670,11 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-pe
     && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
         discord-recovery-source
 
+# Pin the Hermes definitions the Google Chat override binds, so an upgrade fails
+# this build instead of silently falling back to the stock adapter.
+RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
+        googlechat-override-seams
+
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the exact public/secret placeholder bound to the matching standard Langfuse
@@ -662,7 +704,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=a0c87387c0a00e7aad5892375303115577d72293ea6af7d15d1861e6a02c62c6
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=b355d1365fb1d15475e327f312ceb854ae96f9ebed28cf96bc8817f550df2688
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
@@ -818,17 +860,20 @@ RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
     node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
 
 # Managed images have no serialized messaging plan. Install their complete
-# reviewed package union from the read-only wheel set with registry access
-# disabled so this layer is independently reproducible without imported cache.
+# reviewed package union from the selected wheel stage. Portable Podman uses the
+# classic Dockerfile parser, which supports cross-stage COPY but not BuildKit's
+# RUN --mount or RUN --network options. UV_OFFLINE keeps package resolution
+# independent of registry access.
+COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/
 # hadolint ignore=DL3059
-RUN --network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \
     fi; \
     /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual"
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+    && rm -rf /opt/nemoclaw-hermes-teams-wheels
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox"
@@ -1150,26 +1195,91 @@ RUN set -eu; \
 # gateway must retain import access after the lock while both runtime identities
 # remain unable to mutate the dependency tree. Remove the probe install so the
 # published image still performs installation only when Hindsight is selected.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+# uv creates the Hermes virtual environment without pip. Seed pip from Python's
+# bundled ensurepip payload while this layer is still root, then verify the
+# sandbox can read but cannot modify the virtual environment used by the lazy
+# installer. Dockerfile.base separately installs and imports the official
+# Hindsight client. This layer uses a build-only wheel with the same package
+# identity to isolate the lazy-installer and durable-target contract from PyPI.
+# The nested write-denial shell returns success after every prohibited mutation
+# fails. Create the wheel before resetting the target so the sandbox installer
+# is the next Python process to use it.
+# ensurepip reads only Python's bundled wheel payload; it performs no external
+# package lookup and therefore needs no BuildKit network option.
+RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+    && /opt/hermes/.venv/bin/python -I -m pip --version \
+    && chmod 644 /opt/hermes/.venv/.lock \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755" \
+    && venv_violation="$(find -P /opt/hermes/.venv ! -type l \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)" \
+    && test -z "$venv_violation" \
+    && venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l \( ! -user root -o ! -group root \) -print -quit)" \
+    && test -z "$venv_link_owner_violation" \
+    && venv_links_file="$(mktemp)" \
+    && find -P /opt/hermes/.venv -type l -printf '%P -> %l\n' > "$venv_links_file" \
+    && LC_ALL=C sort -o "$venv_links_file" "$venv_links_file" \
+    && venv_links="$(cat "$venv_links_file")" \
+    && rm -f "$venv_links_file" \
+    && expected_venv_links="$(printf '%s\n' \
+        'bin/python -> /usr/bin/python3' \
+        'bin/python3 -> python' \
+        'bin/python3.13 -> python' \
+        "lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE" \
+        'lib64 -> lib')" \
+    && test "$venv_links" = "$expected_venv_links" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3.13)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3.13)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -eu -c '\
+            /opt/hermes/.venv/bin/python -I -m pip --version >/dev/null; \
+            if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            exit 0' \
+    && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \
+    && /opt/hermes/.venv/bin/python -I -c \
+        "import zipfile; entries = {'hindsight_client/__init__.py': 'NEMOCLAW_BUILD_PROBE_FIXTURE = True\n', 'hindsight_client-0.6.1.dist-info/METADATA': 'Metadata-Version: 2.4\nName: hindsight-client\nVersion: 0.6.1\nSummary: NemoClaw offline lazy-installer build probe\n\n', 'hindsight_client-0.6.1.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: NemoClaw build probe\nRoot-Is-Purelib: true\nTag: py3-none-any\n', 'hindsight_client-0.6.1.dist-info/RECORD': 'hindsight_client/__init__.py,,\nhindsight_client-0.6.1.dist-info/METADATA,,\nhindsight_client-0.6.1.dist-info/WHEEL,,\nhindsight_client-0.6.1.dist-info/RECORD,,\n'}; wheel = zipfile.ZipFile('/tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl', 'w', compression=zipfile.ZIP_DEFLATED); [wheel.writestr(name, data) for name, data in entries.items()]; wheel.close()" \
+    && chown root:root /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && HOME=/sandbox \
+        PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
+        PIP_NO_INDEX=1 \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
+        UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
         UV_NO_CACHE=1 \
+        UV_OFFLINE=1 \
         HERMES_HOME=/sandbox/.hermes \
         HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
+    && rm -rf /tmp/nemoclaw-hindsight-probe \
     && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import importlib.metadata as m; assert m.version('hindsight-client') == '0.6.1'" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
     && lazy_plan='{"version":1,"readOnlyRoots":["lazy-packages"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}' \
     && /usr/local/lib/nemoclaw/state-dir-guard.py lock \
         --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
     && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client; from pathlib import Path; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(Path('/sandbox/.hermes/lazy-packages').resolve())" \
     && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
         echo "ERROR: gateway can modify locked Hermes lazy packages" >&2; exit 1; \
@@ -1186,7 +1296,9 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandb
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && rm -rf /sandbox/.cache \
     && chown sandbox:sandbox /sandbox/.hermes \
     && chmod 3770 /sandbox/.hermes \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
@@ -1321,6 +1433,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
+    && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \

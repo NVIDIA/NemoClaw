@@ -189,22 +189,20 @@ describe("nemo-deepagents alias", () => {
     expect(out).toContain("nemo-deepagents");
   });
 
-  it("nemoclaw onboard --agent langchain-deepagents-code keeps the nemoclaw CLI name in suggestions", () => {
+  it("nemoclaw onboard --agent deep agents uses an agent-neutral no-session diagnostic (#9035)", () => {
     const { code, out } = runNemoClaw(
       "onboard --agent langchain-deepagents-code --resume --non-interactive --yes-i-accept-third-party-software",
     );
     expect(code).toBe(1);
-    expect(out).toContain("nemoclaw onboard");
-    expect(out).not.toMatch(/\bnemo-deepagents\b/);
+    expect(out.trim()).toBe("No resumable onboarding session was found.");
   });
 
-  it("NEMOCLAW_AGENT=langchain-deepagents-code nemoclaw also keeps the nemoclaw CLI name", () => {
+  it("NEMOCLAW_AGENT=deep agents uses an agent-neutral no-session diagnostic (#9035)", () => {
     const { code, out } = runNemoClaw(
       "onboard --resume --non-interactive --yes-i-accept-third-party-software",
       { NEMOCLAW_AGENT: "langchain-deepagents-code" },
     );
     expect(code).toBe(1);
-    expect(out).toContain("nemoclaw onboard");
-    expect(out).not.toMatch(/\bnemo-deepagents\b/);
+    expect(out.trim()).toBe("No resumable onboarding session was found.");
   });
 });

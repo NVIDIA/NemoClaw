@@ -195,20 +195,17 @@ describe("package-managed Docker-driver gateway env service", () => {
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
   });
 
-  it("rejects incomplete gateway JWT config before writing env or starting the service (#6903)", () => {
-    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
-    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
-    const startService = vi.fn();
-    const env = homeEnv(tempHome);
-    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
-    try {
-      for (const key of [
-        "signing_key_path",
-        "public_key_path",
-        "kid_path",
-        "gateway_id",
-        "ttl_secs",
-      ]) {
+  it.each(
+    ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
+  )(
+    "rejects incomplete gateway JWT config before writing env or starting the service [%s] (#6903)",
+    (key) => {
+      const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+      const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+      const startService = vi.fn();
+      const env = homeEnv(tempHome);
+      const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+      try {
         const configPath = writeSafeGatewayAuthConfig(tempHome);
         fs.writeFileSync(
           configPath,
@@ -233,13 +230,13 @@ describe("package-managed Docker-driver gateway env service", () => {
             verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
           }),
         ).toThrow(new RegExp(`gateway_jwt\\.${key}`));
-      }
 
-      expect(startService).not.toHaveBeenCalled();
-      expect(fs.existsSync(envFile)).toBe(false);
-    } finally {
-      homedirSpy.mockRestore();
-      fs.rmSync(tempHome, { recursive: true, force: true });
-    }
-  });
+        expect(startService).not.toHaveBeenCalled();
+        expect(fs.existsSync(envFile)).toBe(false);
+      } finally {
+        homedirSpy.mockRestore();
+        fs.rmSync(tempHome, { recursive: true, force: true });
+      }
+    },
+  );
 });

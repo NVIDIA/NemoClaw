@@ -10,15 +10,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
-  readInferenceRoutingCloudflaredPin,
+  readReviewedCloudflaredPin,
   resolveVerifiedCloudflaredBinary,
 } from "../live/cloudflared-prerequisite.ts";
 
-describe("inference-routing cloudflared prerequisite (#6141)", () => {
+describe("reviewed cloudflared prerequisite (#6141)", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("reads the reviewed version and digest from the exact workflow", () => {
-    expect(readInferenceRoutingCloudflaredPin()).toEqual({
+    expect(readReviewedCloudflaredPin()).toEqual({
       version: "2026.6.1",
       debSha256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
     });
@@ -31,9 +31,9 @@ describe("inference-routing cloudflared prerequisite (#6141)", () => {
       workflow,
       [
         "jobs:",
-        "  inference-routing:",
+        "  run:",
         "    steps:",
-        "      - name: Install and verify cloudflared prerequisite",
+        "      - name: Install reviewed cloudflared",
         "        env:",
         '          CLOUDFLARED_VERSION: "2026.6.1"',
         '          CLOUDFLARED_DEB_SHA256: "mutable"',
@@ -41,8 +41,8 @@ describe("inference-routing cloudflared prerequisite (#6141)", () => {
       ].join("\n"),
     );
     try {
-      expect(() => readInferenceRoutingCloudflaredPin(workflow)).toThrow(
-        "inference-routing cloudflared SHA256 pin is missing or invalid",
+      expect(() => readReviewedCloudflaredPin(workflow)).toThrow(
+        "reviewed cloudflared SHA256 pin is missing or invalid",
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

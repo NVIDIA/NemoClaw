@@ -41,30 +41,26 @@ describe("spark install live test helpers", () => {
     }
   });
 
-  it("rejects public installer URL overrides outside the documented origin", () => {
-    const unsafeUrls = [
-      "http://www.nvidia.com/nemoclaw.sh",
-      "file:///tmp/nemoclaw.sh",
-      "https://user:pass@www.nvidia.com/nemoclaw.sh",
-      "https://localhost/nemoclaw.sh",
-      "https://127.0.0.1/nemoclaw.sh",
-      "https://10.0.0.1/nemoclaw.sh",
-      "https://example.com/nemoclaw.sh",
-      "https://www.nvidia.com/other.sh",
-      "https://www.nvidia.com/nemoclaw.sh?token=leak",
-    ];
-
-    for (const installUrl of unsafeUrls) {
-      expect(() =>
-        buildInstallerInvocation({
-          repoRoot: "/repo",
-          env: {
-            NEMOCLAW_E2E_PUBLIC_INSTALL: "1",
-            NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
-          },
-        }),
-      ).toThrow();
-    }
+  it.each([
+    "http://www.nvidia.com/nemoclaw.sh",
+    "file:///tmp/nemoclaw.sh",
+    "https://user:pass@www.nvidia.com/nemoclaw.sh",
+    "https://localhost/nemoclaw.sh",
+    "https://127.0.0.1/nemoclaw.sh",
+    "https://10.0.0.1/nemoclaw.sh",
+    "https://example.com/nemoclaw.sh",
+    "https://www.nvidia.com/other.sh",
+    "https://www.nvidia.com/nemoclaw.sh?token=leak",
+  ])("rejects public installer URL overrides outside the documented origin [%s]", (installUrl) => {
+    expect(() =>
+      buildInstallerInvocation({
+        repoRoot: "/repo",
+        env: {
+          NEMOCLAW_E2E_PUBLIC_INSTALL: "1",
+          NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
+        },
+      }),
+    ).toThrow();
   });
 
   it("defaults public curl-pipe mode to the allowlisted installer URL", () => {

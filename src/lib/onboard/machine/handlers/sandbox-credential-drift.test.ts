@@ -27,6 +27,7 @@ import {
 // Messaging discovery is mocked at import time to isolate credential-drift resume behavior.
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
   readMessagingPlanFromEnv: vi.fn(() => null),
   getRegistrySandboxMessagingAuthority: vi.fn(() => ({
     authoritative: false,
@@ -48,9 +49,8 @@ let persistManifestChannelDisabledPlan: typeof import("../../../actions/sandbox/
 
 beforeAll(async () => {
   ({ handleSandboxState } = await import("./sandbox"));
-  ({ persistManifestChannelDisabledPlan } = await import(
-    "../../../actions/sandbox/policy-channel"
-  ));
+  ({ persistManifestChannelDisabledPlan } =
+    await import("../../../actions/sandbox/policy-channel"));
   registry = await import("../../../state/registry");
 
   const registryPath = path.relative(registryHome, registry.REGISTRY_FILE);

@@ -41,8 +41,10 @@ export function writeFailedOnboardSession(home: string): void {
 
 export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
   const onboardDir = path.join(path.dirname(readinessDir), "onboard");
+  const experimentalDir = path.join(onboardDir, "experimental");
   fs.mkdirSync(readinessDir, { recursive: true });
   fs.mkdirSync(onboardDir, { recursive: true });
+  fs.mkdirSync(experimentalDir, { recursive: true });
   fs.writeFileSync(
     `${readinessDir}/host.js`,
     `exports.createHostReadinessReport = (_options, collection) => ({ host: collection.assess() });\n`,
@@ -51,7 +53,9 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     `${readinessDir}/onboard-admission.js`,
     `exports.evaluateOnboardReadinessAdmission = (report, options) => {
   const host = report.host;
-  const unsupportedRuntime = host.runtime === "podman" || host.isUnsupportedRuntime === true;
+  const unsupportedRuntime =
+    (host.runtime === "podman" || host.isUnsupportedRuntime === true) &&
+    !options.allowUnsupportedRuntime;
   const cdiBlocks = host.cdiNvidiaGpuSpecNeedsRepair && !(host.isWsl && host.runtime === "docker-desktop");
   const storageRemediationAvailable =
     host.platform === "linux" &&
@@ -90,6 +94,10 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
   return { ok: true, declaration: mode ? { mode } : null };
 };
 `,
+  );
+  fs.writeFileSync(
+    `${experimentalDir}/portable-profile.js`,
+    `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
   );
 }
 

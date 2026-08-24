@@ -136,20 +136,32 @@ describe("managed image registry transport", () => {
     }
   });
 
-  it("adds the validated corporate CA to direct, request, and proxy TLS trust", () => {
-    const options = resolveManagedImageRegistryDispatcherOptions({
-      environment: {},
-      corporateCaOverride: {
-        pem: PEM,
-        sourceEnv: "fixture",
-        sourcePath: "/fixture/corporate-ca.pem",
-      },
-    });
+  it.each([
+    { scenario: "direct connection" },
+    { scenario: "request TLS" },
+    { scenario: "proxy TLS" },
+  ])(
+    "adds the validated corporate CA to direct, request, and proxy TLS trust [$scenario]",
+    ({ scenario }) => {
+      const options = resolveManagedImageRegistryDispatcherOptions({
+        environment: {},
+        corporateCaOverride: {
+          pem: PEM,
+          sourceEnv: "fixture",
+          sourcePath: "/fixture/corporate-ca.pem",
+        },
+      });
 
-    for (const tls of [options.connect, options.requestTls, options.proxyTls]) {
+      const tls = (
+        {
+          "direct connection": options.connect,
+          "request TLS": options.requestTls,
+          "proxy TLS": options.proxyTls,
+        } as const
+      )[scenario]!;
       expect((tls as { ca?: readonly string[] }).ca).toContain(PEM);
-    }
-  });
+    },
+  );
 
   it("gives lowercase proxy variables precedence and rejects unsupported proxy URLs", () => {
     expect(

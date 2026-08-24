@@ -63,8 +63,11 @@ describe("runner-pressure catalogue boundary", () => {
         "E2E_TERMINAL_CLASSIFICATION_FILE",
         "E2E_TEST_OUTCOME_FILE",
         "NEMOCLAW_CLI_BIN",
+        "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST",
       ];
-      for (const name of environmentNames) vi.stubEnv(name, process.env[name] ?? "");
+      environmentNames.forEach((name) => {
+        vi.stubEnv(name, process.env[name] ?? "");
+      });
       vi.stubEnv("E2E_ARTIFACT_DIR", directory);
       mocks.spawnSync.mockReturnValue({ status: 0 });
       mocks.runLiveVitestCommand.mockResolvedValue(exitCode);
@@ -76,6 +79,7 @@ describe("runner-pressure catalogue boundary", () => {
           "--test-path",
           target.testFile,
         ]);
+        expect(process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
         expect(mocks.spawnSync.mock.calls.map((call) => call[1].at(-1))).toEqual([
           "snapshot",
           "initialize-evidence",

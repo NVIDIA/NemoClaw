@@ -392,6 +392,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "progress" },
   ],
   [
+    "test/e2e/live/native-runtime-qualification-case-executor.ts#startPodmanQualificationService",
+    { kind: "path", path: "progress" },
+  ],
+  [
     "test/e2e/live/portable-profile-gateway-proof.ts#verifyPinnedPodmanGatewayStarts",
     { kind: "path", path: "progress" },
   ],
@@ -405,6 +409,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
   ],
   [
     "test/e2e/live/onboard-interactive-pty.ts#driveInteractiveCommand",
+    { kind: "path", path: "options.progress" },
+  ],
+  [
+    "test/e2e/live/dashboard-connect-handoff.ts#runDashboardConnectUntilForwardHandoff",
     { kind: "path", path: "options.progress" },
   ],
 ]);

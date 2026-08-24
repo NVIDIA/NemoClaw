@@ -36,26 +36,24 @@ describe("buildVllmMenuEntries", () => {
     assert.match(entries[0].label, /running/);
   });
 
-  for (const [platform, hostLabel] of [
-    ["spark", "Spark"],
-    ["station", "Station"],
-  ] as const) {
-    it(`does not mark the running entry experimental on DGX ${hostLabel}`, () => {
-      const entries = buildVllmMenuEntries({
-        vllmRunning: true,
-        vllmProfile: null,
-        experimental: false,
-        platform,
-        hasVllmImage: false,
-        log: () => {},
-        env: {},
-      });
-      assert.equal(entries.length, 1);
-      assert.equal(entries[0].key, "vllm");
-      assert.doesNotMatch(entries[0].label, /experimental/);
-      assert.match(entries[0].label, /running/);
+  it.each([
+    { platform: "spark", hostLabel: "Spark" },
+    { platform: "station", hostLabel: "Station" },
+  ] as const)("does not mark the running entry experimental on DGX $hostLabel", ({ platform }) => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: null,
+      experimental: false,
+      platform,
+      hasVllmImage: false,
+      log: () => {},
+      env: {},
     });
-  }
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].key, "vllm");
+    assert.doesNotMatch(entries[0].label, /experimental/);
+    assert.match(entries[0].label, /running/);
+  });
 
   it("returns the install entry when a profile matches and EXPERIMENTAL is set", () => {
     const entries = buildVllmMenuEntries({
@@ -99,6 +97,48 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].key, "install-vllm");
     assert.equal(entries[0].label, "Start vLLM (DGX Station)");
+  });
+
+  it("labels only the N1x managed install entry as a Deferred preview (#8574)", () => {
+    const install = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: false,
+      env: {},
+      log: () => {},
+    });
+    const running = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: true,
+      env: {},
+      log: () => {},
+    });
+
+    assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");
+    assert.equal(running[0].label, "Local vLLM (localhost:8000) — running");
+    assert.doesNotMatch(running[0].label, /Deferred preview/);
+    assert.doesNotMatch(running[0].label, /suggested/);
+  });
+
+  it("keeps the N1x managed preview selected when vLLM already occupies port 8000 (#8574)", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: true,
+      env: { NEMOCLAW_PROVIDER: "install-vllm" },
+      log: () => {},
+    });
+
+    assert.deepEqual(entries, [
+      { key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" },
+    ]);
   });
 
   it("keeps generic Linux managed vLLM behind EXPERIMENTAL", () => {

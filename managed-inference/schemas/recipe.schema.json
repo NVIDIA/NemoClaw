@@ -23,8 +23,11 @@
       "type": "object",
       "required": [
         "backend",
-        "model",
         "execution"
+      ],
+      "anyOf": [
+        { "required": ["model"], "properties": { "model": {} } },
+        { "required": ["modelRef"], "properties": { "modelRef": {} } }
       ],
       "properties": {
         "backend": {
@@ -57,6 +60,20 @@
               "type": "string",
               "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
             },
+            "environmentValue": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "menuOrder": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
             "servedName": {
               "$ref": "#/$defs/stableId"
             },
@@ -71,6 +88,12 @@
             },
             "preparation": {
               "$ref": "#/$defs/modelPreparation"
+            },
+            "capabilities": {
+              "$ref": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json#/properties/spec/properties/capabilities"
+            },
+            "probePolicyRef": {
+              "$ref": "#/$defs/adapterId"
             },
             "files": {
               "type": "array",
@@ -119,6 +142,9 @@
           },
           "additionalProperties": false
         },
+        "modelRef": {
+          "$ref": "#/$defs/stableId"
+        },
         "runtime": {
           "type": "object",
           "properties": {
@@ -127,6 +153,17 @@
               "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
             },
             "imageDownloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "imageUnpackedSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "minimumComputeCapability": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999
+            },
+            "minimumGpuMemoryBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
             },
             "pullTimeoutSeconds": {
@@ -353,6 +390,23 @@
             "lifecycleRef": {
               "$ref": "#/$defs/adapterId"
             },
+            "orchestrationRef": {
+              "$ref": "#/$defs/adapterId"
+            },
+            "stationPair": {
+              "type": "object",
+              "required": ["image", "imageDownloadSizeBytes", "servedName", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "loadTimeoutSeconds"],
+              "properties": {
+                "image": { "$ref": "#/$defs/imageDigest" },
+                "imageDownloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+                "servedName": { "$ref": "#/$defs/stableId" },
+                "nodeCount": { "const": 2 },
+                "tensorParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+                "pipelineParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+                "loadTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+              },
+              "additionalProperties": false
+            },
             "topologyBinding": {
               "$ref": "#/$defs/bindingName"
             },
@@ -391,6 +445,29 @@
             "authentication": {
               "$ref": "#/$defs/token"
             },
+            "directInstall": {
+              "type": "object",
+              "required": [
+                "authentication",
+                "fixedArguments",
+                "catalogReceipt"
+              ],
+              "properties": {
+                "authentication": {
+                  "enum": [
+                    "none",
+                    "bearer"
+                  ]
+                },
+                "fixedArguments": {
+                  "type": "boolean"
+                },
+                "catalogReceipt": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
             "executable": {
               "$ref": "#/$defs/absolutePath"
             },
@@ -405,7 +482,7 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "pattern": "^--[a-z0-9][a-z0-9-]*$",
+                    "pattern": "^--[a-z0-9][a-z0-9._-]*$",
                     "maxLength": 128
                   },
                   "value": {
@@ -425,6 +502,43 @@
             },
             "chatTemplate": {
               "$ref": "#/$defs/artifactLabel"
+            },
+            "chatTemplateFile": {
+              "type": "string",
+              "pattern": "^/usr/local/share/nemoclaw/llama-cpp/chat-templates/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.jinja$"
+            },
+            "chatTemplateArguments": {
+              "type": "object",
+              "required": [
+                "reasoningStrength"
+              ],
+              "properties": {
+                "reasoningStrength": {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "reasoning": {
+              "type": "object",
+              "required": [
+                "format",
+                "mode"
+              ],
+              "properties": {
+                "format": {
+                  "const": "deepseek"
+                },
+                "mode": {
+                  "const": "auto"
+                }
+              },
+              "additionalProperties": false
             },
             "contextSize": {
               "type": "integer",
@@ -1188,6 +1302,11 @@
               "not": {
                 "enum": [
                   "downloadSizeBytes",
+                  "environmentValue",
+                  "displayName",
+                  "menuOrder",
+                  "capabilities",
+                  "probePolicyRef",
                   "gated",
                   "installFastSafetensors",
                   "preparation"
@@ -1224,6 +1343,9 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "imageUnpackedSizeBytes",
+                  "minimumComputeCapability",
+                  "minimumGpuMemoryBytes",
                   "pullTimeoutSeconds",
                   "architecture",
                   "networkMode",
@@ -1255,6 +1377,8 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "orchestrationRef",
+                  "stationPair",
                   "topologyBinding",
                   "nodeCount",
                   "tensorParallelSize",
@@ -1292,7 +1416,48 @@
                 "const": 8081
               },
               "chatTemplate": {
-                "const": "nemotron-v3-embedded"
+                "enum": [
+                  "nemotron-v3-embedded",
+                  "container-jinja-file",
+                  "model-embedded-jinja"
+                ]
+              },
+              "chatTemplateFile": {
+                "type": "string",
+                "pattern": "^/usr/local/share/nemoclaw/llama-cpp/chat-templates/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.jinja$"
+              },
+              "chatTemplateArguments": {
+                "type": "object",
+                "required": [
+                  "reasoningStrength"
+                ],
+                "properties": {
+                  "reasoningStrength": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "reasoning": {
+                "type": "object",
+                "required": [
+                  "format",
+                  "mode"
+                ],
+                "properties": {
+                  "format": {
+                    "const": "deepseek"
+                  },
+                  "mode": {
+                    "const": "auto"
+                  }
+                },
+                "additionalProperties": false
               },
               "contextSize": {},
               "slots": {
@@ -1312,11 +1477,124 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "directInstall",
                   "executable",
                   "arguments"
                 ]
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "chatTemplate": {
+                      "const": "container-jinja-file"
+                    }
+                  },
+                  "required": [
+                    "chatTemplate"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "chatTemplateFile": {}
+                  },
+                  "required": [
+                    "chatTemplateFile"
+                  ],
+                  "not": {
+                    "properties": {
+                      "chatTemplateArguments": {}
+                    },
+                    "required": [
+                      "chatTemplateArguments"
+                    ]
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "chatTemplate": {
+                      "const": "nemotron-v3-embedded"
+                    }
+                  },
+                  "required": [
+                    "chatTemplate"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "chatTemplateFile": {}
+                        },
+                        "required": [
+                          "chatTemplateFile"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "reasoning": {}
+                        },
+                        "required": [
+                          "reasoning"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "chatTemplateArguments": {}
+                        },
+                        "required": [
+                          "chatTemplateArguments"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "chatTemplate": {
+                      "const": "model-embedded-jinja"
+                    }
+                  },
+                  "required": [
+                    "chatTemplate"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "chatTemplateArguments": {}
+                  },
+                  "required": [
+                    "chatTemplateArguments"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "chatTemplateFile": {}
+                        },
+                        "required": [
+                          "chatTemplateFile"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "reasoning": {}
+                        },
+                        "required": [
+                          "reasoning"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
           },
           "readiness": {
             "type": "object",
@@ -1349,7 +1627,10 @@
         },
         "propertyNames": {
           "not": {
-            "const": "bindings"
+            "enum": [
+              "bindings",
+              "modelRef"
+            ]
           }
         }
       },
@@ -1420,6 +1701,43 @@
               },
               "required": [
                 "model"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "serve": {
+                  "type": "object",
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "chatTemplateFile": {}
+                      },
+                      "required": [
+                        "chatTemplateFile"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "reasoning": {}
+                      },
+                      "required": [
+                        "reasoning"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "chatTemplateArguments": {}
+                      },
+                      "required": [
+                        "chatTemplateArguments"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "serve"
               ]
             }
           ]

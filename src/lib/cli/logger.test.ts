@@ -39,17 +39,14 @@ describe("Logger", () => {
     expect(log.level).toBe("debug");
   });
 
-  it.each([
-    "1",
-    "true",
-    "y",
-    "yes",
-    "TRUE",
-  ])("enables debug for the supported NEMOCLAW_DEBUG value %s", async (value) => {
-    vi.stubEnv("NEMOCLAW_DEBUG", value);
-    const { log } = await freshLogger();
-    expect(log.level).toBe("debug");
-  });
+  it.each(["1", "true", "y", "yes", "TRUE"])(
+    "enables debug for the supported NEMOCLAW_DEBUG value %s",
+    async (value) => {
+      vi.stubEnv("NEMOCLAW_DEBUG", value);
+      const { log } = await freshLogger();
+      expect(log.level).toBe("debug");
+    },
+  );
 
   it("does not treat the framework DEBUG variable as a NemoClaw logging control", async () => {
     vi.stubEnv("DEBUG", "*");
@@ -222,6 +219,33 @@ describe("Logger", () => {
     expect(output()).toContain('"count": "1"');
     expect(output()).toContain('"self": "[Circular]"');
     expect(output()).toContain('"name": "Error"');
+  });
+
+  it("serializes nested AggregateError entries without exposing credentials", async () => {
+    const apiKey = `nvapi-${"a".repeat(40)}`;
+    const authorizationToken = "opaque-aggregate-authorization-token";
+    const urlToken = "opaque-aggregate-url-token";
+    const { log } = await freshLogger();
+    log.setDebug(true);
+    const sanitizerError = new Error(`sanitizer failed with ${apiKey}`);
+    sanitizerError.stack = `Error: sanitizer failed\nAuthorization: Bearer ${authorizationToken}`;
+    Object.assign(sanitizerError, {
+      endpoint: `https://example.test/path?access_token=${urlToken}`,
+    });
+    const cause = new AggregateError(
+      [sanitizerError, new Error("cleanup failed")],
+      "both failed",
+    );
+
+    log.debugObject("context", new Error("outer failure", { cause }));
+
+    expect(output()).toContain('"errors"');
+    expect(output()).toContain("sanitizer failed");
+    expect(output()).toContain("cleanup failed");
+    expect(output()).not.toContain(apiKey);
+    expect(output()).not.toContain(authorizationToken);
+    expect(output()).not.toContain(urlToken);
+    expect(output()).toContain("<REDACTED>");
   });
 
   it("does not let a synchronous stderr failure escape", async () => {

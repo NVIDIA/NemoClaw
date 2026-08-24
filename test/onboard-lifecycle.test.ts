@@ -64,6 +64,9 @@ function runLifecycleEntrypoint(mode: "fresh" | "resume" | "recovery"): Lifecycl
   const eventsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "events.ts"),
   );
+  const checkpointPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
@@ -90,14 +93,15 @@ OnboardRuntimeBoundary.prototype.recordOnboardStarted = async function(resumed) 
 };
 
 const onboardModule = require(${onboardPath});
+const { deriveCheckpointFromSession } = require(${checkpointPath});
 if (${JSON.stringify(mode)} === "resume") {
-  onboardModule.onboardSession.saveSession(
-    onboardModule.onboardSession.createSession({
-      mode: "non-interactive",
-      sandboxName: "resume-lifecycle",
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-    }),
-  );
+  const session = onboardModule.onboardSession.createSession({
+    mode: "non-interactive",
+    sandboxName: "resume-lifecycle",
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  });
+  session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
+  onboardModule.onboardSession.saveSession(session);
 }
 if (${JSON.stringify(mode)} === "recovery") {
   const session = onboardModule.onboardSession.createSession({
@@ -119,6 +123,7 @@ if (${JSON.stringify(mode)} === "recovery") {
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   });
   session.steps.gateway.status = "failed";
+  session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
   onboardModule.onboardSession.saveSession(session);
 }
 
@@ -172,6 +177,9 @@ function runResumeConflictEntrypoint(
   const eventsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "events.ts"),
   );
+  const checkpointPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
@@ -204,21 +212,22 @@ process.exit = ((code = 0) => {
 });
 
 const onboardModule = require(${onboardPath});
-onboardModule.onboardSession.saveSession(
-  onboardModule.onboardSession.createSession({
-    mode: "non-interactive",
-    sandboxName: "recorded-sandbox",
-    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-    steps: {
-      sandbox: {
-        status: "complete",
-        startedAt: "2026-05-27T00:00:00.000Z",
-        completedAt: "2026-05-27T00:00:01.000Z",
-        error: null,
-      },
+const { deriveCheckpointFromSession } = require(${checkpointPath});
+const session = onboardModule.onboardSession.createSession({
+  mode: "non-interactive",
+  sandboxName: "recorded-sandbox",
+  metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  steps: {
+    sandbox: {
+      status: "complete",
+      startedAt: "2026-05-27T00:00:00.000Z",
+      completedAt: "2026-05-27T00:00:01.000Z",
+      error: null,
     },
-  }),
-);
+  },
+});
+session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
+onboardModule.onboardSession.saveSession(session);
 
 onboardModule.onboard({
   resume: true,

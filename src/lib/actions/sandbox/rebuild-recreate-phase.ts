@@ -14,7 +14,11 @@ import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migr
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import type { RebuildBackupManifest } from "./rebuild-backup-phase";
+import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
+import {
+  excludePolicyPresetsByName,
+  type RebuildBackupManifest,
+} from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -104,6 +108,13 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   console.log("");
   console.log("  Creating new sandbox with current image...");
 
+  const recreatePolicyPresets = Array.isArray(rebuildSessionPolicyPresets)
+    ? excludePolicyPresetsByName(
+        rebuildSessionPolicyPresets,
+        rebuildMcpEntries.map((entry) => entry.policyName),
+      )
+    : null;
+
   const rebuildGpuOverrides = getRebuildSandboxGpuOverrides(sb);
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
@@ -166,9 +177,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
+        // The inner resume compares its requested host mounts against this
+        // recorded metadata, so the reset must carry the same mounts the
+        // recreate options hand to onboard. Omitting them recorded an empty
+        // mount set and aborted the resume after the old sandbox was already
+        // deleted (#9451).
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
+            ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
+            : {}),
         },
       }),
     );
@@ -186,7 +205,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.agent = rebuildAgent;
     s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
-    s.policyPresets = rebuildSessionPolicyPresets;
+    // MCP preparation removes these generated policies before sandbox delete,
+    // and the dedicated post-rebuild phase restores them with their provider
+    // bindings. Do not ask inner onboarding to resolve their stale preset names
+    // as built-ins while the generated definitions are intentionally absent.
+    s.policyPresets = recreatePolicyPresets;
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
     s.provider = resumeConfig.provider;
@@ -265,6 +288,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
+      ...(Array.isArray(recreatePolicyPresets) ? { rebuildPolicyPresets: recreatePolicyPresets } : {}),
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
         ? { rebuildPreservedEnv: backupManifest.preservedEnv }
         : {}),

@@ -206,20 +206,22 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     });
   });
 
-  it("rewrites reviewed Uint8Array and ArrayBuffer module sources", () => {
-    const load = createOpenClawQrTerminalLoadHook(
-      () => REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
-    );
-    const bytes = new TextEncoder().encode(OPENCLAW_QR_RENDERER_SOURCE);
+  it.each([{ scenario: "Uint8Array" }, { scenario: "ArrayBuffer" }])(
+    "rewrites reviewed Uint8Array and ArrayBuffer module sources [$scenario]",
+    ({ scenario }) => {
+      const load = createOpenClawQrTerminalLoadHook(
+        () => REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+      );
+      const bytes = new TextEncoder().encode(OPENCLAW_QR_RENDERER_SOURCE);
 
-    for (const source of [bytes, bytes.buffer]) {
+      const source = ({ Uint8Array: bytes, ArrayBuffer: bytes.buffer } as const)[scenario]!;
       const result = { format: "module", source };
       expect(load("file:///tmp/openclaw-renderer.mjs", {}, () => result)).toMatchObject({
         format: "module",
         source: expect.stringContaining("const COMPACT_MARGIN_MODULES = 4;"),
       });
-    }
-  });
+    },
+  );
 
   it("registers a synchronous source hook for OpenClaw module loading (#6467)", () => {
     const registerHooks = vi.fn();

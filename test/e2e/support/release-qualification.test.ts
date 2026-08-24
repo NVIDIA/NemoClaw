@@ -25,6 +25,17 @@ describe("release qualification", () => {
     ).toEqual([]);
   });
 
+  it("rejects a failure in any release-required E2E job", () => {
+    const needs = {
+      ...successfulNeeds,
+      "staging-brev-launchable": { result: "failure" },
+    };
+
+    expect(() =>
+      assertReleaseQualification(JSON.stringify(needs), '["live","staging-brev-launchable"]'),
+    ).toThrow("Release qualification did not pass: staging-brev-launchable");
+  });
+
   it("treats an empty test selection as a successful controller-only no-op (#7912)", () => {
     expect(failedReleaseQualificationJobs(successfulNeeds, [])).toEqual([]);
     expect(() => assertReleaseQualification(JSON.stringify(successfulNeeds), "[]")).not.toThrow();

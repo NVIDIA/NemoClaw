@@ -10,6 +10,7 @@ import { buildVersionedUninstallUrl, runUninstallCommand } from "../lib/uninstal
 
 export default class UninstallCliCommand extends NemoClawCommand {
   static id = "uninstall";
+  static customHelp = true;
   static strict = false;
   static summary = "Run uninstall.sh";
   static description = "Run the local uninstall.sh script; remote fallback is disabled.";

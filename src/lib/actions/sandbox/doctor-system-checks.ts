@@ -5,12 +5,15 @@ import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
+import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import { readCloudflaredState } from "../../tunnel/services";
 import {
@@ -19,6 +22,15 @@ import {
 } from "./doctor-gateway-fallback";
 import { captureHostCommand } from "./doctor-host-command";
 import type { DoctorCheck } from "./doctor-report";
+
+export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
+
+export function inspectSandboxDoctorPortableAuthority(
+  sandboxName: string,
+  readRegistry: (sandboxName: string) => SandboxEntry | null,
+) {
+  return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+}
 
 export function oneLine(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();
@@ -39,9 +51,7 @@ function gatewayContainerCheck(
     label: "Docker container",
     status: running && healthy ? "ok" : "fail",
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
-    hint: running
-      ? undefined
-      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
+    hint: running ? undefined : gatewayStartGuidance(options.gatewayName ?? "nemoclaw"),
   };
 }
 

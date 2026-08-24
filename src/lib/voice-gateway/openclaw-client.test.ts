@@ -206,6 +206,32 @@ describe("OpenClaw voice gateway client", () => {
     expect(events).toEqual([{ type: "started" }, { type: "text", text: "Hello world" }]);
   });
 
+  it("accepts a final response that repeats the last sequence and contains assistant text (#9243)", async () => {
+    const { result, events, socket } = await runTurn(
+      replyHandlers([
+        { seq: 2, state: "delta", deltaText: "world", message: assistantMessage("Hello world") },
+        { seq: 7, state: "delta", deltaText: "", message: assistantMessage("Hello world") },
+        {
+          sessionKey: "other-session",
+          seq: 7,
+          state: "final",
+          message: assistantMessage("discarded session"),
+        },
+        {
+          runId: "other-run",
+          seq: 7,
+          state: "final",
+          message: assistantMessage("discarded run"),
+        },
+        { seq: 7, state: "final", message: assistantMessage("Hello world!") },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "Hello world!" }]);
+    expect(socket.closed).toBe(true);
+  });
+
   it("accepts schema-minimum deltas without optional messages (#8482)", async () => {
     const { result, events } = await runTurn(
       replyHandlers([
@@ -270,7 +296,7 @@ describe("OpenClaw voice gateway client", () => {
     ["duplicate", 1],
     ["decreasing", 0],
   ])("rejects a %s sequence before returning response text (#8482)", async (_name, sequence) => {
-    const { result, events } = await runTurn(
+    const { result, events, socket } = await runTurn(
       replyHandlers([
         { seq: 1, state: "delta", deltaText: "first" },
         { seq: sequence, state: "delta", deltaText: "second" },
@@ -279,6 +305,37 @@ describe("OpenClaw voice gateway client", () => {
 
     expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
     expect(events).toEqual([{ type: "started" }]);
+    expect(socket.closed).toBe(true);
+  });
+
+  it("rejects a final response with a lower sequence (#9243)", async () => {
+    const { result, events, socket } = await runTurn(
+      replyHandlers([
+        { seq: 7, state: "delta", deltaText: "first" },
+        { seq: 6, state: "final", message: assistantMessage("complete") },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(events).toEqual([{ type: "started" }]);
+    expect(socket.closed).toBe(true);
+  });
+
+  it.each([
+    ["no message", undefined],
+    ["a user message", { role: "user", content: [{ type: "text", text: "untrusted" }] }],
+    ["non-text assistant content", { role: "assistant", content: [{ type: "image" }] }],
+  ])("rejects an equal-sequence final response with %s (#9243)", async (_name, message) => {
+    const { result, events, socket } = await runTurn(
+      replyHandlers([
+        { seq: 7, state: "delta", deltaText: "partial" },
+        { seq: 7, state: "final", message },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(events).toEqual([{ type: "started" }]);
+    expect(socket.closed).toBe(true);
   });
 
   it("discards malformed frames for another session or run before projection checks (#8482)", async () => {
@@ -311,6 +368,20 @@ describe("OpenClaw voice gateway client", () => {
 
     expect(result).toEqual({ outcome: "failed", reason: "response_too_large" });
     expect(events).toEqual([{ type: "started" }]);
+  });
+
+  it("rejects an oversized equal-sequence final response (#9243)", async () => {
+    const chunk = "x".repeat(VOICE_CHUNK_BYTES);
+    const { result, events, socket } = await runTurn(
+      replyHandlers([
+        { seq: 7, state: "delta", deltaText: "partial" },
+        { seq: 7, state: "final", message: assistantMessage(`${chunk}${chunk}`) },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "failed", reason: "response_too_large" });
+    expect(events).toEqual([{ type: "started" }]);
+    expect(socket.closed).toBe(true);
   });
 
   it("rejects too many queued chat events before the run ID is admitted (#8482)", async () => {

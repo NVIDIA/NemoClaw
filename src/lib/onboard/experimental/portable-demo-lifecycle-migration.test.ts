@@ -107,9 +107,8 @@ async function legacyRegistryEntry(stateDir: string) {
   process.env.HOME = stateDir;
   vi.resetModules();
   const registry = await import("../../state/registry");
-  const { compareAndSetLegacySandboxLifecycleGeneration } = await import(
-    "../../state/registry/lifecycle-generation"
-  );
+  const { compareAndSetLegacySandboxLifecycleGeneration } =
+    await import("../../state/registry/lifecycle-generation");
   registry.registerSandbox({ name: "alpha", agent: "openclaw", openshellDriver: "docker" });
   const expected = registry.getSandbox("alpha")!;
   return {
@@ -129,57 +128,58 @@ afterEach(() => {
 });
 
 describe("portable lifecycle legacy generation migration", () => {
-  it("claims a schema-2 receipt before privileged cleanup and upgrades it (#8584)", async () => {
+  it("refuses privileged cleanup without receipt-owned runtime authority (#9070)", async () => {
     const stateDir = legacyStateDir();
     const { backfill, registry } = await legacyRegistryEntry(stateDir);
+    const podman = createPodman();
 
-    expect(
-      resolvePortableDemoPrivilegedExecTarget(
-        "alpha",
-        migrationDeps(stateDir, createPodman(), backfill),
-      ),
-    ).toMatchObject({ containerId: CONTAINER_ID, dockerHost: `unix://${SOCKET_PATH}` });
-    expect(backfill).toHaveBeenCalledWith(CONTAINER_ID);
+    expect(() =>
+      resolvePortableDemoPrivilegedExecTarget("alpha", migrationDeps(stateDir, podman, backfill)),
+    ).toThrow("predates recorded portable Podman authority");
+    expect(podman).not.toHaveBeenCalled();
+    expect(backfill).not.toHaveBeenCalled();
     expect(
       JSON.parse(
         fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
       ),
-    ).toMatchObject({ schemaVersion: 3, registryGeneration: CONTAINER_ID });
-    expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBe(CONTAINER_ID);
+    ).toMatchObject({ schemaVersion: 2 });
+    expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBeUndefined();
   });
 
-  it("claims a schema-2 receipt before retained-sandbox recovery (#8584)", async () => {
+  it("refuses retained-sandbox recovery without receipt-owned runtime authority (#9070)", async () => {
     const stateDir = legacyStateDir();
     const { backfill, registry } = await legacyRegistryEntry(stateDir);
+    const podman = createPodman();
 
-    expect(
+    expect(() =>
       recoverPortableDemoSandboxLifecycle(
         "alpha",
         { agent: "openclaw", gatewayName: "nemoclaw", openshellDriver: "docker" },
         {
-          ...migrationDeps(stateDir, createPodman(), backfill),
+          ...migrationDeps(stateDir, podman, backfill),
           captureOpenshell: (args) =>
             args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
         },
       ),
-    ).toEqual({ kind: "already-running" });
-    expect(backfill).toHaveBeenCalledWith(CONTAINER_ID);
+    ).toThrow("predates recorded portable Podman authority");
+    expect(podman).not.toHaveBeenCalled();
+    expect(backfill).not.toHaveBeenCalled();
     expect(
       JSON.parse(
         fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
       ),
-    ).toMatchObject({ schemaVersion: 3, registryGeneration: CONTAINER_ID });
-    expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBe(CONTAINER_ID);
+    ).toMatchObject({ schemaVersion: 2 });
+    expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBeUndefined();
   });
 
-  it("finishes a schema-2 receipt upgrade after its registry claim already committed (#8584)", async () => {
+  it("still requires receipt authority after a registry generation claim (#9070)", async () => {
     const stateDir = legacyStateDir();
     const { backfill, registry } = await legacyRegistryEntry(stateDir);
     expect(backfill(CONTAINER_ID)).toBe(true);
     backfill.mockClear();
     const podman = createPodman();
 
-    expect(
+    expect(() =>
       recoverPortableDemoSandboxLifecycle(
         "alpha",
         {
@@ -194,21 +194,18 @@ describe("portable lifecycle legacy generation migration", () => {
             args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
         },
       ),
-    ).toEqual({ kind: "already-running" });
+    ).toThrow("predates recorded portable Podman authority");
     expect(backfill).not.toHaveBeenCalled();
-    expect(podman).toHaveBeenCalledWith(
-      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
-      expect.any(Object),
-    );
+    expect(podman).not.toHaveBeenCalled();
     expect(
       JSON.parse(
         fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
       ),
-    ).toMatchObject({ schemaVersion: 3, registryGeneration: CONTAINER_ID });
+    ).toMatchObject({ schemaVersion: 2 });
     expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBe(CONTAINER_ID);
   });
 
-  it("does not claim an ambiguous legacy portable identity (#8584)", () => {
+  it("does not inspect an ambiguous legacy identity through ambient Podman (#9070)", () => {
     const stateDir = legacyStateDir();
     const backfill = vi.fn(() => true);
 
@@ -217,7 +214,7 @@ describe("portable lifecycle legacy generation migration", () => {
         "alpha",
         migrationDeps(stateDir, createPodman([CONTAINER_ID, "b".repeat(64)]), backfill),
       ),
-    ).toThrow("found 2");
+    ).toThrow("predates recorded portable Podman authority");
     expect(backfill).not.toHaveBeenCalled();
     const receipt = JSON.parse(
       fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
@@ -226,7 +223,7 @@ describe("portable lifecycle legacy generation migration", () => {
     expect(receipt).not.toHaveProperty("registryGeneration");
   });
 
-  it("does not upgrade the receipt when the registry row changes before its claim (#8584)", async () => {
+  it("does not use a changed registry row to synthesize runtime authority (#9070)", async () => {
     const stateDir = legacyStateDir();
     const { backfill, registry } = await legacyRegistryEntry(stateDir);
     registry.updateSandbox("alpha", { model: "replacement" });
@@ -236,7 +233,8 @@ describe("portable lifecycle legacy generation migration", () => {
         "alpha",
         migrationDeps(stateDir, createPodman(), backfill),
       ),
-    ).toThrow("could not claim the current registry generation");
+    ).toThrow("predates recorded portable Podman authority");
+    expect(backfill).not.toHaveBeenCalled();
     const receipt = JSON.parse(
       fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
     );

@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
+import type {
+  ContainerEngine,
+  ContainerEngineCommandCapture,
+  ContainerEngineCommandResult,
+  ContainerEngineOperationScope,
+} from "../../adapters/container-engine";
 import { resolveShieldsStateDir, withShieldsTransitionLock } from "../../shields/transition-lock";
 import type {
   RuntimeProviderPreparedStateMutationPlan,
@@ -18,7 +24,6 @@ import { RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION } from "./contract";
 import {
   createDockerOperationAuthority,
   type DockerOperationAuthority,
-  dockerOperationBindingSha256,
 } from "./docker-operation-authority";
 import {
   createFilePersistedEngineAuthorityStore,
@@ -35,6 +40,7 @@ import {
   hasActivePersistedEngineStateMutationTarget,
   loadPersistedEngineStateMutationIntent,
   type PersistedEngineLifecycleExecutionInput,
+  type PersistedEngineLifecycleExactCommand,
   type PersistedEngineLifecycleRecord,
   type PersistedEngineLifecycleStore,
   type PersistedEngineStateMutationIntent,
@@ -43,7 +49,7 @@ import {
 } from "./persisted-engine-lifecycle";
 import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
 
-const PROVIDER_ID = "docker";
+const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
@@ -51,6 +57,10 @@ const HELPER_FAST_TIMEOUT_MS = 30_000;
 const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
 const HELPER_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
+const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_POLL_MS = 250;
+const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -59,14 +69,286 @@ const INSPECT_FORMAT =
   '[{{json .Id}},{{json .State.Running}},{{json .State.Status}},{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},{{json .State.Pid}},{{json (index .Config.Labels "openshell.ai/managed-by")}},{{json (index .Config.Labels "openshell.ai/sandbox-name")}},{{json (index .Config.Labels "openshell.ai/sandbox-id")}},{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]';
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CONTAINER_ID = /^[a-f0-9]{64}$/u;
+const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const LIFECYCLE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
-const PROVIDER_HANDLE = /^docker-state-mutation-v1:([a-f0-9]{64}):([a-f0-9]{64})$/u;
-const ACTIVATION_PROVIDER_HANDLE =
-  /^docker-state-mutation-activation-v1:([a-f0-9]{64}):([a-f0-9]{64})$/u;
+const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
+
+export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE = String.raw`
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+
+ROOT = "/run/nemoclaw/runtime-state-mutation"
+MAXIMUM = 128 * 1024
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": 300, "release": 300}
+IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
+INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
+PUBLICATION_SETTLE_SECONDS = 5
+
+def fail(code):
+    raise RuntimeError(code)
+
+def directory(path):
+    metadata = os.lstat(path)
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+        stat.S_IMODE(metadata.st_mode) != 0o700):
+        fail("transport-directory-invalid")
+
+def atomic(path, payload):
+    temporary = path + ".tmp-" + str(os.getpid())
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                fail("transport-write-failed")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+
+def private_file(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        payload = os.read(descriptor, MAXIMUM + 1)
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
+            stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
+            len(payload) > MAXIMUM or os.read(descriptor, 1) or
+            (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_uid,
+             before.st_gid, before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+            (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid,
+             after.st_gid, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            fail("transport-file-invalid")
+        return payload
+    finally:
+        os.close(descriptor)
+
+def copied_file(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        payload = bytearray()
+        while len(payload) <= MAXIMUM:
+            chunk = os.read(descriptor, min(64 * 1024, MAXIMUM + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or len(payload) > MAXIMUM or
+            (before.st_dev, before.st_ino, before.st_nlink, before.st_uid, before.st_gid,
+             before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+            (after.st_dev, after.st_ino, after.st_nlink, after.st_uid, after.st_gid,
+             after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            fail("transport-copied-file-invalid")
+        return bytes(payload)
+    finally:
+        os.close(descriptor)
+
+def response_payload(action, identity, status, stdout, stderr):
+    return json.dumps({"schemaVersion": 1, "action": action, "identity": identity,
+        "status": status, "stdout": stdout, "stderr": stderr},
+        ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
+
+def failure_stderr(action, code):
+    return json.dumps({"schemaVersion": 1, "action": action, "status": "failed", "code": code},
+        ensure_ascii=True, separators=(",", ":")) + "\n"
+
+def post_validation_failure_code(error):
+    if isinstance(error, RuntimeError):
+        code = str(error)
+        if code in ("helper-file-missing", "helper-file-invalid", "transport-response-too-large"):
+            return code
+        return "transport-runtime-failed"
+    if isinstance(error, UnicodeError):
+        return "transport-response-encoding-invalid"
+    if isinstance(error, FileNotFoundError):
+        return "transport-resource-missing"
+    if isinstance(error, PermissionError):
+        return "transport-permission-denied"
+    if isinstance(error, OSError):
+        return "transport-io-failed"
+    return "transport-response-invalid"
+
+def normalize_helper_stderr(action, status, stderr):
+    if not stderr:
+        return stderr
+    try:
+        failure = json.loads(stderr.decode("utf-8", "strict"))
+        if (isinstance(failure, dict) and failure.get("schemaVersion") == 1 and
+            failure.get("action") == action and failure.get("status") == "failed" and
+            isinstance(failure.get("code"), str) and
+            re.fullmatch(r"[a-z][a-z0-9-]{0,127}", failure["code"]) is not None):
+            return stderr
+    except (UnicodeError, ValueError):
+        pass
+    code = "helper-process-failed" if status != 0 else "helper-protocol-stderr"
+    return failure_stderr(action, code).encode("utf-8")
+
+def publisher_phase_failure(action, stderr):
+    if action != "publish":
+        return stderr
+    try:
+        failure = json.loads(stderr.decode("utf-8", "strict"))
+        if (not isinstance(failure, dict) or failure.get("schemaVersion") != 1 or
+            failure.get("action") != "publish" or failure.get("status") != "failed" or
+            failure.get("code") != "publisher-guard-failed"):
+            return stderr
+        journal = json.loads(private_file(
+            "/var/lib/nemoclaw/runtime-state-mutation/hermes-publisher.json"
+        ).decode("utf-8", "strict"))
+        operation = journal.get("operation") if isinstance(journal, dict) else None
+        phase = operation.get("phase") if isinstance(operation, dict) else None
+        if phase not in ("intent", "begun", "state-applied", "top-applied"):
+            return stderr
+        failure["code"] = "publisher-guard-" + phase + "-failed"
+        return (json.dumps(failure, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return stderr
+
+def run_helper(action, request):
+    try:
+        metadata = os.lstat(helper)
+    except FileNotFoundError:
+        fail("helper-file-missing")
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+        stat.S_IMODE(metadata.st_mode) & 0o022):
+        fail("helper-file-invalid")
+    completed = None
+    for attempt in range(2):
+        completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False,
+            start_new_session=True)
+        if completed.returncode >= 0:
+            return completed
+        # Every helper action is transaction-bound and idempotent. Replay only
+        # a signal-terminated invocation once; ordinary nonzero exits remain
+        # authoritative and are never retried.
+    return completed
+
+helper = sys.argv[1]
+transaction = sys.argv[2]
+if IDENTITY.fullmatch(transaction) is None:
+    fail("transport-transaction-invalid")
+os.makedirs(ROOT, mode=0o700, exist_ok=True)
+directory(ROOT)
+session = os.path.join(ROOT, transaction)
+os.makedirs(session, mode=0o700, exist_ok=True)
+directory(session)
+lock = os.open(os.path.join(session, "broker.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(0)
+atomic(os.path.join(session, "ready"), (transaction + "\n").encode("ascii"))
+pending = {}
+
+while True:
+    names = sorted(os.listdir(session))
+    if "released" in names and "resumed" in names:
+        try:
+            expected = (transaction + "\n").encode("ascii")
+            if (private_file(os.path.join(session, "released")) == expected and
+                copied_file(os.path.join(session, "resumed")) == expected):
+                for name in ("released", "resumed", "ready", "broker.lock"):
+                    try:
+                        os.unlink(os.path.join(session, name))
+                    except FileNotFoundError:
+                        pass
+                try:
+                    os.rmdir(session)
+                except OSError:
+                    pass
+                raise SystemExit(0)
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            pass
+    for name in names:
+        incoming = INCOMING.fullmatch(name)
+        if incoming is None:
+            continue
+        identity, action = incoming.groups()
+        request_path = os.path.join(session, name)
+        response_path = os.path.join(session, identity + ".response")
+        if os.path.exists(response_path):
+            continue
+        validated = False
+        try:
+            request = copied_file(request_path)
+            if not request.endswith(b"\n") or hashlib.sha256(request).hexdigest() != identity:
+                fail("transport-request-invalid")
+            envelope = json.loads(request.decode("utf-8", "strict"))
+            if (not isinstance(envelope, dict) or envelope.get("action") != action or
+                envelope.get("transactionId") != transaction):
+                fail("transport-request-invalid")
+            validated = True
+            pending.pop(name, None)
+            os.unlink(request_path)
+            completed = run_helper(action, request)
+            if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
+                fail("transport-response-too-large")
+            status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
+            stderr = publisher_phase_failure(action, completed.stderr)
+            stderr = normalize_helper_stderr(action, status, stderr)
+            response = response_payload(action, identity, status,
+                completed.stdout.decode("utf-8", "strict"), stderr.decode("utf-8", "strict"))
+        except subprocess.TimeoutExpired:
+            response = response_payload(action, identity, 1, "", failure_stderr(action, "helper-timeout"))
+        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
+            if not validated:
+                first_observed = pending.setdefault(name, time.monotonic())
+                if time.monotonic() - first_observed < PUBLICATION_SETTLE_SECONDS:
+                    continue
+                pending.pop(name, None)
+                try:
+                    os.unlink(request_path)
+                except FileNotFoundError:
+                    pass
+                response = response_payload(action, identity, 1, "",
+                    failure_stderr(action, "transport-request-invalid"))
+            else:
+                # Preserve a safe, actionable failure class without returning
+                # exception text, host paths, or request contents to the caller.
+                response = response_payload(action, identity, 1, "",
+                    failure_stderr(action, post_validation_failure_code(error)))
+        atomic(response_path, response)
+    for name in names:
+        if not name.endswith(".ack"):
+            continue
+        identity = name[:-4]
+        if IDENTITY.fullmatch(identity) is None:
+            continue
+        response_path = os.path.join(session, identity + ".response")
+        if not os.path.exists(response_path):
+            continue
+        try:
+            response = json.loads(private_file(response_path).decode("utf-8", "strict"))
+            if copied_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
+                fail("transport-ack-invalid")
+            successful_release = response.get("action") == "release" and response.get("status") == 0
+            for suffix in (".response", ".ack"):
+                try:
+                    os.unlink(os.path.join(session, identity + suffix))
+                except FileNotFoundError:
+                    pass
+            if successful_release:
+                atomic(os.path.join(session, "released"), (transaction + "\n").encode("ascii"))
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            pass
+    time.sleep(0.05)
+`;
 
 type HelperAction =
   | "acquire"
@@ -105,6 +387,7 @@ interface DockerMountIdentity {
 }
 
 interface DockerRuntimeObservation {
+  readonly providerDisplayName: string;
   readonly runtimeId: string;
   readonly runtimePid: number;
   readonly pidMode: "";
@@ -123,7 +406,7 @@ interface DockerStateMutationHelperReceipt {
   readonly schemaVersion: 1;
   readonly phase: HelperPhase;
   readonly transactionId: string;
-  readonly providerId: typeof PROVIDER_ID;
+  readonly providerId: string;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly engineBindingSha256: string;
@@ -147,17 +430,34 @@ interface DockerStateMutationHelperReceipt {
   readonly activationProviderHandle?: string;
 }
 
-export interface DockerStateMutationOwnerOptions {
+export interface ContainerStateMutationAuthority {
+  readonly assertAuthority: () => void;
+  readonly engine: ContainerEngine;
+}
+
+export interface ContainerStateMutationOwnerOptions {
+  readonly providerId: string;
+  readonly providerDisplayName: string;
+  readonly engineOperation: ContainerEngineOperationScope;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   /** SHA-256 of the raw OpenShell sandbox ID recorded with this generation. */
   readonly lifecycleLiveIdentityFingerprint?: string;
-  /** Full immutable Docker container ID. Names and short IDs are not accepted. */
+  /** Full immutable container ID. Names and short IDs are not accepted. */
   readonly runtimeId: string;
-  readonly authority: DockerOperationAuthority;
+  /** Trusted host directory for bounded Docker copy transport files. */
+  readonly hostTransportRoot: string;
+  readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
 }
+
+export type DockerStateMutationOwnerOptions = Omit<
+  ContainerStateMutationOwnerOptions,
+  "providerId" | "providerDisplayName" | "engineOperation" | "authority"
+> & {
+  readonly authority: DockerOperationAuthority;
+};
 
 export interface DockerStateMutationSurfaceOptions {
   /** Test seam for the fixed Docker executable; production uses the real capture adapter. */
@@ -171,7 +471,22 @@ export interface DockerStateMutationSurfaceOptions {
   ) => T;
 }
 
-function resolveDockerStateMutationStateDir(environment: NodeJS.ProcessEnv): string {
+export interface ContainerStateMutationSurfaceOptions {
+  readonly providerId: string;
+  readonly providerDisplayName: string;
+  readonly engineOperation: ContainerEngineOperationScope;
+  readonly createAuthority: (
+    input: RuntimeProviderStateMutationContext,
+  ) => ContainerStateMutationAuthority;
+  readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
+  readonly withDirectSandboxExecutionExclusion?: <T>(
+    sandboxName: string,
+    operation: string,
+    fn: () => T,
+  ) => T;
+}
+
+function resolveContainerStateMutationStateDir(environment: NodeJS.ProcessEnv): string {
   if (
     environment.VITEST === "true" &&
     (environment.HOME ?? "") === environment.NEMOCLAW_TEST_BASE_HOME &&
@@ -183,7 +498,7 @@ function resolveDockerStateMutationStateDir(environment: NodeJS.ProcessEnv): str
   return resolveShieldsStateDir(environment.HOME?.trim() || undefined);
 }
 
-export interface DockerStateMutationOwner {
+export interface ContainerStateMutationOwner {
   acquire(
     input: RuntimeProviderStateMutationContext & {
       readonly plan: RuntimeProviderPreparedStateMutationPlan;
@@ -215,8 +530,33 @@ export interface DockerStateMutationOwner {
   ): void;
 }
 
+export type DockerStateMutationOwner = ContainerStateMutationOwner;
+
 function fail(message: string): never {
-  throw new Error(`Docker state mutation failed: ${message}`);
+  throw new Error(`Runtime provider state mutation failed: ${message}`);
+}
+
+function providerHandlePattern(providerId: string): RegExp {
+  return new RegExp(`^${providerId}-state-mutation-v1:([a-f0-9]{64}):([a-f0-9]{64})$`, "u");
+}
+
+function activationProviderHandlePattern(providerId: string): RegExp {
+  return new RegExp(
+    `^${providerId}-state-mutation-activation-v1:([a-f0-9]{64}):([a-f0-9]{64})$`,
+    "u",
+  );
+}
+
+function operationBindingSha256(engine: ContainerEngine): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        operation: engine.operation,
+        engineId: engine.engineId,
+        authorityId: engine.authorityId,
+      }),
+    )
+    .digest("hex");
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -288,7 +628,9 @@ function canonicalAbsolutePath(value: unknown, label: string): string {
 function canonicalStateRoot(value: unknown): string {
   const stateRoot = canonicalAbsolutePath(value, "state root");
   if (!stateRoot.startsWith("/sandbox/")) fail("state root is outside /sandbox");
-  if (stateRoot !== SUPPORTED_STATE_ROOT) fail("state root is unsupported by the Docker helper");
+  if (stateRoot !== SUPPORTED_STATE_ROOT) {
+    fail("state root is unsupported by the runtime-provider helper");
+  }
   return stateRoot;
 }
 
@@ -298,23 +640,23 @@ function exactOptionalText(value: unknown, label: string): string | null {
 }
 
 function parseMount(value: unknown, index: number): DockerMountIdentity {
-  const source = record(value, `Docker mount ${String(index)}`);
-  const type = exactText(source.Type, `Docker mount ${String(index)} type`, 128);
-  const mountSource = exactText(source.Source, `Docker mount ${String(index)} source`);
+  const source = record(value, `container mount ${String(index)}`);
+  const type = exactText(source.Type, `container mount ${String(index)} type`, 128);
+  const mountSource = exactText(source.Source, `container mount ${String(index)} source`);
   const destination = canonicalAbsolutePath(
     source.Destination,
-    `Docker mount ${String(index)} destination`,
+    `container mount ${String(index)} destination`,
   );
-  const name = exactOptionalText(source.Name, `Docker mount ${String(index)} name`);
-  const driver = exactOptionalText(source.Driver, `Docker mount ${String(index)} driver`);
-  const mode = exactText(source.Mode, `Docker mount ${String(index)} mode`, 1024);
+  const name = exactOptionalText(source.Name, `container mount ${String(index)} name`);
+  const driver = exactOptionalText(source.Driver, `container mount ${String(index)} driver`);
+  const mode = exactText(source.Mode, `container mount ${String(index)} mode`, 1024);
   const propagation = exactText(
     source.Propagation,
-    `Docker mount ${String(index)} propagation`,
+    `container mount ${String(index)} propagation`,
     1024,
   );
   if (type.length === 0 || mountSource.length === 0 || typeof source.RW !== "boolean") {
-    fail(`Docker mount ${String(index)} is malformed`);
+    fail(`container mount ${String(index)} is malformed`);
   }
   return Object.freeze({
     type,
@@ -359,13 +701,17 @@ function bindStateRoot(
   const owners = observation.mounts.filter((mount) =>
     isPathAtOrBelow(stateRoot, mount.destination),
   );
-  if (owners.length === 0) fail("state root has no durable Docker mount");
+  if (owners.length === 0) {
+    fail(`state root has no durable ${observation.providerDisplayName} mount`);
+  }
   const deepestLength = Math.max(...owners.map((mount) => mount.destination.length));
   const deepest = owners.filter((mount) => mount.destination.length === deepestLength);
   if (deepest.length !== 1 || !["bind", "volume"].includes(deepest[0]?.type ?? "")) {
-    fail("state root Docker mount is ambiguous or not durable");
+    fail(`state root ${observation.providerDisplayName} mount is ambiguous or not durable`);
   }
-  if (!deepest[0]?.readWrite) fail("state root Docker mount is not writable");
+  if (!deepest[0]?.readWrite) {
+    fail(`state root ${observation.providerDisplayName} mount is not writable`);
+  }
   const related = observation.mounts.filter(
     (mount) =>
       isPathAtOrBelow(stateRoot, mount.destination) ||
@@ -378,22 +724,23 @@ function parseInspection(
   output: string,
   expectedRuntimeId: string,
   expectedSandboxName: string,
+  providerDisplayName: string,
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
     Buffer.byteLength(output, "utf8") > MAX_INSPECTION_BYTES ||
     output.includes("\0")
   ) {
-    fail("Docker container inspection output is empty or too large");
+    fail(`${providerDisplayName} container inspection output is empty or too large`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch {
-    fail("Docker container inspection returned unreadable JSON");
+    fail(`${providerDisplayName} container inspection returned unreadable JSON`);
   }
   if (!Array.isArray(parsed) || parsed.length !== 13) {
-    fail("Docker container inspection schema is unsupported");
+    fail(`${providerDisplayName} container inspection schema is unsupported`);
   }
   const [
     runtimeIdInput,
@@ -410,8 +757,12 @@ function parseInspection(
     privileged,
     mountsInput,
   ] = parsed;
-  const runtimeId = boundedString(runtimeIdInput, CONTAINER_ID, "Docker container identity");
-  if (runtimeId !== expectedRuntimeId) fail("Docker container identity changed");
+  const runtimeId = boundedString(
+    runtimeIdInput,
+    CONTAINER_ID,
+    `${providerDisplayName} container identity`,
+  );
+  if (runtimeId !== expectedRuntimeId) fail(`${providerDisplayName} container identity changed`);
   if (
     running !== true ||
     status !== "running" ||
@@ -421,18 +772,18 @@ function parseInspection(
     !Number.isSafeInteger(runtimePid) ||
     (runtimePid as number) <= 0
   ) {
-    fail("Docker container is not one stable running runtime");
+    fail(`${providerDisplayName} container is not one stable running runtime`);
   }
   if (managedBy !== "openshell" || sandboxName !== expectedSandboxName) {
-    fail("Docker container does not belong to the exact OpenShell sandbox");
+    fail(`${providerDisplayName} container does not belong to the exact OpenShell sandbox`);
   }
   if (pidMode !== "" || privileged !== false) {
-    fail("Docker container does not have one private unprivileged PID namespace");
+    fail(`${providerDisplayName} container does not have one private unprivileged PID namespace`);
   }
   const sandboxId = exactText(sandboxIdInput, "OpenShell sandbox identity", 512);
   if (sandboxId.length === 0) fail("OpenShell sandbox identity is missing");
   if (!Array.isArray(mountsInput) || mountsInput.length > MAX_MOUNTS) {
-    fail("Docker container mounts are malformed");
+    fail(`${providerDisplayName} container mounts are malformed`);
   }
   const mounts = mountsInput
     .map(parseMount)
@@ -444,7 +795,7 @@ function parseInspection(
           : left.source.localeCompare(right.source),
     );
   if (new Set(mounts.map((mount) => mount.destination)).size !== mounts.length) {
-    fail("Docker container has ambiguous mount destinations");
+    fail(`${providerDisplayName} container has ambiguous mount destinations`);
   }
   if (
     mounts.some(
@@ -454,10 +805,11 @@ function parseInspection(
         mount.destination.startsWith("/proc/"),
     )
   ) {
-    fail("Docker container overlays the trusted private procfs");
+    fail(`${providerDisplayName} container overlays the trusted private procfs`);
   }
   const sandboxIdentitySha256 = sha256(sandboxId);
   return Object.freeze({
+    providerDisplayName,
     runtimeId,
     runtimePid: runtimePid as number,
     pidMode: "",
@@ -476,7 +828,10 @@ function exactPosture(
   return value;
 }
 
-function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
+function parseHelperReceipt(
+  output: string,
+  expectedProviderId: string,
+): DockerStateMutationHelperReceipt {
   if (
     output.length === 0 ||
     !output.endsWith("\n") ||
@@ -553,7 +908,7 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
           healthSha256: boundedString(receipt.healthSha256, SHA256, "helper health digest"),
           activationProviderHandle: boundedString(
             receipt.activationProviderHandle,
-            ACTIVATION_PROVIDER_HANDLE,
+            activationProviderHandlePattern(expectedProviderId),
             "helper activation provider handle",
           ),
         }
@@ -562,11 +917,7 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
     schemaVersion: 1,
     phase: receipt.phase,
     transactionId: boundedString(receipt.transactionId, SHA256, "helper transaction identity"),
-    providerId: boundedString(
-      receipt.providerId,
-      /^docker$/u,
-      "helper provider identity",
-    ) as typeof PROVIDER_ID,
+    providerId: boundedString(receipt.providerId, SAFE_NAME, "helper provider identity"),
     sandboxName: boundedString(receipt.sandboxName, SAFE_NAME, "helper sandbox name"),
     lifecycleGeneration: boundedString(
       receipt.lifecycleGeneration,
@@ -618,6 +969,9 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
     rollback: exactPosture(receipt.rollback, "helper rollback posture"),
     ...activation,
   });
+  if (normalized.providerId !== expectedProviderId) {
+    fail("root helper receipt changed the provider identity");
+  }
   if (output !== `${fullReceiptTransport(normalized)}\n`) {
     fail("root helper receipt is not canonical");
   }
@@ -669,7 +1023,7 @@ function receiptWithPhase(
 }
 
 function providerHandle(receipt: DockerStateMutationHelperReceipt): string {
-  return `docker-state-mutation-v1:${receipt.transactionId}:${sha256(receiptTransport(receipt))}`;
+  return `${receipt.providerId}-state-mutation-v1:${receipt.transactionId}:${sha256(receiptTransport(receipt))}`;
 }
 
 function activationProviderHandleFor(
@@ -701,7 +1055,7 @@ function activationProviderHandleFor(
       ["fenceProviderHandle", fenceProviderHandle],
     ]),
   );
-  return `docker-state-mutation-activation-v1:${transactionId}:${digest}`;
+  return `${evidence.providerId}-state-mutation-activation-v1:${transactionId}:${digest}`;
 }
 
 function expectedActivationProviderHandle(
@@ -778,7 +1132,7 @@ function normalizeActivationProof(
   );
   const handle =
     typeof proof.providerHandle === "string"
-      ? proof.providerHandle.match(ACTIVATION_PROVIDER_HANDLE)
+      ? proof.providerHandle.match(activationProviderHandlePattern(fence.providerId))
       : null;
   if (
     proof.schemaVersion !== 1 ||
@@ -794,7 +1148,7 @@ function normalizeActivationProof(
   }
   const normalized = Object.freeze({
     schemaVersion: 1,
-    providerId: PROVIDER_ID,
+    providerId: fence.providerId,
     sandboxName: fence.sandboxName,
     lifecycleGeneration: fence.lifecycleGeneration,
     runtimeId: fence.runtimeId,
@@ -812,7 +1166,7 @@ function normalizeActivationProof(
     healthSha256: boundedString(proof.healthSha256, SHA256, "activation health digest"),
     providerHandle: boundedString(
       proof.providerHandle,
-      ACTIVATION_PROVIDER_HANDLE,
+      activationProviderHandlePattern(fence.providerId),
       "activation provider handle",
     ),
   });
@@ -826,7 +1180,7 @@ function normalizeActivationProof(
 }
 
 function runtimeStateSha256(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   stateRoot: DockerStateRootBinding,
@@ -834,14 +1188,12 @@ function runtimeStateSha256(
   return sha256(
     canonicalRecord([
       ["schemaVersion", 1],
-      ["providerId", PROVIDER_ID],
+      ["providerId", options.providerId],
       ["sandboxName", options.sandboxName],
       ["lifecycleGeneration", options.lifecycleGeneration],
       ["engineBindingSha256", bindingSha256],
       ["runtimeId", observation.runtimeId],
       ["runtimePid", observation.runtimePid],
-      ["pidMode", observation.pidMode],
-      ["privileged", observation.privileged],
       ["sandboxIdentitySha256", observation.sandboxIdentitySha256],
       ["containerMountsSha256", observation.containerMountsSha256],
       ["stateRoot", stateRoot.stateRoot],
@@ -873,13 +1225,13 @@ function transactionId(
 }
 
 function requireContext(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   input: RuntimeProviderStateMutationContext,
 ): void {
   if (
     input.sandboxName !== options.sandboxName ||
     input.sandbox.name !== options.sandboxName ||
-    input.sandbox.openshellDriver !== PROVIDER_ID
+    input.sandbox.openshellDriver !== options.providerId
   ) {
     fail("sandbox provider identity changed");
   }
@@ -892,25 +1244,32 @@ function requireContext(
 }
 
 function requireRegistryLiveIdentity(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   observation: DockerRuntimeObservation,
 ): void {
   const expected = options.lifecycleLiveIdentityFingerprint;
   if (expected === undefined) return;
   boundedString(expected, SHA256, "sandbox live identity fingerprint");
   if (observation.sandboxIdentitySha256 !== expected) {
-    fail("Docker sandbox identity does not match the registered live identity");
+    fail(
+      `${options.providerDisplayName} sandbox identity does not match the registered live identity`,
+    );
   }
 }
 
 function requireCurrentEngineAuthority(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): void {
   options.authority.assertAuthority();
-  const persisted = options.engineAuthorityStore.load("sandbox-lifecycle");
-  if (!persisted) fail("persisted sandbox-lifecycle engine authority is missing");
-  requirePersistedEngineAuthority(persisted, PROVIDER_ID, options.authority.engine, bindingSha256);
+  const persisted = options.engineAuthorityStore.load(options.engineOperation);
+  if (!persisted) fail(`persisted ${options.engineOperation} engine authority is missing`);
+  requirePersistedEngineAuthority(
+    persisted,
+    options.providerId,
+    options.authority.engine,
+    bindingSha256,
+  );
 }
 
 function inspectCommand(runtimeId: string) {
@@ -938,6 +1297,362 @@ function helperCommand(runtimeId: string, action: HelperAction) {
   });
 }
 
+type HelperTransportCapture = (
+  command: PersistedEngineLifecycleExactCommand,
+  timeoutMs: number,
+) => ContainerEngineCommandResult;
+
+function helperTransportSessionPath(transactionId: string): string {
+  return `${HELPER_TRANSPORT_ROOT}/${transactionId}`;
+}
+
+function helperTransportBrokerCommand(
+  runtimeId: string,
+  transactionId: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze([
+      "container",
+      "exec",
+      "--detach",
+      "--user",
+      "root",
+      runtimeId,
+      HELPER_PYTHON_PATH,
+      "-I",
+      "-c",
+      "import base64,sys;source=base64.b64decode(sys.argv.pop(1));exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
+      Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8").toString("base64"),
+      HELPER_PATH,
+      transactionId,
+    ]),
+    targetIndex: 5,
+  });
+}
+
+function helperTransportCopyToCommand(
+  runtimeId: string,
+  hostPath: string,
+  containerPath: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze(["container", "cp", hostPath, `${runtimeId}:${containerPath}`]),
+    targetIndex: 3,
+    targetPath: containerPath,
+  });
+}
+
+function helperTransportCopyFromCommand(
+  runtimeId: string,
+  containerPath: string,
+  hostPath: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze(["container", "cp", `${runtimeId}:${containerPath}`, hostPath]),
+    targetIndex: 2,
+    targetPath: containerPath,
+  });
+}
+
+function helperTransportHostParent(hostRoot: string): string {
+  const parent = path.join(hostRoot, "runtime-state-mutation-transport");
+  fs.mkdirSync(parent, { mode: 0o700, recursive: true });
+  const metadata = fs.lstatSync(parent);
+  const expectedUid = process.getuid?.();
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o777) !== 0o700 ||
+    (expectedUid !== undefined && metadata.uid !== expectedUid)
+  ) {
+    fail("host helper transport directory is not private");
+  }
+  return parent;
+}
+
+function withHelperTransportHostDirectory<T>(hostRoot: string, run: (root: string) => T): T {
+  const temporary = fs.mkdtempSync(path.join(helperTransportHostParent(hostRoot), "operation-"));
+  fs.chmodSync(temporary, 0o700);
+  try {
+    return run(temporary);
+  } finally {
+    fs.rmSync(temporary, { force: true, recursive: true });
+  }
+}
+
+function writePrivateTransportFile(filePath: string, value: Buffer): void {
+  // Docker can preserve the invoking host UID on copied files. The enclosing
+  // transport directories remain private (0700), while this copy source must be
+  // readable by the capability-restricted broker after publication.
+  const descriptor = fs.openSync(filePath, "wx", 0o644);
+  try {
+    fs.writeFileSync(descriptor, value);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function copyHelperTransportFile(
+  capture: HelperTransportCapture,
+  command: PersistedEngineLifecycleExactCommand,
+): ContainerEngineCommandResult {
+  return capture(command, HELPER_TRANSPORT_COMMAND_TIMEOUT_MS);
+}
+
+function readHelperTransportFile(
+  capture: HelperTransportCapture,
+  runtimeId: string,
+  containerPath: string,
+  hostRoot: string,
+  timeoutMs: number,
+): Buffer {
+  return withHelperTransportHostDirectory(hostRoot, (temporary) => {
+    const destination = path.join(temporary, "response");
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      fs.rmSync(destination, { force: true });
+      const result = copyHelperTransportFile(
+        capture,
+        helperTransportCopyFromCommand(runtimeId, containerPath, destination),
+      );
+      if (!result.error && result.status === 0 && result.stderr.length === 0) {
+        const value = fs.readFileSync(destination);
+        if (value.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
+          fail("root helper transport response exceeds its byte bound");
+        }
+        return value;
+      }
+      if (Date.now() >= deadline) fail("root helper transport response did not arrive");
+      Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
+    }
+  });
+}
+
+function probeHelperTransport(
+  capture: HelperTransportCapture,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+): boolean {
+  return withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const destination = path.join(temporary, "ready");
+    const result = copyHelperTransportFile(
+      capture,
+      helperTransportCopyFromCommand(
+        options.runtimeId,
+        `${helperTransportSessionPath(transactionId)}/ready`,
+        destination,
+      ),
+    );
+    if (result.error || result.status !== 0 || result.stderr.length !== 0) return false;
+    const ready = fs.readFileSync(destination);
+    if (ready.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
+      fail("root helper transport readiness response exceeds its byte bound");
+    }
+    return ready.equals(Buffer.from(`${transactionId}\n`, "ascii"));
+  });
+}
+
+function ensureHelperTransportAuthorized(
+  scope: AuthorizedPersistedEngineLifecycle,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+): void {
+  const capture: HelperTransportCapture = (command, timeoutMs) =>
+    scope.captureExact("target", () => command, timeoutMs);
+  if (probeHelperTransport(capture, options, transactionId)) return;
+  requireCommandSuccess(
+    capture(
+      helperTransportBrokerCommand(options.runtimeId, transactionId),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    ),
+    "root helper transport startup",
+  );
+  let ready: Buffer;
+  try {
+    ready = readHelperTransportFile(
+      capture,
+      options.runtimeId,
+      `${helperTransportSessionPath(transactionId)}/ready`,
+      options.hostTransportRoot,
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+  } catch {
+    fail("root helper transport did not become available");
+  }
+  if (!ready.equals(Buffer.from(`${transactionId}\n`, "ascii"))) {
+    fail("root helper transport identity changed");
+  }
+}
+
+function finishReleasedHelperTransport(
+  options: ContainerStateMutationOwnerOptions,
+  bindingSha256: string,
+  transactionId: string,
+): void {
+  if (options.providerId !== DOCKER_PROVIDER_ID) return;
+  const capture: HelperTransportCapture = (command, timeoutMs) => {
+    requireCurrentEngineAuthority(options, bindingSha256);
+    const result = options.authority.engine.capture(command.args, timeoutMs);
+    requireCurrentEngineAuthority(options, bindingSha256);
+    return result;
+  };
+  if (!probeHelperTransport(capture, options, transactionId)) return;
+  withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const resumed = path.join(temporary, "resumed");
+    writePrivateTransportFile(resumed, Buffer.from(`${transactionId}\n`, "ascii"));
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          resumed,
+          `${helperTransportSessionPath(transactionId)}/resumed`,
+        ),
+      ),
+      "root helper transport release finalization",
+    );
+  });
+}
+
+function parseHelperTransportResult(
+  value: Buffer,
+  action: HelperAction,
+  identity: string,
+): ContainerEngineCommandResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value.toString("utf8"));
+  } catch {
+    fail("root helper transport response is malformed");
+  }
+  const response = record(parsed, "root helper transport response");
+  exactKeys(
+    response,
+    ["schemaVersion", "action", "identity", "status", "stdout", "stderr"],
+    "root helper transport response",
+  );
+  if (
+    response.schemaVersion !== 1 ||
+    response.action !== action ||
+    response.identity !== identity ||
+    !Number.isSafeInteger(response.status) ||
+    (response.status as number) < 0 ||
+    typeof response.stdout !== "string" ||
+    typeof response.stderr !== "string" ||
+    Buffer.byteLength(response.stdout, "utf8") > MAX_HELPER_TRANSPORT_BYTES ||
+    Buffer.byteLength(response.stderr, "utf8") > MAX_HELPER_TRANSPORT_BYTES
+  ) {
+    fail("root helper transport response is malformed");
+  }
+  return {
+    status: response.status as number,
+    stdout: response.stdout,
+    stderr: response.stderr,
+  };
+}
+
+function helperFailureCode(stderr: string, action: HelperAction): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stderr);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const failure = parsed as Record<string, unknown>;
+  return failure.schemaVersion === 1 &&
+    failure.action === action &&
+    failure.status === "failed" &&
+    typeof failure.code === "string" &&
+    /^[a-z][a-z0-9-]{0,127}$/u.test(failure.code)
+    ? failure.code
+    : null;
+}
+
+function requireHelperSuccess(result: ContainerEngineCommandResult, action: HelperAction): string {
+  if (result.error || result.status !== 0 || result.stderr.length !== 0) {
+    const code = helperFailureCode(result.stderr, action);
+    fail(`root helper ${action} did not complete successfully${code ? `: ${code}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function invokeHelperTransport(
+  capture: HelperTransportCapture,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+  action: HelperAction,
+  input: Buffer,
+): DockerStateMutationHelperReceipt {
+  const identity = createHash("sha256").update(input).digest("hex");
+  const sessionPath = helperTransportSessionPath(transactionId);
+  const result = withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const request = path.join(temporary, "request");
+    writePrivateTransportFile(request, input);
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          request,
+          `${sessionPath}/${identity}.${action}.incoming`,
+        ),
+      ),
+      "root helper transport request publication",
+    );
+    const response = readHelperTransportFile(
+      capture,
+      options.runtimeId,
+      `${sessionPath}/${identity}.response`,
+      options.hostTransportRoot,
+      helperTimeoutMs(action) + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+    const parsed = parseHelperTransportResult(response, action, identity);
+    const acknowledgement = path.join(temporary, "ack");
+    writePrivateTransportFile(acknowledgement, Buffer.from(`${identity}\n`, "ascii"));
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          acknowledgement,
+          `${sessionPath}/${identity}.ack`,
+        ),
+      ),
+      "root helper transport response acknowledgement",
+    );
+    return parsed;
+  });
+  return parseHelperReceipt(requireHelperSuccess(result, action), options.providerId);
+}
+
+function supervisorSignalCommand(runtimeId: string, requestedSignal: "SIGSTOP" | "SIGCONT") {
+  return Object.freeze({
+    args: Object.freeze(["container", "kill", "--signal", requestedSignal, runtimeId]),
+    targetIndex: 4,
+  });
+}
+
+function signalSupervisorAuthorized(
+  scope: AuthorizedPersistedEngineLifecycle,
+  options: ContainerStateMutationOwnerOptions,
+  requestedSignal: "SIGSTOP" | "SIGCONT",
+): void {
+  // PID-namespace init can only be stopped from an ancestor namespace. Keep
+  // that one lifecycle operation on the authority-bound engine endpoint and
+  // expose neither a caller-authored signal nor a caller-authored command.
+  const result = scope.captureExact(
+    "target",
+    (runtimeId) => supervisorSignalCommand(runtimeId, requestedSignal),
+    SUPERVISOR_SIGNAL_TIMEOUT_MS,
+  );
+  requireCommandSuccess(
+    result,
+    `${options.providerDisplayName} host supervisor ${requestedSignal === "SIGSTOP" ? "stop" : "resume"}`,
+  );
+}
+
 function requireCommandSuccess(
   result: {
     readonly status: number;
@@ -954,7 +1669,7 @@ function requireCommandSuccess(
 }
 
 function inspectDirect(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): DockerRuntimeObservation {
   requireCurrentEngineAuthority(options, bindingSha256);
@@ -964,9 +1679,10 @@ function inspectDirect(
   );
   requireCurrentEngineAuthority(options, bindingSha256);
   const observation = parseInspection(
-    requireCommandSuccess(result, "Docker container inspection"),
+    requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
+    options.providerDisplayName,
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -974,13 +1690,14 @@ function inspectDirect(
 
 function inspectAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): DockerRuntimeObservation {
   const result = scope.captureExact("target", inspectCommand, INSPECT_TIMEOUT_MS);
   const observation = parseInspection(
-    requireCommandSuccess(result, "Docker container inspection"),
+    requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
+    options.providerDisplayName,
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -998,7 +1715,9 @@ function sameObservation(
     expected.sandboxIdentitySha256 !== actual.sandboxIdentitySha256 ||
     expected.containerMountsSha256 !== actual.containerMountsSha256
   ) {
-    fail("Docker runtime changed while the state mutation fence was established");
+    fail(
+      `${expected.providerDisplayName} runtime changed while the state mutation fence was established`,
+    );
   }
 }
 
@@ -1012,20 +1731,29 @@ function helperInput(fields: readonly (readonly [string, unknown])[]): Buffer {
 
 function invokeHelperAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
+  options: ContainerStateMutationOwnerOptions,
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
+  if (options.providerId === DOCKER_PROVIDER_ID) {
+    const capture: HelperTransportCapture = (command, timeoutMs) =>
+      scope.captureExact("target", () => command, timeoutMs);
+    return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
+  }
   const result = scope.captureExact(
     "target",
     (runtimeId) => helperCommand(runtimeId, action),
     helperTimeoutMs(action),
     input,
   );
-  return parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`));
+  return parseHelperReceipt(
+    requireCommandSuccess(result, `root helper ${action}`),
+    options.providerId,
+  );
 }
 
 function lifecycleInput(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   record: Pick<
     PersistedEngineLifecycleRecord,
@@ -1038,7 +1766,7 @@ function lifecycleInput(
     sandboxName: record.sandboxName,
     resources: record.resources,
     runtimeStateSha256: record.runtimeStateSha256,
-    providerId: PROVIDER_ID,
+    providerId: options.providerId,
     bindingSha256,
     engine: options.authority.engine,
     engineAuthorityStore: options.engineAuthorityStore,
@@ -1063,7 +1791,7 @@ function normalizePreparedPlan(
     fail("prepared state mutation plan changed after validation");
   }
   if (normalized.plan.intent !== "protection-transition") {
-    fail("Docker adapter does not implement restore publication");
+    fail("container state-mutation adapter does not implement restore publication");
   }
   if (normalized.plan.target === normalized.plan.rollback) {
     fail("protection transition target must differ from its rollback posture");
@@ -1094,7 +1822,7 @@ function preparedPlanFromPersistedIntent(
 }
 
 function acquireRequest(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   stateRoot: DockerStateRootBinding,
@@ -1106,7 +1834,7 @@ function acquireRequest(
     ["schemaVersion", 1],
     ["action", "acquire"],
     ["transactionId", exactTransactionId],
-    ["providerId", PROVIDER_ID],
+    ["providerId", options.providerId],
     ["sandboxName", options.sandboxName],
     ["lifecycleGeneration", options.lifecycleGeneration],
     ["engineBindingSha256", bindingSha256],
@@ -1127,7 +1855,7 @@ function acquireRequest(
 
 function statusRequest(
   action: Exclude<HelperAction, "acquire">,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   exactTransactionId: string,
@@ -1139,7 +1867,7 @@ function statusRequest(
     ["schemaVersion", 1],
     ["action", action],
     ["transactionId", exactTransactionId],
-    ["providerId", PROVIDER_ID],
+    ["providerId", options.providerId],
     ["sandboxName", options.sandboxName],
     ["lifecycleGeneration", options.lifecycleGeneration],
     ["engineBindingSha256", bindingSha256],
@@ -1161,14 +1889,14 @@ function statusRequest(
 
 function validateReceipt(
   receipt: DockerStateMutationHelperReceipt,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   record: PersistedEngineLifecycleRecord,
 ): DockerStateRootBinding {
   const stateRoot = bindStateRoot(observation, receipt.stateRoot);
   if (
-    receipt.providerId !== PROVIDER_ID ||
+    receipt.providerId !== options.providerId ||
     receipt.sandboxName !== options.sandboxName ||
     receipt.lifecycleGeneration !== options.lifecycleGeneration ||
     receipt.engineBindingSha256 !== bindingSha256 ||
@@ -1179,7 +1907,9 @@ function validateReceipt(
     receipt.stateRootMountsSha256 !== stateRoot.stateRootMountsSha256 ||
     receipt.target === receipt.rollback
   ) {
-    fail("root helper receipt does not match the exact Docker runtime binding");
+    fail(
+      `root helper receipt does not match the exact ${options.providerDisplayName} runtime binding`,
+    );
   }
   const expectedRuntimeState = runtimeStateSha256(options, bindingSha256, observation, stateRoot);
   const expectedTransactionId = transactionId(
@@ -1236,7 +1966,7 @@ function fenceFromReceipt(
 
 function normalizeFence(
   fence: RuntimeProviderStateMutationFence,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): RuntimeProviderStateMutationFence {
   const source = record(fence, "state mutation fence");
@@ -1267,7 +1997,9 @@ function normalizeFence(
     "state mutation fence",
   );
   const handle =
-    typeof fence.providerHandle === "string" ? fence.providerHandle.match(PROVIDER_HANDLE) : null;
+    typeof fence.providerHandle === "string"
+      ? fence.providerHandle.match(providerHandlePattern(options.providerId))
+      : null;
   if (
     fence.schemaVersion !== 1 ||
     fence.intent !== "protection-transition" ||
@@ -1275,7 +2007,7 @@ function normalizeFence(
       fence.phase !== "published" &&
       fence.phase !== "rolled-back" &&
       fence.phase !== "activation-proven") ||
-    fence.providerId !== PROVIDER_ID ||
+    fence.providerId !== options.providerId ||
     fence.sandboxName !== options.sandboxName ||
     fence.lifecycleGeneration !== options.lifecycleGeneration ||
     fence.runtimeId !== options.runtimeId ||
@@ -1284,7 +2016,7 @@ function normalizeFence(
     fence.target === fence.rollback ||
     !handle
   ) {
-    fail("state mutation fence does not match the bound Docker runtime");
+    fail(`state mutation fence does not match the bound ${options.providerDisplayName} runtime`);
   }
   return Object.freeze({
     ...fence,
@@ -1345,7 +2077,7 @@ function requireFenceReceipt(
 }
 
 function unfinishedRecord(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): PersistedEngineLifecycleRecord | null {
   const matches = options.lifecycleStore
     .listUnfinished()
@@ -1357,7 +2089,9 @@ function unfinishedRecord(
   if (!match) return null;
   const targetRuntime = match.resources.find((resource) => resource.role === "target")?.runtimeId;
   if (targetRuntime !== options.runtimeId) {
-    fail("durable state mutation target does not match the exact labeled Docker runtime");
+    fail(
+      `durable state mutation target does not match the exact labeled ${options.providerDisplayName} runtime`,
+    );
   }
   return match;
 }
@@ -1384,7 +2118,7 @@ function validateAcquireReceipt(
 
 function acquireAuthorizedReceipt(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   plan: ReturnType<typeof normalizePreparedPlan>,
   nonce: string,
@@ -1402,7 +2136,9 @@ function acquireAuthorizedReceipt(
     stateRoot,
   );
   if (observedRuntimeStateSha256 !== expectedRuntimeStateSha256) {
-    fail("Docker runtime changed before the state mutation fence was established");
+    fail(
+      `${options.providerDisplayName} runtime changed before the state mutation fence was established`,
+    );
   }
   if (
     transactionId(
@@ -1416,8 +2152,13 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
+  if (options.providerId === DOCKER_PROVIDER_ID) {
+    ensureHelperTransportAuthorized(scope, options, exactTransactionId);
+  }
+  signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
+    options,
     "acquire",
     acquireRequest(options, bindingSha256, observation, stateRoot, plan, nonce, exactTransactionId),
   );
@@ -1429,7 +2170,7 @@ function acquireAuthorizedReceipt(
 }
 
 function queryEstablishedReceipt(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   execution: PersistedEngineLifecycleExecutionInput,
   action: "assert" | "publish" | "recover" | "rollback" | "activate",
@@ -1453,24 +2194,47 @@ function queryEstablishedReceipt(
         currentRecord.runtimeStateSha256 !==
           runtimeStateSha256(options, bindingSha256, before, stateRoot)
       ) {
-        fail("Docker runtime changed after the state mutation fence was established");
+        fail(
+          `${options.providerDisplayName} runtime changed after the state mutation fence was established`,
+        );
       }
     }
     guard();
-    const result = options.authority.engine.capture(
-      helperCommand(options.runtimeId, action).args,
-      helperTimeoutMs(action),
-      statusRequest(
-        action,
-        options,
-        bindingSha256,
-        before,
-        execution.transactionId,
-        expectedFence?.providerHandle,
-      ),
+    const request = statusRequest(
+      action,
+      options,
+      bindingSha256,
+      before,
+      execution.transactionId,
+      expectedFence?.providerHandle,
     );
+    const result =
+      options.providerId === DOCKER_PROVIDER_ID
+        ? invokeHelperTransport(
+            (command, timeoutMs) => {
+              guard();
+              const captured = options.authority.engine.capture(command.args, timeoutMs);
+              guard();
+              return captured;
+            },
+            options,
+            execution.transactionId,
+            action,
+            request,
+          )
+        : parseHelperReceipt(
+            requireCommandSuccess(
+              options.authority.engine.capture(
+                helperCommand(options.runtimeId, action).args,
+                helperTimeoutMs(action),
+                request,
+              ),
+              `root helper ${action}`,
+            ),
+            options.providerId,
+          );
     guard();
-    const receipt = parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`));
+    const receipt = result;
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);
     if (expectedFence) requireFenceReceipt(expectedFence, receipt);
     const after = inspectDirect(options, bindingSha256);
@@ -1497,7 +2261,7 @@ function executionRecord(
 function requireRecordMatchesFence(
   record: PersistedEngineLifecycleRecord,
   fence: RuntimeProviderStateMutationFence,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): void {
   const targetRuntime = record.resources.find((resource) => resource.role === "target")?.runtimeId;
   if (
@@ -1534,7 +2298,7 @@ function sameActivationProof(
 
 function releaseAuthorizedFence(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   fence: RuntimeProviderStateMutationFence,
   proof: RuntimeProviderStateMutationActivationProof,
@@ -1543,6 +2307,7 @@ function releaseAuthorizedFence(
   const before = inspectAuthorized(scope, options);
   const receipt = invokeHelperAuthorized(
     scope,
+    options,
     "release",
     statusRequest(
       "release",
@@ -1558,18 +2323,21 @@ function releaseAuthorizedFence(
   validateReceipt(receipt, options, bindingSha256, before, scope.record);
   requireFenceReceipt(fence, receipt);
   sameActivationProof(proof, activationProofFromReceipt(receipt, fence.providerHandle));
+  signalSupervisorAuthorized(scope, options, "SIGCONT");
   const after = inspectAuthorized(scope, options);
   sameObservation(before, after);
 }
 
 /**
- * Own Docker's durable state-mutation fence without accepting a shell command,
- * helper path, runtime alias, or caller-authored provider receipt.
+ * Own one container provider's durable state-mutation fence without accepting
+ * a shell command, helper path, runtime alias, or caller-authored receipt.
  */
-export function createDockerStateMutationOwner(
-  optionsInput: DockerStateMutationOwnerOptions,
-): DockerStateMutationOwner {
+export function createContainerStateMutationOwner(
+  optionsInput: ContainerStateMutationOwnerOptions,
+): ContainerStateMutationOwner {
   const options = Object.freeze({ ...optionsInput });
+  boundedString(options.providerId, PROVIDER_ID, "provider identity");
+  boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
   boundedString(options.lifecycleGeneration, LIFECYCLE_GENERATION, "lifecycle generation");
   if (options.lifecycleLiveIdentityFingerprint !== undefined) {
@@ -1579,16 +2347,18 @@ export function createDockerStateMutationOwner(
       "sandbox live identity fingerprint",
     );
   }
-  boundedString(options.runtimeId, CONTAINER_ID, "Docker runtime identity");
+  boundedString(options.runtimeId, CONTAINER_ID, `${options.providerDisplayName} runtime identity`);
   if (
-    options.authority.engine.operation !== "sandbox-lifecycle" ||
-    options.authority.engine.engineId !== PROVIDER_ID
+    options.authority.engine.operation !== options.engineOperation ||
+    options.authority.engine.engineId !== options.providerId
   ) {
-    fail("Docker authority does not own sandbox-lifecycle operations");
+    fail(
+      `${options.providerDisplayName} authority does not own ${options.engineOperation} operations`,
+    );
   }
-  const bindingSha256 = dockerOperationBindingSha256(options.authority.engine);
+  const bindingSha256 = operationBindingSha256(options.authority.engine);
 
-  const owner: DockerStateMutationOwner = {
+  const owner: ContainerStateMutationOwner = {
     acquire(input) {
       requireContext(options, input);
       if (
@@ -1604,7 +2374,7 @@ export function createDockerStateMutationOwner(
       const plan = normalizePreparedPlan(input.plan);
       options.authority.assertAuthority();
       options.engineAuthorityStore.record(
-        createPersistedEngineAuthority(PROVIDER_ID, options.authority.engine, bindingSha256),
+        createPersistedEngineAuthority(options.providerId, options.authority.engine, bindingSha256),
       );
       const before = inspectDirect(options, bindingSha256);
       const stateRoot = bindStateRoot(before, plan.plan.stateRoot);
@@ -1742,6 +2512,7 @@ export function createDockerStateMutationOwner(
               completedLedgerSha256,
             )
           ) {
+            finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
             options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
             return;
           }
@@ -1760,6 +2531,7 @@ export function createDockerStateMutationOwner(
             completedLedgerSha256,
           );
         });
+        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
         return;
       }
@@ -1774,6 +2546,7 @@ export function createDockerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const receipt = invokeHelperAuthorized(
             scope,
+            options,
             "activate",
             statusRequest(
               "activate",
@@ -1806,6 +2579,7 @@ export function createDockerStateMutationOwner(
           );
         },
       );
+      finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
       options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
     },
 
@@ -1822,6 +2596,7 @@ export function createDockerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const recovered = invokeHelperAuthorized(
             scope,
+            options,
             "recover",
             statusRequest("recover", options, bindingSha256, before, record.transactionId),
           );
@@ -1844,6 +2619,7 @@ export function createDockerStateMutationOwner(
             completed.resultSha256 as string,
           );
         });
+        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, record.resultSha256);
         return null;
       }
@@ -1872,6 +2648,17 @@ export function createDockerStateMutationOwner(
   return Object.freeze(owner);
 }
 
+export function createDockerStateMutationOwner(
+  options: DockerStateMutationOwnerOptions,
+): DockerStateMutationOwner {
+  return createContainerStateMutationOwner({
+    ...options,
+    providerId: DOCKER_PROVIDER_ID,
+    providerDisplayName: "Docker",
+    engineOperation: "sandbox-lifecycle",
+  });
+}
+
 function lifecycleGeneration(input: RuntimeProviderStateMutationContext): string {
   return boundedString(
     input.sandbox.lifecycleGeneration,
@@ -1880,11 +2667,14 @@ function lifecycleGeneration(input: RuntimeProviderStateMutationContext): string
   );
 }
 
-function requireSurfaceContext(input: RuntimeProviderStateMutationContext): void {
+function requireSurfaceContext(
+  input: RuntimeProviderStateMutationContext,
+  providerId: string,
+): void {
   const sandboxName = boundedString(input.sandboxName, SAFE_NAME, "sandbox name");
   if (
     input.sandbox.name !== sandboxName ||
-    input.sandbox.openshellDriver !== PROVIDER_ID ||
+    input.sandbox.openshellDriver !== providerId ||
     typeof input.environment !== "object" ||
     input.environment === null
   ) {
@@ -1894,8 +2684,9 @@ function requireSurfaceContext(input: RuntimeProviderStateMutationContext): void
 }
 
 function resolveExactLabeledRuntimeId(
-  authority: DockerOperationAuthority,
+  authority: ContainerStateMutationAuthority,
   sandboxName: string,
+  providerDisplayName: string,
 ): string {
   const result = authority.engine.capture(
     [
@@ -1911,59 +2702,63 @@ function resolveExactLabeledRuntimeId(
     ],
     INSPECT_TIMEOUT_MS,
   );
-  const output = requireCommandSuccess(result, "Docker labeled runtime resolution");
+  const output = requireCommandSuccess(result, `${providerDisplayName} labeled runtime resolution`);
   if (Buffer.byteLength(output, "utf8") > 4096 || output.includes("\0") || output.includes("\r")) {
-    fail("Docker labeled runtime resolution returned malformed output");
+    fail(`${providerDisplayName} labeled runtime resolution returned malformed output`);
   }
   const ids = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   if (ids.length !== 1 || !CONTAINER_ID.test(ids[0] as string)) {
-    fail("Docker labeled runtime resolution requires one exact full container identity");
+    fail(
+      `${providerDisplayName} labeled runtime resolution requires one exact full container identity`,
+    );
   }
   authority.assertAuthority();
   return ids[0] as string;
 }
 
 function requireExistingSurfaceAuthority(
-  authority: DockerOperationAuthority,
+  authority: ContainerStateMutationAuthority,
   engineAuthorityStore: PersistedEngineAuthorityStore,
+  options: ContainerStateMutationSurfaceOptions,
 ): void {
   authority.assertAuthority();
-  const persisted = engineAuthorityStore.load("sandbox-lifecycle");
-  if (!persisted) fail("persisted sandbox-lifecycle engine authority is missing");
+  const persisted = engineAuthorityStore.load(options.engineOperation);
+  if (!persisted) fail(`persisted ${options.engineOperation} engine authority is missing`);
   requirePersistedEngineAuthority(
     persisted,
-    PROVIDER_ID,
+    options.providerId,
     authority.engine,
-    dockerOperationBindingSha256(authority.engine),
+    operationBindingSha256(authority.engine),
   );
 }
 
 function createSurfaceOwner(
   input: RuntimeProviderStateMutationContext,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
   phase: "acquire" | "existing",
-): DockerStateMutationOwner {
-  requireSurfaceContext(input);
+): ContainerStateMutationOwner {
+  requireSurfaceContext(input, options.providerId);
 
-  // The operation-qualified endpoint is established from this invocation's
-  // environment before any mutable-name lookup occurs.
-  const authority = createDockerOperationAuthority(
-    "sandbox-lifecycle",
-    input.environment,
-    options.capture,
-  );
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  const authority = options.createAuthority(input);
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const engineAuthorityStore = createFilePersistedEngineAuthorityStore(stateDir);
   if (phase === "existing") {
-    requireExistingSurfaceAuthority(authority, engineAuthorityStore);
+    requireExistingSurfaceAuthority(authority, engineAuthorityStore, options);
   }
-  const runtimeId = resolveExactLabeledRuntimeId(authority, input.sandboxName);
-  return createDockerStateMutationOwner({
+  const runtimeId = resolveExactLabeledRuntimeId(
+    authority,
+    input.sandboxName,
+    options.providerDisplayName,
+  );
+  return createContainerStateMutationOwner({
+    providerId: options.providerId,
+    providerDisplayName: options.providerDisplayName,
+    engineOperation: options.engineOperation,
     sandboxName: input.sandboxName,
     lifecycleGeneration: lifecycleGeneration(input),
     ...(input.sandbox.lifecycleLiveIdentityFingerprint === undefined
@@ -1972,6 +2767,7 @@ function createSurfaceOwner(
           lifecycleLiveIdentityFingerprint: input.sandbox.lifecycleLiveIdentityFingerprint,
         }),
     runtimeId,
+    hostTransportRoot: stateDir,
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
@@ -1980,10 +2776,10 @@ function createSurfaceOwner(
 
 function recoverSurface(
   input: RuntimeProviderStateMutationContext,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
 ): RuntimeProviderStateMutationFence | null {
-  requireSurfaceContext(input);
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  requireSurfaceContext(input, options.providerId);
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -1999,20 +2795,20 @@ function releaseSurface(
   fence: RuntimeProviderStateMutationFence,
   proof: RuntimeProviderStateMutationActivationProof,
   completedLedgerSha256: string,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
 ): void {
-  requireSurfaceContext(input);
+  requireSurfaceContext(input, options.providerId);
   const source = record(fence, "state mutation fence");
   const transactionId = boundedString(source.transactionId, SHA256, "fence transaction identity");
   const resultSha256 = boundedString(completedLedgerSha256, SHA256, "completed ledger digest");
   if (
-    source.providerId !== PROVIDER_ID ||
+    source.providerId !== options.providerId ||
     source.sandboxName !== input.sandboxName ||
     source.lifecycleGeneration !== input.sandbox.lifecycleGeneration
   ) {
     fail("state mutation fence does not match the sandbox release context");
   }
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -2020,10 +2816,12 @@ function releaseSurface(
   createSurfaceOwner(input, options, "existing").release(input, fence, proof, resultSha256);
 }
 
-/** Production Docker provider surface for one exact, durable runtime fence. */
-export function createDockerStateMutationSurface(
-  options: DockerStateMutationSurfaceOptions = {},
+/** One exact, durable container-provider runtime fence. */
+export function createContainerStateMutationSurface(
+  options: ContainerStateMutationSurfaceOptions,
 ): Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> {
+  boundedString(options.providerId, PROVIDER_ID, "provider identity");
+  boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   const withDirectSandboxExecutionExclusion =
     options.withDirectSandboxExecutionExclusion ?? withShieldsTransitionLock;
   const acquireSurface = (
@@ -2031,8 +2829,8 @@ export function createDockerStateMutationSurface(
       readonly plan: RuntimeProviderPreparedStateMutationPlan;
     },
   ): RuntimeProviderStateMutationFence => {
-    requireSurfaceContext(input);
-    const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+    requireSurfaceContext(input, options.providerId);
+    const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
       input.environment,
     );
     const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -2043,13 +2841,13 @@ export function createDockerStateMutationSurface(
     return createSurfaceOwner(input, options, "acquire").acquire(input);
   };
   const surface: Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> = {
-    providerId: PROVIDER_ID,
+    providerId: options.providerId,
     supported: true,
     contractVersion: RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
     acquire: (input) =>
       withDirectSandboxExecutionExclusion(
         input.sandboxName,
-        "Docker runtime-provider state mutation acquire",
+        `${options.providerDisplayName} runtime-provider state mutation acquire`,
         () => acquireSurface(input),
       ),
     assertFenced: (input, fence) =>
@@ -2064,9 +2862,28 @@ export function createDockerStateMutationSurface(
     recover: (input) =>
       withDirectSandboxExecutionExclusion(
         input.sandboxName,
-        "Docker runtime-provider state mutation recovery",
+        `${options.providerDisplayName} runtime-provider state mutation recovery`,
         () => recoverSurface(input, options),
       ),
   };
   return Object.freeze(surface);
+}
+
+/** Production Docker provider surface for one exact, durable runtime fence. */
+export function createDockerStateMutationSurface(
+  options: DockerStateMutationSurfaceOptions = {},
+): Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> {
+  return createContainerStateMutationSurface({
+    providerId: DOCKER_PROVIDER_ID,
+    providerDisplayName: "Docker",
+    engineOperation: "sandbox-lifecycle",
+    createAuthority: (input) =>
+      createDockerOperationAuthority("sandbox-lifecycle", input.environment, options.capture),
+    ...(options.resolveStateDir ? { resolveStateDir: options.resolveStateDir } : {}),
+    ...(options.withDirectSandboxExecutionExclusion
+      ? {
+          withDirectSandboxExecutionExclusion: options.withDirectSandboxExecutionExclusion,
+        }
+      : {}),
+  });
 }

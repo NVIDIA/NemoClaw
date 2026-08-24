@@ -6,8 +6,6 @@ import * as trace from "../trace";
 
 type TraceFn<T> = () => T;
 
-const TRACE_TRUTHY_VALUES = new Set(["1", "true", "yes", "on"]);
-
 export const ONBOARD_TRACE_PHASE_NAMES = {
   preflight: "nemoclaw.onboard.phase.preflight",
   gateway: "nemoclaw.onboard.phase.gateway",
@@ -28,14 +26,6 @@ export interface OnboardTraceHandle {
   span: ReturnType<NonNullable<ReturnType<typeof trace.getTraceCollector>>["startSpan"]> | null;
 }
 
-export function isTruthyTraceEnv(value: unknown): boolean {
-  return TRACE_TRUTHY_VALUES.has(
-    String(value ?? "")
-      .trim()
-      .toLowerCase(),
-  );
-}
-
 function hasTracePath(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -50,7 +40,7 @@ export function startOnboardTrace(
     fresh: opts.fresh === true,
     non_interactive: opts.nonInteractive === true || env.NEMOCLAW_NON_INTERACTIVE === "1",
     agent: opts.agent || env.NEMOCLAW_AGENT || null,
-    trace_enabled: isTruthyTraceEnv(env.NEMOCLAW_TRACE),
+    trace_enabled: trace.isTraceFlagEnabled(env.NEMOCLAW_TRACE),
     trace_file_enabled: hasTracePath(env.NEMOCLAW_TRACE_FILE),
     trace_dir_enabled: hasTracePath(env.NEMOCLAW_TRACE_DIR),
   });

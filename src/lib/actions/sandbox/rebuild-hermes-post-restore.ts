@@ -523,7 +523,7 @@ function executeCronRestoreControl(
   const command = [HERMES_PYTHON, "-I", HERMES_CRON_CONTROL, action];
   if (identity) {
     command.push("--pid", String(identity.pid), "--start-time", String(identity.start_time));
-    if (identity.drain_token) command.push("--drain-token", identity.drain_token);
+    if (identity.drain_token) command.push(`--drain-token=${identity.drain_token}`);
   }
   if (replacementIdentity) {
     command.push(

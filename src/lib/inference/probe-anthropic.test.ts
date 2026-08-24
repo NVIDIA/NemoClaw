@@ -94,6 +94,7 @@ describe("probeAnthropicEndpoint", () => {
       missingEvents: [],
       duplicateEvents: [],
       sequenceErrors: [],
+      toolCallErrors: [],
       message: "",
     });
 
@@ -130,6 +131,7 @@ describe("probeAnthropicEndpoint", () => {
           missingEvents: [],
           duplicateEvents: [],
           sequenceErrors: [],
+          toolCallErrors: [],
           message: "",
         };
       });
@@ -156,6 +158,77 @@ describe("probeAnthropicEndpoint", () => {
     expect(fs.existsSync(configPath)).toBe(false);
   });
 
+  it("forces and validates a native streaming tool call when requested (#7967)", () => {
+    vi.spyOn(probe, "runCurlProbe").mockReturnValue({
+      ok: true,
+      httpStatus: 200,
+      curlStatus: 0,
+      body: "{}",
+      stderr: "",
+      message: "HTTP 200",
+    });
+    const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
+      ok: true,
+      httpStatus: 200,
+      curlStatus: 0,
+      missingEvents: [],
+      duplicateEvents: [],
+      sequenceErrors: [],
+      toolCallErrors: [],
+      message: "",
+    });
+
+    const result = probeAnthropicEndpoint(
+      "https://custom.endpoint.test",
+      "nvidia/nemotron-3-super-v3",
+      "sk-custom-secret",
+      { probeStreaming: true, requireStreamingToolCalling: true },
+    );
+
+    expect(result.ok).toBe(true);
+    const [streamingArgv, , expectations] = streamSpy.mock.calls[0];
+    const payload = JSON.parse(streamingArgv[streamingArgv.indexOf("-d") + 1]);
+    expect(payload).toMatchObject({
+      stream: true,
+      tools: [{ name: "emit_ok" }],
+      tool_choice: { type: "tool", name: "emit_ok" },
+    });
+    expect(expectations).toEqual({ expectedToolName: "emit_ok" });
+  });
+
+  it("reports native tool-call protocol violations as diagnostics (#7967)", () => {
+    vi.spyOn(probe, "runCurlProbe").mockReturnValue({
+      ok: true,
+      httpStatus: 200,
+      curlStatus: 0,
+      body: "{}",
+      stderr: "",
+      message: "HTTP 200",
+    });
+    vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      missingEvents: [],
+      duplicateEvents: [],
+      sequenceErrors: [],
+      toolCallErrors: ["missing-expected-tool-use", "missing-tool-use-stop-reason"],
+      message: "Missing native Anthropic tool call.",
+    });
+
+    const result = probeAnthropicEndpoint(
+      "https://custom.endpoint.test",
+      "nvidia/nemotron-3-super-v3",
+      "sk-custom-secret",
+      { probeStreaming: true, requireStreamingToolCalling: true },
+    );
+
+    expect(result.failures?.[0]?.diagnosticCodes).toEqual([
+      "anthropic-streaming-missing-tool-use",
+      "anthropic-streaming-missing-tool-use-stop-reason",
+    ]);
+  });
+
   it("fails validation when the streaming event sequence is malformed", () => {
     vi.spyOn(probe, "runCurlProbe").mockReturnValue({
       ok: true,
@@ -172,6 +245,7 @@ describe("probeAnthropicEndpoint", () => {
       missingEvents: [],
       duplicateEvents: ["message_start"],
       sequenceErrors: [],
+      toolCallErrors: [],
       message:
         "Anthropic Messages streaming on this endpoint emits duplicate message_start " +
         "(2 events for one request). Agent runs use the streaming path and would fail " +
@@ -211,6 +285,7 @@ describe("probeAnthropicEndpoint", () => {
       missingEvents: ["message_stop"],
       duplicateEvents: [],
       sequenceErrors: [],
+      toolCallErrors: [],
       message: "Anthropic Messages streaming is missing required events: message_stop.",
     });
 
@@ -249,6 +324,7 @@ describe("probeAnthropicEndpoint", () => {
       missingEvents: [],
       duplicateEvents: [],
       sequenceErrors: [],
+      toolCallErrors: [],
       message: "",
     });
 

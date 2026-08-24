@@ -22,21 +22,13 @@ describe("Hermes Provider menu contract", () => {
     expect(REMOTE_PROVIDER_CONFIG.hermesProvider.providerName).toBe("hermes-provider");
   });
 
-  it("names every Hermes-served model family in its menu label", () => {
-    const label = REMOTE_PROVIDER_CONFIG.hermesProvider.label;
-    expect(label.startsWith("Hermes Provider")).toBe(true);
-    for (const family of [
-      "Moonshot",
-      "Z-AI",
-      "MiniMax",
-      "Qwen",
-      "Xiaomi",
-      "Tencent",
-      "StepFun",
-      "xAI",
-      "Arcee",
-    ]) {
+  it.each(["Moonshot", "Z-AI", "MiniMax", "Qwen", "Xiaomi", "Tencent", "StepFun", "xAI", "Arcee"])(
+    "names every Hermes-served model family in its menu label [%s]",
+    (family) => {
+      const label = REMOTE_PROVIDER_CONFIG.hermesProvider.label;
+      expect(label.startsWith("Hermes Provider")).toBe(true);
+
       expect(label).toContain(family);
-    }
-  });
+    },
+  );
 });

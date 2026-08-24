@@ -4,6 +4,7 @@
 import {
   createSessionRecoveryReceiptId,
   MACHINE_SNAPSHOT_VERSION,
+  syncCheckpointMachineState,
   type Session,
 } from "../state/onboard-session";
 import { isTerminalOnboardMachineState } from "./machine/transitions";
@@ -126,6 +127,7 @@ export function applySessionRecovery(
         revision,
       },
     };
+    syncCheckpointMachineState(session, plan.entry, appliedAt);
   }
   return plan;
 }

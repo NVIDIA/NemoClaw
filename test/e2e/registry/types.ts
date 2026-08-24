@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RuntimeCaseReference } from "./runtime-matrix.ts";
+import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
 
 export type PhaseName = "environment" | "onboarding" | "state-validation" | "lifecycle" | "runtime";
 
@@ -186,6 +186,7 @@ export interface TargetEnvironment {
   install: string;
   runtime: string;
   onboarding: string;
+  policyTier?: "balanced" | "open" | "personal";
   // Optional lifecycle profile id. When set to a profile supported by
   // LifecyclePhaseFixture, the live registry test runs that fixture between
   // onboarding and state-validation. Targets that do not need a post-onboard
@@ -196,14 +197,9 @@ export interface TargetEnvironment {
 export interface TargetDefinition {
   id: string;
   description?: string;
+  executionCoverage?: E2eExecutionMetadata;
   manifestPath?: string;
   environment?: TargetEnvironment;
-  /**
-   * Optional reference into the registry-wide cross-runtime catalog. Canonical
-   * targets do not declare this until a live consumer and support policy land
-   * separately.
-   */
-  runtimeCase?: RuntimeCaseReference;
   assertionGroups: AssertionGroup[];
   expectedStateId?: string;
   suiteIds?: string[];

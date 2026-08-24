@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -11,12 +11,13 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_BRANCH = "main";
 const WORKFLOW_PATH = ".github/workflows/base-image.yaml";
 const WORKFLOW_FILE = "base-image.yaml";
-const WORKFLOW_NAME = "Images / Base Images";
+const WORKFLOW_NAME = "Images / Publish Base and Managed Images";
 const API_ROOT = "https://api.github.com";
 const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
 const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
+const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
@@ -39,6 +40,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   [
     "test/e2e/live/managed-image-activation-e2e*.ts",
     /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
+  ],
+  [
+    "src/lib/actions/sandbox/mcp-bridge-*.ts",
+    /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
   ],
   [
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
@@ -92,17 +97,28 @@ export interface PublicationRun {
 
 export type PublicationSelection =
   | { state: "missing" }
-  | { state: "pending"; run: PublicationRun }
-  | { state: "ready"; run: PublicationRun };
+  | { state: "selected"; run: PublicationRun };
 
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
   request: (path: string) => Promise<unknown>;
+  requireWorkflowSuccess?: boolean;
   waitMs: number;
   pollMs: number;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   notice?: (message: string) => void;
+}
+
+export function writePublicationRunOutputs(path: string, run: PublicationRun): void {
+  if (!path || path.includes("\r") || path.includes("\n")) {
+    throw new Error("GITHUB_OUTPUT must be a non-empty single-line path");
+  }
+  appendFileSync(
+    path,
+    [`run_id=${run.id}`, `run_attempt=${run.attempt}`, `head_sha=${run.headSha}`, ""].join("\n"),
+    "utf8",
+  );
 }
 
 export interface GithubRequestOptions {
@@ -423,16 +439,10 @@ export function selectPublicationRun(
     );
   }
   const run = nearest[0].run;
-  if (run.status !== "completed") return { state: "pending", run };
-  if (run.conclusion !== "success") {
-    throw new Error(
-      `base-image workflow for ${run.headSha} concluded ${run.conclusion}; ${run.url}`,
-    );
-  }
-  return { state: "ready", run };
+  return { state: "selected", run };
 }
 
-export function validatePublisherJobs(payload: unknown, run: PublicationRun): void {
+export function validatePublisherJobs(payload: unknown, run: PublicationRun): "pending" | "ready" {
   const response = asRecord(payload);
   const totalCount = Number(response.total_count);
   if (!Number.isSafeInteger(totalCount) || totalCount < 0) {
@@ -442,79 +452,91 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): vo
     throw new Error("publisher job listing is incomplete");
   }
 
-  const jobsByName = new Map<
-    string,
-    Array<{ attempt: number; status: string; conclusion: string }>
-  >();
+  const jobsByName = new Map<string, { status: string; conclusion: string | null }>();
   for (const [index, value] of response.jobs.entries()) {
     const job = asRecord(value);
     positiveSafeInteger(job.id, `publisher job ${index} id`);
     const attempt = positiveSafeInteger(job.run_attempt, `publisher job ${index} attempt`);
-    if (job.run_id !== run.id || attempt > run.attempt || job.head_sha !== run.headSha) {
+    if (job.run_id !== run.id || attempt !== run.attempt || job.head_sha !== run.headSha) {
       throw new Error(`publisher job ${index} provenance does not match the selected run`);
     }
     if (typeof job.name !== "string" || job.name.length === 0) {
       throw new Error(`publisher job ${index} name is invalid`);
     }
-    if (
-      job.status !== "completed" ||
-      typeof job.conclusion !== "string" ||
-      !COMPLETED_CONCLUSIONS.has(job.conclusion)
-    ) {
-      throw new Error(`publisher job ${job.name} completion evidence is invalid; ${run.url}`);
+    const requiredName = REQUIRED_PUBLISHER_JOBS.find((name) => name === job.name);
+    if (!requiredName) continue;
+    if (typeof job.status !== "string") {
+      throw new Error(`publisher job ${requiredName} status is invalid; ${run.url}`);
     }
-    const occurrences = jobsByName.get(job.name) ?? [];
-    if (occurrences.some((occurrence) => occurrence.attempt === attempt)) {
-      throw new Error(`publisher job ${job.name} is duplicated in attempt ${attempt}; ${run.url}`);
+    const status = job.status;
+    let conclusion: string | null = null;
+    if (status === "completed") {
+      if (typeof job.conclusion !== "string" || !COMPLETED_CONCLUSIONS.has(job.conclusion)) {
+        throw new Error(`publisher job ${requiredName} conclusion is invalid; ${run.url}`);
+      }
+      conclusion = job.conclusion;
+    } else if (!PENDING_RUN_STATUSES.has(status) || job.conclusion !== null) {
+      throw new Error(`publisher job ${requiredName} pending state is invalid; ${run.url}`);
     }
-    occurrences.push({
-      attempt,
-      status: job.status,
-      conclusion: job.conclusion,
-    });
-    jobsByName.set(job.name, occurrences);
+    if (jobsByName.has(requiredName)) {
+      throw new Error(
+        `publisher job ${requiredName} is duplicated in attempt ${run.attempt}; ${run.url}`,
+      );
+    }
+    jobsByName.set(requiredName, { status, conclusion });
   }
 
+  let pending = false;
   for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
-    const occurrences = jobsByName.get(requiredName) ?? [];
-    if (occurrences.length === 0) {
-      throw new Error(`missing required ${requiredName} job; ${run.url}`);
+    const current = jobsByName.get(requiredName);
+    if (!current) {
+      if (run.status === "completed") {
+        throw new Error(
+          `missing required ${requiredName} job in attempt ${run.attempt}; ${run.url}`,
+        );
+      }
+      pending = true;
+      continue;
     }
-    const latestAttempt = Math.max(...occurrences.map((occurrence) => occurrence.attempt));
-    const latest = occurrences.find((occurrence) => occurrence.attempt === latestAttempt);
-    if (!latest || latest.status !== "completed" || latest.conclusion !== "success") {
+    if (current.status !== "completed") {
+      if (run.status === "completed") {
+        throw new Error(
+          `${requiredName} job is not complete in terminal attempt ${run.attempt}; ${run.url}`,
+        );
+      }
+      pending = true;
+      continue;
+    }
+    if (current.conclusion !== "success") {
       throw new Error(
-        `latest ${requiredName} job did not complete successfully in attempt ${latestAttempt}; ${run.url}`,
+        `${requiredName} job did not complete successfully in attempt ${run.attempt}; ${run.url}`,
       );
     }
   }
+  return pending ? "pending" : "ready";
 }
 
-export function validateBoundRun(payload: unknown, expected: PublicationRun): void {
+export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
   const actual = validateRun(payload, 0, expected.workflowId);
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
-    actual.headSha !== expected.headSha ||
-    actual.status !== "completed" ||
-    actual.conclusion !== "success"
+    actual.headSha !== expected.headSha
   ) {
     throw new Error(
       `selected base-image workflow changed while evidence was verified; ${expected.url}`,
     );
   }
+  return actual;
 }
 
-export async function collectPaginated(
+async function collectPaginationAttempt(
   request: (path: string) => Promise<unknown>,
   basePath: string,
   collectionKey: "workflow_runs" | "jobs",
-  maxPages = MAX_API_PAGES,
-): Promise<JsonRecord> {
-  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
-    throw new Error("pagination page cap must be a positive integer");
-  }
-  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  maxPages: number,
+  label: string,
+): Promise<JsonRecord | undefined> {
   const values: unknown[] = [];
   const ids = new Set<number>();
   let totalCount: number | undefined;
@@ -528,7 +550,7 @@ export async function collectPaginated(
     }
     if (totalCount === undefined) totalCount = pageTotal;
     if (pageTotal !== totalCount) {
-      throw new Error(`${label} total_count changed during pagination`);
+      return undefined;
     }
     const pageValues = response[collectionKey];
     if (!Array.isArray(pageValues) || pageValues.length > PAGE_SIZE) {
@@ -550,6 +572,29 @@ export async function collectPaginated(
   }
 
   throw new Error(`${label} pagination exceeded the ${maxPages}-page safety cap`);
+}
+
+export async function collectPaginated(
+  request: (path: string) => Promise<unknown>,
+  basePath: string,
+  collectionKey: "workflow_runs" | "jobs",
+  maxPages = MAX_API_PAGES,
+): Promise<JsonRecord> {
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+    throw new Error("pagination page cap must be a positive integer");
+  }
+  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  for (let attempt = 1; attempt <= PAGINATION_ATTEMPTS; attempt += 1) {
+    const result = await collectPaginationAttempt(
+      request,
+      basePath,
+      collectionKey,
+      maxPages,
+      label,
+    );
+    if (result) return result;
+  }
+  throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
 }
 
 function annotationValue(value: string): string {
@@ -587,40 +632,56 @@ export async function waitForBaseImagePublication(
   while (true) {
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId);
-    if (selection.state === "ready") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/jobs?filter=all&per_page=100`;
+    if (selection.state === "selected") {
+      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
         );
       }
+      let publisherState: "pending" | "ready";
+      let validatedRun = selection.run;
       try {
         const jobs = await collectPaginated(options.request, jobsPath, "jobs");
-        validatePublisherJobs(jobs, selection.run);
-        validateBoundRun(
-          await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
-          selection.run,
-        );
+        publisherState = validatePublisherJobs(jobs, selection.run);
+        if (publisherState === "ready") {
+          const boundRun = validateBoundRun(
+            await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
+            selection.run,
+          );
+          validatedRun = boundRun;
+          if (options.requireWorkflowSuccess === true) {
+            if (boundRun.status !== "completed") {
+              publisherState = "pending";
+            } else if (boundRun.conclusion !== "success") {
+              throw new Error(
+                `managed-image publication workflow did not complete successfully; ${boundRun.url}`,
+              );
+            }
+          }
+        }
       } catch (error) {
         throw publicationEvidenceError(error, selection.run);
       }
-      if (now() > deadline) {
-        throw new Error(
-          `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
-        );
+      if (publisherState === "ready") {
+        if (now() > deadline) {
+          throw new Error(
+            `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
+          );
+        }
+        return validatedRun;
       }
-      return selection.run;
     }
 
     if (now() >= deadline) {
-      const pending = selection.state === "pending" ? `; ${selection.run.url}` : "";
+      const pending = selection.state === "selected" ? `; ${selection.run.url}` : "";
       throw new Error(
         `timed out waiting for base-image publication covering ${options.history.relevantSha}${pending}`,
       );
     }
     notice(
-      selection.state === "pending"
-        ? `Base-image publication is ${selection.run.status} for ${selection.run.headSha}; ${selection.run.url}`
+      selection.state === "selected"
+        ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
         : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));
@@ -740,6 +801,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
 
   const token = env.GITHUB_TOKEN ?? "";
   const expectedSha = env.EXPECTED_SHA ?? "";
+  const outputPath = env.GITHUB_OUTPUT ?? "";
+  const requireManagedImagePublication = env.REQUIRE_MANAGED_IMAGE_PUBLICATION ?? "0";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -757,6 +820,9 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");
   }
+  if (requireManagedImagePublication !== "0" && requireManagedImagePublication !== "1") {
+    throw new Error("REQUIRE_MANAGED_IMAGE_PUBLICATION must be 0 or 1");
+  }
 
   const workflowSource = readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
@@ -764,9 +830,11 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const run = await waitForBaseImagePublication({
     history,
     request: (path) => githubRequest(path, token),
+    requireWorkflowSuccess: requireManagedImagePublication === "1",
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });
+  writePublicationRunOutputs(outputPath, run);
   console.log(
     `::notice title=Base-image publication verified::${annotationValue(
       `All required publishers succeeded for ${run.headSha}; ${run.url}`,

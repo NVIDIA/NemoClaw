@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
-import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const { isHijackedDockerInternalUrl } = require("./onboard-host-docker-internal");
@@ -47,18 +46,19 @@ describe("host.docker.internal onboarding inference policy", () => {
     expect(result.message).toMatch(/host\.openshell\.internal:11435/);
   });
 
-  it("validates Windows-host Ollama from Docker for strict and compatibility paths (#8127)", async () => {
-    const seenCommands: Array<{ command: string; args: readonly string[] }> = [];
-    const containerProbeSpawnSyncImpl = (
-      command: string,
-      args: readonly string[],
-    ): SpawnSyncReturns<string> => {
-      seenCommands.push({ command, args });
-      const outputIndex = args.indexOf("-o");
-      const outputPath = args[outputIndex + 1];
-      fs.writeFileSync(
-        outputPath,
-        JSON.stringify({
+  it.each([
+    ["required", true],
+    ["optional", false],
+  ] as const)(
+    "recognizes Windows-host Ollama tool calls when strict tool calling is %s (#9116)",
+    async (_label, requireChatCompletionsToolCalling) => {
+      const seenCommands: Array<{ command: string; args: readonly string[] }> = [];
+      const containerProbeSpawnSyncImpl = (
+        command: string,
+        args: readonly string[],
+      ): SpawnSyncReturns<string> => {
+        seenCommands.push({ command, args });
+        const body = JSON.stringify({
           choices: [
             {
               message: {
@@ -72,19 +72,20 @@ describe("host.docker.internal onboarding inference policy", () => {
               },
             },
           ],
-        }),
-      );
-      return {
-        pid: 123,
-        output: ["200", ""],
-        stdout: "200",
-        stderr: "",
-        status: 0,
-        signal: null,
+        });
+        const writeOutIndex = args.indexOf("-w");
+        const writeOut = args[writeOutIndex + 1];
+        const stdout = `${body}${writeOut.replace("%{http_code}", "200")}`;
+        return {
+          pid: 123,
+          output: [stdout, ""],
+          stdout,
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
       };
-    };
 
-    for (const requireChatCompletionsToolCalling of [true, false]) {
       const result = await probeOpenAiLikeEndpointOptimized(
         "http://host.docker.internal:11434/v1",
         "openai/nemotron-mini",
@@ -102,14 +103,15 @@ describe("host.docker.internal onboarding inference policy", () => {
         api: "openai-completions",
         label: "Chat Completions API",
       });
-    }
-    expect(seenCommands).toHaveLength(2);
-    for (const { command, args } of seenCommands) {
-      expect(command).toBe("docker");
-      expect(args).toContain("curlimages/curl:8.10.1");
-      expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
-    }
-  });
+      expect(seenCommands).toHaveLength(1);
+      seenCommands.forEach(({ command, args }) => {
+        expect(command).toBe("docker");
+        expect(args).toContain("curlimages/curl:8.10.1");
+        expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
+        expect(args).not.toContain("--volume");
+      });
+    },
+  );
 
   it.each([
     {
@@ -127,22 +129,21 @@ describe("host.docker.internal onboarding inference policy", () => {
       apiKey: "",
       extraHeaders: ["Authorization: Bearer not-a-real-secret"],
     },
-  ])("refuses credentials and non-canonical Windows-host Ollama routes in Docker-context validation (#8127)", ({
-    endpointUrl,
-    apiKey,
-    extraHeaders,
-  }) => {
-    const result = probeOpenAiLikeEndpoint(endpointUrl, "openai/nemotron-mini", apiKey, {
-      skipResponsesProbe: true,
-      requireChatCompletionsToolCalling: true,
-      allowHostDockerInternal: true,
-      probeFromDocker: { expectedPort: 11434 },
-      extraHeaders,
-    });
+  ])(
+    "refuses credentials and non-canonical Windows-host Ollama routes in Docker-context validation (#8127)",
+    ({ endpointUrl, apiKey, extraHeaders }) => {
+      const result = probeOpenAiLikeEndpoint(endpointUrl, "openai/nemotron-mini", apiKey, {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        allowHostDockerInternal: true,
+        probeFromDocker: { expectedPort: 11434 },
+        extraHeaders,
+      });
 
-    expect(result).toMatchObject({
-      ok: false,
-      failures: [expect.objectContaining({ name: "Docker-context validation boundary" })],
-    });
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        failures: [expect.objectContaining({ name: "Docker-context validation boundary" })],
+      });
+    },
+  );
 });

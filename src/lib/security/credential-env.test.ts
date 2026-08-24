@@ -14,73 +14,74 @@ import {
 } from "./credential-env";
 
 describe("isCredentialShapedName", () => {
-  it("matches credential stem words as the exact name", () => {
-    for (const name of ["KEY", "secret", "TOKEN", "password", "passwd", "auth", "credential"]) {
+  it.each(["KEY", "secret", "TOKEN", "password", "passwd", "auth", "credential"])(
+    "matches the exact credential stem %s",
+    (name) => {
       expect(isCredentialShapedName(name)).toBe(true);
-    }
+    },
+  );
+
+  it.each(["MY_API_KEY", "provider-secret", "SESSION_TOKEN", "x_auth_y"])(
+    "matches the separated credential name %s",
+    (name) => {
+      expect(isCredentialShapedName(name)).toBe(true);
+    },
+  );
+
+  it.each([
+    "APIKEY",
+    "apikey",
+    "accesskey",
+    "accessKey",
+    "secretkey",
+    "authtoken",
+    "refreshToken",
+    "accesstoken",
+    "clientsecret",
+  ])("matches the compound credential name %s", (name) => {
+    expect(isCredentialShapedName(name)).toBe(true);
   });
 
-  it("matches stems joined to other words with separators", () => {
-    for (const name of ["MY_API_KEY", "provider-secret", "SESSION_TOKEN", "x_auth_y"]) {
-      expect(isCredentialShapedName(name)).toBe(true);
-    }
+  it.each([
+    "PRIVATE_KEY",
+    "privateKey",
+    "passcode",
+    "personalAccessToken",
+    "connection_string",
+    "webhookURL",
+    "authorization",
+    "bearerToken",
+    "cookies",
+    "PAT",
+    "PIN",
+    "DSN",
+    "connectionstring",
+  ])("matches the local credential-capture name %s (#5048)", (name) => {
+    expect(isCredentialShapedName(name)).toBe(true);
   });
 
-  it("matches api/apikey and other run-together compound forms", () => {
-    for (const name of [
-      "APIKEY",
-      "apikey",
-      "accesskey",
-      "accessKey",
-      "secretkey",
-      "authtoken",
-      "refreshToken",
-      "accesstoken",
-      "clientsecret",
-    ]) {
-      expect(isCredentialShapedName(name)).toBe(true);
-    }
-  });
-
-  it("matches sensitive compound names shared with local credential capture (#5048)", () => {
-    for (const name of [
-      "PRIVATE_KEY",
-      "privateKey",
-      "passcode",
-      "personalAccessToken",
-      "connection_string",
-      "webhookURL",
-      "authorization",
-      "bearerToken",
-      "cookies",
-      "PAT",
-      "PIN",
-      "DSN",
-      "connectionstring",
-    ]) {
-      expect(isCredentialShapedName(name)).toBe(true);
-    }
-  });
-
-  it("does not overmatch sensitive-looking substrings inside benign names (#5048)", () => {
-    for (const name of ["SPIN", "DISPATCH", "COOKIEJAR", "PRIVATEERING"]) {
+  it.each(["SPIN", "DISPATCH", "COOKIEJAR", "PRIVATEERING"])(
+    "does not overmatch the benign name %s (#5048)",
+    (name) => {
       expect(isCredentialShapedName(name)).toBe(false);
-    }
-  });
+    },
+  );
 
-  it("does not match benign names", () => {
-    for (const name of ["PATH", "HOME", "NO_PROXY", "HTTP_PROXY", "LANG", "monkey", "keyboard"]) {
+  it.each(["PATH", "HOME", "NO_PROXY", "HTTP_PROXY", "LANG", "monkey", "keyboard"])(
+    "does not match the benign name %s",
+    (name) => {
       expect(isCredentialShapedName(name)).toBe(false);
-    }
-  });
+    },
+  );
 });
 
 describe("shouldStripCredentialEnv", () => {
-  it("strips every supported credential env name", () => {
-    for (const name of SUPPORTED_CREDENTIAL_ENV_NAMES) {
+  it.each([...SUPPORTED_CREDENTIAL_ENV_NAMES])(
+    "strips the supported credential env name %s",
+    (name) => {
       expect(shouldStripCredentialEnv(name)).toBe(true);
-    }
-  });
+    },
+  );
 
   it("keeps the legacy explicit-deny export on the shared inventory", () => {
     expect(CREDENTIAL_ENV_EXPLICIT_DENY).toBe(SUPPORTED_CREDENTIAL_ENV_NAMES);

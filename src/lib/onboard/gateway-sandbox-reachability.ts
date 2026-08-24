@@ -15,7 +15,14 @@ import os from "node:os";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
+import { parseDockerDaemonObservation } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
+import {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
+} from "./experimental/docker-network-authority";
 import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
@@ -33,7 +40,7 @@ export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
 const DEFAULT_PROBE_IMAGE =
   "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
-const DEFAULT_NETWORK_NAME = "openshell-docker";
+const DEFAULT_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 const HOST_DOCKER_INTERNAL_NAME = "host.docker.internal";
 const DEFAULT_PROBE_TIMEOUT_SEC = 5;
@@ -94,7 +101,7 @@ export interface SandboxBridgeReachabilityOptions {
   inspectNetworkImpl?: (networkName: string) => DockerBridgeNetworkInfo | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
 
-  runtimeProbeImpl?: () => SandboxBridgeProbeRunResult;
+  runtimeProbeImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   /** Inject a precomputed image-cache result; bypasses real pre-pull. */
   ensureImageCachedOverride?: import("./preflight").EnsureProbeImageCachedResult;
 }
@@ -108,23 +115,8 @@ function isRunningInWsl(env: NodeJS.ProcessEnv = process.env, release = os.relea
 }
 
 function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | undefined {
-  const text = raw.trim();
-  if (!text || text === "<no value>") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(parsed)) return undefined;
-  const candidates: DockerBridgeNetworkInfo[] = [];
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const subnet = typeof record.Subnet === "string" ? record.Subnet : undefined;
-    const gatewayIp = typeof record.Gateway === "string" ? record.Gateway : undefined;
-    if (subnet || gatewayIp) candidates.push({ subnet, gatewayIp });
-  }
+  const candidates = parseDockerNetworkIpamEntries(raw);
+  if (!candidates) return undefined;
   return (
     candidates.find((candidate) => candidate.gatewayIp && !candidate.gatewayIp.includes(":")) ??
     candidates.find((candidate) => candidate.subnet && /^\d+\./.test(candidate.subnet)) ??
@@ -134,7 +126,7 @@ function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | un
 
 function defaultInspectNetwork(networkName: string): DockerBridgeNetworkInfo | undefined {
   const raw = dockerCapture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName],
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     { ignoreError: true },
   );
   return parseDockerNetworkIpamConfig(raw);
@@ -205,11 +197,27 @@ function buildOpenShellDockerRoute(
   };
 }
 
-function outputTail(value: unknown): string | undefined {
+function outputText(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
   const text = raw.trim();
-  return text ? text.slice(-400) : undefined;
+  return text || undefined;
+}
+
+function outputTail(value: unknown): string | undefined {
+  return outputText(value)?.slice(-400);
+}
+
+function isReachableRuntimeInfo(result: SandboxBridgeProbeRunResult): boolean {
+  if (result.status !== 0) return false;
+  const stdout = outputText(result.stdout);
+  if (!stdout) return false;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  return parseDockerDaemonObservation(stdout).reachable;
 }
 
 function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
@@ -221,6 +229,22 @@ function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
     result.status !== null ? `exit ${result.status}` : undefined,
   ].filter((item): item is string => Boolean(item));
   return details.length > 0 ? details.join(" | ") : "docker run did not complete the probe";
+}
+
+function summarizeRuntimeInfoProbeResult(result: SandboxBridgeProbeRunResult): string {
+  if (isProbeTimeout(result)) {
+    return "Docker-compatible runtime info probe timed out";
+  }
+  if (result.status === 0) {
+    return "Docker-compatible runtime info did not contain a recognized daemon version";
+  }
+  if (result.signal) {
+    return `Docker-compatible runtime info probe ended with signal ${result.signal}`;
+  }
+  if (result.status !== null) {
+    return `Docker-compatible runtime info probe exited with status ${result.status}`;
+  }
+  return "Docker-compatible runtime info probe did not complete";
 }
 
 function isNameResolutionFailure(detail: string): boolean {
@@ -276,8 +300,7 @@ function buildProbeArgs(
 export async function isSandboxBridgeGatewayReachable(
   opts: SandboxBridgeReachabilityOptions = {},
 ): Promise<SandboxBridgeReachabilityResult> {
-  const networkName =
-    opts.networkName ?? process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_NETWORK_NAME;
+  const networkName = opts.networkName ?? resolveDockerDriverNetworkName();
   const port = opts.port ?? GATEWAY_PORT;
   const timeoutSec = opts.timeoutSec ?? DEFAULT_PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? DEFAULT_PROBE_IMAGE;
@@ -286,13 +309,7 @@ export async function isSandboxBridgeGatewayReachable(
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
   const portableProfile = isPortableExperimentalProfile();
-  const runtimeProbe =
-    opts.runtimeProbeImpl ??
-    (() =>
-      defaultRunImpl(
-        ["info", "--format", "{{.ServerVersion}}"],
-        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
-      ));
+  const runtimeProbe = opts.runtimeProbeImpl ?? defaultRunImpl;
 
   const network = inspectNetwork(networkName);
   const route = buildOpenShellDockerRoute(
@@ -303,13 +320,16 @@ export async function isSandboxBridgeGatewayReachable(
   );
   if (!route) {
     if (portableProfile) {
-      const runtimeResult = runtimeProbe();
-      if (runtimeResult.status !== 0) {
+      const runtimeResult = runtimeProbe(
+        ["info", "--format", "{{json .}}"],
+        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
+      );
+      if (!isReachableRuntimeInfo(runtimeResult)) {
         return {
           ok: false,
           reason: "docker_daemon_unreachable",
           networkName,
-          detail: summarizeProbeResult(runtimeResult),
+          detail: summarizeRuntimeInfoProbeResult(runtimeResult),
         };
       }
     }
@@ -483,8 +503,8 @@ export function formatSandboxBridgeUnreachableMessage(
       result.detail ? `    ${result.detail}` : undefined,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ]
       .filter((line): line is string => Boolean(line))
@@ -509,8 +529,8 @@ export function formatSandboxBridgeUnreachableMessage(
       `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ].join("\n");
   }

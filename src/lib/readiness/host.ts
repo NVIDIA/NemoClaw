@@ -17,6 +17,7 @@ import {
   type PlatformIdentity,
   projectPlatformQualification,
 } from "./platform-qualification.js";
+import { measureObservationAge, staleEvidence } from "./observation-age.js";
 import { buildSystemReadinessProbeEnv, createSystemReadinessCapture } from "./probe-env.js";
 import { sanitizeReadinessText } from "./sanitize.js";
 import {
@@ -58,6 +59,11 @@ export interface HostObservations {
   hasNvidiaGpu: boolean;
   nvidiaGpuCount?: number;
   nvidiaDriverVersion?: string;
+  nvidiaGpuMemoryTotalBytes?: number;
+  nvidiaGpuMemoryAvailableBytes?: number;
+  nvidiaGpuMemoryPerDeviceBytes?: number;
+  nvidiaGpuUnifiedMemory?: boolean;
+  nvidiaGpuComputeConstrained?: boolean;
   hostGpuPlatform?: NvidiaPlatform;
   nvidiaContainerToolkitInstalled: boolean;
   dockerCdiSpecDirs: readonly string[];
@@ -69,9 +75,9 @@ export interface HostObservations {
 
 export interface HostObservationSnapshot {
   observedAt: string;
+  completedAt: string;
   observations?: Readonly<HostObservations>;
   failure?: string;
-  reusable?: boolean;
 }
 
 export interface CollectHostObservationsOptions {
@@ -79,7 +85,19 @@ export interface CollectHostObservationsOptions {
   architecture?: string;
   detectGpu?: () =>
     | (Pick<GpuDetection, "count" | "wslDockerDesktopGpuProofPassed"> &
-        Partial<Pick<GpuDetection, "platform" | "type">>)
+        Partial<
+          Pick<
+            GpuDetection,
+            | "platform"
+            | "type"
+            | "gpus"
+            | "totalMemoryMB"
+            | "availableMemoryMB"
+            | "perGpuMB"
+            | "unifiedMemory"
+            | "computeConstrained"
+          >
+        >)
     | null;
   detectNvidiaDriverVersion?: () => string | undefined;
   detectHostGpuPlatform?: () => NvidiaPlatform;
@@ -107,6 +125,7 @@ function adaptHostAssessment(
   hostGpuPlatform?: NvidiaPlatform,
   nvidiaGpuCount?: number,
   nvidiaDriverVersion?: string,
+  gpu?: ReturnType<NonNullable<CollectHostObservationsOptions["detectGpu"]>>,
   platformIdentity?: PlatformIdentity,
   wslDockerDesktopGpuProofPassed?: boolean,
 ): HostObservations {
@@ -134,6 +153,18 @@ function adaptHostAssessment(
     hasNvidiaGpu,
     nvidiaGpuCount,
     nvidiaDriverVersion,
+    nvidiaGpuMemoryTotalBytes:
+      gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
+    nvidiaGpuMemoryAvailableBytes:
+      gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes:
+      gpu?.gpus?.length
+        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+        : gpu?.perGpuMB === undefined
+          ? undefined
+          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
+    nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
     nvidiaContainerToolkitInstalled: host.nvidiaContainerToolkitInstalled,
     dockerCdiSpecDirs: [...host.dockerCdiSpecDirs],
@@ -146,10 +177,19 @@ function adaptHostAssessment(
   };
 }
 
+/** Stamp the completion of a collection so its own duration cannot age it out. */
 export function collectHostObservations(
   options: CollectHostObservationsOptions = {},
 ): HostObservationSnapshot {
-  const observedAt = (options.now ?? (() => new Date()))().toISOString();
+  const now = options.now ?? (() => new Date());
+  const observed = observeHost(options, now().toISOString());
+  return { ...observed, completedAt: now().toISOString() };
+}
+
+function observeHost(
+  options: CollectHostObservationsOptions,
+  observedAt: string,
+): Omit<HostObservationSnapshot, "completedAt"> {
   try {
     const probeEnv = buildSystemReadinessProbeEnv();
     const runCaptureImpl = createSystemReadinessCapture(probeEnv);
@@ -206,19 +246,18 @@ export function collectHostObservations(
             ? options.detectNvidiaDriverVersion()
             : detectNvidiaDriverVersion({ runCaptureImpl })
           : undefined,
+        gpu,
         (
           options.collectPlatformIdentity ??
           (() => collectPlatformIdentity(options.platformIdentityOptions))
         )(),
         wslDockerDesktopGpuProofPassed,
       ),
-      reusable: false,
     };
   } catch (error) {
     return {
       observedAt,
       failure: safeReportText(error instanceof Error ? error.message : String(error)),
-      reusable: false,
     };
   }
 }
@@ -272,6 +311,11 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.nvidia",
     "host.gpu.count",
     "host.gpu.driver_version",
+    "host.gpu.memory_total_bytes",
+    "host.gpu.memory_available_bytes",
+    "host.gpu.memory_per_device_bytes",
+    "host.gpu.unified_memory",
+    "host.gpu.compute_constrained",
     "host.gpu.container_toolkit",
     "host.gpu.nvidia_runtime",
     "host.gpu.cdi",
@@ -298,6 +342,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
     "host.platform.dgx_spark",
+    "host.platform.n1x",
     "host.platform.dgx_station",
   ];
   return {
@@ -319,19 +364,17 @@ export function projectHostReadiness(
   options: CreateHostReadinessReportOptions,
 ): SystemReadinessReport {
   const now = (options.now ?? (() => new Date()))();
-  const age = now.getTime() - Date.parse(snapshot.observedAt);
-  const stale =
-    !Number.isFinite(age) || age < 0 || age > (options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS);
-  const unsafeReuse = stale && snapshot.reusable !== true;
+  const unsafeReuse = measureObservationAge(
+    snapshot.completedAt,
+    now,
+    options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS,
+  );
   const evidence: ReadinessEvidence[] = [];
   if (snapshot.failure) {
     evidence.push({ id: "host.probe.failure", summary: safeReportText(snapshot.failure) });
   }
   if (unsafeReuse) {
-    evidence.push({
-      id: "host.probe.stale",
-      summary: "Host observations exceeded their safe reuse window.",
-    });
+    evidence.push(staleEvidence("host.probe.stale", "Host", snapshot.completedAt, unsafeReuse));
   }
 
   let observations: ReadinessObservation[];
@@ -408,6 +451,26 @@ export function projectHostReadiness(
       observation(
         "host.gpu.driver_version",
         host.hasNvidiaGpu ? host.nvidiaDriverVersion : undefined,
+      ),
+      observation(
+        "host.gpu.memory_total_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryTotalBytes : undefined,
+      ),
+      observation(
+        "host.gpu.memory_available_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryAvailableBytes : undefined,
+      ),
+      observation(
+        "host.gpu.memory_per_device_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryPerDeviceBytes : undefined,
+      ),
+      observation(
+        "host.gpu.unified_memory",
+        host.hasNvidiaGpu ? host.nvidiaGpuUnifiedMemory : undefined,
+      ),
+      observation(
+        "host.gpu.compute_constrained",
+        host.hasNvidiaGpu ? host.nvidiaGpuComputeConstrained : undefined,
       ),
       observation(
         "host.gpu.container_toolkit",

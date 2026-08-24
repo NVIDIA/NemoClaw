@@ -3,9 +3,11 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const root = path.join(import.meta.dirname, "..");
 const dockerfileBase = fs.readFileSync(
@@ -22,13 +24,20 @@ const cliAdapter = JSON.parse(
   fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
 );
 const review = fs.readFileSync(
-  path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
+  path.join(root, "internal", "security-reviews", "hermes-0.19.0-dependency-review.md"),
   "utf8",
 );
 const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents", "hermes", "security-dependencies.patch"),
   "utf8",
 );
+const hindsightProbeRequirementsPath = path.join(
+  root,
+  "agents",
+  "hermes",
+  "hindsight-client-probe-requirements.txt",
+);
+const hindsightProbeRequirements = fs.readFileSync(hindsightProbeRequirementsPath, "utf8");
 
 function arg(name: string): string {
   const match = dockerfileBase.match(new RegExp(`^ARG ${name}=(.+)$`, "mu"));
@@ -60,6 +69,10 @@ function uvVersionCheckStatus(output: string, expectedVersion: string): number |
 
 describe("Hermes 0.19.0 dependency review", () => {
   it("binds every active source identity to the reviewed release", () => {
+    const pinnedBaseDigest = dockerfile.match(
+      /^ARG BASE_IMAGE=ghcr[.]io\/nvidia\/nemoclaw\/hermes-sandbox-base@(sha256:[0-9a-f]{64})$/mu,
+    )?.[1];
+
     expect(arg("HERMES_VERSION")).toBe("v2026.7.20");
     expect(arg("HERMES_SEMVER")).toBe("0.19.0");
     expect(arg("HERMES_TARBALL_SHA256")).toBe(
@@ -72,6 +85,10 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`3ef6bbd201263d354fd83ec55b3c306ded2eb72a`");
     expect(review).toContain("`bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f`");
     expect(review).toContain("`ac986bede64a2785436676c0ea084ec586574f8cb00a9d047e095b435d3e21c0`");
+    expect(pinnedBaseDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(review).toContain(
+      `The \`BASE_IMAGE\` argument in \`agents/hermes/Dockerfile\` pins the patched multi-platform Open Container Initiative (OCI) index \`${pinnedBaseDigest}\`.`,
+    );
   });
 
   it("preserves the reviewed authorization and state migrations", () => {
@@ -163,6 +180,49 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfile).toContain(
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
     );
+    expect(dockerfileBase).toContain(
+      "HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe",
+    );
+    expect(dockerfileBase).toContain(
+      "COPY --chmod=0444 agents/hermes/hindsight-client-probe-requirements.txt /tmp/nemoclaw-hindsight-client-probe-requirements.txt",
+    );
+    expect(dockerfileBase).toContain(
+      "ADD --chmod=0444 --checksum=sha256:9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a https://files.pythonhosted.org/",
+    );
+    expect(dockerfileBase).toContain(
+      "ADD --chmod=0444 --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54 https://files.pythonhosted.org/",
+    );
+    expect(hindsightProbeRequirements).toContain(
+      "hindsight-client==0.6.1 \\\n    --hash=sha256:9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a",
+    );
+    expect(hindsightProbeRequirements).toContain(
+      "aiohttp-retry==2.9.1 \\\n    --hash=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54",
+    );
+    expect(dockerfileBase).toContain(`&& rm -rf \\
+        /tmp/nemoclaw-hindsight-client-artifacts \\
+        /tmp/nemoclaw-hindsight-client-probe \\
+        /tmp/nemoclaw-hindsight-client-cache \\
+        /tmp/nemoclaw-hindsight-client-probe-requirements.txt \\
+        /sandbox/.hermes/lazy-packages \\
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`);
+    expect(dockerfileBase).toContain(
+      "chmod 0555 /tmp/nemoclaw-hindsight-client-artifacts",
+    );
+    expect(dockerfileBase).toContain("import hindsight_client, importlib.metadata as m");
+    const compatibilityLayer = dockerfileInstructions(dockerfileBase).find(
+      (instruction) =>
+        instruction.keyword === "RUN" &&
+        instruction.body.includes("nemoclaw-hindsight-client-probe-requirements.txt"),
+    );
+    expect(compatibilityLayer).toBeDefined();
+    const compatibilityInstall = compatibilityLayer?.body ?? "";
+    expect(compatibilityInstall).toContain("--network=none");
+    expect(compatibilityInstall).toContain("--no-deps --no-cache --offline --no-index");
+    expect(compatibilityInstall).toContain("--require-hashes");
+    expect(compatibilityInstall).not.toContain("ensure('memory.hindsight'");
+    expect(compatibilityInstall.indexOf("/usr/local/bin/uv pip install")).toBeLessThan(
+      compatibilityInstall.indexOf("import hindsight_client"),
+    );
     expect(dockerfile).toContain("state-dir-guard.py lock");
     expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
     expect(dockerfile).toContain("gateway can modify locked Hermes lazy packages");
@@ -204,6 +264,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       expect(addedPatchLines).not.toContain(supersededSelection);
     }
     for (const installedVersion of [
+      "'agent-client-protocol': '0.9.0'",
       "'aiohttp': '3.14.3'",
       "'cryptography': '50.0.0'",
       "'mcp': '1.28.1'",
@@ -231,7 +292,25 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`aiohttp==3.14.3`");
     expect(review).toContain("`cryptography==50.0.0`");
     expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
-    expect(review).toContain("confirms 94 unique third-party package names");
+    expect(review).toContain(
+      "contains 95 unique third-party package names across all retained environment markers",
+    );
+    expect(review).toContain(
+      "Six exported packages—`colorama`, `concurrent-log-handler`, `portalocker`, `pywin32`, `pywinpty`, and `tzdata`—are guarded by `sys_platform == 'win32'`",
+    );
+    expect(review).toContain(
+      "both published base jobs prepared, installed, and compatibility-checked 90 distributions",
+    );
+    expect(review).toContain("`agent-client-protocol==0.9.0`");
+    expect(review).toContain("PyPI serves no PEP 740 provenance");
+    expect(review).toContain("does not validate protocol sessions");
+    expect(review).toContain("require separate product acceptance and end-to-end evidence");
+    expect(review).toContain("95-package amd64 and arm64 capability-union evidence predates ACP");
+    expect(review).toContain(
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:0d07845fa3b02a0657d28e134eb2e1f4a96cc6260e2538f3d4eafe831c7e5c17",
+    );
+    expect(review).toContain("found 97 installed distributions");
+    expect(review).toContain("contains 95 third-party runtime distributions");
     expect(review).toContain("Tornado `6.5.7` is the lowest version");
     expect(review).toContain("source-distribution-only");
     expect(review).toContain("`mcp==1.28.1`");
@@ -240,5 +319,134 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`tornado==6.5.7`");
     expect(review).toContain("checksum-pinned Node.js `24.18.1`");
     expect(review).toContain("exact uv `0.11.33`");
+  });
+
+  it("rejects an altered Hindsight wheel before the compatibility import", () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hindsight-hash-"));
+    const artifact = path.join(temporaryRoot, "hindsight_client-0.6.1-py3-none-any.whl");
+    const installTarget = path.join(temporaryRoot, "install");
+    fs.writeFileSync(artifact, "same version, altered wheel digest\n", "utf8");
+
+    try {
+      const result = spawnSync(
+        "python3",
+        [
+          "-m",
+          "pip",
+          "install",
+          "--target",
+          installTarget,
+          "--no-deps",
+          "--no-index",
+          "--find-links",
+          temporaryRoot,
+          "--require-hashes",
+          "-r",
+          hindsightProbeRequirementsPath,
+        ],
+        { encoding: "utf8" },
+      );
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("DO NOT MATCH THE HASHES");
+      expect(output).toContain(
+        "Expected sha256 9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a",
+      );
+      expect(fs.existsSync(path.join(installTarget, "hindsight_client"))).toBe(false);
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the sandbox lazy-installer probe offline", () => {
+    const instructions = dockerfileInstructions(dockerfile);
+    const lazyInstallLayer = instructions.find(
+      (instruction) =>
+        instruction.keyword === "RUN" &&
+        instruction.body.includes(
+          "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+        ),
+    );
+    expect(lazyInstallLayer).toBeDefined();
+
+    const layer = lazyInstallLayer?.body ?? "";
+    const orderedContracts = [
+      "/opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip",
+      "/opt/hermes/.venv/bin/python -I -m pip --version",
+      "chmod 644 /opt/hermes/.venv/.lock",
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644"`,
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755"`,
+      `venv_violation="$(find -P /opt/hermes/.venv ! -type l`,
+      `test -z "$venv_violation"`,
+      `venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l`,
+      `test -z "$venv_link_owner_violation"`,
+      `venv_links_file="$(mktemp)"`,
+      `find -P /opt/hermes/.venv -type l -printf '%P -> %l\\n' > "$venv_links_file"`,
+      `LC_ALL=C sort -o "$venv_links_file" "$venv_links_file"`,
+      `venv_links="$(cat "$venv_links_file")"`,
+      `rm -f "$venv_links_file"`,
+      `expected_venv_links="$(printf '%s\\n'`,
+      "'bin/python -> /usr/bin/python3'",
+      "'bin/python3 -> python'",
+      "'bin/python3.13 -> python'",
+      `"lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE"`,
+      "'lib64 -> lib'",
+      `test "$venv_links" = "$expected_venv_links"`,
+      `test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13"`,
+      `test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory"`,
+      "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
+      "sh -eu -c",
+      "/opt/hermes/.venv/bin/python -I -m pip --version >/dev/null",
+      `if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
+      `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `exit 0`,
+      `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
+      `chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl`,
+      `rm -rf /sandbox/.hermes/lazy-packages`,
+      `install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`,
+      `chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages`,
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+      `test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)"`,
+      "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+    ];
+    let previousIndex = -1;
+    orderedContracts.forEach((contract) => {
+      const contractIndex = layer.indexOf(contract);
+      expect(
+        contractIndex,
+        `Missing or misordered lazy-install contract: ${contract}`,
+      ).toBeGreaterThan(previousIndex);
+      previousIndex = contractIndex;
+    });
+    expect(layer).toContain("-perm /022");
+    expect(layer).not.toContain("--network=none");
+    expect(layer).toContain("PIP_NO_INDEX=1");
+    expect(layer).toContain("UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe");
+    expect(layer).toContain("UV_OFFLINE=1");
+    expect(layer).toContain("NEMOCLAW_BUILD_PROBE_FIXTURE");
+    expect(
+      layer.match(/chmod u=rwx,g=rx,o=,g-s \/sandbox\/\.hermes\/lazy-packages/g),
+    ).toHaveLength(2);
+    expect(layer.lastIndexOf("rm -rf /sandbox/.cache")).toBeGreaterThan(
+      layer.indexOf("from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)"),
+    );
+    expect(layer).not.toContain("https://");
+    expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
+    expect(layer).not.toContain(`printf ''`);
+
+    const activeUser = instructions
+      .filter(
+        (instruction) =>
+          instruction.keyword === "USER" &&
+          instruction.start < (lazyInstallLayer?.start ?? Number.POSITIVE_INFINITY),
+      )
+      .at(-1);
+    expect(activeUser?.body.trim()).toBe("root");
   });
 });

@@ -277,12 +277,33 @@ def _run_behavior(module: types.ModuleType) -> dict[str, Any]:
 
     async_names = asyncio.run(exercise_async())
     assert async_names == _visible_names(cumulative)
+
+    # Deep Agents Code 0.1.55 can give a middleware tool a narrower executor
+    # projection than the graph-construction catalog. The registered catalog
+    # must still make a loaded MCP tool searchable and discoverable.
+    projected = module.ProgressiveToolDisclosureMiddleware(
+        registered_tools=[weather, database]
+    )
+    projected_result = projected.tools[0].func(
+        query="customer records",
+        runtime=ToolRuntime({}, tools=[projected.tools[0]]),
+    )
+    assert projected_result.update["discovered_tools"] == ["query_database"]
+    assert "- query_database:" in projected_result.update["messages"][0].content
+    projected_visible = projected._prepare_request(
+        ModelRequest(
+            [weather, database, projected.tools[0]],
+            {"discovered_tools": projected_result.update["discovered_tools"]},
+        )
+    )
+    assert database in projected_visible.tools
     return {
         "initial": _visible_names(captured[0]),
         "discovered": state,
         "async": async_names,
         "max_query_length": module.MAX_SEARCH_QUERY_LENGTH,
         "provider_native_preserved": captured[0].tools[-1] is provider_native,
+        "projected_catalog_discovered": projected_result.update["discovered_tools"],
     }
 
 

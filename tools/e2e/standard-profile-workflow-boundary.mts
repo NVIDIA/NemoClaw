@@ -26,6 +26,10 @@ const DEFAULT_PROFILE_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-standa
 const PROFILE_WORKFLOW = "./.github/workflows/e2e-standard-profile.yaml";
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
+const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
+const guardedCallerSecret = (name: string): string =>
+  `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -44,18 +48,45 @@ const PROFILE_JOBS = {
     matrix: "catalogue_standard_matrix",
     credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
+    githubToken: false,
+    maxParallel: undefined,
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
     matrix: "catalogue_nvidia_api_matrix",
     credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "github-read": {
+    job: "catalogue-github-read",
+    matrix: "catalogue_github_read_matrix",
+    credentialBoundary: "GitHub read token",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
+    githubToken: true,
+    maxParallel: undefined,
+  },
+  "brave-nvidia-inference": {
+    job: "catalogue-brave-nvidia-inference",
+    matrix: "catalogue_brave_nvidia_inference_matrix",
+    credentialBoundary: "Brave and NVIDIA inference API keys",
+    secrets: [
+      "BRAVE_API_KEY",
+      "DOCKERHUB_TOKEN",
+      "DOCKERHUB_USERNAME",
+      "NVIDIA_INFERENCE_API_KEY",
+    ],
+    githubToken: false,
+    maxParallel: 2,
   },
 } as const;
 
@@ -112,6 +143,13 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       errors.push(`${contract.job} must use its generated catalogue matrix`);
     }
     const withInputs = record(job.with);
+    if (record(job.strategy)["max-parallel"] !== contract.maxParallel) {
+      errors.push(
+        contract.maxParallel === undefined
+          ? `${contract.job} must not cap matrix concurrency`
+          : `${contract.job} must cap matrix concurrency at ${contract.maxParallel}`,
+      );
+    }
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
@@ -120,6 +158,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
       target_id: "${{ matrix.target_id }}",
@@ -132,14 +171,16 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       install_mode: "${{ matrix.install_mode }}",
       install_non_interactive: "${{ matrix.install_non_interactive }}",
       restore_cli: "${{ matrix.restore_cli }}",
+      cloudflared: "${{ matrix.cloudflared }}",
       host_packages: "${{ matrix.host_packages }}",
       host_preparation: "${{ matrix.host_preparation }}",
       runner_comparison: "${{ matrix.runner_comparison }}",
       compatible_api_key: "${{ matrix.compatible_api_key }}",
+      github_token: contract.githubToken,
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}",
+        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -148,7 +189,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     const callerSecrets = record(job.secrets);
     if (
       Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
-      contract.secrets.some((name) => callerSecrets[name] !== `\${{ secrets.${name} }}`)
+      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);
     }
@@ -165,6 +206,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    managed_image_catalog: "string",
     credential_boundary: "string",
     catalogue_id: "string",
     target_id: "string",
@@ -176,10 +218,12 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     install_mode: "string",
     install_non_interactive: "boolean",
     restore_cli: "boolean",
+    cloudflared: "boolean",
     host_packages: "string",
     host_preparation: "string",
     runner_comparison: "boolean",
     compatible_api_key: "boolean",
+    github_token: "boolean",
     shard: "string",
     artifact_layout: "string",
     trusted_main: "boolean",
@@ -198,13 +242,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
+    "BRAVE_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its four optional profile secrets");
+    errors.push("standard E2E profile must accept only its five optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -252,6 +297,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install target host dependencies",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
+    "Materialize temporary managed-image catalog",
+    "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
     "Install OpenShell CLI",
@@ -345,10 +392,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     checkout?.uses !== CHECKOUT ||
     checkoutWith.repository !== "${{ inputs.candidate_repository }}" ||
     checkoutWith.ref !== "${{ inputs.candidate_sha }}" ||
+    checkoutWith["fetch-depth"] !== 0 ||
     checkoutWith["persist-credentials"] !== false ||
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
-    errors.push("standard E2E profile must check out the exact candidate without credentials");
+    errors.push("standard E2E profile must check out checkout_sha without credentials");
   }
 
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");
@@ -400,10 +448,67 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
+  const managedCatalog = requireStep(
+    errors,
+    workflowSteps,
+    "Materialize temporary managed-image catalog",
+  );
+  const managedCatalogRun = String(managedCatalog?.run ?? "");
+  if (
+    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
+    managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(managedCatalog.env), {
+      CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+      MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
+      RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
+    }) ||
+    !managedCatalogRun.includes(".source.revision == $revision") ||
+    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
+    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
+    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
+    !managedCatalogRun.includes(".source.release == $release") ||
+    !managedCatalogRun.includes(
+      "managed-image catalog source identity does not match the candidate",
+    ) ||
+    !managedCatalogRun.includes(
+      "managed-image catalog release does not match the restored CLI",
+    ) ||
+    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
+    managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
+    managedCatalogRun.includes(".source.release = $release") ||
+    workflowSteps.indexOf(managedCatalog ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+  ) {
+    errors.push(
+      "standard E2E profile must materialize only the exact-candidate managed-image catalog",
+    );
+  }
+  const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
+  const cloudflaredRun = String(cloudflared?.run ?? "");
+  if (
+    cloudflared?.if !== "${{ inputs.cloudflared }}" ||
+    cloudflared.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(cloudflared.env), {
+      CLOUDFLARED_VERSION: "2026.6.1",
+      CLOUDFLARED_DEB_SHA256:
+        "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+    }) ||
+    !cloudflaredRun.includes(
+      'https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb',
+    ) ||
+    !cloudflaredRun.includes("sha256sum -c -") ||
+    !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
+    !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
+    cloudflaredRun.includes("command -v cloudflared") ||
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(managedCatalog ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must install only the reviewed cloudflared package");
+  }
   const rebuildSwap = requireStep(errors, workflowSteps, "Add swap for Hermes image rebuild");
   const rebuildSwapRun = String(rebuildSwap?.run ?? "");
   const rebuildSwapFragments = [
-    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]',
+    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]',
+    '[[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]',
+    '[[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]',
     '[[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted"',
     'fail "refusing unexpected pre-existing rebuild swap path"',
     "required_disk_bytes=$((swap_file_bytes + reserve_bytes))",
@@ -431,7 +536,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
     }) ||
     rebuildSwapFragments.some((fragment) => !rebuildSwapRun.includes(fragment)) ||
-    workflowSteps.indexOf(rebuildSwap ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+    workflowSteps.indexOf(rebuildSwap ?? {}) !== workflowSteps.indexOf(cloudflared ?? {}) + 1
   ) {
     errors.push("standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore");
   }
@@ -490,7 +595,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     executeEnv.NVIDIA_INFERENCE_API_KEY !==
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
-      "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}"
+      "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
+    executeEnv.BRAVE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.GITHUB_TOKEN !==
+      "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {
     errors.push("standard E2E profile must run the planned catalogue target with guarded secrets");
   }

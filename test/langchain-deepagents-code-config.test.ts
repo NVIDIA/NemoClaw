@@ -171,6 +171,31 @@ describe("LangChain Deep Agents Code config generator", () => {
   });
 
   it.each([
+    ["credentials", "https://user:password@openrouter.ai/api/v1", "must not include credentials"],
+    [
+      "a query string",
+      "https://openrouter.ai/api/v1?route=other",
+      "must not include query strings or fragments",
+    ],
+    [
+      "a fragment",
+      "https://openrouter.ai/api/v1#route",
+      "must not include query strings or fragments",
+    ],
+  ])("rejects an upstream endpoint URL with %s (#9555)", (_label, endpointUrl, message) => {
+    const result = runGeneratorProcess({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: endpointUrl,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      `NEMOCLAW_UPSTREAM_ENDPOINT_URL ${message}.`,
+    );
+    expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
+  });
+
+  it.each([
     "nvidia/nemotron-3-ultra-550b-a55b",
     "nvidia/nvidia/nemotron-3-ultra",
   ])("adds the required coding-agent request options for %s", (model) => {

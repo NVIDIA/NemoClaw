@@ -254,7 +254,7 @@ function startInput(agent: ManagedStartupAgent, fake: ReturnType<typeof harness>
 
 describe("Podman image-owned bootstrap transaction", () => {
   it.each(
-    MANAGED_STARTUP_AGENTS,
+    MANAGED_STARTUP_AGENTS.filter((agent) => agent !== "pi"),
   )("stages, starts, and authenticates one protected %s completion without exec", (agent) => {
     const fake = harness(agent);
     const transaction = startPodmanBootstrapImageTransaction(startInput(agent, fake), {
@@ -542,5 +542,15 @@ describe("Podman image-owned bootstrap transaction", () => {
       ),
     ).toThrow("not published before timeout");
     expect(fake.completionAttempts()).toBe(3);
+  });
+
+  it("refuses to bootstrap a release candidate on Podman (#7927)", () => {
+    const fake = harness("pi");
+
+    expect(() =>
+      startPodmanBootstrapImageTransaction(startInput("pi", fake), {
+        now: () => new Date("2026-08-01T12:00:00.000Z"),
+      }),
+    ).toThrow("agent 'pi' is not supported on Podman; onboard it through the Docker compute runtime");
   });
 });

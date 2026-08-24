@@ -7,7 +7,7 @@ import type {
 } from "../../adapters/container-engine";
 import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 
-// OpenShell v0.0.101 Podman ownership contract. Keep the legacy managed marker,
+// OpenShell v0.0.106 Podman ownership contract. Keep the legacy managed marker,
 // but bind sandbox identity to the same labels and default-workspace name that
 // the pinned OpenShell release emits.
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
@@ -306,7 +306,7 @@ function sameObservation(
 }
 
 /**
- * Resolve and inspect one OpenShell v0.0.101 Podman workload twice. The caller
+ * Resolve and inspect one OpenShell v0.0.106 Podman workload twice. The caller
  * receives only immutable ownership and startup evidence; replacement planning
  * remains in the provider transaction that owns the complete launch spec.
  */
@@ -323,7 +323,7 @@ export function inspectExactPodmanHeldWorkload(
   const sandboxName = safeSandboxName(input.sandboxName);
   const sandboxId = safeSandboxId(input.sandboxId);
   if (input.sandboxNamespace !== PODMAN_SANDBOX_NAMESPACE) {
-    throw new Error("Managed bootstrap Podman sandbox namespace must match OpenShell v0.0.101.");
+    throw new Error("Managed bootstrap Podman sandbox namespace must match OpenShell v0.0.106.");
   }
   const sandboxNamespace = PODMAN_SANDBOX_NAMESPACE;
   exactContainerName(sandboxName, sandboxId);

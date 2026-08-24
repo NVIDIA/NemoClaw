@@ -289,7 +289,18 @@ describe("inference health", () => {
         "malformed tool call",
         '{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"probe","arguments":7}}]}}]}',
       ],
+      [
+        "a tool_calls value that is not a list (#9108)",
+        '{"choices":[{"message":{"content":"OK","tool_calls":"none"}}]}',
+      ],
       ["numeric streaming delta", 'data: {"choices":[{"delta":{"content":123}}]}\n'],
+      ["a null content field and no tool call", '{"choices":[{"message":{"content":null}}]}'],
+      [
+        "a null reasoning_content field and no tool call",
+        '{"choices":[{"message":{"reasoning_content":null}}]}',
+      ],
+      ["a null reasoning field and no tool call", '{"choices":[{"message":{"reasoning":null}}]}'],
+      ["a null refusal field and no tool call", '{"choices":[{"message":{"refusal":null}}]}'],
     ])("rejects a Chat Completions response with %s", (_description, body) => {
       const result = probeRemoteProviderHealth("openai-api", {
         model: "gpt-4o-mini",
@@ -301,6 +312,110 @@ describe("inference health", () => {
       expect(result?.probed).toBe(true);
       expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("not a Chat Completions result");
+    });
+
+    it("accepts a null content field with a valid tool call", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () =>
+          httpOk(
+            '{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_probe","type":"function","function":{"name":"probe","arguments":"{}"}}]}}]}',
+          ),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("succeeded");
+    });
+
+    it("accepts a reasoning-only Chat Completions response", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "reasoning-model",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () =>
+          httpOk(
+            '{"choices":[{"finish_reason":"length","message":{"content":null,"reasoning":"Planning the reply."}}]}',
+          ),
+      });
+
+      expect(result).toMatchObject({ ok: true, probed: true });
+    });
+
+    it.each([
+      ["an empty tool call list", []],
+      ["a null tool call list", null],
+    ])("reports a hosted response that carries %s as healthy (#9108)", (_description, toolCalls) => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: () =>
+          httpOk(
+            JSON.stringify({
+              object: "chat.completion",
+              model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    reasoning_content: null,
+                    content: "OK",
+                    refusal: null,
+                    tool_calls: toolCalls,
+                  },
+                  finish_reason: "stop",
+                },
+              ],
+            }),
+          ),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("succeeded");
+    });
+
+    it("reports what an HTTP 200 body lacked and omits the connection advice (#9108)", () => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "meta/llama-3.3-70b-instruct",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: () =>
+          httpOk('{"object":"chat.completion","choices":[{"message":{"role":"assistant"}}]}'),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("was answered");
+      expect(result?.detail).toContain("no choice carried a message");
+      expect(result?.detail).not.toContain("Check your network connection");
+    });
+
+    it("names an HTTP 200 reply that carried no choices (#9108)", () => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "meta/llama-3.3-70b-instruct",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: () => httpOk('{"object":"chat.completion","choices":[]}'),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.detail).toContain("carried no choices");
+    });
+
+    it("keeps the connection and credential advice when the route returns HTTP 500 (#9108)", () => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "meta/llama-3.3-70b-instruct",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: () => httpServerError(),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.detail).toContain("Check your network connection");
+      expect(result?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(result?.detail).not.toContain("was answered");
     });
 
     it("reports a provider error envelope returned with HTTP 200 as unhealthy", () => {
@@ -341,6 +456,20 @@ describe("inference health", () => {
       expect(result?.ok).toBe(false);
       expect(result?.probed).toBe(true);
       expect(result?.failureLabel).toBe("unauthorized");
+    });
+
+    it("names the host credential environment variable when the provider rejects the request (#9595)", () => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "meta/llama-3.3-70b-instruct",
+        getCredentialImpl: () => "nvapi-stale",
+        runCurlProbeImpl: () => httpUnauthorized(),
+      });
+
+      expect(result?.failureLabel).toBe("unauthorized");
+      expect(result?.detail).toContain("rejected the");
+      expect(result?.detail).toContain("host credential in NVIDIA_INFERENCE_API_KEY");
+      expect(result?.detail).toContain("not the provider credential stored in the gateway");
+      expect(result?.detail).not.toContain("Check your network connection");
     });
 
     it("reports unhealthy on a non-auth HTTP failure", () => {

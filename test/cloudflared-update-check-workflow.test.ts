@@ -12,7 +12,6 @@ import { describe, expect, it } from "vitest";
 import { readYaml, type WorkflowStep } from "./helpers/e2e-workflow-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const E2E_WORKFLOW = path.join(ROOT, ".github", "workflows", "e2e.yaml");
 const CHECK_SCRIPT = path.join(ROOT, "scripts", "checks", "check-cloudflared-update.sh");
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/iu;
 
@@ -31,16 +30,10 @@ type CloudflaredUpdateWorkflow = {
   >;
 };
 
-function pinValues(source: string, name: string): string[] {
-  return [...source.matchAll(new RegExp(`^\\s*${name}:\\s*"([^"]+)"`, "gmu"))].map(
-    (match) => match[1],
-  );
-}
-
-function writePinFixture(file: string, version: string, sha256: string): void {
+function writePinFixture(file: string, version: string, sha256: string, count: number): void {
   fs.writeFileSync(
     file,
-    ["one", "two", "three", "four", "five"]
+    Array.from({ length: count }, (_, index) => `consumer-${index + 1}`)
       .map(
         (job) =>
           `  ${job}:\n    env:\n      CLOUDFLARED_VERSION: "${version}"\n      CLOUDFLARED_DEB_SHA256: "${sha256}"`,
@@ -55,6 +48,7 @@ function runFixtureCheck(
 ) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-update-"));
   const workflowPath = path.join(tempDir, "e2e.yaml");
+  const profileWorkflowPath = path.join(tempDir, "e2e-standard-profile.yaml");
   const releasePath = path.join(tempDir, "release.json");
   const assetPath = path.join(tempDir, "cloudflared-linux-amd64.deb");
   const curlPath = path.join(tempDir, "curl");
@@ -66,7 +60,8 @@ function runFixtureCheck(
   const downloadBase = "https://downloads.example.invalid/cloudflared";
   const assetUrl = `${downloadBase}/${options.latestVersion}/cloudflared-linux-amd64.deb`;
 
-  writePinFixture(workflowPath, options.pinnedVersion, pinnedSha);
+  writePinFixture(workflowPath, options.pinnedVersion, pinnedSha, 3);
+  writePinFixture(profileWorkflowPath, options.pinnedVersion, pinnedSha, 1);
   fs.writeFileSync(assetPath, asset);
   fs.writeFileSync(
     releasePath,
@@ -109,6 +104,7 @@ esac
       CLOUDFLARED_CURL_BIN: curlPath,
       CLOUDFLARED_DOWNLOAD_BASE_URL: downloadBase,
       CLOUDFLARED_E2E_WORKFLOW: workflowPath,
+      CLOUDFLARED_PROFILE_WORKFLOW: profileWorkflowPath,
       CLOUDFLARED_RELEASE_API_URL: apiUrl,
       FAKE_API_URL: apiUrl,
       FAKE_ASSET: assetPath,
@@ -126,20 +122,29 @@ describe("cloudflared update-check workflow contract", () => {
   const workflow = readYaml<CloudflaredUpdateWorkflow>(
     ".github/workflows/cloudflared-update-check.yaml",
   );
-  const e2e = fs.readFileSync(E2E_WORKFLOW, "utf8");
   const configuredCheckCommand =
     workflow.jobs?.["check-cloudflared"]?.steps?.find((step) => typeof step.run === "string")
       ?.run ?? "";
 
-  it("extracts exactly five identical reviewed version and SHA256 pins", () => {
-    const versions = pinValues(e2e, "CLOUDFLARED_VERSION");
-    const hashes = pinValues(e2e, "CLOUDFLARED_DEB_SHA256");
-    expect(versions).toHaveLength(5);
-    expect(hashes).toHaveLength(5);
-    expect(new Set(versions).size).toBe(1);
-    expect(new Set(hashes).size).toBe(1);
-    expect(versions[0]).toMatch(/^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/u);
-    expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/u);
+  it("validates all current workflow pins before querying upstream", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-pins-"));
+    const curlPath = path.join(tempDir, "curl");
+    fs.writeFileSync(
+      curlPath,
+      "#!/usr/bin/env bash\nprintf 'fixture curl reached\\n' >&2\nexit 77\n",
+      { mode: 0o755 },
+    );
+    try {
+      const result = spawnSync("bash", [CHECK_SCRIPT], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CLOUDFLARED_CURL_BIN: curlPath },
+      });
+      expect(result.status).toBe(77);
+      expect(result.stderr).toContain("fixture curl reached");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("queries the upstream latest release and verifies its exact linux-amd64 asset", () => {
@@ -185,7 +190,8 @@ describe("cloudflared update-check workflow contract", () => {
       );
       expect(fixture.result.stderr).toContain("CLOUDFLARED_VERSION lines:");
       expect(fixture.result.stderr).toContain("CLOUDFLARED_DEB_SHA256 lines:");
-      expect(fixture.result.stderr).toContain("Set all five version/SHA256 pairs");
+      expect(fixture.result.stderr).toContain("e2e-standard-profile.yaml CLOUDFLARED_VERSION");
+      expect(fixture.result.stderr).toContain("Set all four version/SHA256 pairs");
     } finally {
       fs.rmSync(fixture.tempDir, { recursive: true, force: true });
     }

@@ -42,7 +42,10 @@ export interface GatewayStartFailure {
    *   dockerd on Linux) is not responding. Retrying the openshell health
    *   poll cannot recover from this — the user must start Docker first.
    * - `database_migration_incompatible`: the gateway database records a
-   *   migration that the installed OpenShell version does not include.
+   *   migration that the installed OpenShell version does not include, or
+   *   defines with different contents. Both sqlx signatures mean the database
+   *   was written by a newer OpenShell than the one now starting (#8797,
+   *   #9293).
    * - `unknown`: any other failure; callers should fall through to the
    *   normal retry/health-wait behavior.
    */
@@ -216,16 +219,20 @@ export function planSandboxCreateRecovery(
 }
 
 /**
- * Classify a non-zero `openshell gateway start` result so the onboard retry
- * loop can short-circuit on unrecoverable failures.
+ * Classify a failed gateway start so the onboard retry loop can short-circuit
+ * on unrecoverable failures.
  *
  * The classifier identifies failures for which callers can select a supported
  * recovery instead of generic retry or health-wait behavior.
  */
 export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
   const text = String(output || "");
+  // Both sqlx migrate signatures for a database written by a newer OpenShell:
+  // the newer build appended a migration this build does not resolve
+  // ("is missing in the resolved migrations"), or it rewrote an applied
+  // migration so the checksum no longer matches ("has been modified").
   if (
-    /migration\s+\d+\s+was previously applied[\s\S]{0,512}\bis missing in the resolved migrations\b/i.test(
+    /migration\s+\d+\s+was previously applied[\s\S]{0,512}\b(?:is missing in the resolved migrations|has been modified)\b/i.test(
       text,
     )
   ) {

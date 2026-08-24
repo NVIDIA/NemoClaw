@@ -6,7 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
 
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
 import {
@@ -21,7 +31,8 @@ function ok(stdout = ""): RunResult {
 }
 
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
-  return {
+  return withProvenManagedGatewayProcess({
+    isPortFree: () => true,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -33,7 +44,34 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
       requiredCapabilities: [],
     }),
     ...deps,
-  };
+  });
+}
+
+function writeScopedGatewayState(home: string, port: number): void {
+  const stateDir = path.join(
+    home,
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(port),
+  );
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(port)}`,
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+  writeManagedGatewayRuntimeProof(stateDir, port);
 }
 
 function bindManagedGatewayAuthority(run: typeof runUninstallPlanBase) {
@@ -113,6 +151,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
         }),
       );
       migrateLegacyPortState({ gatewayPort: selectedPort, home: tmpHome });
+      writeScopedGatewayState(tmpHome, selectedPort);
       const calls: string[][] = [];
       const warnings: string[] = [];
 
@@ -142,9 +181,15 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
         },
       );
 
-      expect(result.exitCode).toBe(expectedExitCode);
+      expect(result.exitCode, warnings.join("\n")).toBe(expectedExitCode);
       expect(warnings.join("\n")).toContain(expectedWarning);
-      expect(calls).toContainEqual(["sandbox", "delete", "selected-box"]);
+      expect(calls).toContainEqual([
+        "sandbox",
+        "delete",
+        "-g",
+        `nemoclaw-${String(selectedPort)}`,
+        "selected-box",
+      ]);
       expect(
         calls.some(
           (args) =>

@@ -39,6 +39,7 @@ import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reaso
 import {
   assertStationExpressInstallerResumeMatches,
   bindStationExpressProviderSelection,
+  isValidStationExpressProviderState,
   isValidStationExpressReceiptGeneration,
   parseStationExpressResumeIntent,
   reconcileStationExpressInstallerResumeRetirement,
@@ -67,6 +68,7 @@ const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -203,6 +205,10 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
+  vllmInstallModel: string | null;
+  /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
+  vllmGpuDevice: string | null;
   /** Exact secret-free serving recipe identity selected before runtime side effects. */
   servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
@@ -329,6 +335,8 @@ export interface DebugSessionSummary {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  vllmInstallModel: string | null;
+  vllmGpuDevice: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
@@ -380,6 +388,26 @@ export function isObject(value: unknown): value is UnknownRecord {
 
 function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function parseVllmInstallModel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const model = value.trim();
+  return model.length > 0 && model.length <= 512 && SAFE_VLLM_INSTALL_MODEL.test(model)
+    ? model
+    : null;
+}
+
+function parseVllmGpuDevice(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const candidate = value.trim();
+  if (/^\d+$/.test(candidate)) {
+    const index = Number(candidate);
+    if (Number.isSafeInteger(index)) return String(index);
+  }
+  return /^GPU-[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}$/.test(candidate)
+    ? `GPU-${candidate.slice("GPU-".length).toLowerCase()}`
+    : null;
 }
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
@@ -520,13 +548,11 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
         !hasUnsafeHostMountTerminalText(candidate.target) &&
         candidate.readOnly === true,
     )
-      ? value.hostMounts.map(
-          (candidate): SandboxHostMount => ({
-            source: (candidate as { source: string }).source,
-            target: (candidate as { target: string }).target,
-            readOnly: true,
-          }),
-        )
+      ? value.hostMounts.map((candidate): SandboxHostMount => ({
+          source: (candidate as { source: string }).source,
+          target: (candidate as { target: string }).target,
+          readOnly: true,
+        }))
       : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -702,6 +728,16 @@ function transitionMachineSnapshot(
     return;
   }
   session.machine = createMachineSnapshot(state, now, current.revision + 1);
+  syncCheckpointMachineState(session, state, now);
+}
+
+export function syncCheckpointMachineState(
+  session: Session,
+  state: OnboardMachineState,
+  updatedAt: string,
+): void {
+  if (!session.checkpoint) return;
+  session.checkpoint = { ...session.checkpoint, machineState: state, updatedAt };
 }
 
 export function createSession(overrides: Partial<Session> = {}): Session {
@@ -727,6 +763,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
+    vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
@@ -792,6 +830,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const vllmInstallModel = parseVllmInstallModel(data.vllmInstallModel);
+  if (hasOwn(data, "vllmInstallModel") && data.vllmInstallModel !== null && !vllmInstallModel) {
+    return null;
+  }
+  const vllmGpuDevice = parseVllmGpuDevice(data.vllmGpuDevice);
+  if (hasOwn(data, "vllmGpuDevice") && data.vllmGpuDevice !== null && !vllmGpuDevice) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -831,6 +877,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    vllmInstallModel,
+    vllmGpuDevice,
     servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
@@ -891,19 +939,25 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     }
   }
 
+  if (
+    normalized.vllmInstallModel &&
+    (!normalized.resumable ||
+      (normalized.status !== "in_progress" && normalized.status !== "failed") ||
+      (normalized.steps.provider_selection?.status !== "in_progress" &&
+        normalized.steps.provider_selection?.status !== "failed"))
+  ) {
+    return null;
+  }
+
   if (normalized.stationExpressIntent) {
     const intent = normalized.stationExpressIntent;
-    const providerComplete = normalized.steps.provider_selection?.status === "complete";
-    const providerBound = Boolean(
-      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
-    );
     if (
-      providerComplete !== providerBound ||
-      (providerComplete &&
-        (intent.kind === "spark" ||
-          normalized.provider !== "vllm-local" ||
-          normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      !isValidStationExpressProviderState(
+        intent,
+        normalized.steps.provider_selection?.status,
+        normalized.provider,
+        normalized.model,
+      )
     ) {
       return null;
     }
@@ -911,6 +965,13 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 
   normalized.machine =
     parseMachineSnapshot(data.machine, normalized.sessionId) ?? inferMachineSnapshot(normalized);
+  if (
+    normalized.checkpoint &&
+    (normalized.checkpoint.sessionId !== normalized.sessionId ||
+      normalized.checkpoint.machineState !== normalized.machine.state)
+  ) {
+    return null;
+  }
   preserveInvalidSessionToolDisclosure(data, normalized);
   preserveInvalidSessionHostMounts(data, normalized);
 
@@ -1466,6 +1527,36 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
+export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
+
+/**
+ * Mutate the current session while this process owns the onboarding lock.
+ *
+ * Reuse the process-local `LOCK_FILE` lock when the caller already holds it.
+ * Otherwise, acquire the lock without waiting and return `busy` when another
+ * onboarding writer owns it.
+ */
+export function compareAndSwapSession(
+  matches: (session: Session) => boolean,
+  mutator: (session: Session) => Session | void,
+  command = "nemoclaw session compare-and-swap",
+): CompareAndSwapSessionResult {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) return "busy";
+  }
+  try {
+    const current = loadSession();
+    if (!current || !matches(current)) return "mismatch";
+    const next = mutator(current) || current;
+    saveSession(next);
+    return "updated";
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
+
 export function markStepStarted(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1509,6 +1600,7 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
+    if (stepName === "provider_selection") session.vllmInstallModel = null;
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
     return session;
@@ -1542,6 +1634,7 @@ export function markStepRejected(stepName: string): Session {
     if (stepName === "provider_selection") {
       session.provider = null;
       session.model = null;
+      session.vllmInstallModel = null;
       session.endpointUrl = null;
       session.credentialEnv = null;
       session.hermesAuthMethod = null;
@@ -1575,6 +1668,19 @@ export function markStepFailed(stepName: string, message: string | null = null):
     step.completedAt = null;
     step.error = redactSensitiveText(message);
     return session;
+  });
+}
+
+/** Persist the validated model needed to retry an interrupted managed-vLLM install. */
+export function checkpointVllmInstallModel(modelId: string): Session {
+  const model = parseVllmInstallModel(modelId);
+  if (!model) throw new Error("Managed vLLM install produced an invalid model checkpoint.");
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error("Managed vLLM install intent can only be checkpointed during provider selection.");
+    }
+    session.vllmInstallModel = model;
   });
 }
 
@@ -1668,6 +1774,7 @@ export function completeSession(
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    session.vllmInstallModel = null;
     session.stationExpressIntent = null;
     session.stationExpressReceiptRetirement = receiptGeneration;
     session.failure = null;
@@ -1760,6 +1867,8 @@ export function summarizeForDebug(
     sandboxName: session.sandboxName,
     provider: session.provider,
     model: session.model,
+    vllmInstallModel: session.vllmInstallModel,
+    vllmGpuDevice: session.vllmGpuDevice,
     servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,

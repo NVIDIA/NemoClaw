@@ -3,9 +3,7 @@
 
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
-  type: "json",
-};
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import type { HostAssessment } from "../onboard/preflight";
 import { type GatewayObservationSnapshot, projectGatewayReadiness } from "./gateway";
 import { createPublicReadinessReport } from "./presentation";
@@ -37,7 +35,7 @@ function hostReport(): SystemReadinessReport {
 function gatewaySnapshot(): GatewayObservationSnapshot {
   return {
     observedAt: NOW.toISOString(),
-    reusable: false,
+    completedAt: NOW.toISOString(),
     observations: {
       owner: {
         gatewayName: "nemoclaw",
@@ -123,7 +121,7 @@ describe("composite system readiness (#7411)", () => {
     );
   });
 
-  it("marks host and gateway facts stale when collection exceeds the reuse window", async () => {
+  it("marks facts held across a slow gateway probe stale, but not the probe itself (#9310)", async () => {
     let currentTime = NOW.getTime();
     const report = await createSystemReadinessReport(
       {
@@ -167,14 +165,15 @@ describe("composite system readiness (#7411)", () => {
       },
     );
 
+    // The host facts were collected before the probe and held across it, so
+    // they age out. The gateway facts are as fresh as collection can make them.
     expect(report.status).toBe("inconclusive");
     expect(report.evidence).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "host.probe.stale" }),
-        expect.objectContaining({ id: "gateway.probe.stale" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ id: "host.probe.stale" })]),
+    );
+    expect(report.evidence).not.toContainEqual(
+      expect.objectContaining({ id: "gateway.probe.stale" }),
     );
     expect(report.capabilities.length).toBeGreaterThan(0);
-    expect(report.capabilities.every(({ state }) => state === "unknown")).toBe(true);
   });
 });

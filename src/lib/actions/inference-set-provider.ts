@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type CaptureOpenshellResult, stripAnsi } from "../adapters/openshell/client";
+import { retryUntilAsync } from "../core/retry";
 import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
 } from "../onboard/gateway-provider-metadata";
+import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -20,9 +22,79 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
+import type {
+  SandboxInferenceInvocationInput,
+  SandboxInferenceInvocationResult,
+} from "./sandbox/inference-invocation-probe";
 
 export type { RuntimeProviderBundleRegistry };
 export { RuntimeProviderSelectionError };
+
+export type InferenceSetSandboxRouteProbe = (
+  input: SandboxInferenceInvocationInput,
+) => SandboxInferenceInvocationResult;
+
+// OpenShell 0.0.106 refreshes the sandbox route cache every five seconds.
+// A stale route can still return a valid 2xx response, so wait one complete
+// refresh interval before probing a changed provider/model selection.
+const ROUTE_SELECTION_REFRESH_WAIT_MS = 6_000;
+const ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS = [2_000, 4_000] as const;
+
+export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function probeInferenceSetSandboxRoute(
+  input: SandboxInferenceInvocationInput,
+): SandboxInferenceInvocationResult {
+  const probe: typeof import("./sandbox/inference-invocation-probe") = require(
+    "./sandbox/inference-invocation-probe",
+  );
+  return probe.probeSandboxInferenceInvocation(
+    input,
+    {},
+    probe.READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  );
+}
+
+export async function probeInferenceSetSandboxRouteUntilConverged(
+  options: {
+    input: SandboxInferenceInvocationInput;
+    previousProvider: string;
+    previousModel: string;
+    previousInferenceApi: string | null;
+    targetInferenceApi: string | null;
+  },
+  deps: {
+    probe: InferenceSetSandboxRouteProbe;
+    sleep: (milliseconds: number) => Promise<void>;
+    onRetry?: (
+      result: SandboxInferenceInvocationResult,
+      delayMs: number,
+      attempt: number,
+    ) => void | Promise<void>;
+  } = {
+    probe: probeInferenceSetSandboxRoute,
+    sleep: sleepInferenceSetRouteConvergence,
+  },
+): Promise<SandboxInferenceInvocationResult> {
+  const routeSelectionChanged =
+    options.previousProvider !== options.input.provider ||
+    options.previousModel !== options.input.model;
+  if (routeSelectionChanged) {
+    await deps.sleep(ROUTE_SELECTION_REFRESH_WAIT_MS);
+  }
+  const inferenceApiChanged = options.previousInferenceApi !== options.targetInferenceApi;
+  return await retryUntilAsync(() => deps.probe(options.input), {
+    accept: (result) =>
+      result.ok ||
+      !inferenceApiChanged ||
+      (result.httpStatus !== 400 && result.httpStatus !== 404),
+    retryDelaysMs: ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS,
+    onRetry: deps.onRetry,
+    sleep: deps.sleep,
+  });
+}
 
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,
@@ -30,6 +102,10 @@ export function requireInferenceSetRuntimeAuthority(
 ): void {
   const runtimeProvider = requireRuntimeProviderBundleForSandbox(entry, providers);
   requireRuntimeProviderMutationAuthority(runtimeProvider, "inference-set");
+}
+
+export function assertInferenceSetCommandAvailable(sandboxName: string): void {
+  assertHermesPortableCommandUnavailable(sandboxName, "inference:set");
 }
 
 type CaptureProviderCommand = (

@@ -90,8 +90,13 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
     assert.deepEqual(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")), extras);
   });
 
-  it("leaves the empty default when NEMOCLAW_EXTRA_AGENTS_JSON is unset or whitespace-only", () => {
-    for (const [index, value] of ([undefined, "", "   "] as Array<string | undefined>).entries()) {
+  it.each([
+    { index: 0, value: undefined },
+    { index: 1, value: "" },
+    { index: 2, value: "   " },
+  ])(
+    "leaves the empty default for an unset or whitespace-only value [case %#]",
+    ({ index, value }) => {
       const dockerfilePath = dockerfileWith(BASE_DOCKERFILE);
       withExtraAgentsEnv(value, () =>
         patchStagedDockerfile(
@@ -107,16 +112,21 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
         /^ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=$/m,
         `value="${String(value)}" should leave the empty default untouched`,
       );
-    }
-  });
+    },
+  );
 
-  it("passes a malformed payload through to the build-time validator", () => {
-    // Host-side does not parse or shape-check; otherwise a malformed payload
-    // would be silently dropped while docs promise an image-build failure.
-    // The build-time validator in scripts/generate-openclaw-config.mts is the
-    // single source of truth for structured validation errors.
-    const cases = ["not-json", '{"id":"research"}', '[{"id":"main"}]'];
-    for (const [index, value] of cases.entries()) {
+  it.each([
+    { index: 0, value: "not-json" },
+    { index: 1, value: '{"id":"research"}' },
+    { index: 2, value: '[{"id":"main"}]' },
+  ])(
+    "passes a malformed payload through to the build-time validator [case %#]",
+    ({ index, value }) => {
+      // Host-side does not parse or shape-check; otherwise a malformed payload
+      // would be silently dropped while docs promise an image-build failure.
+      // The build-time validator in scripts/generate-openclaw-config.mts is the
+      // single source of truth for structured validation errors.
+
       const dockerfilePath = dockerfileWith(BASE_DOCKERFILE);
       withExtraAgentsEnv(value, () =>
         patchStagedDockerfile(
@@ -139,6 +149,6 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
         value,
         `value="${value}" must round-trip through base64 unchanged`,
       );
-    }
-  });
+    },
+  );
 });

@@ -234,8 +234,7 @@ describe("Hermes cron rebuild restore contract", () => {
       "41",
       "--start-time",
       "902",
-      "--drain-token",
-      "restore-token",
+      "--drain-token=restore-token",
     ]);
   });
 
@@ -251,7 +250,23 @@ describe("Hermes cron rebuild restore contract", () => {
     validateHermesCronRestore("alpha", identity);
 
     const validateArgv = processMocks.privilegedSandboxExecArgv.mock.calls[1]?.[1];
-    expect(validateArgv?.at(-1)).toBe(untrustedToken);
+    expect(validateArgv?.at(-1)).toBe(`--drain-token=${untrustedToken}`);
+  });
+
+  it("keeps a leading-hyphen drain token attached to its option", () => {
+    const leadingHyphenToken = "-restore-token";
+    processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => ({
+      status: 0,
+      stdout: receipt(argv.includes("validate") ? "validate" : "begin", 41, 902, leadingHyphenToken),
+      stderr: "",
+    }));
+
+    const identity = beginHermesCronRestore("alpha");
+    validateHermesCronRestore("alpha", identity);
+
+    expect(processMocks.privilegedSandboxExecArgv.mock.calls[1]?.[1]).toContain(
+      "--drain-token=-restore-token",
+    );
   });
 
   it("keeps dispatch drained when state restore is incomplete", () => {
@@ -321,8 +336,7 @@ describe("Hermes cron rebuild restore contract", () => {
         "41",
         "--start-time",
         "902",
-        "--drain-token",
-        "restore-token",
+        "--drain-token=restore-token",
         "--replacement-pid",
         "77",
         "--replacement-start-time",
@@ -447,8 +461,7 @@ describe("Hermes cron rebuild restore contract", () => {
       "41",
       "--start-time",
       "902",
-      "--drain-token",
-      "restore-token",
+      "--drain-token=restore-token",
     ]);
   });
 

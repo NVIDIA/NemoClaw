@@ -8,8 +8,8 @@ import { getSandboxStatusReport } from "../src/lib/actions/sandbox/status-snapsh
 // `sandbox status --json` builds a machine-readable report through
 // getSandboxStatusReport, which reconciles the gateway. When the gateway needs
 // recovery, the reconcile path prints human progress to stdout (step(),
-// streamGatewayStart, "Waiting for gateway health...", etc.). We inject a
-// reconcile that writes that progress and assert the --json report builder
+// "Waiting for gateway health...", and so on). We inject a reconcile that
+// writes that progress and assert the --json report builder
 // keeps stdout clean; otherwise the JSON document on stdout is unparseable.
 // Writes go through process.stdout.write directly (what console.log delegates
 // to), so the test targets the exact stream the builder must keep clean.

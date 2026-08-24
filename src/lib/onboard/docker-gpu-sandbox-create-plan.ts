@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type DockerGpuRoutePlan, resolveDockerGpuRoutePlan } from "./docker-gpu-route";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
 
 type DockerGpuSandboxConfig = {
@@ -31,6 +32,24 @@ export function resetIsDockerDesktopWslRuntimeCache(): void {
   cachedDockerDesktopWslRuntime = null;
 }
 
+export function resolveProfileGpuCreatePlan(
+  config: DockerGpuSandboxConfig,
+  dockerDriverGateway: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): DockerGpuSandboxCreatePlan {
+  return resolveDockerGpuSandboxCreatePlan(config, {
+    dockerDriverGateway,
+    // Rootless Podman owns every portable sandbox regardless of agent: the
+    // compatibility recreation discovers containers by docker-driver labels
+    // and can never match a podman-driver sandbox (#9462), so keep the whole
+    // profile on native GPU injection, not only OpenClaw (#9068).
+    portableLifecycle: isPortableExperimentalProfile(env),
+    env,
+    platform,
+  });
+}
+
 /**
  * SOURCE_OF_TRUTH_REVIEW (GPU create route selection; #6110)
  * invalidState: one attempt combines native `--gpu` with compatibility recreation.
@@ -47,16 +66,24 @@ export function resolveDockerGpuSandboxCreatePlan(
     dockerDesktopWsl?: boolean;
     detectDockerDesktopWsl?: () => boolean;
     env?: NodeJS.ProcessEnv;
+    portableLifecycle?: boolean;
     platform?: NodeJS.Platform;
     log?: (message: string) => void;
   },
 ): DockerGpuSandboxCreatePlan {
+  const env = options.env ?? process.env;
+  const portableLifecycle = options.portableLifecycle === true;
   const dockerDesktopWsl =
-    options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)();
+    portableLifecycle
+      ? false
+      : (options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)());
   const gpuRoutePlan = resolveDockerGpuRoutePlan(config, {
-    dockerDriverGateway: options.dockerDriverGateway,
+    // The hidden portable profile reaches OpenShell through its Docker-compatible
+    // endpoint, but rootless Podman owns sandbox lifecycle. Keep Docker-only
+    // container substitution out of that lifecycle path.
+    dockerDriverGateway: options.dockerDriverGateway && !portableLifecycle,
     dockerDesktopWsl,
-    env: options.env,
+    env,
     platform: options.platform,
     log: options.log,
   });

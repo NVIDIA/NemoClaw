@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E standard profile
+name: E2E / Run Standard Target
 
 on:
   workflow_call:
@@ -19,6 +19,9 @@ on:
         required: true
         type: string
       cli_artifact_provenance:
+        required: true
+        type: string
+      managed_image_catalog:
         required: true
         type: string
       credential_boundary:
@@ -54,6 +57,9 @@ on:
       restore_cli:
         required: true
         type: boolean
+      cloudflared:
+        required: true
+        type: boolean
       host_packages:
         required: true
         type: string
@@ -64,6 +70,9 @@ on:
         required: true
         type: boolean
       compatible_api_key:
+        required: true
+        type: boolean
+      github_token:
         required: true
         type: boolean
       shard:
@@ -83,6 +92,8 @@ on:
       NVIDIA_API_KEY:
         required: false
       NVIDIA_INFERENCE_API_KEY:
+        required: false
+      BRAVE_API_KEY:
         required: false
 
 permissions:
@@ -188,11 +199,17 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
-            fail "workflow must run from NVIDIA/NemoClaw main"
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw"
           fi
           if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then
+            fail "push workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then
+            fail "manual workflow must run from an NVIDIA/NemoClaw branch"
           fi
           # PR E2E mode: maintainer-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
@@ -348,6 +365,7 @@ jobs:
         with:
           repository: ${{ inputs.candidate_repository }}
           ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Authenticate to Docker Hub
@@ -373,6 +391,66 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
+
+      - name: Materialize temporary managed-image catalog
+        if: ${{ inputs.managed_image_catalog != '' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          MANAGED_IMAGE_CATALOG: ${{ inputs.managed_image_catalog }}
+          RESTORE_CLI: ${{ inputs.restore_cli && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
+          jq -e --arg revision "$CANDIDATE_SHA" '
+            type == "object" and length > 0 and
+            all(.[];
+              .source.revision == $revision and
+              (.source.release | type == "string" and length > 0) and
+              (.source.cohort | type == "string" and length > 0)
+            ) and
+            ([.[].source.release] | unique | length) == 1 and
+            ([.[].source.cohort] | unique | length) == 1
+          ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
+            echo "::error::managed-image catalog source identity does not match the candidate" >&2
+            exit 1
+          }
+          if [[ "$RESTORE_CLI" == "true" ]]; then
+            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
+            jq -e --arg release "$candidate_release" '
+              all(.[]; .source.release == $release)
+            ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
+              echo "::error::managed-image catalog release does not match the restored CLI" >&2
+              exit 1
+            }
+          fi
+          jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
+          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
+            echo "::error::temporary managed-image catalog is invalid" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
+
+      - name: Install reviewed cloudflared
+        if: ${{ inputs.cloudflared }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
 
       - name: Add swap for Hermes image rebuild
         if: ${{ inputs.host_preparation == 'rebuild-swap' }}
@@ -404,11 +482,17 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
-            fail "workflow must run from NVIDIA/NemoClaw main"
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw"
           fi
           if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then
+            fail "push workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then
+            fail "manual workflow must run from an NVIDIA/NemoClaw branch"
           fi
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -493,7 +577,7 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
+            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY -u GITHUB_TOKEN \
             -u COMPATIBLE_API_KEY bash scripts/install-openshell.sh
 
       - name: Run catalogue E2E target
@@ -504,6 +588,8 @@ jobs:
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
+          GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -549,7 +635,7 @@ jobs:
           [[ "$JOB_STATUS" =~ ^(success|failure|cancelled)$ ]] || { echo "::error::E2E job status is invalid" >&2; exit 1; }
           [[ "$ARTIFACT_DIRECTORY" =~ ^e2e-artifacts/live/[a-z0-9]+([_-][a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$ ]] || { echo "::error::E2E artifact directory is invalid" >&2; exit 1; }
           install -d -m 0700 "$ARTIFACT_DIRECTORY"
-          product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -printf . | wc -c)"
+          product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -exec printf . \; | wc -c | tr -d '[:space:]')"
           if [[ "$JOB_STATUS" == "success" && "$product_evidence_count" == "0" ]]; then
             echo "::error::successful E2E target produced no product evidence" >&2
             exit 1

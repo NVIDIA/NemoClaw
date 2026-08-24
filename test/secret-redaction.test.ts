@@ -50,21 +50,17 @@ describe("secret redaction consistency (#1736)", () => {
   const TEST_TOKENS = [...LITERAL_PREFIX_TOKENS, ...MESSAGING_TOKENS];
 
   describe("runner.ts redacts all token types", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name}`, () => {
-        const text = runnerRedact(`error: authentication failed with ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name", ({ token }) => {
+      const text = runnerRedact(`error: authentication failed with ${token}`);
+      expect(text).not.toContain(token);
+    });
   });
 
   describe("debug.ts redacts all token types", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name}`, () => {
-        const text = debugRedact(`error: authentication failed with ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name", ({ token }) => {
+      const text = debugRedact(`error: authentication failed with ${token}`);
+      expect(text).not.toContain(token);
+    });
   });
 
   describe("redactor consistency (#2381)", () => {
@@ -74,14 +70,16 @@ describe("secret redaction consistency (#1736)", () => {
       expect(debugRedact(text)).not.toContain("nvapi-");
     });
 
-    it("redacts complete multi-segment LangSmith keys without exposing their tails", () => {
-      const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
-      for (const redactor of [runnerRedact, debugRedact, redactSensitiveText]) {
+    it.each(Array.from([runnerRedact, debugRedact, redactSensitiveText], (value) => [value]))(
+      "redacts complete multi-segment LangSmith keys without exposing their tails [case %#]",
+      (redactor) => {
+        const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
+
         const redacted = redactor(`provider failed with ${token}`);
         expect(redacted).not.toContain(token);
         expect(redacted).not.toContain("_tailtailtail");
-      }
-    });
+      },
+    );
   });
 
   describe("debug.sh delegates to node when available (#2381)", () => {
@@ -144,6 +142,7 @@ describe("secret redaction consistency (#1736)", () => {
           /* ignore optional command */
         }
       }
+
       writeFileSync(
         join(fakeBin, "date"),
         "#!/bin/sh\necho nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb sk-cccccccccccccccccccccccc\n",
@@ -176,12 +175,10 @@ describe("secret redaction consistency (#1736)", () => {
   });
 
   describe("onboard-session redactSensitiveText (#2336)", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name} from persisted failure messages`, () => {
-        const text = redactSensitiveText(`onboard step failed: provider returned ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name from persisted failure messages", ({ token }) => {
+      const text = redactSensitiveText(`onboard step failed: provider returned ${token}`);
+      expect(text).not.toContain(token);
+    });
 
     it("redacts Telegram token embedded in API URL path", () => {
       const token = "1234567890:" + "A".repeat(35);

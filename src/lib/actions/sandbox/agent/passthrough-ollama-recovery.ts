@@ -51,6 +51,19 @@ function reportRecovery(
     return;
   }
 
+  if (result.reason === "model-absent") {
+    proc.stderr.write(
+      `  Ollama at ${result.endpoint} reports '${model}' as unavailable ` +
+        `(reported models: ${result.inventoryLabel}); continuing to OpenClaw dispatch.\n`,
+    );
+    proc.stderr.write(
+      `  Either the daemon answering that endpoint changed, or the model was removed from ` +
+        `it. Restart the daemon that holds '${model}', or rerun \`nemoclaw onboard\` and ` +
+        `select a model that the endpoint reports.\n`,
+    );
+    return;
+  }
+
   const reason = result.reason;
   switch (reason) {
     case "already-loaded":

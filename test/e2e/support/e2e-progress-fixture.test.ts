@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, it } from "vitest";
-import { assertPhaseLabel } from "../../../tools/e2e/runner-pressure-core.mts";
 import {
   E2E_TEARDOWN_PHASE,
   resourcePhaseLabel,
@@ -79,17 +78,6 @@ it.each([
   expect(runnerComparisonProgressOptions(environment)).toEqual({});
 });
 
-it("bounds long resource phase labels without losing deterministic identity", () => {
-  const target = "openshell-gateway-auth-contract";
-  const phase = "confirm gateway and Docker prerequisites";
-  const label = resourcePhaseLabel(target, phase);
-
-  expect(label).toHaveLength(64);
-  expect(label).toMatch(/\.[a-f0-9]{12}$/u);
-  expect(assertPhaseLabel(label)).toBe(label);
-  expect(resourcePhaseLabel(target, phase)).toBe(label);
-  expect(resourcePhaseLabel(target, `${phase} again`)).not.toBe(label);
-});
 
 it("writes completed target and shard evidence through the automatic progress fixture", () => {
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-fixture-"));

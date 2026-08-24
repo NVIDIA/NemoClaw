@@ -111,14 +111,15 @@ describe("parseToolScopeProbe (#4616)", () => {
 describe("interpretToolScopeProbe (#4616)", () => {
   const base = { sandboxName: "sb", cliName: "nemoclaw", wantsFix: false };
 
-  it("reports info when the probe is unavailable", () => {
-    for (const p of [null, probe({ ok: false })]) {
+  it.each([null, probe({ ok: false })])(
+    "reports info when the probe is unavailable [case %#]",
+    (p) => {
       const checks = interpretToolScopeProbe(p, base);
       expect(checks).toHaveLength(1);
       expect(checks[0].status).toBe("info");
       expect(checks[0].detail).toContain("unavailable");
-    }
-  });
+    },
+  );
 
   it("fails with a fix hint when allowlisted upgrades are pending", () => {
     const checks = interpretToolScopeProbe(

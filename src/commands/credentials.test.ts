@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   prompt: vi.fn().mockResolvedValue("yes"),
@@ -9,17 +9,23 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
   recordExtraProvider: vi.fn(),
   forgetExtraProvider: vi.fn(),
+  listManagedMcpCredentialReservations: vi.fn<
+    () => Array<{ sandboxName: string; server: string; credentialKeys: string[] }>
+  >(() => []),
   resolveGatewayCredentialMutationAuthority: vi.fn(),
 }));
 
 vi.mock("../lib/credentials/store", () => ({
   KNOWN_CREDENTIAL_ENV_KEYS: ["NVIDIA_INFERENCE_API_KEY"],
+  getCredential: vi.fn(),
   prompt: mocks.prompt,
+  saveCredential: vi.fn(),
 }));
 vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   recordExtraProvider: mocks.recordExtraProvider,
   forgetExtraProvider: mocks.forgetExtraProvider,
+  listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
 vi.mock("../lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
@@ -40,8 +46,13 @@ describe("credentials oclif adapter source coverage", () => {
     vi.clearAllMocks();
     mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: false });
     mocks.runOpenshellProviderCommand.mockReturnValue({ status: 0, stdout: "nvidia-prod\n" });
+    mocks.listManagedMcpCredentialReservations.mockReturnValue([]);
     mocks.resolveGatewayCredentialMutationAuthority.mockReturnValue({});
     process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("prints top-level credentials usage", async () => {
@@ -126,6 +137,86 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
     expect(error.mock.calls.flat().join("\n")).toContain(
       "gateway lifecycle authority could not be revalidated",
+    );
+  });
+
+  it("rejects a provider credential reserved by managed MCP before gateway mutation (#9388)", async () => {
+    vi.stubEnv("MAAS_GLEAN_TOKEN", "qa-secret-value");
+    mocks.listManagedMcpCredentialReservations.mockReturnValue([
+      {
+        sandboxName: "hermes",
+        server: "maas-glean",
+        credentialKeys: ["MAAS_GLEAN_TOKEN"],
+      },
+    ]);
+
+    const result = await runCredentialsAddAction({
+      provider: "maas-glean",
+      type: "generic",
+      credentials: ["MAAS_GLEAN_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain(
+      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
+    );
+    expect(result.failureLines.join("\n")).not.toContain("qa-secret-value");
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects --from-existing before gateway work when managed MCP reserves credentials (#9388)", async () => {
+    mocks.listManagedMcpCredentialReservations.mockReturnValue([
+      {
+        sandboxName: "hermes",
+        server: "maas-glean",
+        credentialKeys: ["MAAS_GLEAN_TOKEN"],
+      },
+    ]);
+
+    const result = await runCredentialsAddAction({
+      provider: "maas-glean",
+      type: "generic",
+      credentials: [],
+      configPairs: [],
+      fromExisting: true,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain(
+      "Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
+    );
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
+
+  it("releases a provider reservation when credential registration fails (#9388)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
+    mocks.recordExtraProvider.mockReturnValueOnce(true);
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "provider creation failed",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
     );
   });
 });

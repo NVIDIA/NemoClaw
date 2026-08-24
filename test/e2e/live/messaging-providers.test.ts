@@ -447,18 +447,18 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    for (const [assertionId, channel, plugin] of [
+    ([
       ["M6a", "telegram", "telegram"],
       ["M6b", "discord", "discord"],
       ["M6c", "slack", "slack"],
       ["M6d", "whatsapp", "whatsapp"],
-    ] as const) {
+    ] as const).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
         `${assertionId}: plugins.entries.${plugin}.enabled is true`,
       );
-    }
+    });
 
     const telegramAccount = channelAccount(config, "telegram");
     const discordAccount = channelAccount(config, "discord");
@@ -582,11 +582,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    for (const [assertionId, channel, accountId] of [
+    ([
       ["M6e", "telegram", "default"],
       ["M6f", "discord", "default"],
       ["M6g", "slack", "default"],
-    ] as const) {
+    ] as const).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&
@@ -595,7 +595,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
           entry.accounts.includes(accountId),
         `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
       );
-    }
+    });
     const whatsappRuntime = parsedRuntime.chat?.whatsapp;
     check(
       whatsappRuntime?.installed === true &&

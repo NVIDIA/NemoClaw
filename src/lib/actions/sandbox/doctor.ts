@@ -12,11 +12,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import {
-  type CuaStateObservationDeps,
-  getObservedValidatedCuaState,
-  isCuaPublicStateEnabled,
-} from "../../cua/state";
-import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
@@ -49,7 +44,10 @@ import {
   type DoctorInferenceRoute,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
-import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
+import {
+  buildLifecycleRegistrationCheck,
+  buildPortableRuntimeCheck,
+} from "./doctor-lifecycle-registration";
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
@@ -63,9 +61,11 @@ import {
   dockerInspectGateway,
   findSandboxListLine,
   inferSandboxReadyFromLine,
+  inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
   shouldInspectLegacyGatewayContainer,
+  withSandboxDoctorLifecycleLock,
 } from "./doctor-system-checks";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 
@@ -89,6 +89,22 @@ type SandboxProbe = {
   checks: DoctorCheck[];
   reachable: boolean;
 };
+
+function hermesPortableDoctorReport(
+  sandboxName: string,
+  phase: "pending" | "configuring" | "active",
+): DoctorReport {
+  const active = phase === "active";
+  return buildDoctorReport(sandboxName, [
+    {
+      group: "Sandbox",
+      label: "Portable lifecycle",
+      status: active ? "ok" : "warn",
+      detail: `agent=Hermes; phase=${phase}`,
+      ...(active ? {} : { hint: "resume the existing Hermes portable onboarding transaction" }),
+    },
+  ]);
+}
 
 function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | null {
   const asJson = args.includes("--json");
@@ -136,25 +152,25 @@ function cliBuildCheck(): DoctorCheck {
   };
 }
 
-function collectHostChecks(sb: SandboxEntry | null | undefined): {
-  checks: DoctorCheck[];
-  openshellBin: ReturnType<typeof resolveOpenshell>;
-} {
-  const cli = cliBuildCheck();
-  const openshellBin = resolveOpenshell();
-  let runtimeCheck: DoctorCheck;
+function inspectRuntimeHost(sb: SandboxEntry | null | undefined): DoctorCheck {
+  const portable = sb ? buildPortableRuntimeCheck(sb.name) : null;
+  if (portable) return portable;
+  const recorded = sb?.openshellDriver?.trim();
+  const provider = recorded
+    ? requireRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
+    : resolveCurrentRuntimeProviderBundle();
+  return provider.preflightDoctor.inspectHost();
+}
+
+function runtimeHostCheck(sb: SandboxEntry | null | undefined): DoctorCheck {
   try {
-    const recorded = sb?.openshellDriver?.trim();
-    const provider = recorded
-      ? requireRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
-      : resolveCurrentRuntimeProviderBundle();
-    runtimeCheck = provider.preflightDoctor.inspectHost();
+    return inspectRuntimeHost(sb);
   } catch (error) {
     const detail =
       error instanceof RuntimeProviderSelectionError
         ? error.message
         : `Runtime provider inspection failed: ${error instanceof Error ? error.message : String(error)}`;
-    runtimeCheck = {
+    return {
       group: "Host",
       label: "Runtime provider",
       status: "fail",
@@ -162,10 +178,18 @@ function collectHostChecks(sb: SandboxEntry | null | undefined): {
       hint: "restore a supported durable runtime provider identity before retrying",
     };
   }
+}
+
+function collectHostChecks(sb: SandboxEntry | null | undefined): {
+  checks: DoctorCheck[];
+  openshellBin: ReturnType<typeof resolveOpenshell>;
+} {
+  const cli = cliBuildCheck();
+  const openshellBin = resolveOpenshell();
   return {
     checks: [
       cli,
-      runtimeCheck,
+      runtimeHostCheck(sb),
       {
         group: "Host",
         label: "OpenShell CLI",
@@ -491,34 +515,6 @@ function collectRegisteredSandboxChecks(
   return checks;
 }
 
-/** Report candidate install readiness only while both exact CUA gates are enabled. */
-export function collectCuaRuntimeDoctorChecks(
-  sb: SandboxEntry | null | undefined,
-  deps: CuaStateObservationDeps = {},
-): DoctorCheck[] {
-  if (!isCuaPublicStateEnabled() || sb?.agent !== "nemocua") return [];
-  const observed = getObservedValidatedCuaState(sb, process.env, deps);
-  if (!observed.readiness) {
-    return [
-      {
-        group: "Sandbox",
-        label: "CUA runtime",
-        status: "fail",
-        detail: "candidate readiness is missing, invalid, stale, or unavailable",
-        hint: "rerun canonical onboarding with exact candidate qualification authority",
-      },
-    ];
-  }
-  return [
-    {
-      group: "Sandbox",
-      label: "CUA runtime",
-      status: "ok",
-      detail: `candidate; source=${observed.readiness.sourceRevision}; manifest=${observed.readiness.runtimeManifestDigest}`,
-    },
-  ];
-}
-
 function collectToolScopeChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -581,10 +577,16 @@ async function collectDoctorChecks(
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
-    // Keep this last because every asynchronous check above may race an
-    // authority-clearing registry write.
-    ...collectCuaRuntimeDoctorChecks(registry.getSandbox(sandboxName)),
   ];
+}
+
+function resolveDoctorGatewayName(sb: SandboxEntry | null | undefined): string | null {
+  if (!sb) return resolveGatewayName(GATEWAY_PORT);
+  try {
+    return resolveSandboxGatewayName(sb);
+  } catch {
+    return null;
+  }
 }
 
 export async function runSandboxDoctor(
@@ -595,20 +597,24 @@ export async function runSandboxDoctor(
   const intent = parseDoctorIntent(sandboxName, args);
   if (!intent) return undefined;
 
-  const sb = registry.getSandbox(sandboxName);
-  let gatewayName: string | null = resolveGatewayName(GATEWAY_PORT);
-  if (sb) {
-    try {
-      gatewayName = resolveSandboxGatewayName(sb);
-    } catch {
-      gatewayName = null;
+  const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
+    const portable = inspectSandboxDoctorPortableAuthority(sandboxName, registry.getSandbox);
+    if (portable.kind === "hermes") {
+      const report = hermesPortableDoctorReport(sandboxName, portable.phase);
+      if (intent.asJson && options.quietJson) return { report };
+      const exitCode = renderDoctorReport(report, intent.asJson);
+      return { exitCode };
     }
-  }
-  const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
-  const report = buildDoctorReport(sandboxName, checks);
-  if (intent.asJson && options.quietJson) return report;
 
-  const exitCode = renderDoctorReport(report, intent.asJson);
-  if (exitCode !== 0) process.exit(exitCode);
-  return undefined;
+    const sb = registry.getSandbox(sandboxName);
+    const gatewayName = resolveDoctorGatewayName(sb);
+    const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
+    const report = buildDoctorReport(sandboxName, checks);
+    if (intent.asJson && options.quietJson) return { report };
+
+    const exitCode = renderDoctorReport(report, intent.asJson);
+    return { exitCode };
+  });
+  if (outcome.exitCode && outcome.exitCode !== 0) process.exit(outcome.exitCode);
+  return outcome.report;
 }

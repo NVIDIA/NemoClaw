@@ -1,18 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { normalizeCustomEndpointUrl } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV,
   COMPATIBLE_ANTHROPIC_PROVIDER,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 
 describe("compatible Anthropic inference switch setup", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
   it("passes the direct binding credential only to the inference-set command", () => {
     const binding = compatibleAnthropicSwitchBinding("http://host.openshell.internal:18766", {
       COMPATIBLE_ANTHROPIC_API_KEY: "fixture-key",
@@ -42,6 +49,14 @@ describe("compatible Anthropic inference switch setup", () => {
         COMPATIBLE_ANTHROPIC_API_KEY: "   ",
       }),
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
+  });
+
+  it("passes the mock bridge through endpoint validation without DNS rewriting (#9166)", async () => {
+    const endpointUrl = compatibleAnthropicMockEndpointUrl(18_766);
+    const rewrite = vi.fn();
+
+    await expect(normalizeCustomEndpointUrl(endpointUrl, rewrite)).resolves.toBe(endpointUrl);
+    expect(rewrite).not.toHaveBeenCalled();
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {

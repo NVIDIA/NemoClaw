@@ -10,6 +10,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { containerPathsOverlap } from "../host-mount/path-overlap";
 import {
   PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
   type PodmanBootstrapJournal,
@@ -104,8 +105,7 @@ interface PodmanBootstrapReplacementAuthority {
   readonly watcherLease: PodmanGatewayWatcherLease;
 }
 
-export interface PrepareStoppedPodmanBootstrapReplacementInput
-  extends PodmanBootstrapReplacementAuthority {
+export interface PrepareStoppedPodmanBootstrapReplacementInput extends PodmanBootstrapReplacementAuthority {
   readonly plan: PodmanBootstrapReplacementPlan;
 }
 
@@ -114,8 +114,7 @@ export interface StopExactPodmanBootstrapOriginalInput extends PodmanBootstrapRe
   readonly heldWorkload: PodmanHeldWorkloadObservation;
 }
 
-export interface RollbackPodmanBootstrapBeforeCommitInput
-  extends PodmanBootstrapReplacementAuthority {
+export interface RollbackPodmanBootstrapBeforeCommitInput extends PodmanBootstrapReplacementAuthority {
   readonly bootstrapIdentity: string;
   readonly heldWorkload: PodmanHeldWorkloadObservation;
 }
@@ -322,10 +321,6 @@ function exactAbsolutePath(value: unknown, label: string): string {
   return target;
 }
 
-function pathsOverlap(left: string, right: string): boolean {
-  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-}
-
 function assertMountDoesNotShadowState(specification: string): void {
   const destinations = specification.split(",").flatMap((entry) => {
     const separator = entry.indexOf("=");
@@ -340,7 +335,7 @@ function assertMountDoesNotShadowState(specification: string): void {
   }
   for (const destination of destinations) {
     const normalized = exactAbsolutePath(destination, "Podman runtime mount destination");
-    if (pathsOverlap(normalized, PODMAN_BOOTSTRAP_STATE_DIRECTORY)) {
+    if (containerPathsOverlap(normalized, PODMAN_BOOTSTRAP_STATE_DIRECTORY)) {
       failure(
         `Podman replacement runtime arguments cannot shadow ${PODMAN_BOOTSTRAP_STATE_DIRECTORY}.`,
         false,

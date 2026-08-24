@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "kind": "nemoclaw-reviewed-vllm-image-provenance",
+  "consumer": {
+    "recipe": "managed-inference/recipes/vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1.yaml",
+    "profile": "muse-glimmer-30b"
+  },
+  "publisher": {
+    "registry": "registry-1.docker.io",
+    "namespace": "vllm",
+    "repository": "vllm/vllm-openai"
+  },
+  "image": {
+    "reference": "vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
+    "manifestDigest": "sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
+    "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "manifestUrl": "https://registry-1.docker.io/v2/vllm/vllm-openai/manifests/sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
+    "configDigest": "sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303",
+    "configMediaType": "application/vnd.docker.container.image.v1+json",
+    "configSizeBytes": 34738,
+    "configUrl": "https://registry-1.docker.io/v2/vllm/vllm-openai/blobs/sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303",
+    "layerCount": 32,
+    "compressedLayerSizeBytes": 9706339423,
+    "createdAt": "2026-08-19T05:34:00.562836767Z",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    }
+  },
+  "build": {
+    "sourceRevision": "5a4c8d99242e9e069b604d0e9b969e77f7dd501d",
+    "imageTag": "vllm/vllm-openai:nightly-5a4c8d99242e9e069b604d0e9b969e77f7dd501d",
+    "pipelineId": "019d130e-464e-4ff7-b84b-492992c0c06b"
+  },
+  "upstreamSupport": {
+    "museMergeCommit": "6adad08767583f52eb4d2122111af0bf638ed5e6",
+    "relationship": "descendant",
+    "aheadBy": 173,
+    "revisionFixCommit": "90984ddbed27a09409506d6d6c0eea87f54b04b5",
+    "revisionFixRelationship": "descendant",
+    "revisionFixAheadBy": 33
+  },
+  "reportedLabels": {
+    "ai.vllm.build.commit": "5a4c8d99242e9e069b604d0e9b969e77f7dd501d",
+    "ai.vllm.build.pipeline": "019d130e-464e-4ff7-b84b-492992c0c06b",
+    "ai.vllm.image.tag": "vllm/vllm-openai:nightly-5a4c8d99242e9e069b604d0e9b969e77f7dd501d",
+    "org.opencontainers.image.revision": "5a4c8d99242e9e069b604d0e9b969e77f7dd501d"
+  },
+  "runtimeDependencies": {
+    "vllmVersion": "0.26.1rc1.dev942+g5a4c8d992",
+    "huggingfaceHubVersion": "1.28.0",
+    "sentencepieceVersion": "0.2.2",
+    "tiktokenVersion": "0.14.0"
+  },
+  "revisionSerialization": {
+    "model": "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    "requestedRevision": "d35cb79050f419c457611b1cee5c5d15b176f285",
+    "resolvedRevisionBeforePickle": "d35cb79050f419c457611b1cee5c5d15b176f285",
+    "resolvedRevisionAfterPickle": "d35cb79050f419c457611b1cee5c5d15b176f285",
+    "preserved": true
+  },
+  "verification": {
+    "observedAt": "2026-08-19T22:53:46Z",
+    "methods": [
+      "docker-buildx-imagetools-inspect-raw",
+      "docker-image-inspect",
+      "github-compare-api",
+      "container-package-imports",
+      "resolved-revision-pickle-round-trip",
+      "dgx-spark-cold-cache-startup",
+      "vllm-openai-api-validation"
+    ],
+    "signedProvenanceAttestation": "not-available"
+  }
+}

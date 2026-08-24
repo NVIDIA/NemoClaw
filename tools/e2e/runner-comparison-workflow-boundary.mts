@@ -19,10 +19,6 @@ const MCP_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }
 const MCP_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }}`;
 
 const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: string }> = new Map([
-  [
-    "common-egress-agent",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
   ["hermes-e2e", { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD }],
   ["mcp-bridge", { initializeIf: MCP_INITIALIZE_GUARD, finalizeIf: MCP_FINALIZE_GUARD }],
 ]);
@@ -100,7 +96,7 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep runner diagnostics on the three retained routed workflow jobs.
+ * Keep runner diagnostics on the retained routed workflow jobs.
  * Telemetry is best-effort, but it must span the
  * complete stable-capacity job and finish before evidence is scanned or
  * uploaded. Rebuild jobs establish their fixed swap capacity first because the
@@ -110,11 +106,6 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
   const jobs = record(record(workflowValue).jobs);
   const errors: string[] = [];
 
-  requireExactMatrixValues(errors, jobs, "common-egress-agent", "scenario", [
-    "openclaw-balanced-weather",
-    "openclaw-open-reference",
-    "hermes-open-reference",
-  ]);
   requireExactMatrixValues(errors, jobs, "mcp-bridge", "agent", [
     "openclaw",
     "hermes",

@@ -236,7 +236,7 @@ navigation:
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.openclaw.generated.mdx
                     slug: set-up-slack
                   - page: "Set Up Google Chat"
-                    path: manage-sandboxes/set-up-google-chat.mdx
+                    path: _build/agent-variants/manage-sandboxes/set-up-google-chat.openclaw.generated.mdx
                     slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.openclaw.generated.mdx
@@ -368,12 +368,6 @@ navigation:
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
                 slug: trusted-computing-base
-              - page: "OpenShell 0.0.72 Compatibility Review"
-                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
-                slug: openshell-0.0.72-compatibility-review
-              - page: "OpenShell 0.0.71 Review"
-                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
-                slug: openshell-0.0.71-gateway-auth-review
               - page: "OpenClaw Controls"
                 path: security/openclaw-controls.mdx
                 slug: openclaw-controls
@@ -720,9 +714,6 @@ navigation:
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.deepagents.generated.mdx
                 slug: trusted-computing-base
-              - page: "OpenShell 0.0.72 Compatibility Review"
-                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.deepagents.generated.mdx
-                slug: openshell-0.0.72-compatibility-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default
@@ -987,6 +978,9 @@ navigation:
                   - page: "Set Up Slack"
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.hermes.generated.mdx
                     slug: set-up-slack
+                  - page: "Set Up Google Chat"
+                    path: _build/agent-variants/manage-sandboxes/set-up-google-chat.hermes.generated.mdx
+                    slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.hermes.generated.mdx
                     slug: set-up-wechat
@@ -1117,12 +1111,6 @@ navigation:
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
                 slug: trusted-computing-base
-              - page: "OpenShell 0.0.72 Compatibility Review"
-                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
-                slug: openshell-0.0.72-compatibility-review
-              - page: "OpenShell 0.0.71 Review"
-                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
-                slug: openshell-0.0.71-gateway-auth-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default

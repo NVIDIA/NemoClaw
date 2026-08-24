@@ -11,6 +11,7 @@ import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerf
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
+const PI_DOCKERFILE_BASE = path.join(ROOT, "agents", "pi", "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const DCODE_DOCKERFILE_BASE = path.join(
   ROOT,
@@ -196,6 +197,35 @@ function expectDcodeRlimitHookWarnsWhenHelperIsMissing(hookPath: string, rlimitL
   expect(result.stderr).toContain(
     "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
   );
+}
+
+function expectPiRlimitHooksRejectFailedEnforcement(
+  hookPaths: Array<{ mode: "interactive" | "login"; path: string }>,
+  failure: string,
+): void {
+  for (const hook of hookPaths) {
+    const args =
+      hook.mode === "login"
+        ? [
+            "--noprofile",
+            "--norc",
+            "-lc",
+            'source "$1"; printf "UNREACHABLE\\n"',
+            "pi-login",
+            hook.path,
+          ]
+        : ["--noprofile", "--rcfile", hook.path, "-ic", 'printf "UNREACHABLE\\n"'];
+    const result = spawnSync("bash", args, {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, `${hook.mode}: ${failure}\n${result.stderr}`).not.toBe(0);
+    expect(result.stdout).not.toContain("UNREACHABLE");
+    expect(result.stderr).toContain(
+      "[SECURITY] Sandbox resource limits were NOT hardened for this shell; refusing shell startup.",
+    );
+  }
 }
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
@@ -422,6 +452,63 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     }
   });
 
+  it("Pi login and interactive hooks reject shells when exact limit enforcement fails", () => {
+    const dockerfile = fs.readFileSync(PI_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-rlimit-hooks-"));
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+
+    try {
+      fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
+      copyRlimitFixture(rlimitLib);
+      fs.writeFileSync(bashrc, "# existing Pi bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide RLIMIT hooks for Pi connect and login shells",
+        "COPY agents/pi/pi-runtime/package.json",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain("# existing Pi bashrc");
+      const hooks: Array<{ mode: "interactive" | "login"; path: string }> = [
+        { mode: "login", path: rlimitHook },
+        { mode: "interactive", path: bashrc },
+      ];
+
+      fs.rmSync(rlimitLib, { force: true });
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "missing helper");
+
+      fs.writeFileSync(
+        rlimitLib,
+        [
+          "harden_resource_limits() { return 1; }",
+          "verify_resource_limits() { :; }",
+          "verify_resource_limits_exact() { :; }",
+        ].join("\n"),
+        { mode: 0o644 },
+      );
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "failed hardening");
+
+      fs.writeFileSync(
+        rlimitLib,
+        [
+          "harden_resource_limits() { :; }",
+          "verify_resource_limits() { :; }",
+          "verify_resource_limits_exact() { return 1; }",
+        ].join("\n"),
+        { mode: 0o644 },
+      );
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "failed exact verification");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("Deep Agents Code base image selects exact verification for connect and login shells", () => {
     const dockerfile = fs.readFileSync(DCODE_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rlimit-hooks-"));
@@ -527,7 +614,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
-      "openshell-child-visible-credentials.v0.0.101.json",
+      "openshell-child-visible-credentials.v0.0.106.json",
     );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
@@ -554,6 +641,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
     const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
     const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
+    const corporateCaRuntime = path.join(localLib, "corporate-ca-runtime.sh");
     const entrypointEnvWrapper = path.join(localLib, "entrypoint-env-wrapper.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
@@ -595,6 +683,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
       fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
       fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
+      fs.writeFileSync(corporateCaRuntime, "# corporate CA runtime fixture\n");
       fs.writeFileSync(entrypointEnvWrapper, "# entrypoint env wrapper fixture\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
@@ -607,6 +696,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/bin/nemoclaw-managed-startup-hold", managedStartupHold)
         .replaceAll("/usr/local/bin/nemoclaw-managed-bootstrap", managedBootstrap)
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
+        .replaceAll("/usr/local/lib/nemoclaw/corporate-ca-runtime.sh", corporateCaRuntime)
         .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
@@ -638,7 +728,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
-          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json",
           mcpCredentialBoundary,
         )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)

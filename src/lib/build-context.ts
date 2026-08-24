@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CLI_NAME } from "./cli/branding";
 import { isPortableExperimentalProfile } from "./onboard/experimental/portable-profile";
-import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./onboard/resume-hint";
+import { noteOnboardResumeHintShown, onboardResumeRecoveryCommand } from "./onboard/resume-hint";
 
 import { classifySandboxCreateFailure, planSandboxCreateRecovery } from "./validation";
 
@@ -109,7 +109,7 @@ export function printSandboxCreateRecoveryHints(
   // the generic incomplete-exit backstop (#6003).
   noteOnboardResumeHintShown();
   const portable = isPortableExperimentalProfile();
-  const recoveryCommand = onboardRecoveryCommand(portable);
+  const recoveryCommand = onboardResumeRecoveryCommand();
   const failure = classifySandboxCreateFailure(output);
   if (failure.kind === "image_upload_container_missing") {
     const { arm64ImageRefWorkaround } = planSandboxCreateRecovery(failure, { platform, arch });

@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingPreset
+
+metadata:
+  id: vllm.dgx-station-gb300.single.nemotron-3-ultra-550b-a55b-nvfp4
+  displayName: NVIDIA Nemotron 3 Ultra 550B NVFP4 on one DGX Station
+  supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
+
+spec:
+  selection: explicit-only
+  priority: 540
+
+  requirements:
+    all:
+      - readiness:
+          scope: everyNode
+          kind: qualification
+          id: host.platform.dgx_station
+          status: qualified
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.dgx_station
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.daemon_reachable
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.runtime_supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.storage_compatible
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.nvidia_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.container_toolkit_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.cdi_healthy
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.os.platform
+          comparison:
+            operator: equals
+            value: linux
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.os.architecture
+          comparison:
+            operator: equals
+            value: arm64
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.docker.runtime
+          comparison:
+            operator: equals
+            value: docker
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.gpu.count
+          comparison:
+            operator: at-least
+            value: 1
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.gpu.driver_version
+          comparison:
+            operator: version-at-least
+            value: 580.65.06
+
+  plan:
+    backend: vllm
+    platform: station
+    interactive: true
+    recipeRef: vllm.nemotron-3-ultra-550b-a55b-nvfp4.station-arm64-single.v1

@@ -16,8 +16,18 @@ network_policies:
       - path: /usr/bin/curl
 `;
 
+export const LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT =
+  `__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=${JSON.stringify({
+    deviceIdentitySha256: "a".repeat(64),
+    pairingStateSha256: "b".repeat(64),
+    requiredRoles: ["operator"],
+    requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+  })}`;
+
 export function launchReadinessRegistryFixture(sandboxId = "abc") {
   return {
+    agent: "openclaw",
+    agentVersion: "2026.7.1",
     openshellDriver: "docker",
     openshellVersion: "0.0.16",
     gatewayName: resolveGatewayName(DEFAULT_GATEWAY_PORT),

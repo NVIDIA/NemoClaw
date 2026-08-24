@@ -118,7 +118,10 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
     "  Fix the registry read error and rerun, or manually verify no sandboxes depend on the gateway before running:",
   );
   error(`    openshell gateway remove ${gatewayName}`);
-  error("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
+  error("  If a privileged process remains, do not use a host-wide process match.");
+  error(
+    `  Verify its live owner, gateway name '${gatewayName}', exact port, command line, PID file, runtime marker, and loaded sandbox namespace before stopping it.`,
+  );
   error("    nemoclaw onboard --gpu");
   exit(1);
 }

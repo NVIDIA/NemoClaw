@@ -24,6 +24,8 @@ const ISO = "2026-01-01T00:00:00.000Z";
 function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "s1",
     machineState: "sandbox",
     updatedAt: ISO,
@@ -327,6 +329,53 @@ describe("requiredMessagingProviderBindings", () => {
     };
 
     expect(requiredMessagingProviderBindings("my-assistant", disabledPlan)).toEqual([]);
+  });
+
+  it("replaces the generic Hermes Discord binding with the active static profile", () => {
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "hermes-discord",
+      agent: "hermes",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "discord",
+          displayName: "Discord",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "discordBotToken",
+          sourceInput: "botToken",
+          providerName: "hermes-discord-discord-bridge",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+
+    expect(requiredMessagingProviderBindings("hermes-discord", plan)).toEqual([
+      {
+        name: "hermes-discord-discord-bridge",
+        type: "discord-hermes-static-v1",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    ]);
   });
 });
 

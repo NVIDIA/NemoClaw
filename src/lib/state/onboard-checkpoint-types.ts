@@ -4,7 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import type { OnboardMachineState } from "../onboard/machine/types";
 
-export const CHECKPOINT_SCHEMA_VERSION = 3 as const;
+export const CHECKPOINT_SCHEMA_VERSION = 4 as const;
 
 export type CheckpointSchemaVersion = typeof CHECKPOINT_SCHEMA_VERSION;
 
@@ -22,6 +22,29 @@ export interface CheckpointResourceProfile {
   readonly cpu: string;
   readonly memory: string;
 }
+
+export type CheckpointOnboardProfile = "default" | "portable";
+
+/** Secret-free durable identity for the user-owned portable Podman runtime. */
+export interface CheckpointPortableRuntimeAuthority {
+  readonly schemaVersion: 1;
+  readonly kind: "podman";
+  readonly ownership: "current-user";
+  readonly uid: number;
+  readonly homeDir: string;
+  readonly configHome: string;
+  readonly runtimeDir: string;
+  readonly socketPath: string;
+}
+
+export type CheckpointProfileDecision = {
+  readonly kind: "selected";
+  readonly value: CheckpointOnboardProfile;
+};
+
+export type CheckpointRuntimeAuthorityDecision =
+  | { readonly kind: "unset" }
+  | { readonly kind: "selected"; readonly value: CheckpointPortableRuntimeAuthority };
 
 export interface CheckpointMessagingSelection {
   readonly selectedChannels: readonly string[];
@@ -116,6 +139,8 @@ export interface OnboardCheckpoint {
   readonly sessionId: string;
   readonly machineState: OnboardMachineState;
   readonly updatedAt: string;
+  readonly profile: CheckpointProfileDecision;
+  readonly runtimeAuthority: CheckpointRuntimeAuthorityDecision;
   readonly sandboxIdentity: CheckpointDecision<CheckpointSandboxIdentity>;
   readonly webSearch: CheckpointDecision<WebSearchConfig>;
   readonly messaging: CheckpointDecision<CheckpointMessagingSelection>;
@@ -131,10 +156,6 @@ export interface OnboardCheckpoint {
 export type CheckpointLoadResult =
   | { readonly status: "none" }
   | { readonly status: "loaded"; readonly checkpoint: OnboardCheckpoint }
-  | {
-      readonly status: "migrated";
-      readonly checkpoint: OnboardCheckpoint;
-      readonly fromVersion: number;
-    }
+  | { readonly status: "legacy"; readonly foundVersion?: 1 | 2 | 3 }
   | { readonly status: "unsupported_future"; readonly foundVersion: number }
   | { readonly status: "corrupt" };

@@ -432,8 +432,9 @@ describe("OpenClaw config guard failed-startup recovery wiring (#8304)", () => {
     expect(recovery?.[planIndex + 1]).toBe('{"version":1}');
   });
 
-  it("rejects a missing recovery plan before privileged execution", () => {
-    for (const planJson of [undefined, ""]) {
+  it.each([undefined, ""])(
+    "rejects a missing recovery plan before privileged execution [case %#]",
+    (planJson) => {
       const { calls, privileged } = createExec(true);
       const result = runOpenClawConfigGuard(privileged, "unlock-failed-startup", {
         planJson,
@@ -444,8 +445,8 @@ describe("OpenClaw config guard failed-startup recovery wiring (#8304)", () => {
         chattrApplied: false,
       });
       expect(calls).toEqual([]);
-    }
-  });
+    },
+  );
 
   it("refuses the recovery action when the sandbox has no installed guard", () => {
     const { privileged } = createExec(false);

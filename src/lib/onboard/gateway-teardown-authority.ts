@@ -51,7 +51,7 @@ export type GatewayTeardownAuthorityResolver = (
 
 type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
 
-function isManagedPackagedServiceMigration(
+export function isManagedPackagedServiceMigration(
   recorded: GatewayOwner,
   resolved: GatewayOwner,
 ): boolean {

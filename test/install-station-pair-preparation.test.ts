@@ -14,7 +14,7 @@ import {
   type PretrustedSshTarget,
   parseDualStationResumeState,
   prepareDualStationPair,
-  type StationDiscoveryHost,
+  STATION_PREP_EXISTING_VLLM_EXIT,
   validateResumeFileMetadata,
   validateStationPeerTarget,
 } from "../scripts/lib/dgx-station-peer.mts";
@@ -24,105 +24,28 @@ import {
   clearDualStationResumeState,
   inspectPretrustedSshTarget,
   readDualStationResumeState,
-  strictStationPrepSshTransportArgs,
+  stationPrepSshArgs,
   writeDualStationResumeState,
 } from "../scripts/prepare-dual-dgx-station.mts";
 import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../src/lib/inference/vllm-station-cluster-lifecycle.ts";
+import { strictVllmSshTransportArgs } from "../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import {
-  stationKnownHostsDigest,
-  strictStationSshTransportArgs,
-} from "../src/lib/inference/vllm-station-ssh-binding.ts";
+  HELPER_SHA256,
+  HOST_KEY_DATA,
+  HOST_KEY_DIGEST,
+  HOST_KEY_FINGERPRINT,
+  preparationOptions,
+  REVISION,
+  sshBinding,
+  stationConnectivity,
+  stationHost,
+} from "./helpers/dgx-station-peer-fixture";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const COORDINATOR = path.join(REPO_ROOT, "scripts", "prepare-dual-dgx-station.mts");
 const STATION_HELPER = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
-const REVISION = "a".repeat(40);
-const HELPER_SHA256 = "b".repeat(64);
-const HOST_KEY_DATA = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const HOST_KEY_DIGEST = stationKnownHostsDigest(`10.10.0.2 ssh-ed25519 ${HOST_KEY_DATA}\n`);
-const HOST_KEY_FINGERPRINT = `SHA256:${"A".repeat(43)}`;
-
-function stationHost(side: "local" | "peer"): StationDiscoveryHost {
-  const local = side === "local";
-  return {
-    schemaVersion: 1,
-    hostname: local ? "station-a" : "station-b",
-    productName: "NVIDIA DGX Station GB300",
-    architecture: "aarch64",
-    gpus: [
-      {
-        index: 0,
-        name: "NVIDIA GB300",
-        uuid: local ? "GPU-LOCAL-0001" : "GPU-PEER-0002",
-      },
-    ],
-    rails: [
-      {
-        netdev: "enp1s0f0np0",
-        macAddress: local ? "02:00:00:00:00:01" : "02:00:00:00:00:02",
-        pciAddress: "0000:01:00.0",
-        pciName: "NVIDIA ConnectX-8 Ethernet Controller",
-        state: "4: ACTIVE",
-        linkLayer: "Ethernet",
-        speedMbps: 400_000,
-        mtu: 9000,
-        ipv4Addresses: [{ address: local ? "10.10.0.1" : "10.10.0.2", prefixLength: 30 }],
-      },
-      {
-        netdev: "enp2s0f0np0",
-        macAddress: local ? "02:00:00:00:00:05" : "02:00:00:00:00:06",
-        pciAddress: "0000:02:00.0",
-        pciName: "NVIDIA ConnectX-8 Ethernet Controller",
-        state: "4: ACTIVE",
-        linkLayer: "Ethernet",
-        speedMbps: 400_000,
-        mtu: 9000,
-        ipv4Addresses: [{ address: local ? "10.10.0.5" : "10.10.0.6", prefixLength: 30 }],
-      },
-    ],
-  };
-}
-
-function stationConnectivity(side: "local" | "peer"): string {
-  const source = stationHost(side);
-  const destination = stationHost(side === "local" ? "peer" : "local");
-  return JSON.stringify({
-    schemaVersion: 1,
-    checks: source.rails.map((rail, index) => ({
-      netdev: rail.netdev,
-      sourceAddress: rail.ipv4Addresses[0].address,
-      peerAddress: destination.rails[index].ipv4Addresses[0].address,
-      routeDevice: rail.netdev,
-      routeSource: rail.ipv4Addresses[0].address,
-      routeGateway: null,
-      routeScope: "link",
-      peerMac: destination.rails[index].macAddress,
-      peerNeighborState: "REACHABLE",
-      jumboPing: true,
-    })),
-  });
-}
-
-function sshBinding(target = "10.10.0.2", keyData = HOST_KEY_DATA): PretrustedSshTarget {
-  const knownHostsLine = `${target.slice(target.lastIndexOf("@") + 1)} ssh-ed25519 ${keyData}`;
-  return {
-    requestedTarget: target,
-    sshTarget: target,
-    resolvedHost: target.slice(target.lastIndexOf("@") + 1),
-    sshUser: "ubuntu",
-    port: 22,
-    lookupHost: target.slice(target.lastIndexOf("@") + 1),
-    hostKeyDigest: stationKnownHostsDigest(`${knownHostsLine}\n`),
-    keyFingerprints: [HOST_KEY_FINGERPRINT],
-    knownHostsLines: [knownHostsLine],
-  };
-}
-
-function preparationOptions() {
-  return { revision: REVISION, helperSha256: HELPER_SHA256 };
-}
 
 function throwFixtureError(error: Error): never {
   throw error;
@@ -282,16 +205,15 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(deriveDiscoveryCandidates(stationHost("local"))).toEqual(["10.10.0.2", "10.10.0.6"]);
   });
 
-  it.each([
-    "DGX-Station",
-    "P3830",
-    "NVIDIA Station GB300",
-  ])("accepts an existing Station firmware product identifier: %s", (productName) => {
-    const host = stationHost("local");
-    host.productName = productName;
+  it.each(["DGX-Station", "P3830", "NVIDIA Station GB300"])(
+    "accepts an existing Station firmware product identifier: %s",
+    (productName) => {
+      const host = stationHost("local");
+      host.productName = productName;
 
-    expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
-  });
+      expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
+    },
+  );
 
   it("rejects extra rails, duplicate identities, and non-jumbo links", () => {
     const extraRail = stationHost("local");
@@ -341,8 +263,8 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(harness.calls.indexOf("local:--verify")).toBeLessThan(
       harness.calls.indexOf("probe:peer:10.10.0.2"),
     );
-    expect(harness.calls.indexOf("state:write:remote-preparation")).toBeLessThan(
-      harness.calls.indexOf("remote:10.10.0.2:--check"),
+    expect(harness.calls.indexOf("remote:10.10.0.2:--check")).toBeLessThan(
+      harness.calls.indexOf("state:write:remote-preparation"),
     );
     expect(harness.calls).toContain("local:--bind-controller");
     expect(harness.calls.filter((call) => call.startsWith("remote:"))).toEqual([
@@ -438,7 +360,7 @@ describe("deterministic dual-DGX Station peer discovery", () => {
       },
     ];
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const harness = new PreparationHarness();
       const binding = sshBinding();
       scenario.mutate(binding);
@@ -455,7 +377,7 @@ describe("deterministic dual-DGX Station peer discovery", () => {
         harness.calls.some((call) => call.startsWith("remote:")),
         scenario.name,
       ).toBe(false);
-    }
+    });
   });
 
   it("rejects an explicit target whose resolved SSH user changed before peer contact", () => {
@@ -558,10 +480,60 @@ describe("deterministic dual-DGX Station peer discovery", () => {
       ),
     ).toThrow(/jumbo-frame/);
   });
+
+  it("leaves an automatically discovered peer with active vLLM unchanged", () => {
+    const harness = new PreparationHarness();
+    trustFirstRail(harness);
+    harness.remoteHelperStatus.set("--check", STATION_PREP_EXISTING_VLLM_EXIT);
+
+    expect(prepareDualStationPair(preparationOptions(), harness.deps)).toEqual({
+      kind: "single-station",
+      reason:
+        "Trusted reciprocal peer has an active vLLM workload; leaving it unchanged and using single-Station inference",
+    });
+    expect(harness.statePhases).toEqual([]);
+    expect(harness.resume).toBeNull();
+    expect(harness.calls.filter((call) => call.startsWith("remote:"))).toEqual([
+      "remote:10.10.0.2:--check",
+    ]);
+    expect(harness.calls).not.toContain("local:--bind-controller");
+  });
+
+  it("keeps other automatic peer check failures pinned and fail-closed", () => {
+    const harness = new PreparationHarness();
+    trustFirstRail(harness);
+    harness.remoteHelperStatus.set("--check", 1);
+
+    expect(() => prepareDualStationPair(preparationOptions(), harness.deps)).toThrow(
+      /selected pair remains pinned/,
+    );
+    expect(harness.resume?.phase).toBe("remote-preparation");
+    expect(harness.calls).toContain("local:--bind-controller");
+    expect(harness.calls).not.toContain("remote:10.10.0.2:--apply");
+  });
+
+  it("keeps an explicit peer with active vLLM pinned and fail-closed", () => {
+    const explicitTarget = "ubuntu@station-b";
+    const harness = new PreparationHarness();
+    harness.trusted.set(explicitTarget, sshBinding(explicitTarget));
+    harness.remoteHelperStatus.set("--check", STATION_PREP_EXISTING_VLLM_EXIT);
+
+    expect(() =>
+      prepareDualStationPair(
+        { ...preparationOptions(), explicitPeer: explicitTarget },
+        harness.deps,
+      ),
+    ).toThrow(/selected pair remains pinned/);
+    expect(harness.resume?.phase).toBe("remote-preparation");
+    expect(harness.calls).toContain("local:--bind-controller");
+    expect(harness.calls.filter((call) => call.startsWith("remote:"))).toEqual([
+      `remote:${explicitTarget}:--check`,
+    ]);
+  });
 });
 
 describe("dual-DGX Station reboot resume and reuse", () => {
-  it("persists the exact pair before remote mutation and resumes remote exit 10", () => {
+  it("persists the exact pair after the read-only check and before remote mutation", () => {
     const first = new PreparationHarness();
     trustFirstRail(first);
     first.remoteHelperStatus.set("--apply", 10);
@@ -584,49 +556,62 @@ describe("dual-DGX Station reboot resume and reuse", () => {
       "remote:10.10.0.2:--verify",
     ]);
   });
-  it("rejects revision, helper, host-key, GPU, and rail substitution on resume", () => {
-    const scenarios: Array<{
-      name: string;
-      configure(harness: PreparationHarness): void;
-      options?: ReturnType<typeof preparationOptions>;
-      expected: RegExp;
-    }> = [
-      {
-        name: "revision",
-        configure: () => undefined,
-        options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
-        expected: /requires NemoClaw revision/,
-      },
-      {
-        name: "helper",
-        configure: () => undefined,
-        options: { revision: REVISION, helperSha256: "d".repeat(64) },
-        expected: /helper changed/,
-      },
-      {
-        name: "host key",
-        configure: (harness) => {
-          harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
-        },
-        expected: /host-key identity changed/,
-      },
-      {
-        name: "GPU",
-        configure: (harness) => {
-          harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-      {
-        name: "rail",
-        configure: (harness) => {
-          harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-    ];
 
-    for (const scenario of scenarios) {
+  it("keeps a resumed pair with active vLLM pinned and fail-closed", () => {
+    const harness = new PreparationHarness();
+    harness.resume = readyState();
+    trustFirstRail(harness);
+    harness.remoteHelperStatus.set("--check", STATION_PREP_EXISTING_VLLM_EXIT);
+
+    expect(() => prepareDualStationPair(preparationOptions(), harness.deps)).toThrow(
+      /selected pair remains pinned/,
+    );
+    expect(harness.resume?.phase).toBe("remote-preparation");
+    expect(harness.calls).toContain("local:--bind-controller");
+    expect(harness.calls).not.toContain("remote:10.10.0.2:--apply");
+  });
+  it.each([
+    {
+      name: "revision",
+      configure: () => undefined,
+      options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
+      expected: /requires NemoClaw revision/,
+    },
+    {
+      name: "helper",
+      configure: () => undefined,
+      options: { revision: REVISION, helperSha256: "d".repeat(64) },
+      expected: /helper changed/,
+    },
+    {
+      name: "host key",
+      configure: (harness) => {
+        harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
+      },
+      expected: /host-key identity changed/,
+    },
+    {
+      name: "GPU",
+      configure: (harness) => {
+        harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
+      },
+      expected: /physical dual-Station pair changed/,
+    },
+    {
+      name: "rail",
+      configure: (harness) => {
+        harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
+      },
+      expected: /physical dual-Station pair changed/,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    configure: (harness: PreparationHarness) => void;
+    options?: ReturnType<typeof preparationOptions>;
+    expected: RegExp;
+  }>)(
+    "rejects revision, helper, host-key, GPU, and rail substitution on resume [$name]",
+    (scenario) => {
       const harness = new PreparationHarness();
       harness.resume = readyState();
       trustFirstRail(harness);
@@ -639,8 +624,8 @@ describe("dual-DGX Station reboot resume and reuse", () => {
         harness.calls.some((call) => call.startsWith("remote:")),
         scenario.name,
       ).toBe(false);
-    }
-  });
+    },
+  );
 
   it("preserves a remote mismatch as a pinned fail-closed state", () => {
     const harness = new PreparationHarness();
@@ -652,6 +637,19 @@ describe("dual-DGX Station reboot resume and reuse", () => {
     );
     expect(harness.resume?.phase).toBe("remote-preparation");
     expect(harness.calls).not.toContain("remote:10.10.0.2:--verify");
+  });
+
+  it("fails closed when active vLLM appears after the read-only peer check", () => {
+    const harness = new PreparationHarness();
+    trustFirstRail(harness);
+    harness.remoteHelperStatus.set("--apply", STATION_PREP_EXISTING_VLLM_EXIT);
+
+    expect(() => prepareDualStationPair(preparationOptions(), harness.deps)).toThrow(
+      /refusing single-Station fallback/,
+    );
+    expect(harness.resume?.phase).toBe("remote-preparation");
+    expect(harness.calls).toContain("local:--bind-controller");
+    expect(harness.calls).not.toContain("remote:10.10.0.2:--bind-controller");
   });
 
   it("revalidates an exact managed pair and binds both controllers without workload probes", () => {
@@ -796,16 +794,23 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     }
   });
 
-  it("uses a strict noninteractive SSH argument boundary and exact-byte helper command", () => {
-    const args = strictStationPrepSshTransportArgs();
-    expect(args).toEqual(strictStationSshTransportArgs());
-    expect(args).toContain("BatchMode=yes");
-    expect(args).toContain("StrictHostKeyChecking=yes");
-    expect(args).toContain("VerifyHostKeyDNS=no");
-    expect(args).toContain("NoHostAuthenticationForLocalhost=no");
-    expect(args).toContain("ClearAllForwardings=yes");
-    expect(args).toContain("ProxyCommand=none");
-    expect(args).toContain("ProxyJump=none");
+  it("pins the Station preparation endpoint after the strict SSH policy (#9519)", () => {
+    const args = stationPrepSshArgs(sshBinding(), "/tmp/nemoclaw-known-hosts", "python3 -");
+    expect(args).toEqual([
+      ...strictVllmSshTransportArgs(),
+      "-o",
+      "UserKnownHostsFile=/tmp/nemoclaw-known-hosts",
+      "-o",
+      "GlobalKnownHostsFile=/dev/null",
+      "-o",
+      "HostKeyAlias=10.10.0.2",
+      "--",
+      "10.10.0.2",
+      "python3 -",
+    ]);
+  });
+
+  it("builds the exact-byte noninteractive helper command", () => {
     const command = buildRemoteHelperCommand(HELPER_SHA256, "--apply");
     expect(command).toContain(HELPER_SHA256);
     expect(command).toContain("sudo -n true");
@@ -816,40 +821,35 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     );
   });
 
-  it("does not expose ambient credentials or shell-loader variables to probes and helpers", () => {
-    const env = buildStationPrepSubprocessEnv({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_CTYPE: "en_US.UTF-8",
-      NVIDIA_API_KEY: "secret",
-      HF_TOKEN: "secret",
-      BASH_ENV: "/tmp/evil",
-      ENV: "/tmp/evil",
-      LD_PRELOAD: "/tmp/evil.so",
-      SSH_ASKPASS: "/tmp/evil",
-    });
-    expect(env).toMatchObject({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_ALL: "C",
-      LC_CTYPE: "en_US.UTF-8",
-      LANG: "C",
-    });
-    for (const forbidden of [
-      "NVIDIA_API_KEY",
-      "HF_TOKEN",
-      "BASH_ENV",
-      "ENV",
-      "LD_PRELOAD",
-      "SSH_ASKPASS",
-    ]) {
+  it.each(["NVIDIA_API_KEY", "HF_TOKEN", "BASH_ENV", "ENV", "LD_PRELOAD", "SSH_ASKPASS"])(
+    "does not expose ambient credentials or shell-loader variables to probes and helpers [case %#]",
+    (forbidden) => {
+      const env = buildStationPrepSubprocessEnv({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_CTYPE: "en_US.UTF-8",
+        NVIDIA_API_KEY: "secret",
+        HF_TOKEN: "secret",
+        BASH_ENV: "/tmp/evil",
+        ENV: "/tmp/evil",
+        LD_PRELOAD: "/tmp/evil.so",
+        SSH_ASKPASS: "/tmp/evil",
+      });
+      expect(env).toMatchObject({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_ALL: "C",
+        LC_CTYPE: "en_US.UTF-8",
+        LANG: "C",
+      });
+
       expect(env).not.toHaveProperty(forbidden);
-    }
-  });
+    },
+  );
 
   it("forces every remote helper sudo call through noninteractive mode", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-sudo-"));
@@ -954,91 +954,87 @@ fi
     }
   });
 
-  it("uses only deterministic rail candidates without trust enrollment or network discovery", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
+    "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it("keeps forbidden discovery and trust enrollment unreachable through pair qualification", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const knownHosts = path.join(root, "known_hosts");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o700,
-    });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
+    "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const knownHosts = path.join(root, "known_hosts");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 cat >/dev/null
 if (($# == 1)); then
@@ -1051,11 +1047,11 @@ ${stationConnectivity("local")}
 JSON
 fi
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh-keygen"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh-keygen"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -F 10.10.0.2 "* ]]; then
   printf '%s\n' '10.10.0.2 ssh-ed25519 ${HOST_KEY_DATA}'
@@ -1066,11 +1062,11 @@ if [[ " $* " == *" -F "* ]]; then
 fi
 printf '%s\n' '256 ${HOST_KEY_FINGERPRINT} fixture (ED25519)'
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -G "* ]]; then
   target=''
@@ -1124,58 +1120,50 @@ if [[ " $* " == *'prepare-dgx-station-host.sh'* ]]; then
 fi
 exit 96
 `,
-      { mode: 0o700 },
-    );
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+        { mode: 0o700 },
+      );
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("dual-DGX Station installer handoff", () => {
@@ -1270,12 +1258,12 @@ printf 'RESULT peer=%s model=%s binding=%s\n' "$NEMOCLAW_DGX_STATION_PEER" "$NEM
     }
   });
 
-  it("preserves the Station resume receipt when discovery finds no peer", () => {
+  it("preserves the Station resume receipt when an automatic peer is unavailable", () => {
     const { result, output, home } = runInstallerBody(
       `
 node() {
   if [[ "\${1:-}" == "--no-warnings" ]]; then
-    printf '%s\n' '{"kind":"single-station","reason":"no pretrusted reciprocal peer"}'
+    printf '%s\n' '{"kind":"single-station","reason":"peer has an active vLLM workload"}'
     return 0
   fi
   command node "$@"
@@ -1295,7 +1283,7 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s receipt=%s\n' "\${NEMOCLA
     );
     try {
       expect(result.status, output).toBe(0);
-      expect(output).toContain("No trusted reciprocal dual-DGX Station pair was detected");
+      expect(output).toContain("No eligible reciprocal dual-DGX Station pair is available");
       expect(output).toContain(
         "RESULT peer= model=nvidia/nemotron-3-ultra-550b-a55b selector=nemotron-3-ultra-550b-a55b binding= receipt=generation=0123456789abcdef0123456789abcdef",
       );
@@ -1431,7 +1419,7 @@ ensure_station_express_pair
     }
   });
 
-  it("defers host preparation only for a complete running managed dual-head candidate", () => {
+  it("defers host preparation only for a complete current or schema-2 managed dual-head candidate", () => {
     const valid = [
       "/nemoclaw-vllm",
       "true",
@@ -1451,6 +1439,14 @@ station_managed_dual_head_running
 `,
       { DOCKER_INSPECTION: valid },
     );
+    const previousSchemaAccepted = runInstallerBody(
+      `
+command_exists() { return 0; }
+docker() { printf '%s\n' "$DOCKER_INSPECTION"; }
+station_managed_dual_head_running
+`,
+      { DOCKER_INSPECTION: valid.replace(` head ${DUAL_STATION_VLLM_LAUNCH_SCHEMA} `, " head 2 ") },
+    );
     const malformed = runInstallerBody(
       `
 command_exists() { return 0; }
@@ -1461,9 +1457,11 @@ station_managed_dual_head_running
     );
     try {
       expect(accepted.result.status, accepted.output).toBe(0);
+      expect(previousSchemaAccepted.result.status, previousSchemaAccepted.output).toBe(0);
       expect(malformed.result.status, malformed.output).not.toBe(0);
     } finally {
       fs.rmSync(accepted.home, { recursive: true, force: true });
+      fs.rmSync(previousSchemaAccepted.home, { recursive: true, force: true });
       fs.rmSync(malformed.home, { recursive: true, force: true });
     }
   });

@@ -11,6 +11,11 @@ import {
 } from "./dashboard-runtime";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 
+// The port deployment verification must probe lives with the rest of this
+// module's "which host port does this agent publish" logic, so onboarding
+// reaches it through the dashboard helpers it already consumes (#9290).
+export { resolveVerifyAgentApiPort } from "./hermes-api-port";
+
 export type EnsureDashboardForward = (
   sandboxName: string,
   chatUiUrl?: string,
@@ -117,7 +122,7 @@ export async function ensureAgentDashboardForward(options: {
   return actualAgentDashboardPort;
 }
 
-function replaceUrlPort(value: string, port: number): string {
+export function replaceUrlPort(value: string, port: number): string {
   try {
     const parsed = new URL(value.includes("://") ? value : `http://${value}`);
     parsed.port = String(port);

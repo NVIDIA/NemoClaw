@@ -1082,6 +1082,7 @@ describe("setupInference dependency failures", () => {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
+      hostLocalInferenceReceipt: null,
     });
     expect(harness.logs).toEqual(["  ✓ Inference route set: nvidia-router / router/model"]);
     expect(harness.errors).toEqual([]);
