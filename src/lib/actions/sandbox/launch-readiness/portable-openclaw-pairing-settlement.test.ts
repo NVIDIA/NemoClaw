@@ -17,6 +17,7 @@ import {
   parsePortableOpenClawPairingApprovalReceipt,
   type PortableOpenClawPairingApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
 } from "../auto-pair-approval";
 import { settlePortableOpenClawPairing } from "../launch-readiness";
@@ -125,6 +126,38 @@ function expectApprovalScriptRejectsRequests(
     expect(parsePortableOpenClawPairingApprovalReceipt(rejectedResult.stdout)).toBe("rejected");
     expect(fs.existsSync(approvalLog)).toBe(false);
   }
+}
+
+function createPortableApprovalFixture(temporaryDirectories: string[]) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-pairing-"));
+  temporaryDirectories.push(root);
+  const approvalLog = path.join(root, "approvals.log");
+  const publicKey = Buffer.alloc(32, 9).toString("base64url");
+  const deviceId = createHash("sha256").update(Buffer.alloc(32, 9)).digest("hex");
+  const identityDigest = createHash("sha256")
+    .update(JSON.stringify({ deviceId, publicKey }))
+    .digest("hex");
+  fs.writeFileSync(
+    path.join(root, "openclaw"),
+    `#!${process.execPath}\nconst fs=require("fs");\nconst args=process.argv.slice(2);\nif(args[1]==="list"){process.stdout.write(JSON.stringify({pending:JSON.parse(process.env.PENDING_JSON || "[]")})+"\\n");process.exit(0);}\nif(args[1]==="approve"){fs.appendFileSync(process.env.APPROVAL_LOG,args[2]+"\\n");process.stdout.write("{}\\n");process.exit(0);}\nprocess.exit(2);\n`,
+    { mode: 0o755 },
+  );
+  return {
+    root,
+    approvalLog,
+    identityDigest,
+    request: {
+      requestId: "request-1",
+      deviceId,
+      publicKey,
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.pairing", "operator.write"],
+      isRepair: true,
+    },
+  };
 }
 
 describe("Portable OpenClaw pairing settlement", () => {
@@ -382,6 +415,48 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
   });
 
+  it("settles a write-only pending repair through the production approval wrapper (#9817)", async () => {
+    const fixture = createPortableApprovalFixture(temporaryDirectories);
+    const writeOnlyRequest = { ...fixture.request, scopes: ["operator.write"] };
+    const runApproval = vi.fn(
+      (sandboxName: string, gatewayName: string, expectedDeviceIdentitySha256: string) =>
+        runPortableOpenClawPairingApproval(sandboxName, gatewayName, expectedDeviceIdentitySha256, {
+          getOpenshellBinary: () => "openshell",
+          spawnSync: ((_command: string, _args: readonly string[], options: { input?: unknown }) =>
+            spawnSync("sh", ["-s"], {
+              encoding: "utf8",
+              input: String(options.input ?? ""),
+              env: {
+                ...process.env,
+                PATH: `${fixture.root}:${process.env.PATH}`,
+                APPROVAL_LOG: fixture.approvalLog,
+                PENDING_JSON: JSON.stringify([writeOnlyRequest]),
+              },
+            })) as never,
+        }),
+    );
+    const scope = settlementDeps({ runPortablePairingApproval: runApproval });
+    scope.observePairing.mockReturnValueOnce({
+      state: "pairing-pending",
+      deviceIdentitySha256: fixture.identityDigest,
+    });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: fixture.identityDigest,
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(runApproval).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "nemoclaw",
+      fixture.identityDigest,
+    );
+    expect(fs.readFileSync(fixture.approvalLog, "utf8")).toBe("request-1\n");
+  });
+
   it("performs no pairing writes when repair observation rejects pending state (#9817)", async () => {
     const scope = settlementDeps();
     scope.observePairing.mockImplementationOnce(() => {
@@ -464,31 +539,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   it("approves only the exact bounded request and emits only a fixed receipt (#9207)", () => {
     const approvalPolicy = readAutoPairApprovalPolicyModule();
     expect(approvalPolicy).toBeTruthy();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-pairing-"));
-    temporaryDirectories.push(root);
-    const approvalLog = path.join(root, "approvals.log");
-    const publicKey = Buffer.alloc(32, 9).toString("base64url");
-    const deviceId = createHash("sha256").update(Buffer.alloc(32, 9)).digest("hex");
-    const identityDigest = createHash("sha256")
-      .update(JSON.stringify({ deviceId, publicKey }))
-      .digest("hex");
-    fs.writeFileSync(
-      path.join(root, "openclaw"),
-      `#!${process.execPath}\nconst fs=require("fs");\nconst args=process.argv.slice(2);\nif(args[1]==="list"){process.stdout.write(JSON.stringify({pending:JSON.parse(process.env.PENDING_JSON || "[]")})+"\\n");process.exit(0);}\nif(args[1]==="approve"){fs.appendFileSync(process.env.APPROVAL_LOG,args[2]+"\\n");process.stdout.write("{}\\n");process.exit(0);}\nprocess.exit(2);\n`,
-      { mode: 0o755 },
-    );
-    const request = {
-      requestId: "request-1",
-      deviceId,
-      publicKey,
-      clientId: "cli",
-      clientMode: "cli",
-      role: "operator",
-      roles: ["operator"],
-      scopes: ["operator.pairing", "operator.write"],
-      isRepair: true,
-    };
+    const { root, approvalLog, identityDigest, request } =
+      createPortableApprovalFixture(temporaryDirectories);
     const { role: _role, roles: _roles, ...requestWithoutRoleFields } = request;
+    const { isRepair: _isRepair, ...requestWithoutRepair } = request;
     const script = buildPortableOpenClawPairingApprovalScript(
       Buffer.from(approvalPolicy as string, "utf8").toString("base64"),
       identityDigest,
@@ -529,6 +583,8 @@ describe("Portable OpenClaw pairing settlement", () => {
         [{ ...request, publicKey: "different-public-key" }],
         [{ ...request, publicKeyPem: "conflicting-public-key" }],
         [{ ...request, publicKeyPem: null }],
+        [{ ...request, isRepair: false }],
+        [requestWithoutRepair],
         [{ ...request, isRepair: "true" }],
         [{ ...request }, { ...request, requestId: "request-2" }],
       ],
