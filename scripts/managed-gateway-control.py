@@ -1444,6 +1444,16 @@ def _http_healthy_in_gateway_namespace(
             return False
         if _recovery_deadline_reached(recovery_deadline):
             return False
+        current_namespace_stat = os.fstat(current_namespace)
+        target_namespace_stat = os.fstat(target_namespace)
+        if (
+            current_namespace_stat.st_dev == target_namespace_stat.st_dev
+            and current_namespace_stat.st_ino == target_namespace_stat.st_ino
+        ):
+            return bool(
+                _http_healthy(port, path, recovery_deadline)
+                and not _recovery_deadline_reached(recovery_deadline)
+            )
         setns(target_namespace, getattr(os, "CLONE_NEWNET", 0x40000000))
         switched = True
         healthy = _http_healthy(port, path, recovery_deadline)
