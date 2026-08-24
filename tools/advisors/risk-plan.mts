@@ -21,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 18 as const;
+export const RISK_PLAN_VERSION = 19 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -49,6 +49,26 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/sandbox-create-step.ts",
   "tools/e2e/onboard-timeout-contract.mts",
 ]);
+export const GATEWAY_TOPOLOGY_FILES = [
+  "src/lib/core/gateway-address.ts",
+  "src/lib/onboard/docker-driver-gateway-config.ts",
+  "src/lib/onboard/docker-driver-gateway-env.ts",
+  "src/lib/onboard/docker-driver-gateway-local-tls.ts",
+  "src/lib/onboard/docker-driver-platform.ts",
+  "src/lib/onboard/experimental/docker-network-authority.ts",
+  "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts",
+  "src/lib/onboard/experimental/portable-host-preparation.ts",
+  "src/lib/onboard/experimental/portable-profile.ts",
+  "src/lib/onboard/gateway-host-runtime.ts",
+  "src/lib/onboard/gateway-http-readiness.ts",
+  "src/lib/onboard/gateway-recovery.ts",
+  "src/lib/onboard/gateway-sandbox-reachability.ts",
+  "src/lib/onboard/gateway-tcp-readiness.ts",
+  "src/lib/onboard/host-service-reachability.ts",
+  "src/lib/onboard/runtime-provider/contract.ts",
+  "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
+] as const;
+const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
   "device-auth-health",
   "issue-4462-scope-upgrade-approval",
@@ -141,6 +161,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES = [
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
   | "lifecycle-state"
+  | "gateway-topology"
   | "upgrade-rebuild"
   | "shared-agent"
   | "inference-policy"
@@ -364,6 +385,17 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("src/lib/onboard/") ||
       file.startsWith("src/lib/state/") ||
       STATEFUL_SANDBOX_FILE.test(file),
+  },
+  {
+    id: "gateway-topology",
+    summary:
+      "Gateway topology changes must keep sandbox-visible host addresses outside sandbox network subnets and use one address authority.",
+    tier: 2,
+    requiredJobs: [],
+    invariants: [
+      "An explicit sandbox-visible host address must be outside the sandbox network subnet, and every gateway-address projection must derive from the same authority.",
+    ],
+    matches: (file) => GATEWAY_TOPOLOGY_FILE_SET.has(file),
   },
   {
     id: "upgrade-rebuild",

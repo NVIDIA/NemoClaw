@@ -10,9 +10,9 @@ import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
   writeExecutable,
-} from "./helpers/installer-sourced-env";
+} from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 function callInstallerPayloadFn(fnCall: string, env: Record<string, string | undefined> = {}) {
   return spawnSync("bash", ["-c", `source "${INSTALLER_PAYLOAD}" 2>/dev/null; ${fnCall}`], {

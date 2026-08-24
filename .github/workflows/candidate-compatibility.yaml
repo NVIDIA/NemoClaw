@@ -185,7 +185,7 @@ jobs:
           exec > >(tee "candidate-lane-${LANE}.log") 2>&1
           [[ "$LANE" == installer ]] || { echo "::error::untrusted lane id: $LANE"; exit 1; }
           npx vitest run --project installer-integration \
-            test/install-openshell-version-check.test.ts \
+            test/installer-integration/install-openshell-version-check.test.ts \
             --testNamePattern "validates the receipt-bound candidate through the installer path"
           base_path="${PATH#*:}"
           env \

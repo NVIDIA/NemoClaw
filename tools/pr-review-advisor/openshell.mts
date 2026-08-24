@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { getDiff } from "../advisors/git.mts";
 import { ADVISOR_OPENSHELL_INFERENCE_BASE_URL } from "../advisors/provider-constants.mts";
 import {
   configureOpenShellInference,
@@ -25,6 +26,7 @@ import {
   type GitHubReviewContext,
   serializePreparedGitHubContext,
 } from "./github-context.mts";
+import { writeSpecialistDiff } from "./specialist-context.mts";
 import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
@@ -35,6 +37,7 @@ const REPOSITORY_BOUNDARY_PROOF_DIRECTORY = `.git/${ADVISOR_BOUNDARY_PROOF_DIREC
 const ADVISOR_BOUNDARY_PROOF_SOURCE_NAME = "source";
 const ADVISOR_BOUNDARY_PROOF_TARGET_NAME = "target";
 const ADVISOR_CONTEXT_FILE_NAME = "github-context.json";
+const ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME = "specialist";
 const SANDBOX_ADVISOR_DIR = "/advisor";
 const SANDBOX_WORKDIR = "/pr-workdir";
 const SANDBOX_GIT_DIR = `${SANDBOX_WORKDIR}/.git`;
@@ -212,6 +215,18 @@ export async function prepareAdvisorSandboxInputs(
     serializePreparedGitHubContext(context),
   );
   fs.chmodSync(path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME), 0o444);
+  if (env.PR_REVIEW_ADVISOR_INTEREST) {
+    const baseRef = required(env.BASE_REF, "BASE_REF");
+    const headRef = required(env.HEAD_REF, "HEAD_REF");
+    const specialistDirectory = path.join(
+      contextDirectory,
+      ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME,
+    );
+    const diff = getDiff(baseRef, headRef, advisorWorkdir);
+    writeSpecialistDiff(specialistDirectory, diff);
+    fs.chmodSync(specialistDirectory, 0o555);
+    fs.chmodSync(path.join(specialistDirectory, "diff.patch"), 0o444);
+  }
 
   const findExecutable = options.resolveExecutable ?? resolveExecutable;
   const rg = findExecutable("rg", env);
