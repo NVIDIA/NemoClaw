@@ -406,11 +406,21 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
 }
 
 function safeBootstrapFailureLine(output: string): string | null {
-  const allowed = output
-    .split(/\r?\n/u)
-    .filter((line) =>
-      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}|\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(line),
-    );
+  const allowed = output.split(/\r?\n/u).flatMap((line) => {
+    if (!/^[\x20-\x7e]+$/u.test(line)) return [];
+    const boundedPrefix =
+      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): |\[SECURITY\] (?:Refusing Hermes startup because |Config integrity check failed|HERMES_[A-Z0-9_]+: ))/u.test(
+        line,
+      );
+    const exactFixedFailure =
+      /^(?:\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(
+        line,
+      );
+    if (!boundedPrefix && !exactFixedFailure) {
+      return [];
+    }
+    return [line.slice(0, 400)];
+  });
   return allowed.at(-1) ?? null;
 }
 

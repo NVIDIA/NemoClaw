@@ -530,6 +530,34 @@ describe("Podman image-owned bootstrap transaction", () => {
     );
   });
 
+  it("truncates an allowlisted managed startup failure instead of dropping it", () => {
+    const detail = "x".repeat(600);
+    const fake = harness("hermes", {
+      bootstrapLog: `Managed startup image application failed: ${detail}`,
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      `bootstrap ${`Managed startup image application failed: ${detail}`.slice(0, 400)}`,
+    );
+  });
+
+  it("reports a bounded Hermes startup refusal after managed profile application", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes is not a safe directory",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "bootstrap [SECURITY] Refusing Hermes startup because /sandbox/.hermes is not a safe directory",
+    );
+  });
+
   it("reports the bounded Hermes runtime-state startup refusal", () => {
     const fake = harness("hermes", {
       bootstrapLog:

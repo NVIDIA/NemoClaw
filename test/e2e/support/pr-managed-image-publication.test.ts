@@ -130,6 +130,8 @@ on:
         "src/lib/adapters/podman/index.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
+        "src/lib/onboard/managed-bootstrap/podman-image-transaction.test.ts",
+        "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
         "src/lib/onboard/managed-bootstrap/podman-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
@@ -153,6 +155,9 @@ on:
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
     expect(source).not.toContain(
       "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
+    );
+    expect(source).not.toContain(
+      "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
     );
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
