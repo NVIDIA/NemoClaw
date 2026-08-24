@@ -1,0 +1,98 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NemoClaw for Pi CLI Commands Reference"
+sidebar-title: "Commands"
+description: "Host lifecycle commands and in-sandbox Pi commands for the candidate Pi runtime."
+description-agent: "Lists candidate-gated Pi onboarding, lifecycle, credential, interactive, and headless commands."
+keywords: ["nemoclaw pi commands", "pi agent command reference", "pi sandbox commands"]
+topics: ["reference", "cli", "pi"]
+tags: ["pi", "commands", "lifecycle"]
+difficulty: "intermediate"
+audience: "operators"
+status: published
+content:
+  type: "reference"
+agent-variants: ["pi"]
+---
+Use `nemoclaw` for Pi sandbox lifecycle and `pi` for work inside the sandbox.
+
+<Warning>
+Pi remains a release candidate. Ordinary installations reject `--agent pi` until final activation lands in a release. Internal candidate qualification settings are not user commands.
+</Warning>
+
+## Onboard and Inspect
+
+| Command | Purpose |
+|---|---|
+| `nemoclaw onboard --agent pi --name <name>` | Create a Pi sandbox after activation |
+| `nemoclaw list` | List registered sandboxes and agents |
+| `nemoclaw <name> status` | Check Pi, inference, policy, and runtime state |
+| `nemoclaw <name> logs` | Read bounded sandbox logs |
+| `nemoclaw <name> doctor` | Diagnose Pi sandbox state; this command does not recover Pi |
+| `nemoclaw <name> recover` | Repair a stopped Pi gateway and its host forwards |
+
+## Run Pi
+
+| Command | Purpose |
+|---|---|
+| `nemoclaw launch <name>` | Run launch preflight and open interactive Pi |
+| `nemoclaw <name> connect` | Open a shell in the sandbox |
+| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --print "<task>"` | Run one headless task from the host |
+| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --mode json --print "<task>"` | Emit newline-delimited JSON task events |
+
+Inside a connected sandbox:
+
+```bash
+pi
+pi --no-approve --print "Review the current changes"
+pi --no-approve --mode json --print --tools read "Read README.md"
+pi --no-context-files
+```
+
+`--no-approve` ignores project-local executable resources. It does not disable `AGENTS.md` or `CLAUDE.md`; use `--no-context-files` for that boundary.
+
+## Preserve and Replace State
+
+Finish active Pi work and lower Shields before snapshot creation.
+
+```bash
+nemoclaw <name> shields down
+nemoclaw <name> snapshot create --name before-change
+nemoclaw <name> snapshot list
+```
+
+Review the selected version, name, or timestamp before restore replaces sandbox state.
+
+```bash
+nemoclaw <name> snapshot restore <version-or-name-or-timestamp>
+```
+
+Rebuild validates recorded authority and resolves the current release's exact Pi image.
+
+```bash
+nemoclaw <name> rebuild --yes
+nemoclaw <name> recover
+```
+
+## Stop or Remove the Sandbox
+
+```bash
+nemoclaw <name> stop
+nemoclaw <name> start
+```
+
+Create a snapshot before destroy when user state must survive. Destroy does not remove a provider credential from the OpenShell gateway.
+
+```bash
+nemoclaw <name> shields down
+nemoclaw <name> snapshot create --name before-destroy
+nemoclaw <name> destroy --yes
+```
+
+After every dependent sandbox is gone, remove the gateway-held credential explicitly.
+
+```bash
+nemoclaw credentials list
+nemoclaw credentials reset <provider> --yes
+```

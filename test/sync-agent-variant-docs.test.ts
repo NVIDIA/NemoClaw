@@ -22,7 +22,7 @@ import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts/sync-agent-variant-docs.mts");
 const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
-const AGENT_VARIANTS = ["openclaw", "hermes", "deepagents"] as const;
+const AGENT_VARIANTS = ["openclaw", "hermes", "deepagents", "pi"] as const;
 type AgentVariant = (typeof AGENT_VARIANTS)[number];
 
 const FRONTMATTER = `---
@@ -164,6 +164,10 @@ navigation:
         layout:
           - page: Example
             path: _build/agent-variants/reference/example.deepagents.generated.mdx
+      - slug: pi
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.pi.generated.mdx
 `,
       );
       const sourcePath = path.join(docsRoot, "reference/example.mdx");
@@ -176,12 +180,14 @@ Run $$nemoclaw list.
 
       const generatedRoot = path.join(docsRoot, "_build/agent-variants/reference");
       mkdirSync(generatedRoot, { recursive: true });
-      const generatedFiles = (["openclaw", "hermes", "deepagents"] as const).map((variant) => {
-        const outputPath = path.join(generatedRoot, `example.${variant}.generated.mdx`);
-        const contents = renderAgentVariantPage(source, variant, { outputPath, sourcePath });
-        writeFileSync(outputPath, contents);
-        return { path: outputPath, contents };
-      });
+      const generatedFiles = (["openclaw", "hermes", "deepagents", "pi"] as const).map(
+        (variant) => {
+          const outputPath = path.join(generatedRoot, `example.${variant}.generated.mdx`);
+          const contents = renderAgentVariantPage(source, variant, { outputPath, sourcePath });
+          writeFileSync(outputPath, contents);
+          return { path: outputPath, contents };
+        },
+      );
 
       const result = spawnSync(
         process.execPath,
@@ -235,6 +241,10 @@ navigation:
         layout:
           - page: Example
             path: _build/agent-variants/reference/example.deepagents.generated.mdx
+      - slug: pi
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.pi.generated.mdx
 `,
       );
       writeFileSync(

@@ -40,8 +40,10 @@ function captureSequence(
   results: Array<{ status: number; stdout?: string; stderr?: string; output?: string }>,
 ): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
   return vi.fn(
-    () =>
-      results.shift() ??
+    (args: string[]) =>
+      (args[0] === "provider" && args[1] === "profile"
+        ? { status: 0, stdout: "", stderr: "" }
+        : results.shift()) ??
       (() => {
         throw new Error("unexpected OpenShell call");
       })(),
@@ -69,7 +71,16 @@ describe("inference set provider binding", () => {
     });
     mutation.commit();
 
-    expect(capture.mock.calls[1]).toEqual([
+    expect(capture.mock.calls[1][0]).toEqual([
+      "provider",
+      "profile",
+      "-g",
+      "nemoclaw",
+      "import",
+      "--file",
+      expect.stringMatching(/openai\.yaml$/u),
+    ]);
+    expect(capture.mock.calls[2]).toEqual([
       [
         "provider",
         "update",
@@ -104,7 +115,57 @@ describe("inference set provider binding", () => {
         captureOpenshell: capture,
       }),
     ).not.toThrow();
-    expect(capture.mock.calls[1][0]).toContain("create");
+    expect(capture.mock.calls[1][0]).toContain("profile");
+    expect(capture.mock.calls[2][0]).toContain("create");
+  });
+
+  it("stops before an OpenAI provider mutation when profile registration fails (#9895)", () => {
+    const before = providerOutput({ resourceVersion: 4 });
+    const responses = new Map([
+      ["get", { status: 0, stdout: before, stderr: "", output: before }],
+      ["profile", { status: 1, stdout: "", stderr: "sensitive profile failure" }],
+    ]);
+    const capture = vi.fn((args: string[]) =>
+      responses.get(args[1]) ?? (() => {
+        throw new Error("provider mutation must not run");
+      })(),
+    ) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
+
+    const mutation = prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      captureOpenshell: capture,
+    });
+
+    expect(() => mutation.commit()).toThrow(
+      "could not import the checked-in 'openai' inference provider profile",
+    );
+    expect(capture.mock.calls.map(([args]) => args[1])).toEqual(["get", "profile"]);
+  });
+
+  it("does not register the OpenAI profile before an Anthropic provider mutation", () => {
+    const after = providerOutput({
+      resourceVersion: 1,
+      providerName: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialKey: "ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+    });
+    const capture = captureSequence([
+      { status: 1, stdout: "", stderr: "Provider 'compatible-anthropic-endpoint' not found" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "", output: after },
+    ]);
+
+    prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-anthropic-endpoint",
+      binding: binding({ providerType: "anthropic", credentialEnv: "ANTHROPIC_API_KEY" }),
+      captureOpenshell: capture,
+    });
+
+    expect(capture.mock.calls.map(([args]) => args[1])).toEqual(["get", "create", "get"]);
   });
 
   it("creates a provider after the OpenShell 0.0.99 generic lookup miss (#7725)", () => {
@@ -128,7 +189,8 @@ describe("inference set provider binding", () => {
     });
 
     expect(mutation.action).toBe("create");
-    expect(capture.mock.calls[1][0]).toContain("create");
+    expect(capture.mock.calls[1][0]).toContain("profile");
+    expect(capture.mock.calls[2][0]).toContain("create");
   });
 
   it("removes a newly created provider when the caller rolls back", () => {
@@ -150,7 +212,7 @@ describe("inference set provider binding", () => {
     mutation.rollback();
 
     expect(mutation.action).toBe("create");
-    expect(capture.mock.calls[3][0]).toEqual([
+    expect(capture.mock.calls[4][0]).toEqual([
       "provider",
       "delete",
       "-g",
@@ -219,6 +281,8 @@ describe("inference set provider binding", () => {
       let version = 1;
       return (args, opts) => {
         switch (args[1]) {
+          case "profile":
+            return { status: 0, stdout: "", stderr: "", output: "" };
           case "get": {
             const output = providerOutput({ id, resourceVersion: version });
             return { status: 0, stdout: output, stderr: "", output };
