@@ -25,6 +25,9 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
+generated.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
 
 const providerCalls = [];
 let policyApplyCalls = 0;
@@ -180,6 +183,9 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
+generated.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
 
 let resourceVersion = 1;
 let registeredProviderGets = 0;

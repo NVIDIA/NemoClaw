@@ -82,6 +82,7 @@ function writeDefaultRegistry(gatewayName: string, gatewayPort: number) {
           dashboardPort: 28790,
           fromDockerfile: null,
           policies: [],
+          policyAuthority: "nemoclaw-managed",
         },
       },
     }),

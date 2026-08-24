@@ -26,6 +26,12 @@ export interface McpDestroyPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
   scrubbedAdapterEntries: McpBridgeEntry[];
+  /** Recheck the exact retained MCP policy authority before sandbox deletion. */
+  revalidateBeforeDelete?: () => Promise<void>;
+  /** Recheck the retained authority and exact manifest after confirmed deletion. */
+  revalidateAfterDelete?: () => Promise<void>;
+  /** Recheck only retained authority after exact post-delete cleanup. */
+  revalidateBeforeSuccess?: () => Promise<void>;
   /** True when phase one was completed by an earlier destroy process. */
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */

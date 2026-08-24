@@ -45,6 +45,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 
 const OPAQUE_INPUTS = [
   ".github/workflows/release-daily-brev-image.yaml",
+  "test/helpers/onboard-script-mocks.cjs",
   "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
@@ -69,6 +70,7 @@ const OPAQUE_INPUTS = [
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
   ".github/workflows/base-image-platform.yaml",
+  "test/e2e/live/managed-image-activation-e2e-helpers.ts",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/download-hermes-source-archive.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -108,6 +110,18 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("maps the onboard child-process preload to its managed-image fixtures", () => {
+    expect(triggeredBy("test/helpers/onboard-script-mocks.cjs")).toEqual([
+      "test/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboard-installer-restore-intent.test.ts",
+      "test/onboard-messaging.test.ts",
+      "test/onboard-reservation-recreate.test.ts",
+      "test/onboard-sandbox-build.test.ts",
+      "test/onboard-sandbox-recreation.test.ts",
+      "test/onboard-terminal-dashboard.test.ts",
+    ]);
+  });
+
   it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
     "maps YAML workflow files to the shared display-name contract [%s]",
     (workflowPath) => {
@@ -222,6 +236,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/pi-candidate-runtime-artifacts.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/pull-public-exact-digest.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([
+      "test/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
       "test/managed-base-image-contract.test.ts",

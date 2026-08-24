@@ -525,6 +525,28 @@ export async function runRebuildDestroyPhase(
       return null;
     }
   }
+  if (mcpPreparation.assertDeleteEdgeUnchanged) {
+    try {
+      // The final policy proof above can await external state. Close that
+      // window with a synchronous registry proof before the delete command.
+      mcpPreparation.assertDeleteEdgeUnchanged();
+    } catch (error) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        validateMcpPolicyAuthorityReceipt,
+      );
+      relockShieldsIfNeeded(true);
+      const detail = error instanceof Error ? error.message : String(error);
+      bail(
+        mcpRecoveryFailure
+          ? `Failed to revalidate read-only MCP recovery before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : `Failed to revalidate read-only MCP recovery before sandbox deletion: ${redactFull(detail)}`,
+      );
+      return null;
+    }
+  }
   if (sourcePresence === "missing") {
     log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);
   } else {

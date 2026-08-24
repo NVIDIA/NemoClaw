@@ -18,6 +18,8 @@ const mode = ${JSON.stringify(mode)};
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 
 const entry = {
   server: "example",
@@ -126,6 +128,8 @@ process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const entry = {
   server: "example",
   agent: "openclaw",
@@ -177,6 +181,8 @@ process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const entry = {
   server: "example",
   agent: "openclaw",
@@ -231,26 +237,26 @@ process.stdout.write(JSON.stringify({
 }
 
 describe("generated MCP policy transitions", () => {
-  it.each([
-    "assert",
-    "apply",
-  ] as const)("preserves an unowned same-name registry record during %s", (operation) => {
-    const result = runUnownedRegistryCollision(operation);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const payload = JSON.parse(result.stdout) as {
-      message: string;
-      applyCalled: boolean;
-      policies: Array<{ content: string; sourcePath: string }>;
-    };
-    expect(payload.message).toMatch(/unowned same-name registry record/);
-    expect(payload.applyCalled).toBe(false);
-    expect(payload.policies).toEqual([
-      expect.objectContaining({
-        content: "operator-owned-content",
-        sourcePath: "/operator/policy.yaml",
-      }),
-    ]);
-  });
+  it.each(["assert", "apply"] as const)(
+    "preserves an unowned same-name registry record during %s",
+    (operation) => {
+      const result = runUnownedRegistryCollision(operation);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        message: string;
+        applyCalled: boolean;
+        policies: Array<{ content: string; sourcePath: string }>;
+      };
+      expect(payload.message).toMatch(/unowned same-name registry record/);
+      expect(payload.applyCalled).toBe(false);
+      expect(payload.policies).toEqual([
+        expect.objectContaining({
+          content: "operator-owned-content",
+          sourcePath: "/operator/policy.yaml",
+        }),
+      ]);
+    },
+  );
 
   it("preserves the confirmed and desired policy across an interrupted refresh", () => {
     const result = runPolicyTransition("crash-retry");
@@ -335,18 +341,21 @@ describe("generated MCP policy transitions", () => {
   it.each([
     ["absent", false],
     ["match", true],
-  ] as const)("requires exact post-removal state %s before dropping ownership", (postRemovalState, preservesOwnership) => {
-    const result = runGeneratedPolicyRemoval(postRemovalState);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const payload = JSON.parse(result.stdout) as {
-      message: string;
-      skipRegistryUpdate: boolean;
-      policies: Array<{ content: string; sourcePath: string }>;
-    };
-    expect(payload.skipRegistryUpdate).toBe(true);
-    expect(payload.message).toMatch(preservesOwnership ? /effective state: match/ : /^$/);
-    expect(payload.policies.map((policy) => policy.sourcePath)).toEqual(
-      preservesOwnership ? ["generated:nemoclaw-mcp-bridge"] : [],
-    );
-  });
+  ] as const)(
+    "requires exact post-removal state %s before dropping ownership",
+    (postRemovalState, preservesOwnership) => {
+      const result = runGeneratedPolicyRemoval(postRemovalState);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        message: string;
+        skipRegistryUpdate: boolean;
+        policies: Array<{ content: string; sourcePath: string }>;
+      };
+      expect(payload.skipRegistryUpdate).toBe(true);
+      expect(payload.message).toMatch(preservesOwnership ? /effective state: match/ : /^$/);
+      expect(payload.policies.map((policy) => policy.sourcePath)).toEqual(
+        preservesOwnership ? ["generated:nemoclaw-mcp-bridge"] : [],
+      );
+    },
+  );
 });

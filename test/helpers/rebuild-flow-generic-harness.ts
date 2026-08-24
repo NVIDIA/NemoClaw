@@ -252,12 +252,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    policyAuthority: "nemoclaw-managed" as const,
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
-  const recordedPolicyAuthority = (
-    currentSandboxEntry as typeof currentSandboxEntry & { policyAuthority?: unknown }
-  ).policyAuthority;
+  const recordedPolicyAuthority = (currentSandboxEntry as Record<string, unknown>)
+    .policyAuthority;
   const policyAuthorityInspection =
     overrides.policyAuthorityInspection ??
     ({
