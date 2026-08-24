@@ -290,9 +290,8 @@ export function createJetsonCancellation(options: {
   let inFlight: Promise<JetsonCancellationResult> | undefined;
   let retry: Promise<JetsonCancellationResult> | undefined;
   return (reason, callOptions) => {
-    const cancellationAlreadyStarted = inFlight !== undefined;
     inFlight ??= cancelJetsonDispatch({ ...options, reason });
-    if (!cancellationAlreadyStarted || !callOptions?.retryJobNotFound) return inFlight;
+    if (!callOptions?.retryJobNotFound) return inFlight;
     retry ??= inFlight.then((result) =>
       result.outcome === "failed" && result.failure === "job-not-found"
         ? cancelJetsonDispatch({ ...options, reason })
