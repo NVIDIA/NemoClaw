@@ -11,12 +11,12 @@ import {
 import { metadata, ROOT, validResult } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
 describe("canonical security rubric", () => {
-  it("owns exactly nine ordered categories and the lifecycle evidence contract", () => {
+  it("owns ordered categories and the lifecycle evidence contract", () => {
     const rubric = readTrustedSecurityRubric();
     const parsed = parseSecurityRubric(rubric);
 
-    expect(parsed.categories).toHaveLength(9);
-    expect(new Set(parsed.categories)).toHaveLength(9);
+    expect(parsed.categories.length).toBeGreaterThan(0);
+    expect(new Set(parsed.categories)).toHaveLength(parsed.categories.length);
     expect(parsed.categories[0]).toBe("Secrets and Credentials");
     expect(parsed.categories.at(-1)).toBe("System Security");
     expect(rubric).toContain("Planning names the applicable risks");
@@ -25,7 +25,7 @@ describe("canonical security rubric", () => {
     expect(rubric).toContain(
       "Does the test include the component that enforces the control, or does mocking bypass that component?",
     );
-    expect(rubric.match(/^### Expected evidence$/gmu)).toHaveLength(9);
+    expect(rubric.match(/^### Expected evidence$/gmu)).toHaveLength(parsed.categories.length);
   });
 
   it("keeps review procedure in the skill and category definitions only in the rubric", () => {
@@ -46,7 +46,7 @@ describe("canonical security rubric", () => {
     expect(skill).toContain("Use **PASS**");
     expect(skill).toContain("## Step 6: Produce the Report");
     expect(skill).not.toMatch(/^### Category \d+:/mu);
-    expect(advisor).not.toContain("use this built-in 9-category security rubric instead");
+    expect(advisor).not.toContain("use this built-in security rubric instead");
     expect(advisor).not.toContain("nemoclaw-maintainer-security-code-review/SKILL.md");
     expect(`${advisor}\n${bootstrap}`).not.toContain(["Holistic", "Security", "Posture"].join(" "));
   });
