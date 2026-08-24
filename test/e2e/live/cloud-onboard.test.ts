@@ -17,50 +17,12 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { reasoningPropagationSource } from "../fixtures/reasoning-propagation.ts";
+import { probeReasoningPropagation } from "../fixtures/reasoning-propagation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
 const CHECKS_DIR = path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/checks");
 const LIVE_TIMEOUT_MS = 60 * 60_000;
-const REASONING_PROPAGATION_PROBE = String.raw`
-const fs = require("node:fs");
-const expectedModel = process.argv[1];
-const runtimeEnvironmentPath = process.argv[2];
-const runtimeEnvironmentStat = fs.lstatSync(runtimeEnvironmentPath);
-if (
-  !runtimeEnvironmentStat.isFile() ||
-  runtimeEnvironmentStat.isSymbolicLink() ||
-  runtimeEnvironmentStat.uid !== 0 ||
-  runtimeEnvironmentStat.gid !== 0 ||
-  (runtimeEnvironmentStat.mode & 0o777) !== 0o444
-) {
-  throw new Error("managed startup runtime environment is not a root-owned mode 0444 regular file");
-}
-const runtimeReasoningLines = fs
-  .readFileSync(runtimeEnvironmentPath, "utf8")
-  .split(/\r?\n/u)
-  .filter((line) => line.startsWith("export NEMOCLAW_REASONING="));
-if (runtimeReasoningLines.length !== 1) {
-  throw new Error("managed startup runtime environment must export NEMOCLAW_REASONING exactly once");
-}
-const runtimeReasoningMatch = /^export NEMOCLAW_REASONING='(true|false)'$/u.exec(
-  runtimeReasoningLines[0],
-);
-if (runtimeReasoningMatch === null) {
-  throw new Error("managed startup runtime environment has an invalid NEMOCLAW_REASONING export");
-}
-const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
-const models = config.models?.providers?.inference?.models ?? [];
-const model = models.find((entry) => entry?.id === expectedModel);
-const evidence = {
-  runtimeReasoning: runtimeReasoningMatch[1],
-  modelReasoning: model?.reasoning,
-};
-console.log(JSON.stringify(evidence));
-process.exit(evidence.runtimeReasoning === "true" && evidence.modelReasoning === true ? 0 : 1);
-`;
-
 validateSandboxName(SANDBOX_NAME);
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -283,22 +245,20 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   progress.phase("verify compatible endpoint reasoning propagation");
-  const reasoningSource = reasoningPropagationSource(workloadKind);
-  const reasoningProbe = await sandbox.exec(
-    SANDBOX_NAME,
-    ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model, reasoningSource.path],
-    {
-      artifactName: "phase-2-compatible-endpoint-reasoning",
-      env: testEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expect(reasoningProbe.exitCode, resultText(reasoningProbe)).toBe(0);
-  const reasoningEvidence = JSON.parse(reasoningProbe.stdout.trim()) as {
-    runtimeReasoning: string;
-    modelReasoning: boolean;
-  };
-  expect(reasoningEvidence).toEqual({ runtimeReasoning: "true", modelReasoning: true });
+  const reasoningEvidence = await probeReasoningPropagation({
+    commandOptions: { env: testEnv(), timeoutMs: 60_000 },
+    expectedModel: hosted.model,
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    workloadKind,
+  });
+  expect(reasoningEvidence.modelReasoning).toBe(true);
+  expect(
+    "runtimeReasoning" in reasoningEvidence
+      ? reasoningEvidence.runtimeReasoning
+      : reasoningEvidence.imageReasoning,
+  ).toBe("true");
   await artifacts.writeJson("compatible-endpoint-reasoning.json", reasoningEvidence);
 
   progress.phase("collect scoped diagnostics from onboarded sandbox");
