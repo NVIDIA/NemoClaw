@@ -68,6 +68,16 @@
       ]
     },
     {
+      "live": "test/e2e/live/pi-agent-qualification.test.ts",
+      "fast": [
+        "src/lib/agent/candidate.test.ts",
+        "src/lib/agent/pi-lifecycle.test.ts",
+        "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/pi-agent-qualification-events.test.ts",
+        "test/pi-candidate-runtime-artifacts.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
       "fast": [
         "src/lib/adapters/container-engine.test.ts",

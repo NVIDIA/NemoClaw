@@ -708,7 +708,7 @@ describe("complete managed-image publication workflow", () => {
     expect(source).toContain("await lifecycle.restartGatewayRuntime(");
     expect(source).toContain("await runAgentTurn(");
     expect(source).toContain("await sandbox.cleanupSandbox(");
-    expect(source).toContain("managed activation attempted a forbidden Dockerfile build");
+    expect(source).toContain("assertNoDockerfileBuild(trace);");
     expect(source).toContain("await lifecycle.stopGatewayRuntime()");
     expect(source).toContain("await host.cleanupGatewayRegistration(GATEWAY");
     expect(source).toContain("startFakeOpenAiCompatibleServer");
