@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
 import {
@@ -35,7 +36,6 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
-  premergeSlackPolicyIfNeeded,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
@@ -112,9 +112,6 @@ test(
       redactionValues,
       timeoutMs: 15 * 60_000,
     });
-
-    const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
-    cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
 
     await runSecondaryCleanup(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
@@ -308,6 +305,42 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
       "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
     );
+    const livePolicy = parseOpenShellPolicy(whatsappPolicyPostText).policy;
+    const slackPolicy = livePolicy.network_policies?.slack;
+    const slackPolicyRecord =
+      slackPolicy && typeof slackPolicy === "object" && !Array.isArray(slackPolicy)
+        ? (slackPolicy as Record<string, unknown>)
+        : null;
+    const slackEndpoints =
+      slackPolicyRecord && Array.isArray(slackPolicyRecord.endpoints)
+        ? (slackPolicyRecord.endpoints as Array<Record<string, unknown>>)
+        : [];
+    const slackBotEndpoint = slackEndpoints.find(
+      (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/**",
+    );
+    const slackAppEndpoint = slackEndpoints.find(
+      (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
+    );
+    check(
+      slackBotEndpoint?.request_body_credential_rewrite === true &&
+        (slackBotEndpoint.credential_binding as { provider?: unknown } | undefined)?.provider ===
+          `${SANDBOX_NAME}-slack-bridge`,
+      "M-WA6: installed ordinary Slack route uses the bot credential provider",
+    );
+    check(
+      slackAppEndpoint?.request_body_credential_rewrite === true &&
+        (slackAppEndpoint.credential_binding as { provider?: unknown } | undefined)?.provider ===
+          `${SANDBOX_NAME}-slack-app`,
+      "M-WA7: installed Socket Mode route uses the app credential provider",
+    );
+    check(
+      ["wss-primary.slack.com", "wss-backup.slack.com"].every((host) =>
+        slackEndpoints.some(
+          (endpoint) => endpoint.host === host && endpoint.websocket_credential_rewrite === true,
+        ),
+      ),
+      "M-WA8: installed Slack Socket Mode routes retain WebSocket credential rewrite",
+    );
 
     progress.phase("inspect providers placeholders and credential isolation");
     const providerList = await runHost(host, "openshell", ["provider", "list"], {
@@ -448,12 +481,14 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    ([
-      ["M6a", "telegram", "telegram"],
-      ["M6b", "discord", "discord"],
-      ["M6c", "slack", "slack"],
-      ["M6d", "whatsapp", "whatsapp"],
-    ] as const).forEach(([assertionId, channel, plugin]) => {
+    (
+      [
+        ["M6a", "telegram", "telegram"],
+        ["M6b", "discord", "discord"],
+        ["M6c", "slack", "slack"],
+        ["M6d", "whatsapp", "whatsapp"],
+      ] as const
+    ).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
@@ -525,8 +560,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       Boolean(
         whatsappHealth &&
-          typeof whatsappHealth === "object" &&
-          (whatsappHealth as Record<string, unknown>).enabled === false,
+        typeof whatsappHealth === "object" &&
+        (whatsappHealth as Record<string, unknown>).enabled === false,
       ),
       "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
     );
@@ -583,11 +618,13 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    ([
-      ["M6e", "telegram", "default"],
-      ["M6f", "discord", "default"],
-      ["M6g", "slack", "default"],
-    ] as const).forEach(([assertionId, channel, accountId]) => {
+    (
+      [
+        ["M6e", "telegram", "default"],
+        ["M6f", "discord", "default"],
+        ["M6g", "slack", "default"],
+      ] as const
+    ).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&

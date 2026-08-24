@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   RESTORED_CLONE_WARMUP_SCRIPT,
   sandboxWarmupExecArgs,
+  WARMUP_OPENCLAW_BIN,
   WARMUP_PROBE_TIMEOUT_S,
   WARMUP_SCRIPT,
   WARMUP_TIMEOUT_MS,
@@ -49,7 +50,8 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
 describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {
   it("keeps the real warm-up as one multiline command on the owning gateway (#10014)", () => {
     expect(WARMUP_SCRIPT).toContain("\n");
-    expect(WARMUP_SCRIPT).toContain("command -v openclaw");
+    expect(WARMUP_SCRIPT).toContain(`test -x ${WARMUP_OPENCLAW_BIN}`);
+    expect(WARMUP_SCRIPT).not.toContain("command -v openclaw");
     expect(WARMUP_SCRIPT).not.toContain("base64 -d");
     expect(WARMUP_SCRIPT).not.toContain("mktemp");
     expect(sandboxWarmupExecArgs("alpha", "nemoclaw-19000", WARMUP_SCRIPT)).toEqual([
@@ -80,7 +82,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
   it("tags the provoke session with the shared warm-up prefix", () => {
     expect(WARMUP_SESSION_ID_PREFIX).toBe("nemoclaw-onboard-warmup-");
     expect(WARMUP_SCRIPT).toContain(
-      `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`,
+      `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(/bin/date +%s)"`,
     );
   });
 
@@ -193,7 +195,8 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       );
 
       try {
-        const result = spawnSync("sh", ["-c", WARMUP_SCRIPT], {
+        const script = WARMUP_SCRIPT.replaceAll(WARMUP_OPENCLAW_BIN, path.join(binDir, "openclaw"));
+        const result = spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -232,28 +235,28 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=ambient-force-marker",
         "export NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING=ambient-clone-marker",
         "export NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT=ambient-settlement-marker",
-        'printf \'consumed\\n\' > "$NEMOCLAW_TEST_PROXY_SOURCE_LOG"',
+        "printf 'consumed\\n' > \"$NEMOCLAW_TEST_PROXY_SOURCE_LOG\"",
         "",
       ].join("\n"),
       { mode: 0o444 },
     );
     fs.writeFileSync(
       path.join(binDir, "openclaw"),
-        [
-          "#!/bin/sh",
-          "{",
-          "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
-          "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
-          "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
-          "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
-          "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
-          "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
-          "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
-          "  printf 'argv=%s\\n' \"$*\"",
-          '} > "$NEMOCLAW_TEST_CALL_LOG"',
-          "exit 1",
-          "",
-        ].join("\n"),
+      [
+        "#!/bin/sh",
+        "{",
+        "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
+        "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
+        "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
+        "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
+        "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
+        "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
+        "  printf 'argv=%s\\n' \"$*\"",
+        '} > "$NEMOCLAW_TEST_CALL_LOG"',
+        "exit 1",
+        "",
+      ].join("\n"),
       { mode: 0o700 },
     );
 
@@ -261,7 +264,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       const script = WARMUP_SCRIPT.replace(
         buildTrustedProxyEnvSourceShell(),
         buildTrustedProxyEnvSourceShell(proxyEnv),
-      );
+      ).replaceAll(WARMUP_OPENCLAW_BIN, path.join(binDir, "openclaw"));
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {
@@ -277,6 +280,72 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       expect(fs.readFileSync(sourceLog, "utf8")).toBe("consumed\n");
       expect(fs.readFileSync(callLog, "utf8")).toMatch(
         /^url=unset\nport=18789\ntoken=shared-token\npassword=shared-password\nforce=1\nrestored=unset\nsettlement=unset\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  itWithSh("does not pass gateway credentials to an OpenClaw program earlier in PATH", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-path-"));
+    const pathBinDir = path.join(fixtureRoot, "path-bin");
+    const trustedBinDir = path.join(fixtureRoot, "trusted-bin");
+    const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
+    const pathLog = path.join(fixtureRoot, "path.log");
+    const trustedLog = path.join(fixtureRoot, "trusted.log");
+    fs.mkdirSync(pathBinDir);
+    fs.mkdirSync(trustedBinDir);
+    fs.writeFileSync(
+      proxyEnv,
+      [
+        "export OPENCLAW_GATEWAY_TOKEN=shared-token",
+        "export OPENCLAW_GATEWAY_PASSWORD=shared-password",
+        "",
+      ].join("\n"),
+      { mode: 0o444 },
+    );
+    fs.writeFileSync(
+      path.join(pathBinDir, "openclaw"),
+      [
+        "#!/bin/sh",
+        'printf \'token=%s password=%s\\n\' "${OPENCLAW_GATEWAY_TOKEN-unset}" "${OPENCLAW_GATEWAY_PASSWORD-unset}" > "$NEMOCLAW_TEST_PATH_LOG"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const trustedOpenClaw = path.join(trustedBinDir, "openclaw");
+    fs.writeFileSync(
+      trustedOpenClaw,
+      [
+        "#!/bin/sh",
+        'printf \'token=%s password=%s\\n\' "${OPENCLAW_GATEWAY_TOKEN-unset}" "${OPENCLAW_GATEWAY_PASSWORD-unset}" > "$NEMOCLAW_TEST_TRUSTED_LOG"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const script = WARMUP_SCRIPT.replace(
+        buildTrustedProxyEnvSourceShell(),
+        buildTrustedProxyEnvSourceShell(proxyEnv),
+      ).replaceAll(WARMUP_OPENCLAW_BIN, trustedOpenClaw);
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_PATH_LOG: pathLog,
+          NEMOCLAW_TEST_TRUSTED_LOG: trustedLog,
+          PATH: `${pathBinDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(pathLog)).toBe(false);
+      expect(fs.readFileSync(trustedLog, "utf8")).toBe(
+        "token=shared-token password=shared-password\n",
       );
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

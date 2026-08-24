@@ -30,6 +30,7 @@ type PolicyRule = {
 type PolicyEndpoint = {
   host?: string;
   port?: number;
+  path?: string;
   access?: string;
   protocol?: string;
   enforcement?: string;
@@ -70,9 +71,7 @@ function filesystemPolicyAncestors(policyPath: string): string[] {
   const segments = normalizeFilesystemPolicyPath(policyPath).split("/").filter(Boolean);
   return [
     "/",
-    ...segments
-      .slice(0, -1)
-      .map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
+    ...segments.slice(0, -1).map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
   ];
 }
 
@@ -95,9 +94,7 @@ describe("initial sandbox policy real preset merge", () => {
       ["agents", "hermes", "policy-additions.yaml"],
       ["agents", "hermes", "policy-permissive.yaml"],
     ],
-    "langchain-deepagents-code": [
-      ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-    ],
+    "langchain-deepagents-code": [["agents", "langchain-deepagents-code", "policy-additions.yaml"]],
   } as const satisfies Record<
     (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
     readonly (readonly string[])[]
@@ -398,28 +395,48 @@ describe("initial sandbox policy real preset merge", () => {
     );
   });
 
-  it.each(
-    [
-      {
-        path: repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
-        agent: "openclaw",
-      },
-      { path: repoPath("agents", "hermes", "policy-permissive.yaml"), agent: "hermes" },
-    ].flatMap((policyCase) =>
-      ["slack.com", "api.slack.com", "hooks.slack.com"].map((host) => ({ policyCase, host })),
-    ),
-  )("keeps Slack credential rewrite for $policyCase.agent on $host", ({ policyCase, host }) => {
+  it.each([
+    {
+      path: repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      agent: "openclaw",
+    },
+    { path: repoPath("agents", "hermes", "policy-additions.yaml"), agent: "hermes" },
+  ])("keeps separate Slack bot and app credential routes for $agent", ({ path, agent }) => {
+    const sandboxName = `${agent}-slack-e2e`;
     const effective = readPreparedPolicy(
-      prepareInitialSandboxCreatePolicy(policyCase.path, ["slack"], {
-        agentName: policyCase.agent,
+      prepareInitialSandboxCreatePolicy(path, ["slack"], {
+        agentName: agent,
+        sandboxName,
       }),
     );
     const slackEndpoints = effective.network_policies?.slack?.endpoints ?? [];
-    const endpoint = slackEndpoints.find((candidate) => candidate.host === host);
-    expect(endpoint, `${policyCase.agent}:${host}`).toMatchObject({
+    const botEndpoint = slackEndpoints.find(
+      (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/**",
+    );
+    const appEndpoint = slackEndpoints.find(
+      (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
+    );
+
+    expect(botEndpoint, `${agent}: ordinary Slack route`).toMatchObject({
       protocol: "rest",
       request_body_credential_rewrite: true,
+      credential_binding: { provider: `${sandboxName}-slack-bridge` },
     });
+    expect(appEndpoint, `${agent}: Socket Mode app route`).toMatchObject({
+      protocol: "rest",
+      request_body_credential_rewrite: true,
+      credential_binding: { provider: `${sandboxName}-slack-app` },
+      rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+    });
+    expect(
+      slackEndpoints.find((endpoint) => endpoint.host === "api.slack.com"),
+      `${agent}:api.slack.com`,
+    ).toMatchObject({ protocol: "rest", request_body_credential_rewrite: true });
+    expect(
+      slackEndpoints.find((endpoint) => endpoint.host === "hooks.slack.com"),
+      `${agent}:hooks.slack.com`,
+    ).toMatchObject({ protocol: "rest", request_body_credential_rewrite: true });
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
   it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
@@ -452,15 +469,18 @@ describe("initial sandbox policy real preset merge", () => {
   it.each([
     ["missing", undefined],
     ["unsafe", "bad:provider"],
-  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
-    expect(() =>
-      prepareInitialSandboxCreatePolicy(
-        repoPath("agents", "hermes", "policy-additions.yaml"),
-        ["discord"],
-        { agentName: "hermes", sandboxName },
-      ),
-    ).toThrow("a valid sandbox name is required to materialize credential bindings");
-  });
+  ])(
+    "rejects a Hermes Discord create policy with a %s target sandbox name",
+    (_case, sandboxName) => {
+      expect(() =>
+        prepareInitialSandboxCreatePolicy(
+          repoPath("agents", "hermes", "policy-additions.yaml"),
+          ["discord"],
+          { agentName: "hermes", sandboxName },
+        ),
+      ).toThrow("a valid sandbox name is required to materialize credential bindings");
+    },
+  );
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(
     "keeps optional Claude hosts out of $agent create policy $path",

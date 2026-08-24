@@ -43,23 +43,25 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 // wedged sandbox from blocking onboard or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
 export const WARMUP_PROBE_TIMEOUT_S = 5;
+export const WARMUP_OPENCLAW_BIN = "/usr/local/bin/openclaw";
 
-// Best-effort in-sandbox request producer. Always exits 0. Keep the trusted
-// gateway credential for the initial request, before a CLI device credential
-// exists. OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so
-// force device pairing only on this command. Finalization's canonical observer
-// owns pairing-state polling.
+// Best-effort in-sandbox request producer. Probe failures exit 0; rejecting an
+// unsafe trusted-proxy source can exit nonzero before the outer wrapper ignores
+// the result. Keep the trusted gateway credential for the initial request,
+// before a CLI device credential exists. OpenClaw 2026.7.1 can omit CLI
+// identity on loopback shared auth, so force device pairing only on this
+// command. Finalization's canonical observer owns pairing-state polling. Use
+// only root-owned executable paths after loading the gateway credential.
 export const WARMUP_SCRIPT = `
 ${buildTrustedProxyEnvSourceShell()}
-command -v openclaw >/dev/null 2>&1 || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
+test -x ${WARMUP_OPENCLAW_BIN} || exit 0
+test -x /usr/bin/python3 || exit 0
 unset OPENCLAW_GATEWAY_URL NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
   NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || exit 0
-session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
+session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(/bin/date +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
-OPENCLAW_BIN="$(command -v openclaw)"
-OPENCLAW_BIN="$OPENCLAW_BIN" NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
-  python3 - "$params" <<'PYPROBE'
+OPENCLAW_BIN="${WARMUP_OPENCLAW_BIN}" NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  /usr/bin/python3 - "$params" <<'PYPROBE'
 import os
 import subprocess
 import sys
@@ -123,16 +125,12 @@ function runSandboxWarmupScript(
   try {
     const openshellBinary = resolveOpenshell();
     if (!openshellBinary) return;
-    spawnSync(
-      openshellBinary,
-      sandboxWarmupExecArgs(sandboxName, gatewayName, script),
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: WARMUP_TIMEOUT_MS,
-      },
-    );
+    spawnSync(openshellBinary, sandboxWarmupExecArgs(sandboxName, gatewayName, script), {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: WARMUP_TIMEOUT_MS,
+    });
   } catch {
     /* defense-in-depth — never throw from a warm-up path */
   }
