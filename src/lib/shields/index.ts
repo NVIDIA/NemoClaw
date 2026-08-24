@@ -171,27 +171,19 @@ function readShieldsPolicySnapshot(snapshotPath: string): Record<string, unknown
   return parsed;
 }
 
-function externalPolicyMatchesShieldsSnapshot(
+function externalPolicyMatchesShieldsPolicy(
   authority: PolicyMutationAuthority,
-  snapshotPath: string,
+  requiredPolicy: Record<string, unknown>,
 ): boolean {
-  return isDeepStrictEqual(
-    authority.inspection.effectivePolicy,
-    readShieldsPolicySnapshot(snapshotPath),
-  );
+  return isDeepStrictEqual(authority.inspection.effectivePolicy, requiredPolicy);
 }
 
-function externalPolicyRecoveryHandoff(
-  sandboxName: string,
-  snapshotPath: string,
-  restrictivePolicyVerified: boolean,
-): string {
-  return restrictivePolicyVerified
-    ? `NemoClaw verified the saved restrictive policy for sandbox '${sandboxName}' under external policy authority. ` +
-        `Run \`${CLI_NAME} ${sandboxName} shields up\` to lock configuration and finish the Shields transition without changing policy.`
-    : `NemoClaw cannot finish the Shields transition for sandbox '${sandboxName}' while its external policy differs from the saved restrictive snapshot. ` +
-        `The external policy authority must apply '${snapshotPath}' as the sandbox policy. Then run \`${CLI_NAME} ${sandboxName} shields up\`. ` +
-        "NemoClaw will verify the exact live policy and lock configuration without changing policy.";
+function externalPolicyRecoveryHandoff(sandboxName: string): string {
+  return (
+    `NemoClaw cannot finish the Shields transition for sandbox '${sandboxName}' while its effective policy differs from the required restrictive policy. ` +
+    "The external policy authority must make the effective policy for this named sandbox match the saved restrictive snapshot and current managed MCP entries without changing policy authority. " +
+    `Then run \`${CLI_NAME} ${sandboxName} shields up\`. NemoClaw will verify the exact effective policy and lock configuration.`
+  );
 }
 
 type ShieldsPolicySnapshotRestoreAuthority = {
@@ -199,11 +191,17 @@ type ShieldsPolicySnapshotRestoreAuthority = {
   policyMutationAllowed: boolean;
 };
 
-function resolveShieldsPolicySnapshotRestoreAuthority(
+function inspectShieldsPolicySnapshotRestoreAuthority(
   sandboxName: string,
-  snapshotPath: string,
   recorded?: PolicyMutationAuthority,
-): ShieldsPolicySnapshotRestoreAuthority {
+): PolicyMutationAuthority {
+  if (recorded?.authority === "externally-managed") {
+    return inspectPolicyRecoveryAuthority(
+      sandboxName,
+      "verify the externally restored Shields policy snapshot",
+      recorded.gatewayName,
+    );
+  }
   let authority: PolicyMutationAuthority;
   try {
     authority = recorded
@@ -217,11 +215,23 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
       recorded?.gatewayName,
     );
   }
+  return authority;
+}
+
+function resolveShieldsPolicySnapshotRestoreAuthority(
+  sandboxName: string,
+  requiredPolicy: Record<string, unknown>,
+  recorded?: PolicyMutationAuthority,
+): ShieldsPolicySnapshotRestoreAuthority {
+  const authority = inspectShieldsPolicySnapshotRestoreAuthority(sandboxName, recorded);
+  if (recorded && authority.authority !== recorded.authority) {
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName));
+  }
   if (authority.authority === "nemoclaw-managed") {
     return { authority, policyMutationAllowed: true };
   }
-  if (!externalPolicyMatchesShieldsSnapshot(authority, snapshotPath)) {
-    throw new Error(externalPolicyRecoveryHandoff(sandboxName, snapshotPath, false));
+  if (!externalPolicyMatchesShieldsPolicy(authority, requiredPolicy)) {
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName));
   }
   const revalidated = inspectPolicyRecoveryAuthority(
     sandboxName,
@@ -230,9 +240,9 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
   );
   if (
     revalidated.authority !== "externally-managed" ||
-    !externalPolicyMatchesShieldsSnapshot(revalidated, snapshotPath)
+    !externalPolicyMatchesShieldsPolicy(revalidated, requiredPolicy)
   ) {
-    throw new Error(externalPolicyRecoveryHandoff(sandboxName, snapshotPath, false));
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName));
   }
   return { authority: revalidated, policyMutationAllowed: false };
 }
@@ -256,18 +266,13 @@ function inspectShieldsPolicyRecovery(sandboxName: string): ShieldsPolicyRecover
         };
       }
       try {
-        const authority = inspectPolicyRecoveryAuthority(
+        inspectPolicyRecoveryAuthority(
           sandboxName,
           "inspect externally managed Shields policy recovery",
         );
         return {
           status: "external",
-          handoff: externalPolicyRecoveryHandoff(
-            sandboxName,
-            snapshotPath,
-            authority.authority === "externally-managed" &&
-              externalPolicyMatchesShieldsSnapshot(authority, snapshotPath),
-          ),
+          handoff: externalPolicyRecoveryHandoff(sandboxName),
         };
       } catch (inspectionError) {
         return {
@@ -4214,12 +4219,14 @@ interface ShieldsPolicySnapshotRestoreOptions {
   transitionProcessToken?: string;
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
+  externalVerificationOnly?: boolean;
   buildPolicySet?: typeof buildPolicySetCommand;
   runPolicySet?: typeof run;
 }
 
 type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
   managedMcpOmissions?: ManagedMcpPolicyOmission[];
+  externalPolicyVerified?: true;
 };
 
 function applyShieldsPolicySnapshot(
@@ -4279,17 +4286,10 @@ function applyShieldsPolicySnapshot(
     throw new Error("Shields state does not match the policy snapshot being restored");
   }
   const persistedSnapshotMatches = state.shieldsPolicySnapshotPath === snapshotPath;
-  const restoreAuthority = resolveShieldsPolicySnapshotRestoreAuthority(sandboxName, snapshotPath);
-  const policyAuthority = restoreAuthority.authority;
-  if (!restoreAuthority.policyMutationAllowed) {
-    return {
-      pid: process.pid,
-      output: [null, "", ""],
-      stdout: "",
-      stderr: "",
-      status: 0,
-      signal: null,
-    };
+  const policyAuthority = inspectShieldsPolicySnapshotRestoreAuthority(sandboxName);
+  const policyMutationAllowed = policyAuthority.authority === "nemoclaw-managed";
+  if (options.externalVerificationOnly && policyMutationAllowed) {
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName));
   }
   const ownershipOmissions: ManagedMcpPolicyOmission[] = [];
   if (
@@ -4321,7 +4321,7 @@ function applyShieldsPolicySnapshot(
         reason:
           "Legacy Shields state had no managed MCP ownership manifest at the auto-restore deadline",
       });
-    } else {
+    } else if (policyMutationAllowed) {
       assertLegacyMcpPolicyRestoreSafe(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
@@ -4339,6 +4339,12 @@ function applyShieldsPolicySnapshot(
       );
       rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
       return result;
+    } else {
+      assertLegacyMcpPolicyRestoreSafe(
+        fs.readFileSync(snapshotPath, "utf-8"),
+        hasManagedMcpPolicyClaims(sandboxName),
+      );
+      snapshotManagedPolicyKeys = [];
     }
   }
   let managedMcpOmissions: ManagedMcpPolicyOmission[] = [];
@@ -4358,7 +4364,9 @@ function applyShieldsPolicySnapshot(
   } else {
     const managedMcpPolicies = resolveExactManagedMcpPolicies(
       sandboxName,
-      undefined,
+      policyMutationAllowed
+        ? undefined
+        : YAML.stringify(policyAuthority.inspection.effectivePolicy),
       policyAuthority.gatewayName,
     );
     runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
@@ -4369,6 +4377,23 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
+    if (!policyMutationAllowed) {
+      const externalRequiredPolicy = readShieldsPolicySnapshot(runtimePolicyPath);
+      resolveShieldsPolicySnapshotRestoreAuthority(
+        sandboxName,
+        externalRequiredPolicy,
+        policyAuthority,
+      );
+      return {
+        pid: process.pid,
+        output: [null, "", ""],
+        stdout: "",
+        stderr: "",
+        status: 0,
+        signal: null,
+        externalPolicyVerified: true,
+      };
+    }
     assertShieldsPolicyMutationAuthority(
       sandboxName,
       "restore the Shields policy snapshot",
@@ -4554,13 +4579,25 @@ function activateLockdownFromSnapshot(
     };
   }
   try {
-    resolveShieldsPolicySnapshotRestoreAuthority(sandboxName, snapshotPath);
+    if (restoreResult.externalPolicyVerified) {
+      applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+        ...restoreOptions,
+        externalVerificationOnly: true,
+      });
+    } else {
+      resolveShieldsPolicySnapshotRestoreAuthority(
+        sandboxName,
+        readShieldsPolicySnapshot(snapshotPath),
+      );
+    }
   } catch (error) {
     return {
       ok: false,
       error: `policy verification after config lock failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
+      chattrApplied: relock.lastResult.chattrApplied,
+      fileHashes: relock.lastResult.fileHashes,
     };
   }
   return {
@@ -4639,6 +4676,14 @@ function recoverExpiredAutoRestoreInline(
   );
   const nowIso = new Date().toISOString();
   if (!activation.ok) {
+    const configLocked =
+      activation.fileHashes !== undefined && typeof activation.chattrApplied === "boolean";
+    if (configLocked) {
+      saveShieldsState(sandboxName, {
+        chattrApplied: activation.chattrApplied,
+        fileHashes: activation.fileHashes,
+      });
+    }
     appendAuditEntry({
       action: "shields_up_failed",
       sandbox: sandboxName,
@@ -4648,6 +4693,11 @@ function recoverExpiredAutoRestoreInline(
       error: `Inline auto-restore failed: ${activation.error ?? "unknown error"}`,
     });
     console.error("  Recovery warning: inline auto-restore failed; shields remain DOWN.");
+    if (configLocked) {
+      console.error(
+        "  Recovery warning: configuration remains locked while policy recovery waits.",
+      );
+    }
     console.error(`  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` manually.`);
     return { attempted: true, restored: false };
   }
@@ -5939,9 +5989,23 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       protocol,
     );
     if (!activation.ok) {
+      const configLocked =
+        activation.fileHashes !== undefined && typeof activation.chattrApplied === "boolean";
+      if (configLocked) {
+        saveShieldsState(sandboxName, {
+          chattrApplied: activation.chattrApplied,
+          fileHashes: activation.fileHashes,
+        });
+      }
       console.error(`  ERROR: ${activation.error ?? "unknown restore error"}`);
-      console.error("  Config remains unlocked — manual intervention required.");
-      printManualRelockRecoveryHint(sandboxName);
+      if (configLocked) {
+        console.error(
+          "  Config remains locked; Shields remain DOWN until policy verification succeeds.",
+        );
+      } else {
+        console.error("  Config remains unlocked — manual intervention required.");
+        printManualRelockRecoveryHint(sandboxName);
+      }
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
     if (activation.fileHashes && typeof activation.chattrApplied === "boolean") {
