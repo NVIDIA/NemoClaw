@@ -525,9 +525,17 @@ describe("uninstall run plan", () => {
       try {
         const logs: string[] = [];
         const warnings: string[] = [];
+        const run = vi.fn(okWithKnownGatewayList);
+        const runDocker = vi.fn(() => ok(""));
+        const rmSync = vi.fn(fs.rmSync);
         const result = runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
-          preserveCaseDeps(tmpHome, logs, { warnings }),
+          {
+            ...preserveCaseDeps(tmpHome, logs, { warnings }),
+            rmSync,
+            run,
+            runDocker,
+          },
         );
 
         expect(result.exitCode).toBe(1);
@@ -538,6 +546,15 @@ describe("uninstall run plan", () => {
         expect(warningText).toContain(`unreconciled staging remains at ${stagedTarget}`);
         expect(warningText).toContain("Do not retry uninstall");
         expect(warningText).toContain(`move it back to ${stateDir}`);
+        expect(logs.some((line) => /^\[\d+\/\d+\]/u.test(line))).toBe(false);
+        expect(rmSync).not.toHaveBeenCalled();
+        expect(runDocker).not.toHaveBeenCalled();
+        expect(
+          run.mock.calls.every(
+            ([command, args]) =>
+              command === "openshell" && args[0] === "gateway" && args[1] === "list",
+          ),
+        ).toBe(true);
         expect(logs).not.toContain("Claws retracted. Until next time.");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });

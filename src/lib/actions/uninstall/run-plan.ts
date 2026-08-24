@@ -447,6 +447,42 @@ function findUnreconciledCleanupTargets(target: string): readonly string[] {
   return stagedTargets;
 }
 
+function unreconciledCleanupWarning(target: string, stagedTargets: readonly string[]): string {
+  return `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`;
+}
+
+function preflightSelectiveCleanupTargets(
+  targets: readonly string[],
+  runtime: Pick<UninstallRuntime, "warn">,
+): void {
+  for (const target of new Set(targets)) {
+    let stagedTargets: readonly string[];
+    try {
+      stagedTargets = findUnreconciledCleanupTargets(target);
+    } catch (error) {
+      runtime.warn(
+        `Failed to inspect interrupted cleanup state for ${target}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new IncompleteSelectiveCleanupError();
+    }
+    if (stagedTargets.length > 0) {
+      runtime.warn(unreconciledCleanupWarning(target, stagedTargets));
+      throw new IncompleteSelectiveCleanupError();
+    }
+  }
+}
+
+function selectiveCleanupTargets(
+  paths: UninstallPaths,
+  portableRuntimeCleanup: boolean,
+): readonly string[] {
+  const targets = [paths.nemoclawStateDir, paths.openshellConfigDir];
+  if (portableRuntimeCleanup) {
+    targets.push(path.join(paths.nemoclawConfigDir, "portable"), paths.nemoclawConfigDir);
+  }
+  return targets;
+}
+
 function removePathExcept(
   target: string,
   preserve: readonly string[],
@@ -463,9 +499,7 @@ function removePathExcept(
     return false;
   }
   if (stagedTargets.length > 0) {
-    deps.warn(
-      `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`,
-    );
+    deps.warn(unreconciledCleanupWarning(target, stagedTargets));
     return false;
   }
   if (!deps.existsSync(target)) return true;
@@ -3044,6 +3078,8 @@ function executePlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
 ): { ok: boolean } {
+  const portableConfigDir = path.join(paths.nemoclawConfigDir, "portable");
+  preflightSelectiveCleanupTargets(selectiveCleanupTargets(paths, portableRuntimeCleanup), runtime);
   const externallySupervised = isExternallySupervised(teardownAuthority);
   if (
     !canRemoveScopedOpenShellResources(
@@ -3327,7 +3363,6 @@ function executePlan(
           }
         } else runtime.log("Keeping OpenShell configuration used by the default gateway service.");
         if (portableRuntimeCleanup) {
-          const portableConfigDir = path.join(paths.nemoclawConfigDir, "portable");
           const portableConfigEntries = ["containers.conf", ...portableRetirementEntries.config];
           if (
             portableConfigEntries.some((entry) =>
@@ -3370,6 +3405,7 @@ function completePortablePlan(
 
 class IncompleteHostGatewayCleanupError extends Error {}
 class IncompleteBedrockRuntimeAdapterCleanupError extends Error {}
+class IncompleteSelectiveCleanupError extends Error {}
 
 function stopHostGatewayProcessesForUninstall(
   runtime: UninstallRuntime,
@@ -3532,7 +3568,8 @@ export function runUninstallPlan(
   } catch (error) {
     if (
       !(error instanceof IncompleteHostGatewayCleanupError) &&
-      !(error instanceof IncompleteBedrockRuntimeAdapterCleanupError)
+      !(error instanceof IncompleteBedrockRuntimeAdapterCleanupError) &&
+      !(error instanceof IncompleteSelectiveCleanupError)
     ) {
       throw error;
     }
