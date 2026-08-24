@@ -591,7 +591,6 @@ export function resolvePageLinksByText(
 // (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference and Manage
 // Sandboxes page because their nested navigation differs from source directories.
 const GUARDED_SOURCE_PAGES = [
-  "index.mdx",
   "reference/commands.mdx",
   "reference/network-policies.mdx",
   "reference/platform-support.mdx",

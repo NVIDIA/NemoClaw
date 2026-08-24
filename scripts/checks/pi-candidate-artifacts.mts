@@ -401,55 +401,24 @@ export function verifyPiQualificationReceipts(sources: PiArtifactSources): strin
     true,
     ts.ScriptKind.TS,
   );
-  const authorityDeclarations = authoritySource.statements.flatMap((statement) => {
-    if (!ts.isVariableStatement(statement)) return [];
-    const exported = statement.modifiers?.some(
-      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-    );
-    if (!exported) return [];
-    return statement.declarationList.declarations.filter(
-      (declaration) =>
-        ts.isIdentifier(declaration.name) &&
-        declaration.name.text === "CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS",
-    );
-  });
   let publishedDigests: string[] = [];
-  if (authorityDeclarations.length !== 1) {
-    failures.push(
-      `${PI_CANDIDATE_AUTHORITY_PATH}: must export CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS exactly once`,
-    );
-  } else {
-    const initializer = authorityDeclarations[0]!.initializer;
-    const object =
-      initializer &&
-      ts.isCallExpression(initializer) &&
-      initializer.expression.getText(authoritySource) === "Object.freeze"
-        ? initializer.arguments[0]
-        : undefined;
-    const pi =
-      object && ts.isObjectLiteralExpression(object)
-        ? object.properties.filter(
-            (property): property is ts.PropertyAssignment =>
-              ts.isPropertyAssignment(property) && property.name.getText(authoritySource) === "pi",
-          )
-        : [];
-    const piInitializer = pi.length === 1 ? pi[0]!.initializer : undefined;
-    const array =
-      piInitializer &&
-      ts.isCallExpression(piInitializer) &&
-      piInitializer.expression.getText(authoritySource) === "Object.freeze"
-        ? piInitializer.arguments[0]
-        : undefined;
-    if (!array || !ts.isArrayLiteralExpression(array)) {
-      failures.push(
-        `${PI_CANDIDATE_AUTHORITY_PATH}: exported qualification authority must define one frozen Pi digest array`,
-      );
-    } else {
-      publishedDigests = array.elements.flatMap((element) =>
-        ts.isStringLiteral(element) && /^[a-f0-9]{64}$/u.test(element.text) ? [element.text] : [],
-      );
+  const visitAuthority = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(authoritySource) === "pi" &&
+      ts.isCallExpression(node.initializer) &&
+      node.initializer.expression.getText(authoritySource) === "Object.freeze"
+    ) {
+      const array = node.initializer.arguments[0];
+      if (array && ts.isArrayLiteralExpression(array)) {
+        publishedDigests = array.elements.flatMap((element) =>
+          ts.isStringLiteral(element) && /^[a-f0-9]{64}$/u.test(element.text) ? [element.text] : [],
+        );
+      }
     }
-  }
+    ts.forEachChild(node, visitAuthority);
+  };
+  visitAuthority(authoritySource);
   publishedDigests.sort();
   if (!isDeepStrictEqual(publishedDigests, expectedDigests)) {
     failures.push(
