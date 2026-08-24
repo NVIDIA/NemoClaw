@@ -22,6 +22,27 @@ function safeTmpHelpers(src: string): string {
 describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("captures Portable OpenClaw timestamps with a fixed numeric locale", () => {
+    const captureEpoch = extractShellFunctionFromSource(
+      src,
+      "_nemoclaw_capture_epoch_realtime",
+    );
+    const script = [
+      "set -euo pipefail",
+      captureEpoch,
+      'printf() { _CAPTURED_LOCALE="$LC_NUMERIC"; builtin printf -v "$2" "%s" "1700000000.123456"; }',
+      "LC_NUMERIC=POSIX",
+      "_CAPTURED_LOCALE=",
+      "_nemoclaw_capture_epoch_realtime _CAPTURED_EPOCH",
+      'builtin printf "%s|%s|%s\\n" "$_CAPTURED_LOCALE" "$_CAPTURED_EPOCH" "$LC_NUMERIC"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("C|1700000000.123456|POSIX\n");
+  });
+
   it("writes one bounded credential-free Portable OpenClaw startup timing record", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-timing-"));
     const timingPath = path.join(tmpDir, "gateway-startup-timing");
