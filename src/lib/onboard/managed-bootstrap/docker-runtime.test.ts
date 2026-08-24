@@ -71,13 +71,17 @@ import {
 import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-create";
 
+const temporaryStateRoots: string[] = [];
+
 function compatibilityLifecycleInput(
   seed: ReturnType<typeof authority>,
   dependencies: ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"] & DockerGpuPatchDeps,
 ): ManagedBootstrapRuntimeCreateLifecycleInput {
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-probe-"));
+  temporaryStateRoots.push(stateRoot);
   return {
     providerId: "docker",
-    stateRoot: path.join(os.tmpdir(), "nemoclaw-docker-runtime-probe"),
+    stateRoot,
     bootstrapIdentity: IDENTITY,
     request: seed.request,
     image: seed.plan.image,
@@ -180,6 +184,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  for (const stateRoot of temporaryStateRoots.splice(0)) {
+    fs.rmSync(stateRoot, { recursive: true, force: true });
+  }
 });
 
 describe("Docker managed-bootstrap native fallback owner cleanup", () => {
