@@ -725,15 +725,15 @@ describe("deterministic PR risk plan", () => {
     const changedFiles = [
       "agents/langchain-deepagents-code/dependency-review.md",
       "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
-      "test/langchain-deepagents-code-managed-model-params.test.ts",
-      "test/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-managed-model-params.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
     ];
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
     const docsAndTestsOnly = plan(
       "agents/langchain-deepagents-code/dependency-review.md",
       "agents/langchain-deepagents-code/runtime-notes.mdx",
       "agents/langchain-deepagents-code/resolver.test.ts",
-      "test/langchain-deepagents-code-managed-model-params.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-managed-model-params.test.ts",
     );
 
     expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);

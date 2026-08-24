@@ -365,7 +365,7 @@ jobs:
             scripts/lib/normalize_mutable_config_perms.py \
             /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
           npx vitest run --project integration \
-            test/hermes-restart-config-seal-recovery.test.ts \
+            test/agents/hermes/hermes-restart-config-seal-recovery.test.ts \
             -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
           npx vitest run --project integration \
             test/nemoclaw-start-perms.test.ts \

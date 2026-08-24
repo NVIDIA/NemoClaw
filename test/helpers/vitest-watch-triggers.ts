@@ -90,7 +90,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
-    testsToRun: runTests("test/hermes-dependency-review.test.ts"),
+    testsToRun: runTests("test/agents/hermes/hermes-dependency-review.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
@@ -108,8 +108,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
     testsToRun: runTests(
-      "test/hermes-dependency-review.test.ts",
-      "test/hermes-share-mount-deps.test.ts",
+      "test/agents/hermes/hermes-dependency-review.test.ts",
+      "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/sandbox-provisioning.test.ts",
     ),
@@ -120,7 +120,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       if (match[1] === "agents/hermes/") {
         return [
           "src/lib/onboard/managed-startup-profile.test.ts",
-          "test/hermes-mcp-runtime-capability.test.ts",
+          "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
         ];
       }
       return match[1]
@@ -183,7 +183,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ),
   },
   {
@@ -200,14 +200,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
     testsToRun: runTests(
-      "test/dcode-base-image-workflow.test.ts",
-      "test/openclaw-dependency-review.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+      "test/agents/openclaw/openclaw-dependency-review.test.ts",
     ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/base-image-platform\.yaml$/,
     testsToRun: runTests(
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
@@ -220,7 +220,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/download-hermes-source-archive[.]sh$/,
     testsToRun: runTests(
-      "test/hermes-share-mount-deps.test.ts",
+      "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/managed-image-publication-workflow.test.ts",
     ),
   },
@@ -230,7 +230,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ),
   },
   {
