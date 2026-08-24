@@ -123,6 +123,52 @@ describe("credential exposure in process arguments", () => {
     },
   );
 
+  it.each([withCliLocalNoProxy, withPluginLocalNoProxy])(
+    "subprocess-env keeps a lowercase-only no_proxy exclusion in both spellings [case %#]",
+    (withLocalNoProxy) => {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://proxy.example.com:8888",
+        no_proxy: "corp.internal",
+      };
+
+      withLocalNoProxy(env);
+
+      expect(env.NO_PROXY).toBe(
+        "corp.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+      );
+      expect(env.no_proxy).toBe(env.NO_PROXY);
+    },
+  );
+
+  it.each([withCliLocalNoProxy, withPluginLocalNoProxy])(
+    "subprocess-env preserves distinct proxy exclusions in both spellings [case %#]",
+    (withLocalNoProxy) => {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://proxy.example.com:8888",
+        NO_PROXY: "upper.internal",
+        no_proxy: "lower.internal",
+      };
+
+      withLocalNoProxy(env);
+
+      const expectedExclusions = new Set([
+        "upper.internal",
+        "lower.internal",
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+        "host.containers.internal",
+        "::1",
+        "0.0.0.0",
+        "inference.local",
+      ]);
+      const actualExclusions = env.NO_PROXY.split(",");
+      expect(new Set(actualExclusions)).toEqual(expectedExclusions);
+      expect(actualExclusions).toHaveLength(expectedExclusions.size);
+      expect(env.no_proxy).toBe(env.NO_PROXY);
+    },
+  );
+
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {
       NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,

@@ -159,12 +159,12 @@ beforeEach(() => {
     .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
     .mockImplementation(() => undefined);
 
-  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation(() => ({
+  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => ({
     pid: 0,
     output: [null, "", ""],
     stdout: "",
     stderr: "",
-    status: 0,
+    status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
     signal: null,
   }));
 
@@ -212,7 +212,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
           providerType: "google-chat-bridge",
         },
       ],
-      { bestEffort: true },
+      { bestEffort: true, requireExactBindings: true },
     );
     const refreshCall = runOpenshellSpy.mock.calls.find(
       (call) =>
@@ -361,9 +361,8 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
         expect.objectContaining({ channelId: "googlechat", active: true, disabled: false }),
       ]),
     );
-    expect(policies.applyPreset).toHaveBeenCalledWith("test-sb", "googlechat", {
-      disclosedPresetState: null,
-    });
+    expect(startedPlan?.networkPolicy.presets).toContain("googlechat");
+    expect(policies.applyPreset).not.toHaveBeenCalled();
     expect(appliedPresets).toContain("googlechat");
     expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();

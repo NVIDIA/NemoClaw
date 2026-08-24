@@ -85,6 +85,7 @@ case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
 esac
+target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
@@ -283,6 +284,7 @@ run_build_with_retry() {
   local max_attempts=2
   local attempt
   local build_status
+  local failure_class
   local last_line
   local log_status
   local outcome
@@ -310,13 +312,17 @@ run_build_with_retry() {
     fi
 
     last_line="$(awk 'NF { line=$0 } END { sub(/\r$/, "", line); print line }' "$attempt_log")"
-    if [[ ! "$last_line" =~ ^ERROR:\ failed\ to\ build:\ failed\ to\ solve:\ stream\ error:\ stream\ ID\ [0-9]+\;\ INTERNAL_ERROR\;\ received\ from\ peer$ ]]; then
+    if [[ "$last_line" =~ ^ERROR:\ failed\ to\ build:\ failed\ to\ solve:\ stream\ error:\ stream\ ID\ [0-9]+\;\ INTERNAL_ERROR\;\ received\ from\ peer$ ]]; then
+      failure_class="buildkit-http2-internal-error"
+    elif grep -Eq '^(#[0-9]+ )?[0-9]+([.][0-9]+)? ERROR: curl failed: curl: \(6\) Could not resolve host: registry[.]npmjs[.]org$' "$attempt_log"; then
+      failure_class="npm-registry-dns-resolution"
+    else
       echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} docker-exit=${build_status}" >&2
       return "$build_status"
     fi
 
     if [[ "$attempt" == "$max_attempts" ]]; then
-      echo "::error::Protected managed-image build outcome=exhausted agent=${agent} attempt=${attempt}/${max_attempts} failure=buildkit-http2-internal-error docker-exit=${build_status}" >&2
+      echo "::error::Protected managed-image build outcome=exhausted agent=${agent} attempt=${attempt}/${max_attempts} failure=${failure_class} docker-exit=${build_status}" >&2
       return "$build_status"
     fi
 
@@ -325,7 +331,7 @@ run_build_with_retry() {
       return "$build_status"
     fi
 
-    echo "::warning::Protected managed-image build outcome=transient-external agent=${agent} attempt=${attempt}/${max_attempts} retry-in=2s failure=buildkit-http2-internal-error" >&2
+    echo "::warning::Protected managed-image build outcome=transient-external agent=${agent} attempt=${attempt}/${max_attempts} retry-in=2s failure=${failure_class}" >&2
     sleep 2
   done
 }
@@ -371,7 +377,8 @@ build_agent() {
     -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+    --build-arg "TARGETARCH=${target_arch}"
 
   local -a build_command=(docker buildx build
     --file "$dockerfile_path"
@@ -391,8 +398,12 @@ build_agent() {
     --label "io.nvidia.nemoclaw.managed-image.capabilities=1"
     --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}"
     --build-arg "BASE_IMAGE=${base_reference}"
+    # Dockerfile defaults preserve direct Podman x86 builds. Pass the selected
+    # Buildx target explicitly so that default cannot override linux/arm64.
+    --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
   run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
 

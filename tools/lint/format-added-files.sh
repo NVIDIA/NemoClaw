@@ -55,7 +55,7 @@ for file in "${candidates[@]}"; do
     *.cjs | *.cts | *.js | *.jsx | *.mjs | *.mts | *.ts | *.tsx) ;;
     *) continue ;;
   esac
-  if ! git cat-file -e "${base_commit}:${file}" 2>/dev/null; then
+  if [[ "${file}" == .dsh/tools/* ]] || ! git cat-file -e "${base_commit}:${file}" 2>/dev/null; then
     added_files+=("${file}")
   fi
 done

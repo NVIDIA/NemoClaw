@@ -23,6 +23,7 @@ filesystem_policy:
     - /dev/urandom
     - /app
     - /run/nemoclaw/managed-startup-ca-bundle.pem
+    - /run/nemoclaw/managed-startup-runtime.env
     - /etc
     - /var/log
     - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
@@ -167,11 +168,15 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
       - host: gateway.discord.gg
         port: 443
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -180,6 +185,8 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }

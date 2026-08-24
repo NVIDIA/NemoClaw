@@ -285,7 +285,7 @@ export async function backupAll(): Promise<void> {
 async function backupAllWithoutPortableAuthority(): Promise<void> {
   const sandboxes = registry
     .listSandboxes()
-    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
+    .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
     return;

@@ -311,12 +311,18 @@ export function buildCreatedSandboxRegistryEntry(
   };
 }
 
-/** Load only the immutable profile identity needed by command-level resume validation. */
-export function loadServingProfileResumeSession(): {
+/** Load the immutable choices needed by command-level resume validation. */
+export function loadOnboardCommandResumeSession(): {
   servingProfileProvenance: onboardSession.Session["servingProfileProvenance"];
+  vllmGpuDevice: onboardSession.Session["vllmGpuDevice"];
 } | null {
   const session = onboardSession.loadSession();
-  return session ? { servingProfileProvenance: session.servingProfileProvenance } : null;
+  return session
+    ? {
+        servingProfileProvenance: session.servingProfileProvenance,
+        vllmGpuDevice: session.vllmGpuDevice,
+      }
+    : null;
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {

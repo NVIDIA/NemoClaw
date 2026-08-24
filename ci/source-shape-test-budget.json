@@ -47,6 +47,21 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "keeps the manual workflow read-only and non-cancelling (#9880)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "exposes credentials only to their owning steps and removes Brev state (#9880)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "runs one bounded prompt and always verifies workspace cleanup (#9880)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -62,8 +77,23 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "%s binds Hermes resolution to trusted workflow code",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "%s rejects duplicate Hermes resolver steps",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "pins the Portable launch runtime and rejects runtime identity drift (#9006)",
       "category": "compatibility"
     },
     {
@@ -152,13 +182,23 @@
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
-      "test": "rejects deleting or weakening analysis-workspace symlink removal",
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires valid sandbox names",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
-      "test": "requires one advisor lane to publish the PR comment",
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires distinct specialist and synthesis sandboxes",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires a synthesis matrix",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires native specialist sessions",
       "category": "security"
     },
     {
@@ -174,6 +214,11 @@
     {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-hermes-platform-action.test.ts",
+      "test": "publishes the verified native manifest digest",
       "category": "security"
     },
     {

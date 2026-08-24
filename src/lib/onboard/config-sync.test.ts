@@ -21,12 +21,26 @@ function writeFakeCommand(binDir: string, name: string, stdout: string): void {
   fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' '${stdout}'\n`, { mode: 0o755 });
 }
 
-function runConfigSyncScript(script: string, homeDir: string, fakeUid: string): void {
+function runConfigSyncScript(
+  script: string,
+  homeDir: string,
+  fakeUid: string,
+  fakeOwnerUid = fakeUid,
+): void {
   const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-bin-"));
   try {
     writeFakeCommand(fakeBin, "id", fakeUid);
-    writeFakeCommand(fakeBin, "stat", fakeUid);
-    const result = spawnSync("bash", ["-c", script], {
+    writeFakeCommand(fakeBin, "stat", fakeOwnerUid);
+    const testScript = script
+      .replace(
+        'nemoclaw_dir="/sandbox/.nemoclaw"',
+        `nemoclaw_dir=${JSON.stringify(path.join(homeDir, ".nemoclaw"))}`,
+      )
+      .replace(
+        "config_dir=/sandbox/.openclaw",
+        `config_dir=${JSON.stringify(path.join(homeDir, ".openclaw"))}`,
+      );
+    const result = spawnSync("bash", ["-c", testScript], {
       cwd: homeDir,
       env: { ...process.env, HOME: homeDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
       encoding: "utf8",
@@ -55,7 +69,7 @@ describe("sandbox config sync helpers", () => {
     ]);
   });
 
-  it("builds a sandbox sync script that records provider selection without rewriting OpenClaw config", () => {
+  it("writes provider selection to the managed sandbox home without rewriting OpenClaw config", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -67,7 +81,8 @@ describe("sandbox config sync helpers", () => {
       providerLabel: "Other OpenAI-compatible endpoint",
     });
 
-    expect(script).toMatch(/nemoclaw_dir="\$\{HOME:-\/sandbox\}\/\.nemoclaw"/);
+    expect(script).toMatch(/nemoclaw_dir="\/sandbox\/\.nemoclaw"/);
+    expect(script).not.toContain("${HOME");
     expect(script).toMatch(/mkdir -p -m 700 "\$nemoclaw_dir"/);
     expect(script).toMatch(/nemoclaw_dir_uid="\$\(stat -c '%u' "\$nemoclaw_dir"/);
     expect(script).toMatch(/current_uid="\$\(id -u/);
@@ -142,13 +157,10 @@ describe("sandbox config sync helpers", () => {
 
   itUnix("does not chmod a NemoClaw config dir owned by another user", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-bin-"));
     try {
       const nemoclawDir = path.join(homeDir, ".nemoclaw");
       fs.mkdirSync(nemoclawDir, { mode: 0o755 });
       fs.chmodSync(nemoclawDir, 0o755);
-      writeFakeCommand(fakeBin, "id", "1234");
-      writeFakeCommand(fakeBin, "stat", "0");
       const script = buildSandboxConfigSyncScript({
         endpointType: "custom",
         endpointUrl: "https://inference.local/v1",
@@ -160,17 +172,10 @@ describe("sandbox config sync helpers", () => {
         providerLabel: "Other OpenAI-compatible endpoint",
       });
 
-      const result = spawnSync("bash", ["-c", script], {
-        cwd: homeDir,
-        env: { ...process.env, HOME: homeDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        encoding: "utf8",
-      });
-
-      expect(result.status, result.stderr || result.stdout).toBe(0);
+      runConfigSyncScript(script, homeDir, "1234", "0");
       expect(modeBits(nemoclawDir)).toBe(0o755);
       expect(modeBits(path.join(nemoclawDir, "config.json"))).toBe(0o600);
     } finally {
-      fs.rmSync(fakeBin, { recursive: true, force: true });
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });

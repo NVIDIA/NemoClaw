@@ -24,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
+  "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
@@ -35,6 +36,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+  "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
   "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
@@ -46,10 +48,12 @@ const OPAQUE_INPUTS = [
   "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
+  "tools/e2e/brev-launchable-e2e.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "internal/security-reviews/hermes-0.19.0-dependency-review.md",
   ".github/actions/resolve-hermes-base-image/action.yaml",
+  ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
   "agents/hermes/Dockerfile",
@@ -95,11 +99,22 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
+const WORKFLOW_NAME_TEST = "test/github-actions-workflow-names.test.ts";
+
 function triggeredBy(relativePath: string): string[] {
-  return resolveVitestWatchTests(path.resolve(relativePath));
+  return resolveVitestWatchTests(path.resolve(relativePath)).filter(
+    (test) => test !== WORKFLOW_NAME_TEST,
+  );
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
+    "maps YAML workflow files to the shared display-name contract [%s]",
+    (workflowPath) => {
+      expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
+    },
+  );
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
@@ -113,6 +128,13 @@ describe("Vitest opaque-input watch triggers", () => {
       expect(triggeredBy(inputPath)).toEqual(["test/release-lkg-brev-image.test.ts"]);
     },
   );
+
+  it("maps the Launchable host harness to its integration tests (#6409)", () => {
+    expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
+      "test/brev-launchable-e2e.test.ts",
+      "test/brev-launchable-gateway-diagnostics.test.ts",
+    ]);
+  });
 
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
@@ -130,11 +152,18 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(
-      triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md"),
-    ).toEqual(["test/hermes-dependency-review.test.ts"]);
+    expect(triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md")).toEqual([
+      "test/hermes-dependency-review.test.ts",
+    ]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/base-image-resolver-helper.test.ts",
+    ]);
+    expect(
+      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
+    ).toEqual([
+      "test/reviewed-hermes-platform-action.test.ts",
+      "test/protected-managed-image-contract.test.ts",
+      "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",

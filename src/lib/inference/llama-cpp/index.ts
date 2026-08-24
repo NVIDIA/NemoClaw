@@ -162,6 +162,36 @@ function probeArgs(authArgs: readonly string[], url: string): string[] {
   ];
 }
 
+function probeModelEndpoint(
+  probe: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult,
+  authArgs: readonly string[],
+  baseUrl: string,
+  path: "/props" | "/metrics",
+  model: string,
+  allowUnscopedFallback: boolean,
+  options: CurlProbeOptions,
+): CurlProbeResult {
+  const scoped = probe(
+    probeArgs(authArgs, `${baseUrl}${path}?model=${encodeURIComponent(model)}`),
+    options,
+  );
+  const body = parseJsonObject(scoped.body);
+  const error = body?.error;
+  if (
+    !allowUnscopedFallback ||
+    scoped.curlStatus !== 0 ||
+    scoped.httpStatus !== 404 ||
+    error === null ||
+    typeof error !== "object" ||
+    Array.isArray(error) ||
+    (error as Record<string, unknown>).code !== "route_not_available" ||
+    (error as Record<string, unknown>).type !== "invalid_request_error"
+  ) {
+    return scoped;
+  }
+  return probe(probeArgs(authArgs, `${baseUrl}${path}`), options);
+}
+
 function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult | null {
   if (result.curlStatus === 63) {
     return failure(
@@ -337,12 +367,23 @@ export function probeLlamaCppAttachment(
       );
     }
     const health = probe(probeArgs(auth.args, `${baseUrl}/health`), probeOptions);
-    const props = probe(
-      probeArgs(auth.args, `${baseUrl}/props?model=${encodeURIComponent(model)}`),
+    const allowUnscopedFallback = modelEntries.length === 1;
+    const props = probeModelEndpoint(
+      probe,
+      auth.args,
+      baseUrl,
+      "/props",
+      model,
+      allowUnscopedFallback,
       probeOptions,
     );
-    const metrics = probe(
-      probeArgs(auth.args, `${baseUrl}/metrics?model=${encodeURIComponent(model)}`),
+    const metrics = probeModelEndpoint(
+      probe,
+      auth.args,
+      baseUrl,
+      "/metrics",
+      model,
+      allowUnscopedFallback,
       probeOptions,
     );
     for (const result of [health, props, metrics]) {

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -26,6 +26,14 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+
+const STATIC_TEST_HOME = fs.mkdtempSync(
+  path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-segregation-static-"),
+);
+
+afterAll(() => {
+  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -216,7 +224,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell",
-        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -258,7 +266,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         error: vi.fn(),
         existsSync: () => false,
         resolveGatewayTeardownAuthority: () => {
@@ -289,7 +297,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         rmSync: vi.fn(),
@@ -320,7 +328,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         rmSync: vi.fn(),

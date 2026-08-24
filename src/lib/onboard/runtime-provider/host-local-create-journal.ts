@@ -308,10 +308,17 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-function requireDirectory(root: string): void {
+function requireDirectory(root: string, createIfMissing = true): boolean {
   const existed = fs.existsSync(root);
-  fs.mkdirSync(root, { recursive: true, mode: DIRECTORY_MODE });
-  const status = fs.lstatSync(root);
+  if (!existed && !createIfMissing) return false;
+  if (createIfMissing) fs.mkdirSync(root, { recursive: true, mode: DIRECTORY_MODE });
+  let status: fs.Stats;
+  try {
+    status = fs.lstatSync(root);
+  } catch (error) {
+    if (!createIfMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
   if (
     !status.isDirectory() ||
     status.isSymbolicLink() ||
@@ -322,6 +329,7 @@ function requireDirectory(root: string): void {
     fail("journal directory must be a private current-user-owned directory");
   }
   if (!existed) fsyncDirectory(path.dirname(root));
+  return true;
 }
 
 function recordPath(root: string, transactionId: string): string {
@@ -391,7 +399,7 @@ function reconcileExclusivePublishOrphan(
   return reconciled;
 }
 
-function readPrivateFile(target: string): string | null {
+function readPrivateFile(target: string, recoverPublishOrphan = true): string | null {
   if (typeof fs.constants.O_NOFOLLOW !== "number") fail("O_NOFOLLOW is unavailable");
   const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
   let descriptor: number;
@@ -402,11 +410,10 @@ function readPrivateFile(target: string): string | null {
     throw error;
   }
   try {
-    const before = reconcileExclusivePublishOrphan(
-      target,
-      descriptor,
-      fs.fstatSync(descriptor, { bigint: true }),
-    );
+    const initial = fs.fstatSync(descriptor, { bigint: true });
+    const before = recoverPublishOrphan
+      ? reconcileExclusivePublishOrphan(target, descriptor, initial)
+      : initial;
     if (
       !before.isFile() ||
       before.uid !== BigInt(currentUid()) ||
@@ -436,8 +443,11 @@ function readPrivateFile(target: string): string | null {
   }
 }
 
-function readRecord(target: string): HostLocalCreateJournalRecord | null {
-  const source = readPrivateFile(target);
+function readRecord(
+  target: string,
+  recoverPublishOrphan = true,
+): HostLocalCreateJournalRecord | null {
+  const source = readPrivateFile(target, recoverPublishOrphan);
   if (source === null) return null;
   let parsed: unknown;
   try {
@@ -450,6 +460,23 @@ function readRecord(target: string): HostLocalCreateJournalRecord | null {
     fail("journal record is not canonical");
   }
   return record;
+}
+
+function listRecords(
+  root: string,
+  options: { readonly createDirectory: boolean; readonly recoverPublishOrphans: boolean },
+): readonly HostLocalCreateJournalRecord[] {
+  if (!requireDirectory(root, options.createDirectory)) return Object.freeze([]);
+  return Object.freeze(
+    fs
+      .readdirSync(root)
+      .filter((entry) => SHA256.test(entry.replace(/\.json$/u, "")) && entry.endsWith(".json"))
+      .sort()
+      .flatMap((entry) => {
+        const record = readRecord(path.join(root, entry), options.recoverPublishOrphans);
+        return record === null ? [] : [record];
+      }),
+  );
 }
 
 function readExecutionLease(target: string): HostLocalCreateJournalExecutionLease | null {
@@ -597,17 +624,7 @@ export function createHostLocalCreateJournalStore(
   const store: HostLocalCreateJournalStore = {
     load,
     list() {
-      requireDirectory(root);
-      return Object.freeze(
-        fs
-          .readdirSync(root)
-          .filter((entry) => SHA256.test(entry.replace(/\.json$/u, "")) && entry.endsWith(".json"))
-          .sort()
-          .flatMap((entry) => {
-            const record = readRecord(path.join(root, entry));
-            return record === null ? [] : [record];
-          }),
-      );
+      return listRecords(root, { createDirectory: true, recoverPublishOrphans: true });
     },
     create(record) {
       requireDirectory(root);
@@ -750,4 +767,12 @@ export function createHostLocalCreateJournalStore(
     },
   };
   return Object.freeze(store);
+}
+
+/** Reconcile an interrupted exclusive publish and read records without creating a directory. */
+export function reconcileAndReadHostLocalCreateJournalRecords(
+  stateDirectory: string,
+): readonly HostLocalCreateJournalRecord[] {
+  const root = path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY);
+  return listRecords(root, { createDirectory: false, recoverPublishOrphans: true });
 }

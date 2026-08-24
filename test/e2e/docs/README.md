@@ -127,12 +127,12 @@ npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
 test files serially. It does not retry a failed test.
 
-After an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and source-attempt evidence.
+After an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
 An E2E test can retry an external operation only through its checked-in bounded policy.
 The observer records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored`.
 The `flaky` field is `true` only for `passed-after-retry`.
-Hosted Runner Recovery separately owns one rerun of an eligible `CI / Platform Evidence` push with authenticated GitHub-hosted runner-loss evidence.
+`Automation / Recover Platform CI Runner` separately owns one rerun of an eligible `CI / Platform Compatibility` push with authenticated GitHub-hosted runner-loss evidence.
 
 After the observer evaluates attempt N, it uploads an artifact named for that
 attempt. The artifact contains one `attempts` entry for each source attempt through
@@ -346,7 +346,7 @@ test/e2e/
   its result counts to the expected and tested candidate SHA, correlation ID,
   job ID, and shard ID. The workflow boundary requires every selected job shard
   to upload its evidence artifact.
-- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence`.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
   Each macOS shard installs the pinned OpenShell formula.
   Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.

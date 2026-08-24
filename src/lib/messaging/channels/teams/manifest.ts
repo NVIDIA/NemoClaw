@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
+import { TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT } from "./contract.ts";
 
 export const teamsManifest = {
   schemaVersion: 1,
@@ -103,12 +104,12 @@ export const teamsManifest = {
   },
   render: [
     {
-      id: "teams-openclaw-channel",
-      kind: "json-fragment",
-      agent: "openclaw",
-      target: "openclaw.json",
+      id: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.renderId,
+      kind: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.kind,
+      agent: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.agent,
+      target: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.target,
       fragment: {
-        path: "channels.msteams",
+        path: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.configPath,
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
@@ -116,7 +117,7 @@ export const teamsManifest = {
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
             port: "{{teamsConfig.webhookPort}}",
-            path: "/api/messages",
+            path: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.webhookPath,
           },
           healthMonitor: {
             enabled: false,

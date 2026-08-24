@@ -275,7 +275,7 @@ function requireOpenShellReleaseTrustRecord(
   source: string,
   expectedVersion: string,
   failures: string[],
-): void {
+): string {
   const marker = "const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [";
   const start = source.indexOf(marker);
   const end = source.indexOf("\n] as const;", start + marker.length);
@@ -300,7 +300,14 @@ function requireOpenShellReleaseTrustRecord(
     );
   if (!complete) {
     failures.push(`OpenShell release trust: expected one complete record for ${expectedVersion}`);
+    return "";
   }
+  return extractSingle(
+    matchingRecords[0] ?? "",
+    /^      sha256: "([a-f0-9]{64})",\s*$/gm,
+    "OpenShell release trust formula SHA-256",
+    failures,
+  );
 }
 
 function verifyOpenShellPins(
@@ -309,6 +316,7 @@ function verifyOpenShellPins(
     brevLaunchable: string;
     credentialBoundary: Record<string, unknown>;
     e2eWorkflow: Record<string, unknown>;
+    gatewayService: string;
     hermesDockerfile: string;
     hermesMcpConfigTransaction: string;
     installer: string;
@@ -349,7 +357,22 @@ function verifyOpenShellPins(
     "OpenShell installer PIN_VERSION",
     failures,
   );
-  requireOpenShellReleaseTrustRecord(sources.installerPinExtractor, pins.maxVersion, failures);
+  const formulaSha256 = requireOpenShellReleaseTrustRecord(
+    sources.installerPinExtractor,
+    pins.maxVersion,
+    failures,
+  );
+  compare(
+    extractSingle(
+      sources.gatewayService,
+      /^export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =\s*\n\s*"([a-f0-9]{64})";\s*$/gm,
+      "OpenShell gateway Homebrew formula SHA-256",
+      failures,
+    ),
+    formulaSha256,
+    "OpenShell gateway Homebrew formula SHA-256",
+    failures,
+  );
   compare(
     extractSingle(
       sources.openshellVersion,
@@ -554,6 +577,11 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
     failures,
   );
   const e2eWorkflowSource = readText(rootDir, ".github/workflows/e2e.yaml", failures);
+  const gatewayService = readText(
+    rootDir,
+    "src/lib/onboard/docker-driver-gateway-service.ts",
+    failures,
+  );
   const openclawManifestSource = readText(rootDir, "agents/openclaw/manifest.yaml", failures);
   const hermesManifestSource = readText(rootDir, "agents/hermes/manifest.yaml", failures);
   const dockerfile = readText(rootDir, "Dockerfile", failures);
@@ -623,6 +651,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
       brevLaunchable,
       credentialBoundary,
       e2eWorkflow,
+      gatewayService,
       hermesDockerfile,
       hermesMcpConfigTransaction,
       installer,

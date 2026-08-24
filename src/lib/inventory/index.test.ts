@@ -237,11 +237,9 @@ describe("inventory commands", () => {
     expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
   });
 
-  it("keeps a created sandbox with a lingering pending reservation flag (#7609)", async () => {
+  it("hides a created pending sandbox until lifecycle finalization (#9733)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
-        // createdAt is set, so this is a real sandbox — the filter must NOT hide
-        // it just because the reservation flag was not cleared.
         sandboxes: [
           {
             name: "created",
@@ -257,7 +255,7 @@ describe("inventory commands", () => {
       loadLastSession: () => null,
     });
 
-    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["created"]);
+    expect(inventory.sandboxes).toEqual([]);
   });
 
   it("hides route-only reservations from status output too (#7609)", () => {
@@ -269,6 +267,13 @@ describe("inventory commands", () => {
             provider: "nvidia-prod",
             model: "m",
             pendingRouteReservation: true,
+          },
+          {
+            name: "created-pending",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+            createdAt: "2026-01-01T00:00:00Z",
           },
           { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
         ],

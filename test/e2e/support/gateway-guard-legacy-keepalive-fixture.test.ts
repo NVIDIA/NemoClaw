@@ -237,21 +237,28 @@ describe("gateway guard legacy keepalive fixture", () => {
         record.Config.WorkingDir = "/sandbox";
       }),
     },
+  ])("rejects $name before legacy recreation (#9364)", ({ inspect }) => {
+    expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
+      "requires the reviewed OpenShell OCI workspace identity contract",
+    );
+  });
+
+  it.each([
     {
-      name: "a missing OpenShell management label without the OCI-user marker",
+      name: "a missing OpenShell management label",
       inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
         delete record.Config.Labels;
       }),
     },
     {
-      name: "a changed OpenShell management label without the OCI-user marker",
+      name: "a changed OpenShell management label",
       inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
         record.Config.Labels = { "openshell.ai/managed-by": "unreviewed" };
       }),
     },
   ])("rejects $name before legacy recreation (#9364)", ({ inspect }) => {
     expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
-      "requires the reviewed OpenShell OCI workspace identity contract",
+      "requires the reviewed managed-image or OpenShell-managed runtime process contract",
     );
   });
 
@@ -309,14 +316,6 @@ describe("gateway guard legacy keepalive fixture", () => {
   });
 
   it.each([
-    {
-      name: "an unreviewed OpenShell supervisor",
-      inspect: managedRuntimeInspect({ entrypoint: ["/unreviewed/openshell-sandbox"] }),
-    },
-    {
-      name: "an unreviewed OpenShell supervisor command",
-      inspect: managedRuntimeInspect({ command: ["--workdir", "/unexpected"] }),
-    },
     {
       name: "a missing managed startup command",
       inspect: managedRuntimeInspect({ environment: [] }),
@@ -379,6 +378,23 @@ describe("gateway guard legacy keepalive fixture", () => {
     expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
       "requires the reviewed managed-image or OpenShell-managed runtime process contract",
     );
+  });
+
+  it("canonicalizes the OpenShell-managed source independently of its inherited image process tuple (#9364)", () => {
+    const rewritten = JSON.parse(
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspect({
+          entrypoint: ["/image/entrypoint"],
+          command: ["/image/command"],
+        }),
+        OLD_CONTAINER_ID,
+      ),
+    );
+
+    expect(rewritten[0].Config).toMatchObject({
+      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+      Cmd: ["--workdir", "/sandbox"],
+    });
   });
 
   it("rejects an unreviewed managed-image entrypoint before legacy recreation (#9364)", () => {

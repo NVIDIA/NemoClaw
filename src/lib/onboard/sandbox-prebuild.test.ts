@@ -370,6 +370,127 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("isolates a generated BuildKit build from an unavailable WSL Docker Desktop helper (#9748)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    const originalConfig = JSON.stringify({
+      auths: { "registry.example.com": { auth: "must-remain-private" } },
+      credsStore: "desktop.exe",
+    });
+    fs.writeFileSync(path.join(dockerConfig, "config.json"), originalConfig);
+    const credentialHelperResponds = vi.fn(() => false);
+    const log = vi.fn();
+    let isolatedConfig = "";
+    const buildImage = vi.fn(async (_args, options) => {
+      isolatedConfig = String(options.env.DOCKER_CONFIG);
+      expect(isolatedConfig).toContain("nemoclaw-wsl-buildkit-docker-config-");
+      expect(isolatedConfig).not.toBe(dockerConfig);
+      expect(fs.statSync(isolatedConfig).mode & 0o777).toBe(0o700);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(isolatedConfig, "config.json"), "utf-8")),
+      ).toEqual({ auths: {} });
+      expect(fs.statSync(path.join(isolatedConfig, "config.json")).mode & 0o777).toBe(0o600);
+      return 0;
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {
+          DOCKER_CONFIG: dockerConfig,
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+          WSL_DISTRO_NAME: "Ubuntu",
+        },
+        buildImage,
+        credentialHelperResponds,
+        isWslHost: true,
+        inspectImageId: () => IMAGE_ID,
+        log,
+      }),
+    ).resolves.toMatchObject({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" });
+
+    expect(credentialHelperResponds).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("isolated credential-free config"));
+    expect(fs.existsSync(isolatedConfig)).toBe(false);
+    expect(fs.readFileSync(path.join(dockerConfig, "config.json"), "utf-8")).toBe(originalConfig);
+  });
+
+  it("removes the isolated WSL Docker config after a failed required build (#9748)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe" }),
+    );
+    let isolatedConfig = "";
+    const buildImage = vi.fn(async (_args, options) => {
+      isolatedConfig = String(options.env.DOCKER_CONFIG);
+      expect(fs.existsSync(isolatedConfig)).toBe(true);
+      return 1;
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
+        buildImage,
+        credentialHelperResponds: () => false,
+        isWslHost: true,
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit build failed (exit 1)");
+
+    expect(fs.existsSync(isolatedConfig)).toBe(false);
+  });
+
+  it("preserves the active WSL Docker config when its Desktop helper responds (#9748)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe" }),
+    );
+    const buildImage = vi.fn(async (_args, options) => {
+      expect(options.env.DOCKER_CONFIG).toBe(dockerConfig);
+      return 0;
+    });
+
+    await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {
+        DOCKER_CONFIG: dockerConfig,
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
+        WSL_DISTRO_NAME: "Ubuntu",
+      },
+      buildImage,
+      credentialHelperResponds: () => true,
+      isWslHost: true,
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(fs.existsSync(dockerConfig)).toBe(true);
+  });
+
   it("publishes portable-profile builds to the managed loopback registry", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);

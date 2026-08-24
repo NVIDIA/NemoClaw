@@ -15,6 +15,10 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -109,6 +113,28 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+export function hasManagedMcpRebuildHandoff(
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
+  );
+}
+
+function shouldRefuseManagedMcpRecreate(
+  preservedMcpState: unknown,
+  managedMcpRebuildHandoff: boolean,
+): boolean {
+  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
+}
+
+function hasPreservedManagedMcpRebuildHandoff(
+  preservedMcpState: unknown,
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
+}
 type ApplyRecreatePolicyCarryForward = (
   sandboxName: string,
   nonInteractive: boolean,
@@ -457,7 +483,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         computePlan,
         managedWorkloadRebuild,
-        tempManagedRuntime,
+        tempManagedRuntime:
+          tempManagedRuntime ||
+          managedWorkloadOnboard.shouldActivateStockManagedRuntime({
+            portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
+            agentName: requestedAgentName,
+          }),
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
@@ -778,7 +810,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      if (preservedMcpState) {
+      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
+        preservedMcpState,
+        createIntent,
+      );
+      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
         for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
           sandboxName,
           cliName: cliName(),
@@ -1162,6 +1198,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
+    const providerPreparationInput = {
+      openshellDriver: sandboxRuntimeFields.openshellDriver,
+      inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      messagingProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      gatewayName: GATEWAY_NAME,
+    };
+    const providerPreparationDeps = {
+      providerExistsInGateway,
+      runOpenshell,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
+    };
+    validateAttachedMessagingProvidersBeforeSandboxCreation(
+      providerPreparationInput,
+      providerPreparationDeps,
+    );
+
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
@@ -1238,6 +1295,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        providerPreparationInput,
+        providerPreparationDeps,
+      );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
@@ -1251,7 +1312,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1260,7 +1320,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,
