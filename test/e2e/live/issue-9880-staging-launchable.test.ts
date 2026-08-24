@@ -91,13 +91,12 @@ if (model !== "inference/meta/llama-3.3-70b-instruct") {
       exitCode: scenario.exitCode,
       timedOut: scenario.timedOut,
     });
-    expect(classification, resultText(scenario)).toBe("completed-five-trials");
-
     progress.phase("record the issue reproduction result");
     await artifacts.target.complete({
       id: "issue-9880-staging-launchable",
       classification,
     });
+    expect(classification, resultText(scenario)).toBe("completed-five-trials");
   },
 );
 

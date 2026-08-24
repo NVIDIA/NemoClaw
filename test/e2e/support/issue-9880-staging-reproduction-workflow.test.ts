@@ -68,9 +68,14 @@ const PREPARATION_STEP_NAMES = [
   contract.checkout,
   "Authorize maintainer dispatch",
   "Set up Node",
+  "Install dependencies",
   contract.prepare,
 ] as const;
-const POST_SCENARIO_STEP_NAMES = ["Remove Brev credentials", contract.upload] as const;
+const POST_SCENARIO_STEP_NAMES = [
+  "Verify workflow-owned workspace cleanup",
+  "Remove Brev credentials",
+  contract.upload,
+] as const;
 
 const CONTROLLER_OPERATION_TIMEOUT_MS =
   DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS +
@@ -116,6 +121,13 @@ const mutations: ReadonlyArray<
       prepare.run = String(prepare.run).replace("sha256sum -c -", "true");
     },
     "Brev CLI download must retain checksum verification",
+  ],
+  [
+    "conditional workspace cleanup",
+    (workflow, contract) => {
+      step(workflow, contract, "Verify workflow-owned workspace cleanup").if = "success()";
+    },
+    "workflow must always reconcile its owned Brev workspace before removing credentials",
   ],
   [
     "conditional credential cleanup",
@@ -234,6 +246,7 @@ function validateWorkflow(workflow: StagingWorkflow, timeouts: TimeoutContract):
   validateAuthorization(errors, job);
   validatePreparation(errors, job, contract);
   validateScenario(errors, job, contract, timeouts);
+  validateWorkspaceCleanup(errors, job, contract, timeouts);
   validateCredentialCleanup(errors, job, contract);
   validateEvidenceUpload(errors, job, contract);
   return errors;
@@ -333,6 +346,29 @@ function validateScenario(
       scenario.env.BREV_API_KEY === undefined &&
       scenario.env.BREV_ORG_ID === undefined,
     "workflow credentials must remain scoped to their owning steps",
+  );
+}
+
+function validateWorkspaceCleanup(
+  errors: string[],
+  job: WorkflowJob,
+  contract: WorkflowContract,
+  timeouts: TimeoutContract,
+): void {
+  const prepare = namedStep(job, contract.prepare);
+  const scenario = namedStep(job, contract.scenario);
+  const cleanup = namedStep(job, "Verify workflow-owned workspace cleanup") as
+    | (WorkflowStep & { "timeout-minutes"?: number })
+    | undefined;
+  recordValidation(
+    errors,
+    cleanup?.if === "${{ always() && steps.prepare.outputs.work_dir != '' }}" &&
+      cleanup.env?.BREV_WORKSPACE_OWNERSHIP_FILE ===
+        scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
+      cleanup.env?.HOME === prepare?.env?.HOME &&
+      String(cleanup.run).includes("tools/e2e/cleanup-brev-workspace.mts") &&
+      Number(cleanup["timeout-minutes"]) * MINUTE_MS >= timeouts.cleanupTimeoutMs,
+    "workflow must always reconcile its owned Brev workspace before removing credentials",
   );
 }
 

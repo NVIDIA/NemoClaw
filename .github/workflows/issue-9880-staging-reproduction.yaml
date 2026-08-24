@@ -17,7 +17,7 @@ jobs:
   reproduce:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 190
+    timeout-minutes: 210
     env:
       INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -34,6 +34,7 @@ jobs:
             package.json
             package-lock.json
             vitest.config.ts
+            nemoclaw/vitest.project.ts
             tsconfig.json
             oxlint.config.ts
             oxfmt.config.ts
@@ -60,6 +61,10 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - id: prepare
         name: Prepare Brev CLI and evidence directory
         timeout-minutes: 20
@@ -80,7 +85,6 @@ jobs:
           tar -xzf "$archive" -C "${RUNNER_TEMP}" brev
           sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
-          npm ci --ignore-scripts --no-audit --no-fund
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
       - name: Reproduce issue 9880 on the staging Launchable

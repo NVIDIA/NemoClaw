@@ -33,7 +33,11 @@ const shellProbe = new ShellProbe({
 });
 const host = new HostCliClient(shellProbe);
 const fixture = new BrevLaunchableFixture({ artifacts, host, ownershipFile, secrets });
-await fixture.delete(ownership);
+try {
+  await fixture.delete(ownership);
+} finally {
+  progress.stop();
+}
 
 function requirePath(name: string): string {
   const value = process.env[name];

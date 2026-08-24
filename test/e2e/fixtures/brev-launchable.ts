@@ -276,10 +276,11 @@ export class BrevLaunchableFixture {
       throw new Error(`Brev workspace identity changed before cleanup: ${name}`);
     }
     if (current) {
-      await this.brevCommand(["delete", current.id], {
+      const deleted = await this.brevCommand(["delete", current.id], {
         artifactName: "brev-workspace-delete",
         timeoutMs: DEFAULT_BREV_WORKSPACE_DELETE_COMMAND_TIMEOUT_MS,
       });
+      expectExitZero(deleted, "delete owned Brev workspace");
     }
     const workspaceId = ownership.id ?? current?.id;
     let absent = 0;
@@ -292,6 +293,16 @@ export class BrevLaunchableFixture {
         await this.recordWorkspaceAbsent(name, workspaceId ?? "");
         this.removeOwnershipFile();
         return;
+      }
+      if (record) {
+        const retried = await this.brevCommand(["delete", record.id], {
+          artifactName: "brev-workspace-delete-retry",
+          timeoutMs: DEFAULT_BREV_WORKSPACE_DELETE_COMMAND_TIMEOUT_MS,
+        });
+        await this.artifacts.writeJson("brev-workspace-delete-retry.json", {
+          exitCode: retried.exitCode,
+          workspaceId: record.id,
+        });
       }
       await this.brevCommand(["refresh"], {
         artifactName: "brev-cleanup-refresh",
