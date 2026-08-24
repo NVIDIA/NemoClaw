@@ -17,11 +17,12 @@ jobs:
   reproduce:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 190
     env:
       INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out trusted reproduction lane
+        timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
@@ -39,6 +40,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Authorize maintainer dispatch
+        timeout-minutes: 5
         env:
           ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -52,6 +54,7 @@ jobs:
           done
 
       - name: Set up Node
+        timeout-minutes: 10
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
@@ -59,6 +62,7 @@ jobs:
 
       - id: prepare
         name: Prepare Brev CLI and evidence directory
+        timeout-minutes: 20
         env:
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
@@ -93,6 +97,7 @@ jobs:
 
       - name: Remove Brev credentials
         if: always()
+        timeout-minutes: 5
         env:
           HOME: ${{ runner.temp }}/issue-9880-home
         run: |
@@ -101,6 +106,7 @@ jobs:
           test ! -e "$HOME"
 
       - name: Upload issue 9880 evidence
+        timeout-minutes: 10
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:

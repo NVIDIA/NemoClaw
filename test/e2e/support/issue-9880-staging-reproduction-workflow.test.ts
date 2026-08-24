@@ -64,6 +64,14 @@ const timeoutContract: TimeoutContract = {
   testTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
 };
 
+const PREPARATION_STEP_NAMES = [
+  contract.checkout,
+  "Authorize maintainer dispatch",
+  "Set up Node",
+  contract.prepare,
+] as const;
+const POST_SCENARIO_STEP_NAMES = ["Remove Brev credentials", contract.upload] as const;
+
 const CONTROLLER_OPERATION_TIMEOUT_MS =
   DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS +
   DEFAULT_BREV_WORKSPACE_CREATE_TIMEOUT_MS +
@@ -76,11 +84,7 @@ const CONTROLLER_OPERATION_TIMEOUT_MS =
 const mutations: ReadonlyArray<
   readonly [
     string,
-    (
-      workflow: StagingWorkflow,
-      contract: WorkflowContract,
-      timeouts: TimeoutContract,
-    ) => void,
+    (workflow: StagingWorkflow, contract: WorkflowContract, timeouts: TimeoutContract) => void,
     string,
   ]
 > = [
@@ -143,12 +147,25 @@ const mutations: ReadonlyArray<
     "scenario timeout must contain the live test and cleanup budgets",
   ],
   [
-    "a job timeout without cleanup time",
-    (workflow, contract, timeouts) => {
-      workflow.jobs[contract.job]!["timeout-minutes"] =
-        (timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs) / MINUTE_MS - 1;
+    "an unbounded preparation step",
+    (workflow, contract) => {
+      delete step(workflow, contract, contract.prepare)["timeout-minutes"];
     },
-    "job timeout must contain the live test and cleanup budgets",
+    "workflow preparation and finalization steps must have positive timeouts",
+  ],
+  [
+    "a job timeout without preparation and finalization time",
+    (workflow, contract, timeouts) => {
+      const job = workflow.jobs[contract.job]!;
+      const reservedStepMs = [...PREPARATION_STEP_NAMES, ...POST_SCENARIO_STEP_NAMES].reduce(
+        (total, name) =>
+          total + Number(step(workflow, contract, name)["timeout-minutes"]) * MINUTE_MS,
+        0,
+      );
+      job["timeout-minutes"] =
+        (reservedStepMs + timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs) / MINUTE_MS - 1;
+    },
+    "job timeout must contain preparation, scenario, cleanup, and finalization budgets",
   ],
 ];
 
@@ -286,12 +303,25 @@ function validateScenario(
       scenarioTimeoutMs >= timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs,
     "scenario timeout must contain the live test and cleanup budgets",
   );
+  const boundedWorkflowStepNames = [...PREPARATION_STEP_NAMES, ...POST_SCENARIO_STEP_NAMES];
+  const boundedWorkflowSteps = boundedWorkflowStepNames.map(
+    (name) => namedStep(job, name) as (WorkflowStep & { "timeout-minutes"?: number }) | undefined,
+  );
+  recordValidation(
+    errors,
+    boundedWorkflowSteps.every((workflowStep) => Number(workflowStep?.["timeout-minutes"]) > 0),
+    "workflow preparation and finalization steps must have positive timeouts",
+  );
+  const reservedWorkflowStepMs = boundedWorkflowSteps.reduce(
+    (total, workflowStep) => total + Number(workflowStep?.["timeout-minutes"] ?? 0) * MINUTE_MS,
+    0,
+  );
   const jobTimeoutMs = Number(job["timeout-minutes"]) * MINUTE_MS;
   recordValidation(
     errors,
     Number.isSafeInteger(jobTimeoutMs) &&
-      jobTimeoutMs >= timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs,
-    "job timeout must contain the live test and cleanup budgets",
+      jobTimeoutMs >= reservedWorkflowStepMs + timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs,
+    "job timeout must contain preparation, scenario, cleanup, and finalization budgets",
   );
   recordValidation(
     errors,
