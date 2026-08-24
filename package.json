@@ -109,6 +109,7 @@
     "agents/hermes/host/",
     "agents/nemocua/Dockerfile",
     "agents/nemocua/policy-additions.yaml",
+    "agents/openclaw/policy-permissive.yaml",
     "bin/",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",

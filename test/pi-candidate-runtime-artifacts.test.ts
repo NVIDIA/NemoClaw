@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   type PiArtifactSources,
   verifyPiCandidateArtifacts,
+  verifyPiQualificationReceipts,
   verifyPiTrustBoundary,
 } from "../scripts/checks/pi-candidate-artifacts.mts";
 import {
@@ -27,6 +28,7 @@ function readRepoFile(relativePath: string): string {
 
 function currentSources(): PiArtifactSources {
   return {
+    candidateAuthority: readRepoFile("src/lib/agent/candidate-authority.ts"),
     dependencyReview: readRepoFile("agents/pi/dependency-review.md"),
     dockerfile: readRepoFile("agents/pi/Dockerfile"),
     dockerfileBase: readRepoFile("agents/pi/Dockerfile.base"),
@@ -36,6 +38,11 @@ function currentSources(): PiArtifactSources {
     manifest: readRepoFile("agents/pi/manifest.yaml"),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
     policyAdditions: readRepoFile("agents/pi/policy-additions.yaml"),
+    qualificationReceipts: {
+      "linux/amd64": readRepoFile("ci/pi-agent-qualification-v1-linux-amd64.json"),
+      "linux/arm64": readRepoFile("ci/pi-agent-qualification-v1-linux-arm64.json"),
+    },
+    releasePackageJson: readRepoFile("package.json"),
     startScript: readRepoFile("agents/pi/start.sh"),
   };
 }
@@ -185,6 +192,76 @@ describe("Pi release cohort separation", () => {
   });
 });
 
+describe("Pi qualification receipts", () => {
+  it("binds both platform receipts to one publication and repository authority", () => {
+    expect(verifyPiQualificationReceipts(currentSources())).toEqual([]);
+  });
+
+  it("rejects an authority digest or cross-platform publication identity that drifts", () => {
+    const sources = currentSources();
+    expect(
+      verifyPiQualificationReceipts({
+        ...sources,
+        candidateAuthority: sources.candidateAuthority.replace(
+          "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+          "f".repeat(64),
+        ),
+      }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+    expect(
+      verifyPiQualificationReceipts({
+        ...sources,
+        qualificationReceipts: {
+          ...sources.qualificationReceipts,
+          "linux/arm64": sources.qualificationReceipts["linux/arm64"].replace(
+            '"revision": "d92acac1c40364702eaae92a169a2b06d1bfda4b"',
+            `"revision": "${"e".repeat(40)}"`,
+          ),
+        },
+      }),
+    ).toContain("Pi qualification receipts must identify one source revision, release, and cohort");
+  });
+
+  it("rejects a stale commented Pi authority before the executed entry", () => {
+    const sources = currentSources();
+    const changedAuthority = sources.candidateAuthority.replace(
+      "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+      "f".repeat(64),
+    );
+    const staleAuthority = changedAuthority.replace(
+      "export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS",
+      `// pi: Object.freeze([
+//   "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+//   "1e49356ca9a910ea52fc7a0a70164aff8b056a5530e786c8ea0e54f79858e20e",
+// ])
+export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS`,
+    );
+
+    expect(
+      verifyPiQualificationReceipts({ ...sources, candidateAuthority: staleAuthority }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+  });
+
+  it("rejects Pi receipt digests published under another candidate", () => {
+    const sources = currentSources();
+    expect(
+      verifyPiQualificationReceipts({
+        ...sources,
+        candidateAuthority: sources.candidateAuthority.replace(
+          "pi: Object.freeze([",
+          "another: Object.freeze([",
+        ),
+      }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+  });
+});
+
 describe("Pi candidate contract validation", () => {
   it("accepts an exact candidate contract", () => {
     const contract = validateCandidateContract(candidateContract(), "linux/amd64");
@@ -269,17 +346,14 @@ describe("Pi runtime boundaries", () => {
   it.each([
     ["access", "full"],
     ["credential_source", "sandbox"],
-  ])(
-    "rejects the unapproved managed inference endpoint field %s (#7924)",
-    (field, value) => {
-      const sources = withPolicy((policy) => {
-        policy.network_policies.managed_inference.endpoints[0][field] = value;
-      });
-      expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
-        "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay allow_encoded_slash, enforcement, host, port, protocol, rules",
-      );
-    },
-  );
+  ])("rejects the unapproved managed inference endpoint field %s (#7924)", (field, value) => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0][field] = value;
+    });
+    expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+      "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay allow_encoded_slash, enforcement, host, port, protocol, rules",
+    );
+  });
 
   it("rejects a managed inference rule with an unapproved field (#7924)", () => {
     const sources = withPolicy((policy) => {
@@ -537,11 +611,7 @@ describe("Pi runtime boundaries", () => {
     ["owner-only state", /^umask 077$/mu, "umask 022"],
     ["offline startup", /^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"],
     ["telemetry refusal", /^export PI_TELEMETRY=0$/mu, "export PI_TELEMETRY=1"],
-    [
-      "root privilege drop",
-      "  _NEMOCLAW_PI_DROP_PRIVILEGES=1",
-      "  _NEMOCLAW_PI_DROP_PRIVILEGES=0",
-    ],
+    ["root privilege drop", "  _NEMOCLAW_PI_DROP_PRIVILEGES=1", "  _NEMOCLAW_PI_DROP_PRIVILEGES=0"],
     [
       "privilege-drop target",
       '/usr/local/bin/nemoclaw-start "$@"',

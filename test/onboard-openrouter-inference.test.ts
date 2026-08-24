@@ -51,12 +51,13 @@ describe("OpenRouter onboarding inference setup", () => {
 
       expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: "sk-or-test" });
       const commands = harness.commands.map(({ command }) => command);
-      assert.deepEqual(commands, [
+      expect(commands).toEqual([
+        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
         "provider get -g nemoclaw openrouter-api",
         "provider update -g nemoclaw openrouter-api --credential OPENROUTER_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
         "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
       ]);
-      assert.equal(harness.commands[1].env?.OPENROUTER_API_KEY, "sk-or-test");
+      assert.equal(harness.commands[2].env?.OPENROUTER_API_KEY, "sk-or-test");
       assert.ok(
         !commands.some((command) => command.includes("sk-or-test")),
         "OpenRouter key must not appear in argv",
@@ -156,11 +157,12 @@ describe("OpenRouter onboarding inference setup", () => {
 
       expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: null });
       expect(harness.commands.map(({ command }) => command)).toEqual([
+        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
         "provider get -g nemoclaw openrouter-api",
         "provider update -g nemoclaw openrouter-api --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
         "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
       ]);
-      expect(harness.commands[1].env?.OPENROUTER_API_KEY).toBeUndefined();
+      expect(harness.commands[2].env?.OPENROUTER_API_KEY).toBeUndefined();
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
       expect(harness.logs).toEqual([
         "  OpenRouter Runtime adapter ready: sandbox route http://host.openshell.internal:11437/v1, host log /tmp/openrouter-runtime-adapter.log",

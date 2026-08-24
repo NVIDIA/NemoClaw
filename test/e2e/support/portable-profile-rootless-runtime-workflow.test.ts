@@ -20,7 +20,9 @@ describe("portable profile rootless runtime workflow", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
       ".github/actionlint.yaml",
     );
-    const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
+    const workflow = readYaml<PortableProfileWorkflow>(
+      ".github/workflows/portable-profile-e2e.yaml",
+    );
     const liveTest = fs.readFileSync(
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "utf-8",
@@ -52,6 +54,12 @@ describe("portable profile rootless runtime workflow", () => {
     const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
+    expect(workflow.on.pull_request.paths).toEqual(
+      expect.arrayContaining([
+        "agents/hermes/Dockerfile",
+        "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+      ]),
+    );
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
@@ -81,6 +89,9 @@ describe("portable profile rootless runtime workflow", () => {
       /mkdtempSync\(\s*path\.join\(os\.tmpdir\(\),\s*["']nemoclaw-portable-e2e-/,
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
+    expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
+    expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
     expect(liveTest).toContain('location = "localhost:5000"\\ninsecure = true');
     expect(liveTest).toContain("DOCKER_NETWORK_IPAM_INSPECT_FORMAT");

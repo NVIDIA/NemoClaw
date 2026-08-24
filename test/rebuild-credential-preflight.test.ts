@@ -103,6 +103,7 @@ wait();`,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
           policies: [],
+          policyAuthority: "nemoclaw-managed",
           agent,
           ...(agent === "langchain-deepagents-code"
             ? {
@@ -193,6 +194,16 @@ if (a[0] === "sandbox" && a[1] === "get") {
     process.exit(1);
   }
   process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");
+  process.exit(0);
+}
+if (a[0] === "policy" && a[1] === "get" && a.includes("--output") && a.includes("json")) {
+  process.stdout.write(JSON.stringify({
+    scope: "sandbox",
+    sandbox: "${sandboxName}",
+    status: "effective",
+    policy_source: "sandbox",
+    policy: {},
+  }) + "\\n");
   process.exit(0);
 }
 if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }

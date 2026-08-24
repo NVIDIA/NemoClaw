@@ -291,6 +291,16 @@ describe("initial sandbox policy real preset merge", () => {
     expect(discordBinaries).toContain("/opt/hermes/.venv/bin/python");
     expect(discordBinaries).not.toContain("/usr/bin/node");
 
+    const boundProviders =
+      policy.network_policies?.discord?.endpoints
+        ?.map((endpoint) => endpoint.credential_binding?.provider)
+        .filter(Boolean) ?? [];
+    expect(boundProviders).toEqual([
+      "hermes-channel-discord-bridge",
+      "hermes-channel-discord-bridge",
+      "hermes-channel-discord-bridge",
+    ]);
+
     const discordRules =
       policy.network_policies?.discord?.endpoints
         ?.find((endpoint) => endpoint.host === "discord.com")
