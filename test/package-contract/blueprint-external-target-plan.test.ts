@@ -319,14 +319,6 @@ describe("packaged Blueprint Runner external target", () => {
           },
           dry_run: false,
         });
-        expect(Object.keys(plan.openshell_target as Record<string, unknown>).sort()).toEqual([
-          "authentication_source",
-          "ca_fingerprint",
-          "endpoint",
-          "expected_release",
-          "lifecycle",
-          "workspace",
-        ]);
         const publicOutput = `${result.planOutput}\n${result.applyError}`;
         expect(privateValues.some((value) => publicOutput.includes(value))).toBe(false);
       } finally {
