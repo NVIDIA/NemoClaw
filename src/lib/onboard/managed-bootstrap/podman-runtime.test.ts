@@ -137,6 +137,7 @@ function lifecycleInput(adapterOverride: ManagedBootstrapAdapter) {
       manifestDigest: MANIFEST_DIGEST,
     },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 as const },
     managedStateRoots: [],
     intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: ["/opt/openshell/bin/supervisor"],
@@ -358,9 +359,9 @@ describe("Podman managed-bootstrap runtime surface", () => {
       path: mountpoint,
       device: "8",
       inode: "9001",
-      uid: 998,
+      uid: 0,
       gid: 999,
-      mode: 0o755 as const,
+      mode: 0o1775 as const,
     }));
     const capture = vi.fn(() => ({
       status: 0,
@@ -384,8 +385,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         ],
       },
       sandboxId: "sandbox-alpha",
-      agentUid: 998,
-      agentGid: 999,
+      workspaceRoot: { uid: 0, gid: 999, mode: 0o1775 },
     });
 
     expect(capture).toHaveBeenCalledExactlyOnceWith(
@@ -400,8 +400,9 @@ describe("Podman managed-bootstrap runtime surface", () => {
     );
     expect(prepareManagedWorkspaceRoot).toHaveBeenCalledExactlyOnceWith({
       path: mountpoint,
-      uid: 998,
+      uid: 0,
       gid: 999,
+      mode: 0o1775,
     });
   });
 
@@ -745,6 +746,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         stateRoot: root,
         environment: {},
         gatewayPort: 8080,
+        workspaceRoot: { uid: 998, gid: 999, mode: 0o755 },
         watcherController: {
           recoverUnfinishedLease,
           reclaimStoppedLease: vi.fn(),

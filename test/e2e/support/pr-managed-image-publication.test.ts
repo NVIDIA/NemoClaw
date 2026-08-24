@@ -126,6 +126,7 @@ on:
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
         "scripts/install.sh",
+        "scripts/checks/run-managed-image-openshell-e2e.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/maintenance.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.test.ts",
@@ -134,15 +135,22 @@ on:
         "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
+        "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
+        "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
         "src/lib/onboard/managed-bootstrap/podman-image-transaction.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
         "src/lib/onboard/managed-bootstrap/podman-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
+        "src/lib/onboard/managed-bootstrap/runtime-create.ts",
+        "src/lib/onboard/managed-startup/state-roots.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.ts",
         "src/lib/onboard/sandbox-create/orchestration.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.ts",
+        "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "src/lib/onboard/workload/preparation.ts",
         "test/e2e/fixtures/security-posture.ts",
@@ -160,10 +168,12 @@ on:
     const source = fs.readFileSync(dockerfile, "utf8");
     expect(source).not.toContain("restore-e2e-cli-artifact");
     expect(source).not.toContain("scripts/install.sh");
+    expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
     expect(source).not.toContain("src/lib/actions/maintenance.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
+    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
     expect(source).not.toContain(
       "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
     );
@@ -171,8 +181,12 @@ on:
       "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
     );
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
+    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/runtime-create.ts");
+    expect(source).not.toContain("src/lib/onboard/managed-startup/state-roots.ts");
     expect(source).not.toContain("src/lib/onboard/managed-workload/onboard-orchestration.ts");
     expect(source).not.toContain("src/lib/onboard/sandbox-create/orchestration.ts");
+    expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-flow.ts");
+    expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-run-attempt.ts");
     expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
     expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);
     expect(source).not.toMatch(/^COPY src\/lib\/onboard\/.*[.]test[.]ts/mu);

@@ -346,6 +346,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         manifestDigest: `sha256:${"d".repeat(64)}`,
       },
       agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+      workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 },
       managedStateRoots: [],
       intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
       expectedSupervisorArgv: ["/mxc/supervisor"],

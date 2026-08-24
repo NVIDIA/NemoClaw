@@ -15,6 +15,12 @@ export interface ManagedStartupStateRoot {
   readonly readWrite: boolean;
 }
 
+export interface ManagedStartupWorkspaceRoot {
+  readonly uid: number;
+  readonly gid: number;
+  readonly mode: 0o755 | 0o1775;
+}
+
 type ManagedStartupStateRootDeclaration = {
   readonly mountTarget: string;
   readonly resourceIdentity: (sandboxName: string) => string;
@@ -69,6 +75,24 @@ const MANAGED_AGENT_STATE_ROOTS = Object.freeze({
   pi: Object.freeze([]),
 } satisfies Record<ManagedStartupAgent, readonly ManagedStartupStateRootDeclaration[]>);
 
+const MANAGED_AGENT_WORKSPACE_ROOTS = Object.freeze({
+  openclaw: Object.freeze({ uidAuthority: "agent", gidAuthority: "agent", mode: 0o755 }),
+  hermes: Object.freeze({ uidAuthority: "agent", gidAuthority: "agent", mode: 0o755 }),
+  "langchain-deepagents-code": Object.freeze({
+    uidAuthority: "root",
+    gidAuthority: "agent",
+    mode: 0o1775,
+  }),
+  pi: Object.freeze({ uidAuthority: "agent", gidAuthority: "agent", mode: 0o755 }),
+} satisfies Record<
+  ManagedStartupAgent,
+  {
+    readonly uidAuthority: "agent" | "root";
+    readonly gidAuthority: "agent";
+    readonly mode: ManagedStartupWorkspaceRoot["mode"];
+  }
+>);
+
 function exactSandboxName(sandboxName: string): string {
   if (
     sandboxName.length === 0 ||
@@ -87,6 +111,20 @@ function exactAgentIdentity(value: number, label: string): number {
     throw new Error(`Managed startup state-root ${label} authority is invalid.`);
   }
   return value;
+}
+
+export function managedStartupWorkspaceRoot(input: {
+  readonly agent: ManagedStartupAgent;
+  readonly agentIdentity: { readonly uid: number; readonly gid: number };
+}): ManagedStartupWorkspaceRoot {
+  const uid = exactAgentIdentity(input.agentIdentity.uid, "workspace UID");
+  const gid = exactAgentIdentity(input.agentIdentity.gid, "workspace GID");
+  const declaration = MANAGED_AGENT_WORKSPACE_ROOTS[input.agent];
+  return Object.freeze({
+    uid: declaration.uidAuthority === "root" ? 0 : uid,
+    gid,
+    mode: declaration.mode,
+  });
 }
 
 export function managedStartupStateRoots(input: {

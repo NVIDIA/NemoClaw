@@ -28,6 +28,7 @@ import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding/identity";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import type { ManagedStartupWorkspaceRoot } from "../managed-startup/state-roots";
 import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import {
   activateManagedBootstrapSequence,
@@ -159,6 +160,7 @@ interface PodmanManagedBootstrapAdapterOptions {
   readonly environment: NodeJS.ProcessEnv;
   readonly gatewayPort: number;
   readonly gatewayName?: string;
+  readonly workspaceRoot: ManagedStartupWorkspaceRoot;
   readonly watcherController?: PodmanManagedGatewayWatcherController;
   readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
   readonly sleep?: (seconds: number) => void;
@@ -690,8 +692,7 @@ export function preparePodmanManagedWorkspaceAuthority(input: {
   readonly engine: PodmanBoundContainerEngine;
   readonly inspect: JsonRecord;
   readonly sandboxId: string;
-  readonly agentUid: number;
-  readonly agentGid: number;
+  readonly workspaceRoot: ManagedStartupWorkspaceRoot;
 }): void {
   const workspace = exactPodmanManagedWorkspaceVolume(input.inspect, input.sandboxId);
   const inspected = capture(
@@ -709,14 +710,15 @@ export function preparePodmanManagedWorkspaceAuthority(input: {
   }
   const receipt = prepare({
     path: workspace.mountpoint,
-    uid: input.agentUid,
-    gid: input.agentGid,
+    uid: input.workspaceRoot.uid,
+    gid: input.workspaceRoot.gid,
+    mode: input.workspaceRoot.mode,
   });
   if (
     receipt.path !== workspace.mountpoint ||
-    receipt.uid !== input.agentUid ||
-    receipt.gid !== input.agentGid ||
-    receipt.mode !== 0o755 ||
+    receipt.uid !== input.workspaceRoot.uid ||
+    receipt.gid !== input.workspaceRoot.gid ||
+    receipt.mode !== input.workspaceRoot.mode ||
     !/^\d+$/u.test(receipt.device) ||
     !/^\d+$/u.test(receipt.inode)
   ) {
@@ -1968,8 +1970,7 @@ export function createPodmanManagedBootstrapAdapter(
         engine: options.engine,
         inspect: current.rawInspect,
         sandboxId: current.held.sandboxId,
-        agentUid: snapshot.agentIdentity.uid,
-        agentGid: snapshot.agentIdentity.gid,
+        workspaceRoot: options.workspaceRoot,
       });
       const prepareStateRoot = options.engine.prepareManagedVolumeRoot;
       if (handle.plan.managedStateRoots.length > 0 && !prepareStateRoot) {
@@ -2201,6 +2202,7 @@ function createLifecycle(
       stateRoot: input.stateRoot,
       environment: process.env,
       gatewayPort: input.network.gatewayPort,
+      workspaceRoot: input.workspaceRoot,
       ...(input.dependencies.runCaptureOpenshell
         ? { runCaptureOpenshell: input.dependencies.runCaptureOpenshell }
         : {}),

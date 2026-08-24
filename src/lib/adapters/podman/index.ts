@@ -60,7 +60,7 @@ export interface PodmanManagedWorkspaceRootReceipt {
   readonly inode: string;
   readonly uid: number;
   readonly gid: number;
-  readonly mode: 0o755;
+  readonly mode: 0o755 | 0o1775;
 }
 
 export interface PodmanManagedVolumeRootReceipt {
@@ -80,6 +80,7 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
+    readonly mode: 0o755 | 0o1775;
   }) => PodmanManagedWorkspaceRootReceipt;
   /** Exact, non-recursive local user-namespace mutation for one managed volume root. */
   readonly prepareManagedVolumeRoot?: (input: {
@@ -352,14 +353,15 @@ export function createPodmanContainerEngine(
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
+    readonly mode: 0o755 | 0o1775;
   }): PodmanManagedWorkspaceRootReceipt => {
     const receipt = prepareManagedVolumeRoot({
       path: input.path,
       uid: input.uid,
       gid: input.gid,
-      mode: 0o755,
+      mode: input.mode,
     });
-    return Object.freeze({ ...receipt, mode: 0o755 as const });
+    return Object.freeze({ ...receipt, mode: input.mode });
   };
   return Object.freeze({
     ...boundEngine,

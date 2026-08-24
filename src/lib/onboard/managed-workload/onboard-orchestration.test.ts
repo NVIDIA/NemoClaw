@@ -8,7 +8,27 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
-import { managedStartupStateRoots } from "../managed-startup/state-roots";
+import {
+  managedStartupStateRoots,
+  managedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
+
+describe("managed workspace-root declarations", () => {
+  it("preserves the DCode sticky root-owned login-profile boundary generically", () => {
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "langchain-deepagents-code",
+        agentIdentity: { uid: 999, gid: 999 },
+      }),
+    ).toEqual({ uid: 0, gid: 999, mode: 0o1775 });
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "openclaw",
+        agentIdentity: { uid: 998, gid: 998 },
+      }),
+    ).toEqual({ uid: 998, gid: 998, mode: 0o755 });
+  });
+});
 
 const preparationState = vi.hoisted(() => ({
   prepared: undefined as unknown,

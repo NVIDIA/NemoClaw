@@ -215,7 +215,7 @@ describe("Podman container engine command adapter", () => {
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => ({
       status: 0,
-      stdout: args.includes("--format=%u:%g:%a:%F") ? "998:999:755:directory\n" : "",
+      stdout: args.includes("--format=%u:%g:%a:%F") ? "0:999:1775:directory\n" : "",
       stderr: "",
     }));
     const engine = createPodmanContainerEngine({
@@ -234,16 +234,16 @@ describe("Podman container engine command adapter", () => {
     });
 
     expect(
-      engine.prepareManagedWorkspaceRoot?.({ path: directory, uid: 998, gid: 999 }),
+      engine.prepareManagedWorkspaceRoot?.({ path: directory, uid: 0, gid: 999, mode: 0o1775 }),
     ).toMatchObject({
       path: directory,
-      uid: 998,
+      uid: 0,
       gid: 999,
-      mode: 0o755,
+      mode: 0o1775,
     });
     expect(capture.mock.calls.map((call) => call[1])).toEqual([
-      ["unshare", "chown", "--no-dereference", "998:999", "--", directory],
-      ["unshare", "chmod", "755", "--", directory],
+      ["unshare", "chown", "--no-dereference", "0:999", "--", directory],
+      ["unshare", "chmod", "1775", "--", directory],
       ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
     ]);
     expect(capture.mock.calls.map((call) => call[4])).toEqual(

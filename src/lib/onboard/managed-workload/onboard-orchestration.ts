@@ -34,7 +34,10 @@ import {
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
-import { managedStartupStateRoots } from "../managed-startup/state-roots";
+import {
+  managedStartupStateRoots,
+  managedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
 import { getChannelsFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
@@ -604,6 +607,10 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       manifestDigest: input.workload.source.contract.digest,
     },
     agentIdentity,
+    workspaceRoot: managedStartupWorkspaceRoot({
+      agent: input.workload.source.contract.agent,
+      agentIdentity,
+    }),
     managedStateRoots: managedStartupStateRoots({
       agent: input.workload.source.contract.agent,
       sandboxName: input.sandboxName,

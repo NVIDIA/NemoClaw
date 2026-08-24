@@ -146,6 +146,11 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
       managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
@@ -245,6 +250,11 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
       managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
