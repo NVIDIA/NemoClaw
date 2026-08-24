@@ -579,7 +579,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
       .mockReturnValueOnce(SETTLED);
     const runSandboxScopeWarmupRun = vi.fn();
-    const runConnectAutoPairApprovalPass = vi.fn();
+    const runSandboxAutoPairApprovalPass = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
     } as never);
@@ -590,7 +590,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       runSandboxScopeWarmupRun,
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadAutoPairApproval").mockReturnValue({
-      runConnectAutoPairApprovalPass,
+      runSandboxAutoPairApprovalPass,
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
       withMcpLifecycleLock: async (_name: string, operation: () => unknown) => operation(),
@@ -603,7 +603,16 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
     expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(runSandboxAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", {
+      budget: {
+        timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+        listTimeoutS: 5,
+        approveTimeoutS: 8,
+        maxApprovals: 1,
+      },
+      gatewayName: "nemoclaw",
+      localDeviceOnly: true,
+    });
   });
 
   it("explains the bounded failure without exposing runtime identifiers (#9844)", () => {

@@ -166,10 +166,18 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
       finalizationHandlerRuntime
         .loadAutoPairWarmup()
         .runSandboxScopeWarmupRun(name, gatewayName),
-    runApproval: (name, gatewayName) =>
-      finalizationHandlerRuntime
-        .loadAutoPairApproval()
-        .runConnectAutoPairApprovalPass(name, gatewayName),
+    runApproval: (name, gatewayName) => {
+      finalizationHandlerRuntime.loadAutoPairApproval().runSandboxAutoPairApprovalPass(name, {
+        budget: {
+          timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+          listTimeoutS: 5,
+          approveTimeoutS: 8,
+          maxApprovals: 1,
+        },
+        gatewayName,
+        localDeviceOnly: true,
+      });
+    },
     withSandboxLock: (name, operation, options) =>
       finalizationHandlerRuntime
         .loadSandboxLifecycleLock()
