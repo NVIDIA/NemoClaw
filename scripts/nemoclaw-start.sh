@@ -1698,12 +1698,16 @@ prefix = "openshell:resolve:env:"
 alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
+alias_replacements = {}
 warnings = []
 
 for key in keys:
     value = os.environ.get(key, "")
     if value.startswith(prefix) and value != f"{prefix}{key}":
         replacements[f"{prefix}{key}"] = (key, value)
+        suffix = value[len(prefix) :]
+        if re.fullmatch(rf"v[0-9]+_{re.escape(key)}", suffix):
+            alias_replacements[key] = suffix
 
 with open(config_file, encoding="utf-8") as f:
     config = json.load(f)
@@ -1722,11 +1726,27 @@ replacement_patterns = [
     (re.compile(re.escape(old) + r"(?![A-Za-z0-9_])"), key, new)
     for old, (key, new) in sorted(replacements.items(), key=lambda kv: -len(kv[0]))
 ]
+alias_replacement_patterns = [
+    (
+        re.compile(
+            re.escape(alias_marker)
+            + rf"(?:v[0-9]+_)?{re.escape(key)}(?![A-Za-z0-9_])"
+        ),
+        key,
+        f"{alias_marker}{suffix}",
+    )
+    for key, suffix in alias_replacements.items()
+]
 
 
 def rewrite(value):
     if isinstance(value, str):
         for pattern, key, new in replacement_patterns:
+            updated, count = pattern.subn(new, value)
+            if count:
+                refreshed.add(key)
+                value = updated
+        for pattern, key, new in alias_replacement_patterns:
             updated, count = pattern.subn(new, value)
             if count:
                 refreshed.add(key)
@@ -1784,7 +1804,7 @@ def walk_for_warnings(value, path):
             alias_env_key = value[alias_index + len(alias_marker) :]
             token_scheme = value[:alias_index] + "-"
             for env_key in keys:
-                if env_key != alias_env_key:
+                if not placeholder_suffix_matches_env_key(alias_env_key, env_key):
                     continue
                 label = path_label(path)
                 env_value = os.environ.get(env_key, "")
@@ -1795,7 +1815,16 @@ def walk_for_warnings(value, path):
                     warnings.append(
                         f"[channels] {label} expects the {env_key} provider placeholder but it is missing from the runtime environment"
                     )
-                elif not placeholder_re.match(env_value) and not env_value.startswith(token_scheme):
+                elif placeholder_re.match(env_value):
+                    expected = (
+                        f"{token_scheme}OPENSHELL-RESOLVE-ENV-"
+                        f"{env_value[len(prefix):]}"
+                    )
+                    if value != expected:
+                        warnings.append(
+                            f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                        )
+                elif not env_value.startswith(token_scheme):
                     warnings.append(
                         f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} token; runtime may reject it"
                     )
@@ -2067,11 +2096,20 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
 for alias in plan.get("envAliases", []):
-    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+    env_key = alias["envKey"]
+    runtime_value = os.environ.get(env_key, "")
+    if not re.search(alias["match"], runtime_value):
         continue
+    value = alias["value"]
+    revision = re.fullmatch(
+        rf"openshell:resolve:env:(v[0-9]+_){re.escape(env_key)}", runtime_value
+    )
+    marker = f"-OPENSHELL-RESOLVE-ENV-{env_key}"
+    if revision and value.endswith(marker):
+        value = value[: -len(env_key)] + revision.group(1) + env_key
     print("\t".join([
-        alias["envKey"],
-        alias["value"],
+        env_key,
+        value,
         alias.get("message", ""),
     ]))
 PYMESSAGINGALIASES

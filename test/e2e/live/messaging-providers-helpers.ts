@@ -743,15 +743,37 @@ export async function runSlackApiRequest(
   sandbox: SandboxClient,
   port: string,
   apiPath: string,
-  authorization: string,
+  authorization:
+    | string
+    | { readonly envKey: "SLACK_BOT_TOKEN" | "SLACK_APP_TOKEN"; readonly aliasPrefix?: string },
   redactionValues: string[],
 ): Promise<string> {
+  const authorizationEnv: Record<string, string> =
+    typeof authorization === "string"
+      ? { FAKE_SLACK_AUTH: authorization }
+      : {
+          FAKE_SLACK_AUTH_ENV_KEY: authorization.envKey,
+          FAKE_SLACK_AUTH_ALIAS_PREFIX: authorization.aliasPrefix ?? "",
+        };
   const result = await runSandboxNode(
     sandbox,
     `
 import http from "node:http";
 
-const authorization = process.env.FAKE_SLACK_AUTH ?? "";
+let authorization = process.env.FAKE_SLACK_AUTH ?? "";
+const envKey = process.env.FAKE_SLACK_AUTH_ENV_KEY ?? "";
+if (envKey) {
+  const runtimeValue = process.env[envKey] ?? "";
+  const suffix = runtimeValue.match(
+    new RegExp("^openshell:resolve:env:((?:v[0-9]+_)?" + envKey + ")$"),
+  )?.[1];
+  if (!suffix) throw new Error("runtime placeholder for " + envKey + " is unavailable");
+  const aliasPrefix = process.env.FAKE_SLACK_AUTH_ALIAS_PREFIX ?? "";
+  const token = aliasPrefix
+    ? aliasPrefix + "-OPENSHELL-RESOLVE-ENV-" + suffix
+    : runtimeValue;
+  authorization = "Bearer " + token;
+}
 const token = authorization.replace(/^Bearer\\s+/, "");
 const data = new URLSearchParams({ token }).toString();
 const req = http.request({
@@ -784,7 +806,7 @@ req.end();
       env: {
         FAKE_SLACK_PORT: port,
         FAKE_SLACK_PATH: apiPath,
-        FAKE_SLACK_AUTH: authorization,
+        ...authorizationEnv,
       },
       redactionValues,
       timeoutMs: 60_000,

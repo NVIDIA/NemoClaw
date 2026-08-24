@@ -499,11 +499,6 @@ function rebuildPolicyPresetsForCreateIntent(
   return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
 }
 
-function disabledChannelNamesForCreateIntent(session: Session | null) {
-  const disabledChannelNames = session?.messagingPlan?.disabledChannels;
-  return disabledChannelNames ? { disabledChannelNames } : {};
-}
-
 /** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
 function applyAuthoritativeRebuildPolicyPresets(
   intent: ResolvedSandboxCreateIntent,
@@ -1614,7 +1609,6 @@ class SandboxStateFlow<
         inferenceProvider: this.options.provider,
         hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
         enabledChannels: state.selectedMessagingChannels,
-        ...disabledChannelNamesForCreateIntent(state.session),
         webSearchConfig: state.webSearchConfig,
         agent: this.options.agent,
         sandboxGpuConfig: this.options.sandboxGpuConfig,

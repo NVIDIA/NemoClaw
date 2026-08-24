@@ -881,7 +881,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      { envKey: "SLACK_BOT_TOKEN", aliasPrefix: "xoxb" },
       redactionValues,
     );
     check(
@@ -905,12 +905,12 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+      { envKey: "SLACK_BOT_TOKEN" },
       redactionValues,
     );
     check(
       /^200\b/.test(slackCanonical) && /invalid_auth|not_authed|ok":true/.test(slackCanonical),
-      "M-S15b: L7 proxy substitutes canonical SLACK_BOT_TOKEN placeholder",
+      "M-S15b: L7 proxy substitutes the runtime-scoped SLACK_BOT_TOKEN placeholder",
     );
     const slackUnset = await runSlackApiRequest(
       sandbox,
@@ -936,7 +936,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/apps.connections.open",
-      "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      { envKey: "SLACK_APP_TOKEN", aliasPrefix: "xapp" },
       redactionValues,
     );
     check(

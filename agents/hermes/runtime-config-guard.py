@@ -4962,6 +4962,13 @@ def _runtime_plan_replacements_and_provider_keys(
             if not _placeholder_suffix_matches_env_key(suffix, env_key):
                 continue
         if compiled.search(runtime_value):
+            revision = re.fullmatch(
+                rf"openshell:resolve:env:(v[0-9]{{1,20}}_){re.escape(env_key)}",
+                runtime_value,
+            )
+            marker = f"-OPENSHELL-RESOLVE-ENV-{env_key}"
+            if revision and value.endswith(marker):
+                value = value[: -len(env_key)] + revision.group(1) + env_key
             replacements[env_key] = (value, message)
     return replacements, provider_env_keys, True
 

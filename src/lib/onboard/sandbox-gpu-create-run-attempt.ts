@@ -54,10 +54,9 @@ export type SandboxGpuCreateAttemptState = {
   portableLifecycleGeneration: string | null;
 };
 
-// A runtime-managed container replacement can briefly observe the original
-// container's stale Ready row. Require one confirmation poll before advancing
-// to live validation or the GPU proof.
-const REPLACEMENT_STABLE_READY_POLLS = 2;
+// OpenShell can briefly report Ready before the sandbox accepts live operations.
+// Require one confirmation poll before advancing to validation or forwarding.
+const CREATE_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
@@ -426,7 +425,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 runCaptureOpenshell: deps.runCaptureOpenshell,
                 isSandboxReady,
                 getSandboxFailurePhase,
-                stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
+                stableReadyPolls: CREATE_STABLE_READY_POLLS,
                 sleep: deps.sleep,
               });
               if (!readiness.ready) {
@@ -584,10 +583,7 @@ export function createSandboxGpuCreateAttemptRunner(
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
-      stableReadyPolls:
-        compatibility || managedBootstrap || expectedRecreatedSandboxId
-          ? REPLACEMENT_STABLE_READY_POLLS
-          : 1,
+      stableReadyPolls: CREATE_STABLE_READY_POLLS,
       checkReadyIdentity: expectedRecreatedSandboxId
         ? (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
             checkRecreatedSandboxReadyIdentity(

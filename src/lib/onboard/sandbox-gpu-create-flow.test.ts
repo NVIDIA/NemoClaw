@@ -993,7 +993,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(exit).toHaveBeenCalledWith(23);
   });
 
-  it("keeps native readiness on the single-Ready contract", async () => {
+  it("confirms native readiness before live operations", async () => {
     const deps = createDeps();
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
@@ -1001,7 +1001,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     });
 
     expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
-      expect.objectContaining({ stableReadyPolls: 1 }),
+      expect.objectContaining({ stableReadyPolls: 2 }),
     );
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
