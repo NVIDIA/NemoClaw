@@ -41,7 +41,7 @@ type SupportedSnapshotSurface = Extract<
   { readonly supported: true }
 >;
 
-export const NATIVE_PODMAN_SANDBOX_HOST_ADDRESS = "10.254.254.254";
+export const NATIVE_PODMAN_SANDBOX_HOST_ADDRESS = "169.254.2.2";
 export const NATIVE_PODMAN_RESOURCE_LABEL = "openshell.managed";
 export const NATIVE_PODMAN_RESOURCE_LABEL_VALUE = "true";
 

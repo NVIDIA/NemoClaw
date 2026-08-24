@@ -97,7 +97,7 @@ exports.loadGatewayManagementDeclaration = () => ({
     supported: true,
     prepareHostRuntime: () => ({
       sandboxHostAddress:
-        process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "10.254.254.254" : null,
+        process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
     }),
   },
 });\n`,

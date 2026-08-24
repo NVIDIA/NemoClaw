@@ -108,7 +108,7 @@ function stopScopedTarget(
     buildDockerDriverGatewayConfigToml(
       {
         OPENSHELL_GRPC_ENDPOINT:
-          provider === "podman" ? "https://10.254.254.254:18080" : "https://127.0.0.1:18080",
+          provider === "podman" ? "https://169.254.2.2:18080" : "https://127.0.0.1:18080",
         OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",

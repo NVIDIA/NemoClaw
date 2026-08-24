@@ -249,7 +249,7 @@ runs:
           exit 1
         fi
 
-        sudo ip address replace 10.254.254.254/32 dev lo
+        sudo ip address replace 169.254.2.2/32 dev lo
         {
           printf 'CONTAINERS_CONF=%s\n' "$containers_config"
           printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"

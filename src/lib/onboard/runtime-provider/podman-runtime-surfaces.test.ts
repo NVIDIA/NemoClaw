@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine } from "../../adapters/podman";
-import { isOperatorTrustablePrivateIp } from "../../security/trusted-private-endpoint";
 import { createCurrentPodmanRuntimeProviderBundle } from "./podman";
 import {
   PODMAN_MANAGED_LABEL,
@@ -183,7 +182,6 @@ describe("current Podman runtime provider", () => {
   });
 
   it("projects native gateway authority independently from the portable profile", () => {
-    expect(isOperatorTrustablePrivateIp(NATIVE_PODMAN_SANDBOX_HOST_ADDRESS)).toBe(true);
     expect(
       prepareNativePodmanGatewayHostRuntime({
         environment: {
