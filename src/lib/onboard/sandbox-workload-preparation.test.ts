@@ -184,6 +184,28 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("uses the pinned registry catalog release when candidate and image revisions differ (#8142)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), version: "0.1.0", catalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: "v0.1.0",
+      platform: MANAGED_IMAGE_PLATFORM,
+      revision: REVISION,
+    });
+    expect(prepared).toMatchObject({
+      release: RELEASE,
+      source: {
+        kind: "managed-image",
+        contract: { source: { release: RELEASE, revision: REVISION } },
+      },
+    });
+  });
+
   it("rejects an exact catalog from another PR commit (#9464)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
