@@ -38,6 +38,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import ts from "typescript";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 
@@ -49,6 +51,11 @@ const CANDIDATE_CONTRACT_ARTIFACT_PREFIX = "managed-candidate-contract-";
 const PI_MANIFEST_PATH = "agents/pi/manifest.yaml";
 const PI_POLICY_PATH = "agents/pi/policy-additions.yaml";
 const PI_START_SCRIPT_PATH = "agents/pi/start.sh";
+const PI_CANDIDATE_AUTHORITY_PATH = "src/lib/agent/candidate-authority.ts";
+const PI_QUALIFICATION_RECEIPT_PATHS = {
+  "linux/amd64": "ci/pi-agent-qualification-v1-linux-amd64.json",
+  "linux/arm64": "ci/pi-agent-qualification-v1-linux-arm64.json",
+} as const;
 
 const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
@@ -109,9 +116,7 @@ const APPROVED_SETTINGS_RESTORE = {
     },
   ],
 } as const;
-const APPROVED_STATE_FILES = [
-  { path: SETTINGS_FILE, restore: APPROVED_SETTINGS_RESTORE },
-] as const;
+const APPROVED_STATE_FILES = [{ path: SETTINGS_FILE, restore: APPROVED_SETTINGS_RESTORE }] as const;
 
 const APPROVED_STATE_DIRS: Readonly<
   Record<string, { readonly shields: string; readonly backup: boolean }>
@@ -136,9 +141,12 @@ const REQUIRED_ARTIFACTS = [
   "agents/pi/pi-runtime/package.json",
   "agents/pi/policy-additions.yaml",
   "agents/pi/start.sh",
+  PI_CANDIDATE_AUTHORITY_PATH,
+  ...Object.values(PI_QUALIFICATION_RECEIPT_PATHS),
 ] as const;
 
 export type PiArtifactSources = Readonly<{
+  candidateAuthority: string;
   dependencyReview: string;
   dockerfile: string;
   dockerfileBase: string;
@@ -148,6 +156,8 @@ export type PiArtifactSources = Readonly<{
   manifest: string;
   packageJson: string;
   policyAdditions: string;
+  qualificationReceipts: Readonly<Record<keyof typeof PI_QUALIFICATION_RECEIPT_PATHS, string>>;
+  releasePackageJson: string;
   startScript: string;
 }>;
 
@@ -327,6 +337,116 @@ function verifyCohortSeparation(workflow: string): string[] {
     failures.push(
       ".github/workflows/managed-images.yaml: the all-agent cohort download pattern is missing",
     );
+  }
+  return failures;
+}
+
+export function verifyPiQualificationReceipts(sources: PiArtifactSources): string[] {
+  const failures: string[] = [];
+  const receipts = Object.entries(sources.qualificationReceipts).flatMap(([platform, contents]) => {
+    try {
+      const contract = asRecord(JSON.parse(contents) as unknown);
+      const source = asRecord(contract.source);
+      const digest = contract.digest;
+      const expectedImage = "ghcr.io/nvidia/nemoclaw/pi-sandbox";
+      const expectedContractKeys = [
+        "agent",
+        "capabilityContractVersion",
+        "contractVersion",
+        "digest",
+        "image",
+        "platform",
+        "reference",
+        "source",
+        "startupProfileContractVersion",
+      ];
+      const expectedSourceKeys = ["cohort", "release", "repository", "revision"];
+      if (
+        !isDeepStrictEqual(Object.keys(contract).sort(), expectedContractKeys) ||
+        !isDeepStrictEqual(Object.keys(source).sort(), expectedSourceKeys) ||
+        contract.contractVersion !== 1 ||
+        contract.agent !== "pi" ||
+        contract.platform !== platform ||
+        contract.image !== expectedImage ||
+        typeof digest !== "string" ||
+        !/^sha256:[a-f0-9]{64}$/u.test(digest) ||
+        contract.reference !== `${expectedImage}@${digest}` ||
+        source.repository !== "NVIDIA/NemoClaw" ||
+        typeof source.revision !== "string" ||
+        !/^[a-f0-9]{40}$/u.test(source.revision) ||
+        typeof source.release !== "string" ||
+        !/^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u.test(source.release) ||
+        typeof source.cohort !== "string" ||
+        !/^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u.test(source.cohort) ||
+        contract.startupProfileContractVersion !== 1 ||
+        contract.capabilityContractVersion !== 1
+      ) {
+        throw new Error("qualification receipt failed exact contract validation");
+      }
+      return [{ platform, contents, contract }];
+    } catch (error) {
+      failures.push(
+        `${PI_QUALIFICATION_RECEIPT_PATHS[platform as keyof typeof PI_QUALIFICATION_RECEIPT_PATHS]}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+  });
+  const expectedDigests = receipts
+    .map(({ contents }) => createHash("sha256").update(contents, "utf8").digest("hex"))
+    .sort();
+  const authoritySource = ts.createSourceFile(
+    PI_CANDIDATE_AUTHORITY_PATH,
+    sources.candidateAuthority,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let publishedDigests: string[] = [];
+  const visitAuthority = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(authoritySource) === "pi" &&
+      ts.isCallExpression(node.initializer) &&
+      node.initializer.expression.getText(authoritySource) === "Object.freeze"
+    ) {
+      const array = node.initializer.arguments[0];
+      if (array && ts.isArrayLiteralExpression(array)) {
+        publishedDigests = array.elements.flatMap((element) =>
+          ts.isStringLiteral(element) && /^[a-f0-9]{64}$/u.test(element.text) ? [element.text] : [],
+        );
+      }
+    }
+    ts.forEachChild(node, visitAuthority);
+  };
+  visitAuthority(authoritySource);
+  publishedDigests.sort();
+  if (!isDeepStrictEqual(publishedDigests, expectedDigests)) {
+    failures.push(
+      `${PI_CANDIDATE_AUTHORITY_PATH}: accepted digests must match the exact Pi qualification receipts`,
+    );
+  }
+  if (receipts.length === Object.keys(PI_QUALIFICATION_RECEIPT_PATHS).length) {
+    const first = receipts[0]!;
+    const rest = receipts.slice(1);
+    const currentRelease = `v${JSON.parse(sources.releasePackageJson).version as string}`;
+    if (
+      rest.some(
+        ({ contract }) =>
+          asRecord(contract.source).revision !== asRecord(first.contract.source).revision ||
+          asRecord(contract.source).release !== asRecord(first.contract.source).release ||
+          asRecord(contract.source).cohort !== asRecord(first.contract.source).cohort,
+      )
+    ) {
+      failures.push(
+        "Pi qualification receipts must identify one source revision, release, and cohort",
+      );
+    }
+    if (receipts.some(({ contract }) => asRecord(contract.source).release !== currentRelease)) {
+      failures.push(`Pi qualification receipts must identify current release ${currentRelease}`);
+    }
+    if (new Set(receipts.map(({ contract }) => contract.reference)).size !== receipts.length) {
+      failures.push("Pi qualification receipts must identify unique platform image digests");
+    }
   }
   return failures;
 }
@@ -568,6 +688,7 @@ export function verifyPiCandidateArtifacts(sources: PiArtifactSources): string[]
     ...verifyCandidateRegistration(sources.managedImageContract),
     ...verifyCohortSeparation(sources.managedImagesWorkflow),
     ...verifyManagedImageDeclaration(sources),
+    ...verifyPiQualificationReceipts(sources),
     ...verifyPiTrustBoundary(sources),
   ];
 }
@@ -585,6 +706,7 @@ function main(): void {
     process.exit(1);
   }
   const failures = verifyPiCandidateArtifacts({
+    candidateAuthority: readRepoFile(PI_CANDIDATE_AUTHORITY_PATH),
     dependencyReview: readRepoFile("agents/pi/dependency-review.md"),
     dockerfile: readRepoFile("agents/pi/Dockerfile"),
     dockerfileBase: readRepoFile("agents/pi/Dockerfile.base"),
@@ -594,6 +716,13 @@ function main(): void {
     manifest: readRepoFile(PI_MANIFEST_PATH),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
     policyAdditions: readRepoFile(PI_POLICY_PATH),
+    qualificationReceipts: Object.fromEntries(
+      Object.entries(PI_QUALIFICATION_RECEIPT_PATHS).map(([platform, relativePath]) => [
+        platform,
+        readRepoFile(relativePath),
+      ]),
+    ) as PiArtifactSources["qualificationReceipts"],
+    releasePackageJson: readRepoFile("package.json"),
     startScript: readRepoFile(PI_START_SCRIPT_PATH),
   });
   if (failures.length > 0) {

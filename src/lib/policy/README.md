@@ -27,10 +27,12 @@ NemoClaw does not set policy or record preset or custom-policy attribution.
 The external authority must supply a missing or changed entry.
 
 If policy authority becomes external while Shields is down, NemoClaw keeps the
-saved restrictive policy snapshot and refuses to restore it. Ask the external
-policy authority to restore the restrictive policy. Then run
-`nemoclaw <sandbox> shields up` to retry Shields reconciliation. `shields status`
-reports this recovery requirement while the sandbox remains unlocked.
+saved restrictive policy snapshot and refuses to restore it. The external
+policy authority must keep the restrictive policy active until it returns
+policy authority to NemoClaw management. Then run
+`nemoclaw <sandbox> shields up` to restore the saved snapshot and finish the
+Shields transition. `shields status` reports this recovery requirement while
+the sandbox remains unlocked.
 
 A legacy sandbox record retains the first qualified `policyAuthority` after a later operation fails.
 An inspection that cannot determine authority does not change the record.

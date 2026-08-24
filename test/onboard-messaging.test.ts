@@ -15,6 +15,8 @@ import {
   activeChannelsFromDockerfile,
   encodeMessagingPlanForChannels,
   messagingPlanLiteral,
+  parseMessagingFixturePayload,
+  writeCustomMessagingDockerfile,
 } from "./helpers/messaging-plan-fixtures";
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
@@ -29,15 +31,7 @@ type CommandEntry = {
   rawCredentialInEnv?: boolean;
 };
 
-function parseStdoutJson<T = Record<string, any>>(stdout: string): T {
-  const line = stdout
-    .trim()
-    .split("\n")
-    .reverse()
-    .find((value) => /^[{[]/.test(value) && /[}\]]$/.test(value));
-  assert.ok(line, `expected JSON payload in stdout:\n${stdout}`);
-  return JSON.parse(line);
-}
+const parseStdoutJson = parseMessagingFixturePayload;
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const requireForTest = createRequire(import.meta.url);
@@ -46,7 +40,7 @@ const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
 beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 describe("onboard messaging", () => {
@@ -145,7 +139,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   process.env.KUBECONFIG = "/tmp/host-kubeconfig";
   process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
   await setupMessagingChannels(null, null, "my-assistant");
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
   console.log(JSON.stringify({
     sandboxName,
     commands,
@@ -657,7 +651,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)",
+    "preserves disabled channels in a custom image after a recreate so `channels start` can re-enable them (#3381)",
     {
       timeout: 60_000,
     },
@@ -665,6 +659,7 @@ const { createSandbox } = require(${onboardPath});
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
       );
+      const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -750,6 +745,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -757,7 +753,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["telegram"], ["telegram"])})).toString("base64");
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], ${customDockerfileArg},
   );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
@@ -815,13 +811,14 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "bakes WhatsApp into the sandbox image without bridge providers when no messaging tokens are set",
+    "bakes WhatsApp into a custom sandbox image without bridge providers when no messaging tokens are set",
     {
       timeout: 60_000,
     },
     async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"));
       try {
+        const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
         const fakeBin = path.join(tmpDir, "bin");
         const scriptPath = path.join(tmpDir, "tokenless-whatsapp.js");
         const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -902,6 +899,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -913,7 +911,7 @@ const { createSandbox } = require(${onboardPath});
   }
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["whatsapp"])})).toString("base64");
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"], ${customDockerfileArg},
   );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
@@ -971,13 +969,14 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "drops WhatsApp from the rebuilt image when the registry marks it disabled",
+    "drops WhatsApp from a rebuilt custom image when the registry marks it disabled",
     {
       timeout: 60_000,
     },
     async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"));
       try {
+        const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
         const fakeBin = path.join(tmpDir, "bin");
         const scriptPath = path.join(tmpDir, "disabled-whatsapp.js");
         const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -1063,6 +1062,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -1074,7 +1074,7 @@ const { createSandbox } = require(${onboardPath});
   }
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["whatsapp"], ["whatsapp"])})).toString("base64");
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"], ${customDockerfileArg},
   );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
@@ -1179,7 +1179,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
-  await createSandbox(null, "gpt-5.4");
+  await createSandbox(null, "gpt-5.4", "nvidia-prod");
   // Should not reach here
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {

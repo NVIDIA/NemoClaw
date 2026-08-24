@@ -127,6 +127,7 @@ function createConflictFixture() {
     dashboardPort: 18789,
     fromDockerfile: null,
     policies: [],
+    policyAuthority: "nemoclaw-managed",
     agent: null,
     messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
   });
@@ -163,7 +164,12 @@ function createConflictFixture() {
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get")        { process.stdout.write("Name: " + a.at(-1) + "\\nId: sbx-fixture\\nPhase: Ready\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0]==="policy" && a[1]==="get" && a.includes("--output") && a.includes("json")) {
+  process.stdout.write(JSON.stringify({scope:"sandbox",sandbox:a.at(-1),status:"effective",policy_source:"sandbox",policy:{}}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }

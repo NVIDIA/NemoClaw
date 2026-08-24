@@ -233,11 +233,27 @@ describe("sandbox policy authority ownership", () => {
     mocks.inspectSandboxPolicyAuthority
       .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
       .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
       .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
 
     expect(() => applyPermissivePolicy(SANDBOX)).toThrow(/policy authority changed/u);
 
     expect(mocks.run).toHaveBeenCalledOnce();
     expect(console.log).not.toHaveBeenCalledWith("  Applied permissive policy.");
+  });
+
+  it("refuses a permissive policy set when authority changes before submission (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(applyPermissivePolicy(SANDBOX)).toBeUndefined();
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalledWith("  Applied permissive policy.");
+    expect(reportedErrors()).toContain("policy authority changed");
+    expect(reportedErrors()).toContain("external policy authority");
   });
 });

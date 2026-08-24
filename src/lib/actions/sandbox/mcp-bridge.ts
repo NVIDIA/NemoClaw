@@ -10,8 +10,10 @@ import {
 } from "./mcp-bridge-contracts";
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
+  type McpDestroyPreparation,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
   prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
+  revalidateMcpDestroyAbortPolicyAuthority as revalidateMcpDestroyAbortPolicyAuthorityLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -61,6 +63,7 @@ export {
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
+  McpPolicyAuthorityRefusalError,
 } from "./mcp-bridge-policy";
 export {
   buildMcpBridgeProviderArgs,
@@ -80,18 +83,8 @@ export {
   validateMcpCredentialEnvName,
   validateMcpServerName,
 } from "./mcp-bridge-validation";
-export type { McpRebuildPreparation };
+export type { McpDestroyPreparation, McpRebuildPreparation };
 export { statusMcpBridge };
-
-export interface McpDestroyPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
-  /** True when phase one was completed by an earlier destroy process. */
-  destroyAlreadyPrepared: boolean;
-  /** True when a previous destroy already confirmed the sandbox was absent. */
-  destroyAlreadyPending: boolean;
-}
 
 export async function addMcpBridge(
   sandboxName: string,
@@ -121,15 +114,33 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, validateContainingPolicyReceipt);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
+  return restoreMcpBridgesAfterDestroyAbortLifecycle(
+    sandboxName,
+    preparation,
+    validateContainingPolicyReceipt,
+  );
+}
+
+export async function revalidateMcpDestroyAbortPolicyAuthority(
+  sandboxName: string,
+  preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
+): Promise<void> {
+  return revalidateMcpDestroyAbortPolicyAuthorityLifecycle(
+    sandboxName,
+    preparation,
+    validateContainingPolicyReceipt,
+  );
 }
 
 export async function finalizeMcpBridgesAfterSandboxDelete(
@@ -148,31 +159,35 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
-  validatePolicyAuthority?: () => Promise<void>,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForRebuildLifecycle(sandboxName, validatePolicyAuthority);
+  return prepareMcpBridgesForRebuildLifecycle(sandboxName, validateContainingPolicyReceipt);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
-  validatePolicyAuthority?: () => Promise<void>,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(
     sandboxName,
     entries,
     scrubbedAdapterEntries,
-    validatePolicyAuthority,
+    validateContainingPolicyReceipt,
   );
 }
 
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  validatePolicyAuthority?: () => Promise<void>,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, validatePolicyAuthority);
+  return restoreMcpBridgesAfterRebuildLifecycle(
+    sandboxName,
+    entries,
+    validateContainingPolicyReceipt,
+  );
 }
 
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {

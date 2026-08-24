@@ -8,7 +8,16 @@ import {
   scrubManagedMcpAdapterOrThrow,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
-import { removeGeneratedPolicy } from "./mcp-bridge-policy";
+import {
+  assertGeneratedPolicyMutationSafe,
+  buildRequiredMcpBridgePolicy,
+  McpPolicyAuthorityRefusalError,
+  qualifyMcpPolicyAuthorityReceipt,
+  removeGeneratedPolicy,
+  revalidateContainingMcpPolicyAuthority,
+  revalidateDeletedMcpPolicyAuthorityReceipt,
+  revalidateMcpPolicyAuthorityReceipt,
+} from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
   assertMcpDestroySnapshotCurrent,
@@ -20,6 +29,7 @@ import {
   deleteProvider,
   detachProvider,
   inspectMcpProvider,
+  preflightMcpEntryTargets,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
@@ -37,6 +47,7 @@ import { validateSandboxName } from "./mcp-bridge-validation";
 
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export {
+  assertMcpDestroySnapshotCurrent,
   cloneMcpBridgeEntry,
   discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider,
@@ -52,6 +63,7 @@ export {
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
@@ -67,6 +79,7 @@ export async function prepareMcpBridgesForDestroy(
     currentSandbox,
     entriesRequiringExternalCleanup,
   );
+  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
@@ -104,36 +117,84 @@ export async function prepareMcpBridgesForDestroy(
       destroyAlreadyPending: true,
     };
   }
+  const resolvedTargets = await preflightMcpEntryTargets(entries);
+  const policyAuthorityReceipt = qualifyMcpPolicyAuthorityReceipt({
+    operation: `prepare MCP bridges before destroying sandbox '${sandboxName}'`,
+    requiredPolicyContents: entries.map((entry) => {
+      const target = resolvedTargets.get(entry.server);
+      if (!target) {
+        throw new McpBridgeError(
+          `MCP server '${entry.server}' has no validated address pins. Refusing destroy preparation.`,
+        );
+      }
+      return buildRequiredMcpBridgePolicy(entry, target);
+    }),
+    sandboxName,
+  });
+  const revalidateBeforeMutation = async (): Promise<void> => {
+    await revalidateMcpPolicyAuthorityReceipt(
+      policyAuthorityReceipt,
+      validateContainingPolicyReceipt,
+      () => assertMcpDestroySnapshotCurrent(sandboxName, entries),
+    );
+  };
+  const revalidateAfterDelete = async (): Promise<void> => {
+    await revalidateDeletedMcpPolicyAuthorityReceipt(
+      policyAuthorityReceipt,
+      validateContainingPolicyReceipt,
+      () => assertMcpDestroySnapshotCurrent(sandboxName, entries),
+    );
+  };
+  const revalidateBeforeSuccess = async (): Promise<void> => {
+    await revalidateDeletedMcpPolicyAuthorityReceipt(
+      policyAuthorityReceipt,
+      validateContainingPolicyReceipt,
+    );
+  };
   if (destroyAlreadyPrepared) {
-    // Phase one completed before a prior process stopped. The sandbox may be
-    // live with its adapter scrubbed/provider detached, or it may already be
-    // gone. In either case, repeating delete is the next idempotent step.
+    // Phase one completed before a prior process stopped. Requalify and retain
+    // its exact current policy requirements before repeating sandbox delete.
     return {
       entries,
       detachedProviderEntries: entries.map(cloneMcpBridgeEntry),
       scrubbedAdapterEntries: entries.map(cloneMcpBridgeEntry),
+      revalidateBeforeDelete: revalidateBeforeMutation,
+      revalidateAfterDelete,
+      revalidateBeforeSuccess,
       destroyAlreadyPrepared: true,
       destroyAlreadyPending: false,
     };
   }
-
   await ensureSandboxGatewaySelected(sandboxName);
+  if (policyAuthorityReceipt.authority === "nemoclaw-managed") {
+    for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  }
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
+  let providerDetachAttempted = false;
   try {
     for (const entry of entries) {
+      await revalidateBeforeMutation();
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
-    for (const entry of entries) {
-      removeGeneratedPolicy(sandboxName, entry);
-      removedPolicies.push(entry);
+    if (policyAuthorityReceipt.authority === "nemoclaw-managed") {
+      for (const entry of entries) {
+        await revalidateBeforeMutation();
+        removeGeneratedPolicy(sandboxName, entry);
+        removedPolicies.push(entry);
+      }
     }
     for (const entry of entries) {
+      await revalidateBeforeMutation();
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      const detachOutcome = detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+      providerDetachAttempted = true;
+      const detachOutcome = await detachProvider(sandboxName, entry, {
+        allowLegacyGeneric: true,
+        prepareMutation: revalidateBeforeMutation,
+      });
       if (detachOutcome === "unknown") {
         throw new McpBridgeError(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
@@ -146,6 +207,7 @@ export async function prepareMcpBridgesForDestroy(
       // detached one entry before a later entry fails.
       detached.push(entry);
     }
+    await revalidateBeforeMutation();
     const marked = registry.updateSandbox(sandboxName, {
       mcp: {
         bridges: Object.fromEntries(
@@ -165,9 +227,21 @@ export async function prepareMcpBridgesForDestroy(
   } catch (error) {
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
-    if (removedPolicies.length > 0) {
+    let snapshotCurrent = true;
+    try {
+      assertMcpDestroySnapshotCurrent(sandboxName, entries);
+    } catch (snapshotError) {
+      snapshotCurrent = false;
+      rollbackFailures.push(
+        snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+      );
+    }
+    if (snapshotCurrent && scrubbedAdapters.length > 0) {
       try {
-        await restoreExistingMcpBridgeRuntime(sandboxName, removedPolicies, {
+        await restoreExistingMcpBridgeRuntime(sandboxName, scrubbedAdapters, {
+          ...(error instanceof McpPolicyAuthorityRefusalError
+            ? { teardownPolicyAuthorityRefusal: error }
+            : {}),
           lifecyclePhase: "teardown-rollback",
         });
         runtimeRestored = true;
@@ -177,13 +251,24 @@ export async function prepareMcpBridgesForDestroy(
         );
       }
     }
-    if (!runtimeRestored) {
+    if (
+      snapshotCurrent &&
+      !runtimeRestored &&
+      removedPolicies.length === 0 &&
+      !providerDetachAttempted &&
+      !(error instanceof McpPolicyAuthorityRefusalError)
+    ) {
       rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
+        ...(await rollbackScrubbedMcpAdapters(
+          sandboxName,
+          sandbox,
+          scrubbedAdapters,
+          revalidateBeforeMutation,
+        )),
       );
     }
     const current = registry.getSandbox(sandboxName);
-    if (current?.mcp?.destroyPreparedAt) {
+    if (runtimeRestored && current?.mcp?.destroyPreparedAt) {
       try {
         registry.updateSandbox(sandboxName, {
           mcp: {
@@ -202,6 +287,13 @@ export async function prepareMcpBridgesForDestroy(
       }
     }
     const detail = error instanceof Error ? error.message : String(error);
+    if (error instanceof McpPolicyAuthorityRefusalError) {
+      throw new McpPolicyAuthorityRefusalError(
+        rollbackFailures.length > 0
+          ? `${detail}\nMCP destroy compensation remains pending: ${rollbackFailures.join("; ")}`
+          : detail,
+      );
+    }
     throw new McpBridgeError(
       rollbackFailures.length > 0
         ? `${detail}\nMCP destroy rollback could not reattach: ${rollbackFailures.join("; ")}`
@@ -212,22 +304,82 @@ export async function prepareMcpBridgesForDestroy(
     entries,
     detachedProviderEntries: detached,
     scrubbedAdapterEntries: scrubbedAdapters,
+    revalidateBeforeDelete: revalidateBeforeMutation,
+    revalidateAfterDelete,
+    revalidateBeforeSuccess,
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
   };
+}
+
+/** Recheck exact MCP policy requirements before opening a delete-abort recovery window. */
+export async function revalidateMcpDestroyAbortPolicyAuthority(
+  sandboxName: string,
+  preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
+): Promise<void> {
+  if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) return;
+  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+  const resolvedTargets = await preflightMcpEntryTargets(preparation.entries);
+  const receipt = qualifyMcpPolicyAuthorityReceipt({
+    operation: `restore MCP bridges after a refused delete of sandbox '${sandboxName}'`,
+    requiredPolicyContents: preparation.entries.map((entry) => {
+      const target = resolvedTargets.get(entry.server);
+      if (!target) {
+        throw new McpBridgeError(
+          `MCP server '${entry.server}' has no validated address pins. Refusing delete-abort recovery.`,
+        );
+      }
+      return buildRequiredMcpBridgePolicy(entry, target);
+    }),
+    sandboxName,
+  });
+  await revalidateMcpPolicyAuthorityReceipt(receipt, undefined, () =>
+    assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries),
+  );
 }
 
 /** Restore all MCP runtime state after OpenShell refused to delete the sandbox. */
 export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
   if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
     return;
   }
-  const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  let authorityRefusal: McpPolicyAuthorityRefusalError | undefined;
+  try {
+    await revalidateMcpDestroyAbortPolicyAuthority(
+      sandboxName,
+      preparation,
+      validateContainingPolicyReceipt,
+    );
+  } catch (error) {
+    if (!(error instanceof McpPolicyAuthorityRefusalError)) throw error;
+    authorityRefusal = error;
+  }
+  let preparedSandbox: ReturnType<typeof assertMcpDestroySnapshotCurrent>;
+  try {
+    preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  } catch (snapshotError) {
+    if (!authorityRefusal) throw snapshotError;
+    const snapshotDetail =
+      snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+    throw new McpPolicyAuthorityRefusalError(
+      `${authorityRefusal.message}\nMCP destroy-abort snapshot validation also failed: ${snapshotDetail}`,
+      {
+        cause: new AggregateError(
+          [authorityRefusal, snapshotError],
+          "MCP destroy-abort authority and snapshot validation failed",
+        ),
+        exitCode: authorityRefusal.exitCode,
+        reasonCode: authorityRefusal.reasonCode,
+      },
+    );
+  }
   const destroyPreparedAt = preparedSandbox.mcp?.destroyPreparedAt ?? nowIso();
-  const cleared = registry.updateSandbox(sandboxName, {
+  const transitioned = registry.updateSandbox(sandboxName, {
     mcp: {
       bridges: Object.fromEntries(
         preparation.entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
@@ -235,11 +387,14 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       ...(preparedSandbox.mcp?.managedServerNames
         ? { managedServerNames: preparedSandbox.mcp.managedServerNames }
         : {}),
+      ...(authorityRefusal ? { destroyPreparedAt } : {}),
     },
   });
-  if (!cleared) {
+  if (!transitioned) {
     throw new McpBridgeError(
-      `Could not clear prepared MCP destroy state for sandbox '${sandboxName}' before runtime restoration.`,
+      authorityRefusal
+        ? `Could not retain prepared MCP destroy state for sandbox '${sandboxName}' before runtime compensation.`
+        : `Could not clear prepared MCP destroy state for sandbox '${sandboxName}' before runtime restoration.`,
     );
   }
   try {
@@ -248,7 +403,9 @@ export async function restoreMcpBridgesAfterDestroyAbort(
     for (const entry of preparation.entries)
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
+      ...(authorityRefusal ? { teardownPolicyAuthorityRefusal: authorityRefusal } : {}),
       lifecyclePhase: "teardown-rollback",
+      ...(authorityRefusal ? {} : { validateContainingPolicyReceipt }),
     });
   } catch (error) {
     let markerRestoreFailure = "";
@@ -270,12 +427,27 @@ export async function restoreMcpBridgesAfterDestroyAbort(
         restoreError instanceof Error ? restoreError.message : String(restoreError);
     }
     const detail = error instanceof Error ? error.message : String(error);
+    if (authorityRefusal) {
+      throw new McpPolicyAuthorityRefusalError(
+        `${authorityRefusal.message}\nMCP destroy-abort compensation remains pending: ${
+          markerRestoreFailure ? `${detail}; ${markerRestoreFailure}` : detail
+        }`,
+      );
+    }
+    if (error instanceof McpPolicyAuthorityRefusalError) {
+      throw new McpPolicyAuthorityRefusalError(
+        markerRestoreFailure
+          ? `${detail}; MCP destroy compensation remains pending: ${markerRestoreFailure}`
+          : detail,
+      );
+    }
     throw new McpBridgeError(
       markerRestoreFailure
         ? `${detail}; could not restore the MCP destroy retry marker: ${markerRestoreFailure}`
         : detail,
     );
   }
+  if (authorityRefusal) throw authorityRefusal;
 }
 
 /**

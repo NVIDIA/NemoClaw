@@ -3,17 +3,16 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { canonicalRepoReadPath } from "../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
-import {
-  runSpecialistAdvisor,
-  writeSpecialistDiff,
-  writeSpecialistSummary,
-} from "../tools/pr-review-advisor/run-specialist.mts";
+import { runSpecialistAdvisor, writeSpecialistSummary } from "../tools/pr-review-advisor/run-specialist.mts";
+import { writeSpecialistDiff } from "../tools/pr-review-advisor/specialist-context.mts";
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
@@ -48,15 +47,15 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
-  it("writes diff evidence to a new owner-only runtime path", () => {
-    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
-    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
-    const directory = path.join(configDir, "context");
+  it("writes readable diff evidence in the prepared advisor context", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const expected = path.join(directory, "diff.patch");
 
-    const file = writeSpecialistDiff(configDir, "diff evidence");
+    const file = writeSpecialistDiff(directory, "diff evidence");
 
     expect(file).toBe(expected);
+    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(expected);
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -65,16 +64,45 @@ describe("PR review advisor specialist prompts", () => {
   it("tightens an existing specialist diff path", () => {
     const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
     onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
-    const directory = path.join(configDir, "context");
+    const directory = configDir;
     const expected = path.join(directory, "diff.patch");
-    fs.mkdirSync(directory, { mode: 0o755 });
+    fs.chmodSync(directory, 0o755);
     fs.writeFileSync(expected, "stale", { mode: 0o644 });
 
-    writeSpecialistDiff(configDir, "diff evidence");
+    writeSpecialistDiff(directory, "diff evidence");
 
     expect(fs.readFileSync(expected, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(expected).mode & 0o777).toBe(0o600);
+  });
+
+  it("rejects a symbolic-link specialist diff file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
+    const target = path.join(directory, "outside.patch");
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    fs.writeFileSync(target, "unchanged");
+    fs.symlinkSync(target, path.join(directory, "diff.patch"));
+
+    expect(() => writeSpecialistDiff(directory, "diff evidence")).toThrow(
+      "Specialist diff file must not be a symbolic link",
+    );
+    expect(fs.readFileSync(target, "utf8")).toBe("unchanged");
+  });
+
+  it("rejects a dangling symbolic-link specialist diff file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
+    const targetDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-target-"));
+    const target = path.join(targetDirectory, "missing.patch");
+    onTestFinished(() => {
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.rmSync(targetDirectory, { recursive: true, force: true });
+    });
+    fs.symlinkSync(target, path.join(directory, "diff.patch"));
+
+    expect(() => writeSpecialistDiff(directory, "diff evidence")).toThrow(
+      "Specialist diff file must not be a symbolic link",
+    );
+    expect(fs.existsSync(target)).toBe(false);
   });
 
   it("parses every discovered specialist interest (#9949)", () => {
@@ -82,6 +110,39 @@ describe("PR review advisor specialist prompts", () => {
     expect(() => parseAdvisorInterest("missing-specialist")).toThrowError(
       `interest must be one of: ${ADVISOR_INTERESTS.join(", ")}`,
     );
+  });
+
+  it("renders the workflow matrix without installed packages", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-renderer-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    expect(() =>
+      execFileSync(process.execPath, ["--eval", "import('@earendil-works/pi-coding-agent')"], {
+        cwd: directory,
+        stdio: "ignore",
+      }),
+    ).toThrow();
+    const sourceDirectory = path.join(process.cwd(), "tools/pr-review-advisor");
+    fs.copyFileSync(
+      path.join(sourceDirectory, "render-specialist-matrix.mts"),
+      path.join(directory, "render-specialist-matrix.mts"),
+    );
+    fs.copyFileSync(
+      path.join(sourceDirectory, "specialist-catalog.mts"),
+      path.join(directory, "specialist-catalog.mts"),
+    );
+    fs.cpSync(path.join(sourceDirectory, "specialists"), path.join(directory, "specialists"), {
+      recursive: true,
+    });
+
+    const output = execFileSync(
+      process.execPath,
+      ["--experimental-strip-types", "render-specialist-matrix.mts"],
+      { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
+    );
+    const matrix = JSON.parse(output) as Array<{ interest: string; sandbox_name: string }>;
+
+    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
+    expect(matrix.every(({ sandbox_name: sandboxName }) => sandboxName.length <= 19)).toBe(true);
   });
 
   it("discovers a specialist from one Markdown prompt file", () => {

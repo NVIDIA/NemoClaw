@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-type DetachScenario = "success" | "drift" | "exhausted" | "other-error";
+type DetachScenario = "success" | "drift" | "exhausted" | "other-error" | "authority-refusal";
 
 function runDetachScenario(scenario: DetachScenario) {
   const script = String.raw`
@@ -61,12 +61,20 @@ const entry = {
 };
 let outcome = null;
 let message = null;
-try {
-  outcome = providerActions.detachProvider("alpha", entry);
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+(async () => {
+  try {
+    outcome = await providerActions.detachProvider("alpha", entry, {
+      prepareMutation: async () => {
+        if (scenario === "authority-refusal" && detachCalls > 0) {
+          throw new Error("policy authority changed before detach retry");
+        }
+      },
+    });
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+})().catch((error) => { console.error(error); process.exit(1); });
 `;
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
@@ -112,6 +120,14 @@ describe("MCP provider detach retry", () => {
     const result = runDetachScenario("other-error");
     expect(result.outcome).toBeNull();
     expect(result.message).toContain("permission denied");
+    expect(result.detachCalls).toBe(1);
+    expect(result.attached).toBe(true);
+  });
+
+  it("revalidates policy authority before a detach retry (#9833)", () => {
+    const result = runDetachScenario("authority-refusal");
+    expect(result.outcome).toBeNull();
+    expect(result.message).toContain("policy authority changed before detach retry");
     expect(result.detachCalls).toBe(1);
     expect(result.attached).toBe(true);
   });

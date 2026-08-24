@@ -72,8 +72,15 @@ function stubMissingBedrockAuth(): void {
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
   expectedCommands: string[] = [],
+  expectOpenAiProfileImport = false,
 ): void {
-  expect(harness.commands.map(({ command }) => command)).toEqual(expectedCommands);
+  const expected = expectOpenAiProfileImport
+    ? [
+        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
+        ...expectedCommands,
+      ]
+    : expectedCommands;
+  expect(harness.commands.map(({ command }) => command)).toEqual(expected);
   expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
   expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
   expect(harness.updateSandbox).not.toHaveBeenCalled();
@@ -193,12 +200,13 @@ describe("setupInference dependency failures", () => {
       expect.any(String),
       { OPENAI_API_KEY: "openai-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(23);
     expect(harness.errors).toEqual(["  remote provider registration rejected"]);
-    expectNoPostFailureSideEffects(harness);
+    expectNoPostFailureSideEffects(harness, [], true);
   });
 
   it("redacts a remote inference-set failure and preserves its status at the exit boundary", async () => {
@@ -238,9 +246,11 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledWith(37);
     expect(harness.errors.join("\n")).toContain("route failed");
     expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
-    expectNoPostFailureSideEffects(harness, [
-      "inference set -g nemoclaw --no-verify --provider openai-api --model gpt-test",
-    ]);
+    expectNoPostFailureSideEffects(
+      harness,
+      ["inference set -g nemoclaw --no-verify --provider openai-api --model gpt-test"],
+      true,
+    );
   });
 
   it("fails closed before provider registration when local vLLM validation fails", async () => {
@@ -735,7 +745,7 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledWith(23);
     expect(harness.errors).toContain("  Bedrock provider registration failed");
     expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
+    expectNoPostFailureSideEffects(harness, [], true);
   });
 
   it("falls back to status 1 when Bedrock provider registration returns status 0", async () => {
@@ -772,7 +782,7 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(harness.errors).toContain("  Bedrock provider registration failed without status");
     expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
+    expectNoPostFailureSideEffects(harness, [], true);
   });
 
   it("preserves the inference-set status through the injected Bedrock exit boundary", async () => {
@@ -811,9 +821,13 @@ describe("setupInference dependency failures", () => {
     expect(harness.logs).toEqual([
       "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
     ]);
-    expectNoPostFailureSideEffects(harness, [
-      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
-    ]);
+    expectNoPostFailureSideEffects(
+      harness,
+      [
+        `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
+      ],
+      true,
+    );
   });
 
   it("falls back to status 1 and a generic error when Bedrock inference set has no status", async () => {
@@ -854,9 +868,13 @@ describe("setupInference dependency failures", () => {
     expect(harness.logs).toEqual([
       "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
     ]);
-    expectNoPostFailureSideEffects(harness, [
-      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
-    ]);
+    expectNoPostFailureSideEffects(
+      harness,
+      [
+        `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
+      ],
+      true,
+    );
   });
 
   it("uses an injected Hermes DNS lookup before rejecting an unpinnable HTTPS endpoint", async () => {
@@ -974,11 +992,12 @@ describe("setupInference dependency failures", () => {
       "http://host.openshell.internal:4000/v1",
       { NVIDIA_INFERENCE_API_KEY: "test-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(29);
     expect(harness.errors).toEqual(["  routed provider registration rejected"]);
-    expectNoPostFailureSideEffects(harness);
+    expectNoPostFailureSideEffects(harness, [], true);
   });
 
   it("redacts a routed inference-set failure and preserves its status at the exit boundary", async () => {

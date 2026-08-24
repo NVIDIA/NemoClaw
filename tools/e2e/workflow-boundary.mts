@@ -1177,6 +1177,8 @@ function validateFreeStandingJobSelector(
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
       ? ["generate-matrix", "openshell-dev-artifact"]
+      : jobName === "cloud-onboard"
+        ? ["base-image-publication", "generate-matrix"]
       : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
@@ -1740,12 +1742,19 @@ function validateAllowJetsonDispatchInput(errors: string[], dispatchInputs: Work
 }
 
 function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord): void {
+  const publication = asRecord(jobs["base-image-publication"]);
+  if (
+    asRecord(publication.outputs).managed_image_revision !==
+    "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}"
+  ) {
+    errors.push("base-image-publication must expose the managed-image revision to Jetson dispatch");
+  }
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
-  if (job.needs !== "generate-matrix") {
-    errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
+  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    errors.push("jetson-nvmap-gpu job must depend on managed publication and generate-matrix");
   }
   const trustedPushOrManualSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}";
+    "${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}";
   if (job.if !== trustedPushOrManualSelector) {
     errors.push(
       "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
@@ -1807,11 +1816,13 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     !isDeepStrictEqual(asRecord(dispatch?.env), {
       E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       JETSON_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+      JETSON_DISPATCH_MANAGED_IMAGE_REVISION:
+        "${{ needs.base-image-publication.outputs.managed_image_revision }}",
       JETSON_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}",
     })
   ) {
     errors.push(
-      "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
+      "jetson-nvmap-gpu controller must dispatch the exact candidate, managed-image revision, and configured URL",
     );
   }
   const upload = namedStep(steps, "Upload Jetson nvmap GPU artifacts");
@@ -2898,6 +2909,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const jobEnv = asRecord(liveTargets.env);
+  if (
+    jobEnv.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
+    );
+  }
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }

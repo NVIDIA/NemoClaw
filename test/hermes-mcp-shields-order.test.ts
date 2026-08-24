@@ -18,6 +18,7 @@ const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const shields = require("./src/lib/shields/index.js");
 
@@ -50,6 +51,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 policies.getPresetContentGatewayState = () => "match";
 policies.applyPresetContent = () => { mutations.push("policy:apply"); return true; };
 policies.removePreset = () => { mutations.push("policy:remove"); return true; };
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 processRecovery.executeSandboxCommand = (_sandboxName, command) => {
   mutations.push("adapter:" + command);
   return { status: 0, stdout: '{"ok":true}\n', stderr: "" };
@@ -138,8 +140,11 @@ const capture = async (operation) => {
       freshManifest?: unknown;
     };
     expect(payload.messages).toHaveLength(4);
-    expect(payload.messages.every((message) =>
-        message.includes("has shields up or an unreadable shields posture"))).toBe(true);
+    expect(
+      payload.messages.every((message) =>
+        message.includes("has shields up or an unreadable shields posture"),
+      ),
+    ).toBe(true);
     expect(payload.mutations).toEqual([]);
     expect(payload.freshManifest).toBeUndefined();
   });
