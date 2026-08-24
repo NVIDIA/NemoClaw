@@ -115,7 +115,7 @@ Hermes Google Chat does not use the dedicated webhook endpoint or `$$nemoclaw tu
 
 When `channels start` re-enables a channel, NemoClaw records the channel as enabled in the messaging plan.
 The rebuild attaches the existing bridge provider before applying its matching built-in policy preset to the replacement sandbox.
-While a channel remains stopped, the rebuild omits its runtime configuration, token upsert, and startup effects.
+While a channel remains stopped, the rebuild omits its runtime configuration, token upsert, and channel startup effects.
 Generic providers and refresh bridges remain detached.
 <AgentOnly variant="hermes">
 For stopped Hermes Discord, a preserved credential-bound policy requires the exact validated static provider, so the rebuild retains and attaches only that provider without starting Discord or recreating its credentials.

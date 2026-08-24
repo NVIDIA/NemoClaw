@@ -60,7 +60,12 @@ import {
   observeOpenClawPairingQualification,
   observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
+  OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
+  OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
@@ -123,6 +128,8 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   storeOptions?: LaunchReadinessStoreOptions;
   withSandboxLock?: typeof withSandboxMutationLock;
   withGatewayLock?: typeof withGatewayRouteMutationLock;
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export interface LaunchReadinessPublication {
@@ -986,8 +993,49 @@ export function resolveOrdinaryOpenClawPairingTarget(
  * Settle current Portable OpenClaw pairing under the lifecycle then owning
  * gateway-route locks. The repair observation admits only one canonical local
  * write request; a final strict observation requires that request to be gone.
- * An ambiguous approval receives one final observation and never another write.
+ * An ambiguous approval receives one bounded final observation window and
+ * never another write.
  */
+type PortablePairingWaitResult =
+  | { readonly kind: "observed"; readonly value: OpenClawPairingRepairObservation }
+  | { readonly kind: "rejected" }
+  | { readonly kind: "timeout" };
+
+async function waitForPortablePairingObservation(
+  sandboxName: string,
+  target: OpenClawPairingSettlementTarget,
+  deadline: number,
+  observe: typeof observeOpenClawPairingRepairSettlement,
+  decide: (value: OpenClawPairingRepairObservation) => "accept" | "reject" | "retry",
+  now: () => number,
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<PortablePairingWaitResult> {
+  while (true) {
+    const remaining = deadline - now();
+    if (remaining <= 0) return { kind: "timeout" };
+    try {
+      const value = observe(
+        sandboxName,
+        target.gatewayName,
+        target.version,
+        target.stateDirectory,
+      );
+      if (deadline - now() <= 0) return { kind: "timeout" };
+      const decision = decide(value);
+      if (deadline - now() <= 0) return { kind: "timeout" };
+      if (decision === "accept") return { kind: "observed", value };
+      if (decision === "reject") return { kind: "rejected" };
+    } catch (error) {
+      if (!(error instanceof OpenClawPairingObservationRetryableError)) {
+        return { kind: "rejected" };
+      }
+    }
+    const remainingAfterAttempt = deadline - now();
+    if (remainingAfterAttempt <= 0) return { kind: "timeout" };
+    await sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remainingAfterAttempt));
+  }
+}
+
 export async function settlePortableOpenClawPairing(
   sandboxName: string,
   options: {
@@ -1006,6 +1054,9 @@ export async function settlePortableOpenClawPairing(
     deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
   const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
+  const now = deps.now ?? (() => performance.now());
+  const sleep =
+    deps.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
   return withSandboxLock(sandboxName, async () => {
     let firstEntry = getSandbox(sandboxName);
@@ -1082,17 +1133,24 @@ export async function settlePortableOpenClawPairing(
         return incompletePortablePairing("portable-runtime-identity-invalid");
       }
 
-      let first: OpenClawPairingRepairObservation;
-      try {
-        first = observeRepairPairing(
-          sandboxName,
-          target.gatewayName,
-          target.version,
-          target.stateDirectory,
-        );
-      } catch {
+      const settlementDeadline = now() + OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+      const initialDeadline = Math.min(
+        settlementDeadline,
+        now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+      );
+      const initial = await waitForPortablePairingObservation(
+        sandboxName,
+        target,
+        initialDeadline,
+        observeRepairPairing,
+        () => "accept",
+        now,
+        sleep,
+      );
+      if (initial.kind !== "observed") {
         return incompletePortablePairing("portable-pairing-incomplete");
       }
+      const first = initial.value;
       if (first.state === "settled") return { kind: "settled" };
 
       // A canonical pending transition is the producer's completed output.
@@ -1101,20 +1159,33 @@ export async function settlePortableOpenClawPairing(
       }
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
-      try {
-        const final: OpenClawPairingSettlementObservation = observeSettledPairing(
-          sandboxName,
-          target.gatewayName,
-          target.version,
-          target.stateDirectory,
-        );
-        return final.state === "settled" &&
-          final.deviceIdentitySha256 === first.deviceIdentitySha256
-          ? { kind: "settled" }
-          : incompletePortablePairing("portable-pairing-incomplete");
-      } catch {
-        return incompletePortablePairing("portable-pairing-incomplete");
-      }
+      const finalDeadline = Math.min(
+        settlementDeadline,
+        now() + OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+      );
+      const final = await waitForPortablePairingObservation(
+        sandboxName,
+        target,
+        finalDeadline,
+        observeRepairPairing,
+        (candidate) => {
+          if (candidate.deviceIdentitySha256 !== first.deviceIdentitySha256) return "reject";
+          if (candidate.state !== "settled") return "retry";
+          const strict: OpenClawPairingSettlementObservation = observeSettledPairing(
+            sandboxName,
+            target.gatewayName,
+            target.version,
+            target.stateDirectory,
+          );
+          if (strict.deviceIdentitySha256 !== first.deviceIdentitySha256) return "reject";
+          return strict.state === "settled" ? "accept" : "retry";
+        },
+        now,
+        sleep,
+      );
+      return final.kind === "observed"
+        ? { kind: "settled" }
+        : incompletePortablePairing("portable-pairing-incomplete");
     });
   });
 }
