@@ -86,7 +86,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
   "onboard-negative-paths": {
     legacyFile: "test/e2e/live/onboard-negative-paths.test.ts",
     tests: [
-      { files: ["test/credentials.test.ts"], project: "integration" },
+      { files: ["test/credentials/credentials.test.ts"], project: "integration" },
       {
         files: ["test/package-contract/onboard/invalid-nvidia-key.test.ts"],
         project: "package-contract",

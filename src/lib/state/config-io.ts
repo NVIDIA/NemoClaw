@@ -156,6 +156,13 @@ export class ConfigPermissionError extends Error {
   }
 }
 
+class ConfigSymlinkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigSymlinkError";
+  }
+}
+
 /**
  * Reject a path if it — or any ancestor up to the user's home — is a symlink.
  * This prevents an attacker from planting e.g. ~/.nemoclaw as a symlink to an
@@ -185,7 +192,7 @@ export function rejectSymlinksOnPath(dirPath: string): void {
       const stat = fs.lstatSync(current);
       if (stat.isSymbolicLink()) {
         const target = fs.readlinkSync(current);
-        throw new Error(
+        throw new ConfigSymlinkError(
           `Refusing to use config directory: ${current} is a symbolic link ` +
             `(target: ${target}). This may indicate a symlink attack. ` +
             `Remove the symlink and retry: rm ${shellQuote(current)}`,
@@ -292,11 +299,20 @@ export function ensureConfigDir(dirPath: string): void {
 }
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
+  const dirPath = path.dirname(filePath);
   try {
-    ensureConfigDir(path.dirname(filePath));
+    ensureConfigDir(dirPath);
   } catch (error) {
-    if (error instanceof ConfigPermissionError) {
+    if (error instanceof ConfigSymlinkError || error instanceof ConfigPermissionError) {
       throw error;
+    }
+    const errnoError = error instanceof Error ? error : null;
+    if (isPermissionError(errnoError)) {
+      throw new ConfigPermissionError(
+        `Cannot read config directory: ${dirPath}`,
+        dirPath,
+        toError(errnoError),
+      );
     }
     // Directory doesn't exist and can't be created — fall through to let
     // readFileSync produce the appropriate ENOENT / fallback path.

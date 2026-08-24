@@ -97,11 +97,6 @@
       "category": "security"
     },
     {
-      "file": "test/growth-guardrails-workflow-boundary.test.ts",
-      "test": "runs the trusted Vitest guardrails against pull request data",
-      "category": "security"
-    },
-    {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
