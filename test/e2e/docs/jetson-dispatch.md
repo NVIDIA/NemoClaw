@@ -153,11 +153,11 @@ of `success`, `cleanup: "succeeded"`, a device identity, and the artifact
 archive.
 
 If a workflow fails after submission begins, inspect `jetson-dispatch.json`
-before another dispatch. If it contains `cancellation`, inspect the recorded job
-in the operator service. If artifact upload failed and the file is unavailable,
-use the job ID from the workflow error or logs. Cancel the job or confirm
-completion before another dispatch, regardless of whether the cancellation
-outcome is pending, succeeded, or failed.
+before another dispatch. Use its job ID to inspect the operator-service job,
+even when the receipt has no `cancellation` record. If artifact upload failed
+and the file is unavailable, use the job ID from the workflow error or logs.
+Cancel the job or confirm completion before another dispatch, regardless of
+whether the cancellation outcome is absent, pending, succeeded, or failed.
 
 ## Live Target
 

@@ -295,6 +295,7 @@ export function createJetsonCancellation(options: {
 
 export async function submitJetsonDispatch(options: {
   baseUrl: URL;
+  cancel?: CancelJetsonDispatch;
   dispatchRequest: JetsonDispatchRequest;
   receiptFile: string;
   request?: typeof dispatcherRequest;
@@ -307,12 +308,14 @@ export async function submitJetsonDispatch(options: {
     throw new Error(`Jetson dispatch ${jobId} stopped before submission`);
   }
   const request = options.request ?? dispatcherRequest;
-  const cancel = createJetsonCancellation({
-    baseUrl: options.baseUrl,
-    dispatch,
-    receiptFile: options.receiptFile,
-    request,
-  });
+  const cancel =
+    options.cancel ??
+    createJetsonCancellation({
+      baseUrl: options.baseUrl,
+      dispatch,
+      receiptFile: options.receiptFile,
+      request,
+    });
 
   let status: JetsonDispatchStatus;
   try {
@@ -347,7 +350,6 @@ export async function pollJetsonDispatch(options: {
   cancel?: CancelJetsonDispatch;
   deadlineMs: number;
   initialStatus: JetsonDispatchStatus;
-  jobId: string;
   now?: () => number;
   receiptFile: string;
   request?: typeof dispatcherRequest;
@@ -356,6 +358,7 @@ export async function pollJetsonDispatch(options: {
 }): Promise<JetsonDispatchStatus> {
   const now = options.now ?? Date.now;
   const request = options.request ?? dispatcherRequest;
+  const jobId = options.initialStatus.jobId;
   const cancel =
     options.cancel ??
     createJetsonCancellation({
@@ -367,28 +370,25 @@ export async function pollJetsonDispatch(options: {
   const wait = options.wait ?? delay;
   let consecutiveFailures = 0;
   let status = options.initialStatus;
-  if (status.jobId !== options.jobId) {
-    throw new Error("Jetson dispatcher status does not match the accepted job");
-  }
   try {
     writeJetsonRecoveryReceipt(options.receiptFile, status);
   } catch {
     const cancellation = await cancel("recovery-receipt-failure");
     throw new Error(
-      `Jetson dispatch ${options.jobId} was accepted but its recovery receipt could not be written; ${cancellationResultMessage(cancellation)}`,
+      `Jetson dispatch ${jobId} was accepted but its recovery receipt could not be written; ${cancellationResultMessage(cancellation)}`,
     );
   }
   while (status.state !== "completed") {
     if (options.stopping?.()) {
       const cancellation = await cancel("signal");
       throw new Error(
-        `Jetson dispatch ${options.jobId} cancellation requested; ${cancellationResultMessage(cancellation)}`,
+        `Jetson dispatch ${jobId} cancellation requested; ${cancellationResultMessage(cancellation)}`,
       );
     }
     if (now() >= options.deadlineMs) {
       const cancellation = await cancel("controller-deadline");
       throw new Error(
-        `Jetson dispatch ${options.jobId} did not complete before the controller deadline; ${cancellationResultMessage(cancellation)}`,
+        `Jetson dispatch ${jobId} did not complete before the controller deadline; ${cancellationResultMessage(cancellation)}`,
       );
     }
     await wait(POLL_INTERVAL_MS);
@@ -397,12 +397,12 @@ export async function pollJetsonDispatch(options: {
         await request({
           baseUrl: options.baseUrl,
           method: "GET",
-          path: `v1/jobs/${options.jobId}`,
+          path: `v1/jobs/${jobId}`,
           maxBytes: MAX_STATUS_BYTES,
         }),
         options.initialStatus.request,
       );
-      if (status.jobId !== options.jobId) {
+      if (status.jobId !== jobId) {
         throw new Error("Jetson dispatcher status does not match the accepted job");
       }
       consecutiveFailures = 0;
@@ -412,7 +412,7 @@ export async function pollJetsonDispatch(options: {
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
         const cancellation = await cancel("status-request-failures");
         throw new Error(
-          `Jetson dispatch ${options.jobId} status failed ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive times; ${cancellationResultMessage(cancellation)}`,
+          `Jetson dispatch ${jobId} status failed ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive times; ${cancellationResultMessage(cancellation)}`,
         );
       }
       console.warn("Jetson dispatch status request failed; retrying");
@@ -443,32 +443,38 @@ async function main(): Promise<void> {
   fs.chmodSync(artifactDirectory, 0o700);
   const receiptFile = path.join(artifactDirectory, "jetson-dispatch.json");
 
-  let dispatched: JetsonDispatchStatus | undefined;
-  let cancelDispatch: CancelJetsonDispatch | undefined;
+  const jobId = jetsonDispatchJobId(request);
+  const cancelDispatch = createJetsonCancellation({
+    baseUrl,
+    dispatch: { jobId, request },
+    receiptFile,
+    request: dispatcherRequest,
+  });
+  let submissionStarted = false;
   let stopping = false;
   const cancel = (): void => {
     if (stopping) return;
     stopping = true;
-    if (!dispatched) {
+    if (!submissionStarted) {
       process.exitCode = 1;
       return;
     }
-    void cancelDispatch?.("signal").finally(() => {
+    void cancelDispatch("signal").finally(() => {
       process.exitCode = 1;
     });
   };
   process.on("SIGINT", cancel);
   process.on("SIGTERM", cancel);
 
+  submissionStarted = true;
   const submission = await submitJetsonDispatch({
     baseUrl,
+    cancel: cancelDispatch,
     dispatchRequest: request,
     receiptFile,
     stopping: () => stopping,
   });
-  dispatched = submission.status;
-  const jobId = dispatched.jobId;
-  cancelDispatch = submission.cancel;
+  const dispatched = submission.status;
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
   await pollJetsonDispatch({
@@ -476,7 +482,6 @@ async function main(): Promise<void> {
     cancel: cancelDispatch,
     deadlineMs: deadline,
     initialStatus: dispatched,
-    jobId,
     receiptFile,
     stopping: () => stopping,
   });

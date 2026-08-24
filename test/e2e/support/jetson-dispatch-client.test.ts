@@ -449,7 +449,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 0,
         receiptFile,
         request: requestImpl,
@@ -472,7 +471,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 0,
         receiptFile,
         request: requestImpl,
@@ -501,7 +499,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 0,
         receiptFile: directory,
         request: requestImpl,
@@ -524,7 +521,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 10_000,
         receiptFile: temporaryReceiptFile(),
         request: requestImpl,
@@ -549,7 +545,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 10_000,
         receiptFile,
         request: requestImpl,
@@ -582,7 +577,6 @@ describe("Jetson dispatch GitHub controller", () => {
         baseUrl: new URL("https://dispatch.test/"),
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
-        jobId: queuedStatus.jobId,
         now: () => 10_000,
         receiptFile,
         request: requestImpl,
@@ -671,23 +665,50 @@ describe("Jetson dispatch GitHub controller", () => {
   it("cancels an accepted job when a signal arrives before the submission response (#8142)", async () => {
     const receiptFile = temporaryReceiptFile();
     let stopping = false;
+    let markPostStarted!: () => void;
+    const postStarted = new Promise<void>((resolve) => {
+      markPostStarted = resolve;
+    });
+    let releasePost!: () => void;
+    const postRelease = new Promise<void>((resolve) => {
+      releasePost = resolve;
+    });
     const requestImpl = vi
       .fn<typeof dispatcherRequest>()
       .mockImplementationOnce(async () => {
-        stopping = true;
+        markPostStarted();
+        await postRelease;
         return { job: queuedStatusV2 };
       })
       .mockResolvedValueOnce(undefined);
+    const cancel = createJetsonCancellation({
+      baseUrl: new URL("https://dispatch.test/"),
+      dispatch: queuedStatusV2,
+      receiptFile,
+      request: requestImpl,
+    });
 
-    await expect(
-      submitJetsonDispatch({
-        baseUrl: new URL("https://dispatch.test/"),
-        dispatchRequest: requestV2,
-        receiptFile,
-        request: requestImpl,
-        stopping: () => stopping,
-      }),
-    ).rejects.toThrow(
+    const submission = submitJetsonDispatch({
+      baseUrl: new URL("https://dispatch.test/"),
+      cancel,
+      dispatchRequest: requestV2,
+      receiptFile,
+      request: requestImpl,
+      stopping: () => stopping,
+    });
+    await postStarted;
+    stopping = true;
+    await expect(cancel("signal")).resolves.toEqual({
+      outcome: "succeeded",
+      receiptWritten: true,
+    });
+    expect(requestImpl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatusV2.jobId}` }),
+    );
+    releasePost();
+
+    await expect(submission).rejects.toThrow(
       `Jetson dispatch ${queuedStatusV2.jobId} cancellation requested; cancellation request succeeded`,
     );
     expect(requestImpl).toHaveBeenCalledTimes(2);
@@ -711,7 +732,6 @@ describe("Jetson dispatch GitHub controller", () => {
       baseUrl: new URL("https://dispatch.test/"),
       deadlineMs: 10_000,
       initialStatus: queuedStatus,
-      jobId: queuedStatus.jobId,
       now: () => 0,
       receiptFile,
       request: requestImpl,
