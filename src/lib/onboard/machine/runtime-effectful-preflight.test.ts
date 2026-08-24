@@ -71,7 +71,7 @@ function providerBundle(
       inspectLegacyContainer: false,
       prepareHostRuntime,
     },
-  } as RuntimeProviderBundle;
+  } as unknown as RuntimeProviderBundle;
 }
 
 afterEach(() => {

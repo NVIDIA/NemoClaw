@@ -206,6 +206,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
         status: "ok",
         detail: "socket-free",
       }),
+      validateSandboxGpu: () => undefined,
       preflightLifecycle: () => null,
     },
     gateway: {

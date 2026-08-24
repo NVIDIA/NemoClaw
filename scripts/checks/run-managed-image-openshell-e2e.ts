@@ -33,6 +33,7 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
+import { managedStartupStateRoots } from "../../src/lib/onboard/managed-startup/state-roots.ts";
 import type {
   RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
@@ -1040,6 +1041,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             request: launch.managedStartupRootApplyRequest,
             image,
             agentIdentity: managedImageRuntimeIdentity(input.agent),
+            managedStateRoots: managedStartupStateRoots({
+              agent: input.agent,
+              sandboxName: input.sandbox,
+              agentIdentity: managedImageRuntimeIdentity(input.agent),
+            }),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
           }),
           ...startupPlan,

@@ -40,11 +40,11 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
       "confirm placeholder credential injection",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey =
     secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
     skipLive(skip, "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation");
-  await requireLivePrerequisites(host, skip);
+  await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-cred");
   cleanup.add(`best-effort inference-routing credential-isolation cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
@@ -218,10 +218,10 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
       "request OpenAI chat through inference.local",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   requireProviderSmokeSelected("openai", skip);
   const apiKey = secrets.optional("OPENAI_API_KEY") ?? skipLive(skip, "OPENAI_API_KEY not set");
-  await requireLivePrerequisites(host, skip);
+  await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-openai");
   const model = process.env.NEMOCLAW_OPENAI_MODEL || "gpt-4o-mini";
   cleanup.add(`best-effort inference-routing OpenAI cleanup for ${sandboxName}`, () =>
@@ -269,11 +269,11 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
       "request Anthropic messages through inference.local",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   requireProviderSmokeSelected("anthropic", skip);
   const apiKey =
     secrets.optional("ANTHROPIC_API_KEY") ?? skipLive(skip, "ANTHROPIC_API_KEY not set");
-  await requireLivePrerequisites(host, skip);
+  await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-anth");
   const model = process.env.NEMOCLAW_ANTHROPIC_MODEL || "claude-sonnet-4-6";
   cleanup.add(`best-effort inference-routing Anthropic cleanup for ${sandboxName}`, () =>

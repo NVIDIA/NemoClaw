@@ -23,6 +23,7 @@ import {
   runReadinessGatedRuntimePreflight,
 } from "./fatal-runtime-preflight";
 import type { HostAssessment } from "./preflight";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
   return {
@@ -357,7 +358,7 @@ describe("report-backed runtime readiness (#7411)", () => {
           }),
           detectGpu: () => null,
           warnIfHostProxyMissesLoopback: vi.fn(),
-          assertDockerBridgeAndContainerDnsHealthy: bridge,
+          assertRuntimeProviderHealthy: bridge,
           validateSandboxGpuPreflight: validateGpu,
           exitProcess,
         },
@@ -454,7 +455,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
         nimCapable: true,
       }),
       warnIfHostProxyMissesLoopback: vi.fn(),
-      assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+      assertRuntimeProviderHealthy: vi.fn(),
       validateSandboxGpuPreflight: vi.fn(),
       exitProcess: vi.fn(() => {
         throw new Error("unexpected exit");
@@ -475,7 +476,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
         assessHost: assess,
         detectGpu: () => null,
         warnIfHostProxyMissesLoopback: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
         validateSandboxGpuPreflight: vi.fn(),
       },
     );
@@ -492,7 +493,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
       assessHost: () => hostWithRuntime("docker"),
       detectGpu: () => null,
       warnIfHostProxyMissesLoopback: vi.fn(),
-      assertRuntimeProviderHealthy: (_host, config) => {
+      assertRuntimeProviderHealthy: (_host: HostAssessment, config: SandboxGpuConfig) => {
         gpu(config);
         bridge();
       },
@@ -537,7 +538,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
       assessHost: () => hostWithRuntime("docker"),
       detectGpu: () => null,
       warnIfHostProxyMissesLoopback: vi.fn(),
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      assertRuntimeProviderHealthy: bridge,
       validateSandboxGpuPreflight: validateGpu,
       exitProcess,
     };
@@ -738,7 +739,7 @@ describe("readiness-gated runtime preflight", () => {
         assessHost: wslDockerDesktopHost,
         detectGpu,
         warnIfHostProxyMissesLoopback: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
         validateSandboxGpuPreflight: vi.fn(),
       },
     );
@@ -768,7 +769,7 @@ describe("readiness-gated runtime preflight", () => {
           assessHost: wslDockerDesktopHost,
           detectGpu: () => null,
           warnIfHostProxyMissesLoopback: vi.fn(),
-          assertDockerBridgeAndContainerDnsHealthy: bridge,
+          assertRuntimeProviderHealthy: bridge,
           validateSandboxGpuPreflight: validateGpu,
           exitProcess,
         },
@@ -893,7 +894,7 @@ describe("readiness-gated runtime preflight", () => {
           assessHost: () => hostWithRuntime("docker"),
           detectGpu: () => null,
           warnIfHostProxyMissesLoopback: vi.fn(),
-          assertDockerBridgeAndContainerDnsHealthy: bridge,
+          assertRuntimeProviderHealthy: bridge,
           validateSandboxGpuPreflight: gpu,
           exitProcess: exit as never,
         },
@@ -915,7 +916,7 @@ describe("GPU trust-gate rejection reason propagation (#9000)", () => {
     assessHost: () => host,
     detectGpu,
     warnIfHostProxyMissesLoopback: vi.fn(),
-    assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+    assertRuntimeProviderHealthy: vi.fn(),
     validateSandboxGpuPreflight: vi.fn(),
   });
 

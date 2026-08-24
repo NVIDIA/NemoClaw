@@ -1080,6 +1080,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
       runtime: managedWorkloadRuntime,
       workload: preparedSandboxWorkload,
+      sandboxName,
       stateRoot: getDockerDriverGatewayStateDir(),
       bootstrapIdentity: managedBootstrapIdentity,
       request: managedStartupRootApplyRequest,

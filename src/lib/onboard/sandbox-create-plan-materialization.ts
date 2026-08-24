@@ -362,7 +362,7 @@ export function materializeHermesPortableCreatePlan(input: {
       baselineExclusions: intent.policy.options.baselineExclusions.map((entry) => ({ ...entry })),
     },
   );
-  const driverConfig = buildSandboxDriverConfig(intent, null, null);
+  const driverConfig = buildSandboxDriverConfig(intent, undefined, null);
   const createArgs = [
     "--from",
     fromRef,

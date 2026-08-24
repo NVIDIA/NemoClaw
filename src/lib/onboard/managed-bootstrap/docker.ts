@@ -3676,19 +3676,12 @@ export function createDockerManagedBootstrapAdapter(
         prepareManagedBootstrapStateRoots({
           inspect: originalBeforeJournal as Record<string, unknown>,
           roots: handle.plan.managedStateRoots,
-          captureVolume: (args) => {
-            const result = deps.dockerCapture(["volume", ...args], {
+          captureVolume: (args) =>
+            deps.dockerCapture(["volume", ...args], {
               ignoreError: true,
               suppressOutput: true,
               timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-            });
-            if (Number(result.status ?? 1) !== 0) {
-              throw new Error(
-                `Managed bootstrap Docker state-volume inspection failed: ${commandDetail(result)}`,
-              );
-            }
-            return String(result.stdout ?? "");
-          },
+            }),
         });
         if (
           dockerContainerName(originalBeforeJournal) !== authority.originalName ||

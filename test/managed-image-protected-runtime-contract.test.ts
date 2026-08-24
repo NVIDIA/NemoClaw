@@ -135,6 +135,7 @@ describe("protected managed-image runtime contract", () => {
           },
         },
       } as never,
+      sandboxName: "alpha",
       stateRoot: "/tmp/nemoclaw-state",
       bootstrapIdentity: "bootstrap-identity",
       request: {} as never,

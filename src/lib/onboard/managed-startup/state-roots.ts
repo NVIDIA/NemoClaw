@@ -99,18 +99,19 @@ export function managedStartupStateRoots(input: {
   const gid = exactAgentIdentity(input.agentIdentity.gid, "GID");
   return Object.freeze(
     MANAGED_AGENT_STATE_ROOTS[input.agent].map((declaration) => {
+      const mountTarget: string = declaration.mountTarget;
       if (
-        !path.posix.isAbsolute(declaration.mountTarget) ||
-        path.posix.normalize(declaration.mountTarget) !== declaration.mountTarget ||
-        declaration.mountTarget === "/"
+        !path.posix.isAbsolute(mountTarget) ||
+        path.posix.normalize(mountTarget) !== mountTarget ||
+        mountTarget === "/"
       ) {
         throw new Error("Managed startup state-root mount target is invalid.");
       }
       const resourceIdentity = declaration.resourceIdentity(sandboxName);
       return Object.freeze({
-        mountTarget: declaration.mountTarget,
+        mountTarget,
         resourceIdentity,
-        ownershipLabels: declaration.ownershipLabels(sandboxName, declaration.mountTarget),
+        ownershipLabels: declaration.ownershipLabels(sandboxName, mountTarget),
         uid,
         gid,
         mode: declaration.mode,

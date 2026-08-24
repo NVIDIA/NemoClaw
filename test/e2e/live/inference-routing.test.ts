@@ -308,7 +308,7 @@ const RUNTIME_IDENTITY_E2E_SCENARIOS = [
 
 type RuntimeIdentityE2EContext = Pick<
   E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
 > & {
   skip: (note?: string) => never;
 };
@@ -348,7 +348,6 @@ async function runRuntimeIdentityE2EScenario(
   cleanup.add(`remove runtime identity E2E temp root ${root}`, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
-
   const model = "nemoclaw-e2e-runtime-identity";
   const inferenceKey = "sk-runtime-identity-TEST-NOT-A-REAL-VALUE";
   const sandboxName = inferenceSandboxName(`e2e-i${scenario.testId.slice(-2)}`);
@@ -993,13 +992,14 @@ test
   RUNTIME_IDENTITY_E2E_OPTIONS,
   async (
     [testNumber, providerLabel, scenario],
-    { artifacts, cleanup, host, progress, sandbox, skip },
+    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip },
   ) => {
     await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, {
       artifacts,
       cleanup,
       host,
       progress,
+      runtimeProvider,
       sandbox,
       skip,
     });

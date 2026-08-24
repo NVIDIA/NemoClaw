@@ -164,15 +164,17 @@ export function assertOnboardSystemReadiness(
 ): SystemReadinessReport {
   const exitProcess = options.exitProcess ?? exitProcessByDefault;
   const portable = isPortableExperimentalProfile();
+  const managedLocalGatewayEnabled =
+    host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
   const selectedRuntimeUsesProviderHostRoute =
-    !portable && isLinuxDockerDriverGatewayEnabled(host.platform)
+    !portable && managedLocalGatewayEnabled
       ? (() => {
-          const provider = resolveConfiguredRuntimeProvider(host.platform);
+          const provider = resolveConfiguredRuntimeProvider("linux");
           return (
             provider.gateway.supported &&
             provider.gateway.prepareHostRuntime({
               environment: process.env,
-              platform: host.platform,
+              platform: "linux",
             }).sandboxHostAddress !== null
           );
         })()
@@ -182,7 +184,7 @@ export function assertOnboardSystemReadiness(
     allowUnsupportedRuntime:
       portable ||
       selectedRuntimeUsesProviderHostRoute ||
-      !isLinuxDockerDriverGatewayEnabled(host.platform),
+      !managedLocalGatewayEnabled,
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:

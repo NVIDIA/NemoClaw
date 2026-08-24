@@ -534,9 +534,9 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
     visit(sourceFile);
   }
 
-  const managedBootstrapFiles = walk(
-    path.join(SRC_ROOT, "lib/onboard/managed-bootstrap"),
-  ).filter((absPath) => !path.basename(absPath).includes("test-fixture"));
+  const managedBootstrapFiles = [
+    ...walk(path.join(SRC_ROOT, "lib/onboard/managed-bootstrap")),
+  ].filter((absPath) => !path.basename(absPath).includes("test-fixture"));
   const podmanProviderFiles = [
     ...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider")),
   ].filter((absPath) => path.basename(absPath).startsWith("podman"));

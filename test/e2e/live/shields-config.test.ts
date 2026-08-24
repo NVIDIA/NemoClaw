@@ -909,7 +909,6 @@ test(
       ],
       {
         artifactName: "phase-5b-host-root-tamper",
-        env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
@@ -998,7 +997,6 @@ test(
     ],
     {
       artifactName: "phase-5c-config-hash-perms-only-drift",
-      env: commandEnv(),
       timeoutMs: 30_000,
     },
   );

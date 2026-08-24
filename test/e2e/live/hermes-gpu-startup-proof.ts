@@ -321,8 +321,14 @@ raise SystemExit(1)`,
   expect(verifiedManagedAuthority.agent).toBe("hermes");
   const managedBootstrapCommand = commandBoundary.cmd;
   expect(Array.isArray(managedBootstrapCommand)).toBe(true);
+  if (!Array.isArray(managedBootstrapCommand)) {
+    throw new TypeError("managed bootstrap command must be an argument array");
+  }
   const bootstrapIdentity = managedBootstrapCommand[5];
   expect(typeof bootstrapIdentity).toBe("string");
+  if (typeof bootstrapIdentity !== "string") {
+    throw new TypeError("managed bootstrap identity must be a string");
+  }
   assertManagedBootstrapIdentity(bootstrapIdentity);
   const agentIdentity = managedImageRuntimeIdentity(verifiedManagedAuthority.agent);
   expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);

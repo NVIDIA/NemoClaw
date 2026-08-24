@@ -171,6 +171,7 @@ describe("OpenShell 0.0.99 migration review", () => {
           },
         },
       } as never,
+      sandboxName: "alpha",
       stateRoot: "/tmp/nemoclaw-state",
       bootstrapIdentity: "bootstrap-identity",
       request: {} as never,

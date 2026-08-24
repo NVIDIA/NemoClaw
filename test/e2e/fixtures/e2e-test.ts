@@ -40,7 +40,7 @@ import { RuntimeProviderPrerequisite } from "./runtime-provider.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
-declare module "@vitest/runner" {
+declare module "vitest" {
   interface TaskMeta {
     e2eArtifactRootId?: string;
     e2ePhases?: readonly string[];

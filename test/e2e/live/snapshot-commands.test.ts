@@ -591,7 +591,7 @@ printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
     );
     expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
     await expectBaselineExclusionAgreement(
-      runtimeProvider,
+      host,
       sandbox,
       SANDBOX_NAME,
       "phase-4-after-reapplying-baseline-exclusion",
@@ -941,7 +941,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     progress.phase("back up a stopped sandbox and restore its snapshot");
     const snapshotsBeforeStoppedBackup = snapshotManifestDirectories();
     const stoppedContainerId = await onlySandboxContainerId(
-      host,
+      runtimeProvider,
       SANDBOX_NAME,
       "phase-10-stopped-backup-container-lookup",
     );

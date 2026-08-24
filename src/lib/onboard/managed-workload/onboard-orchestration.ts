@@ -570,6 +570,7 @@ export async function prepareSelectedOnboardSandboxWorkloadLaunch(
 export function resolveOnboardManagedBootstrapLaunch(input: {
   readonly runtime: ManagedWorkloadOnboardRuntime;
   readonly workload: PreparedSandboxWorkloadSource;
+  readonly sandboxName: string;
   readonly stateRoot: string;
   readonly bootstrapIdentity: string | null;
   readonly request: import("../managed-startup/root-apply").ManagedStartupRootApplyRequest | null;
@@ -596,7 +597,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
     agentIdentity,
     managedStateRoots: managedStartupStateRoots({
       agent: input.workload.source.contract.agent,
-      sandboxName: input.request.sandboxName,
+      sandboxName: input.sandboxName,
       agentIdentity,
     }),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
