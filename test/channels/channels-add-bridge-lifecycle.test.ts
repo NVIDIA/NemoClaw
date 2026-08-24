@@ -16,17 +16,17 @@ import {
   removeSandboxChannel,
   startSandboxChannel,
   stopSandboxChannel,
-} from "../src/lib/actions/sandbox/policy-channel";
-import { policyChannelDependencies } from "../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../src/lib/actions/sandbox/process-recovery";
-import * as runtime from "../src/lib/adapters/openshell/runtime";
-import * as store from "../src/lib/credentials/store";
-import * as gatewayRuntime from "../src/lib/gateway-runtime-action";
-import { MESSAGING_BRIDGE_PENDING_VALUE } from "../src/lib/onboard/messaging-bridge-provider";
-import * as policies from "../src/lib/policy";
-import * as onboardSession from "../src/lib/state/onboard-session";
-import type { SandboxEntry } from "../src/lib/state/registry";
-import * as registry from "../src/lib/state/registry";
+} from "../../src/lib/actions/sandbox/policy-channel";
+import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
+import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
+import * as runtime from "../../src/lib/adapters/openshell/runtime";
+import * as store from "../../src/lib/credentials/store";
+import * as gatewayRuntime from "../../src/lib/gateway-runtime-action";
+import { MESSAGING_BRIDGE_PENDING_VALUE } from "../../src/lib/onboard/messaging-bridge-provider";
+import * as policies from "../../src/lib/policy";
+import * as onboardSession from "../../src/lib/state/onboard-session";
+import type { SandboxEntry } from "../../src/lib/state/registry";
+import * as registry from "../../src/lib/state/registry";
 
 class ExitError extends Error {
   constructor(public readonly code: number | undefined) {
@@ -54,10 +54,10 @@ const GOOGLECHAT_ENV = {
 // handler is replaced with one that succeeds immediately — as if the operator
 // had already finished enrollment. Everything else in the add path runs real.
 type GateModule =
-  typeof import("../src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate");
+  typeof import("../../src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate");
 
 vi.mock(
-  "../src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate",
+  "../../src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate",
   async (importOriginal) => {
     const actual = await importOriginal<GateModule>();
     return {
