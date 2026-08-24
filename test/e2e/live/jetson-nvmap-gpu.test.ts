@@ -5,10 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getBuildIdentity } from "../../../src/lib/core/version";
-import {
-  OPENCLAW_SANDBOX_BASE_IMAGE,
-  parseSandboxBaseImageResolutionLabels,
-} from "../../../src/lib/sandbox-base-image";
+import { MANAGED_IMAGE_REPOSITORIES } from "../../../src/lib/onboard/managed-image/contract";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -27,22 +24,30 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-jetson-nvmap";
 const INFERENCE_API_KEY = "jetson-nvmap-e2e-key";
 const INFERENCE_MODEL = "jetson-nvmap-e2e";
-const PUBLISHED_BASE_IMAGE_SOURCES = new Set(["pinned", "version-tag", "source-sha", "latest"]);
 const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
 const TIMEOUT_MS = 50 * 60_000;
 const CANDIDATE_SOURCE_REVISION = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
 const MANAGED_IMAGE_SOURCE_REVISION =
   process.env.E2E_MANAGED_IMAGE_REVISION ?? CANDIDATE_SOURCE_REVISION;
 
-function sandboxImageTag(): string {
+function sandboxManagedImage(): {
+  imageTag: string;
+  workload: Record<string, unknown>;
+} {
   expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { imageTag?: unknown }>;
+    sandboxes?: Record<string, { imageTag?: unknown; workload?: unknown }>;
   };
-  const imageTag = registry.sandboxes?.[SANDBOX_NAME]?.imageTag;
+  const entry = registry.sandboxes?.[SANDBOX_NAME];
+  const imageTag = entry?.imageTag;
   const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
   expect(normalizedImageTag, `registry imageTag missing for ${SANDBOX_NAME}`).not.toBe("");
-  return normalizedImageTag;
+  expect(entry?.workload).toBeTypeOf("object");
+  expect(entry?.workload).not.toBeNull();
+  return {
+    imageTag: normalizedImageTag,
+    workload: entry?.workload as Record<string, unknown>,
+  };
 }
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -282,33 +287,49 @@ fi`,
     expect(install.exitCode, resultText(install)).toBe(0);
 
     // #3508 failed after Jetson onboarding silently fell back to building
-    // Dockerfile.base locally. Prove the completed managed image instead uses
-    // an immutable published linux/arm64 sandbox base.
+    // Dockerfile.base locally. Prove this buildless path instead registered
+    // the dispatched, immutable published linux/arm64 managed image.
     expect(resultText(install)).not.toContain(
       "Building OpenClaw sandbox base image locally because no compatible published base image was found.",
     );
-    const managedImage = sandboxImageTag();
+    const managedImage = sandboxManagedImage();
+    const expectedReference = new RegExp(
+      `^${MANAGED_IMAGE_REPOSITORIES.openclaw.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}@sha256:[0-9a-f]{64}$`,
+      "u",
+    );
+    expect(managedImage.imageTag).toMatch(expectedReference);
+    expect(managedImage.workload).toMatchObject({
+      kind: "managed-image",
+      platform: "linux/arm64",
+      reference: managedImage.imageTag,
+      shared: true,
+      sourceRevision: MANAGED_IMAGE_SOURCE_REVISION,
+    });
     const managedImageLabels = await host.command(
       "docker",
-      ["image", "inspect", "--format", "{{json .Config.Labels}}", managedImage],
+      ["image", "inspect", "--format", "{{json .Config.Labels}}", managedImage.imageTag],
       {
-        artifactName: "phase-2-managed-image-base-resolution-labels",
+        artifactName: "phase-2-published-managed-image-labels",
         env: env(),
         timeoutMs: 30_000,
       },
     );
     expect(managedImageLabels.exitCode, resultText(managedImageLabels)).toBe(0);
-    const baseResolution = parseSandboxBaseImageResolutionLabels(
-      JSON.parse(managedImageLabels.stdout.trim()),
-    );
-    expect(baseResolution, "managed image lacks valid base-resolution metadata").not.toBeNull();
-    expect(baseResolution?.imageName).toBe(OPENCLAW_SANDBOX_BASE_IMAGE);
-    expect(PUBLISHED_BASE_IMAGE_SOURCES.has(baseResolution?.source ?? "")).toBe(true);
-    expect(baseResolution?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(baseResolution?.ref).toBe(`${OPENCLAW_SANDBOX_BASE_IMAGE}@${baseResolution?.digest}`);
-    expect(baseResolution?.os).toBe("linux");
-    expect(baseResolution?.architecture).toBe("arm64");
-    await artifacts.writeJson("phase-2-published-base-image-resolution.json", baseResolution);
+    const labels = JSON.parse(managedImageLabels.stdout.trim()) as Record<string, unknown>;
+    expect(labels).toMatchObject({
+      "io.nvidia.nemoclaw.agent": "openclaw",
+      "io.nvidia.nemoclaw.managed-image.capabilities": "1",
+      "io.nvidia.nemoclaw.managed-image.contract": "1",
+      "io.nvidia.nemoclaw.managed-image.platform": "linux/arm64",
+      "io.nvidia.nemoclaw.managed-image.startup-profile": "1",
+      "org.opencontainers.image.revision": MANAGED_IMAGE_SOURCE_REVISION,
+      "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
+    });
+    await artifacts.writeJson("phase-2-published-managed-image.json", {
+      imageTag: managedImage.imageTag,
+      labels,
+      workload: managedImage.workload,
+    });
 
     const inferenceRoute = await host.command(
       "bash",

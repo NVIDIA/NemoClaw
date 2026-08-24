@@ -176,9 +176,9 @@ The test verifies these requirements:
 - `/dev/nvmap` is a character device on the host.
 - Docker reports the NVIDIA runtime.
 - NemoClaw installation completes without prompts.
-- The final managed sandbox image uses an immutable published
-  `ghcr.io/nvidia/nemoclaw/sandbox-base` digest for `linux/arm64` instead of
-  the local `Dockerfile.base` fallback.
+- The sandbox registry records the immutable published
+  `ghcr.io/nvidia/nemoclaw/openclaw-sandbox` digest selected for `linux/arm64`,
+  and its source revision matches the separately dispatched publication commit.
 - The installed commands resolve inside the Jetson job workspace.
 
 The live test runs `bash install.sh --non-interactive` with
@@ -193,9 +193,9 @@ A passing test requires these results:
   `/dev/nvmap`, or `/opt/nvidia`.
 - `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
 
-The test writes `phase-2-published-base-image-resolution.json` with the
-published base-image source, digest-qualified reference, operating system, and
-architecture used by the final managed sandbox image.
+The test writes `phase-2-published-managed-image.json` with the registry
+workload receipt, digest-qualified managed-image reference, and inspected image
+labels used to prove its agent, contracts, source revision, and platform.
 
 The test result verifies CPU-only onboarding for the named commit and Jetson
 device. It does not verify CUDA or OpenClaw Jetson device-group preservation.
