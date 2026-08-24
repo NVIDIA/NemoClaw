@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const SECURITY_CATEGORY_COUNT = 9;
+const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const TRUSTED_SECURITY_RUBRIC_PATH = path.resolve(
   moduleDir,
@@ -35,8 +37,52 @@ function readTrustedFile(filePath: string, label: string): string {
   }
 }
 
+function validateSecurityRubric(rubric: string): void {
+  const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
+  if (headings.length !== SECURITY_CATEGORY_COUNT) {
+    throw new Error(
+      `Security rubric must define exactly ${SECURITY_CATEGORY_COUNT} categories; found ${headings.length}`,
+    );
+  }
+  const categories = headings.map((heading, index) => {
+    const number = Number(heading[1]);
+    const name = heading[2]?.trim() ?? "";
+    if (number !== index + 1 || !name)
+      throw new Error(`Security rubric category ${index + 1} has a malformed heading`);
+    const sectionStart = heading.index ?? 0;
+    const sectionEnd = headings[index + 1]?.index ?? rubric.length;
+    const section = rubric.slice(sectionStart, sectionEnd);
+    const subsectionMatches = [...section.matchAll(/^### (.+)$/gmu)];
+    const subsectionNames = subsectionMatches.map((match) => match[1]?.trim() ?? "");
+    if (
+      subsectionNames.length !== SECURITY_CATEGORY_SECTION_NAMES.length ||
+      !SECURITY_CATEGORY_SECTION_NAMES.every(
+        (sectionName, sectionIndex) => sectionName === subsectionNames[sectionIndex],
+      )
+    ) {
+      throw new Error(
+        `Security rubric category ${number} must define Meaning, Questions, and Expected evidence in order`,
+      );
+    }
+    for (const [sectionIndex, sectionName] of SECURITY_CATEGORY_SECTION_NAMES.entries()) {
+      const contentStart =
+        (subsectionMatches[sectionIndex]?.index ?? section.length) + `### ${sectionName}`.length;
+      const contentEnd = subsectionMatches[sectionIndex + 1]?.index ?? section.length;
+      if (!section.slice(contentStart, contentEnd).trim())
+        throw new Error(`Security rubric category ${number} has empty ${sectionName}`);
+    }
+    return name;
+  });
+  if (new Set(categories).size !== categories.length)
+    throw new Error("Security rubric category names must be unique");
+  if (categories.at(-1) !== "System Security")
+    throw new Error("Security rubric category 9 must be System Security");
+}
+
 export function readTrustedSecurityRubric(): string {
-  return readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric");
+  const rubric = readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric");
+  validateSecurityRubric(rubric);
+  return rubric;
 }
 
 export function readTrustedWritingGuide(): string {

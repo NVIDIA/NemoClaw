@@ -60,6 +60,45 @@ describe("PR review advisor", () => {
 
     expect(() => readTrustedSecurityRubric()).toThrow("Security rubric unavailable");
   });
+
+  it.each([
+    [
+      "a missing category",
+      (rubric: string) => rubric.replace(/## Category 5:.*?(?=## Category 6:)/su, ""),
+      "must define exactly 9 categories",
+    ],
+    [
+      "an out-of-order category",
+      (rubric: string) => rubric.replace("## Category 2:", "## Category 3:"),
+      "category 2 has a malformed heading",
+    ],
+    [
+      "a duplicate category name",
+      (rubric: string) =>
+        rubric.replace("## Category 2: Input Validation and Data Sanitization", "## Category 2: Secrets and Credentials"),
+      "category names must be unique",
+    ],
+    [
+      "an empty category section",
+      (rubric: string) =>
+        rubric.replace(
+          /### Meaning\n\nKeep credentials[^\n]*\n/u,
+          "### Meaning\n\n",
+        ),
+      "category 1 has empty Meaning",
+    ],
+    [
+      "a different final category",
+      (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
+      "category 9 must be System Security",
+    ],
+  ])("rejects a trusted security rubric with %s", (_case, mutate, message) => {
+    const malformed = mutate(readTrustedSecurityRubric());
+    vi.spyOn(fs, "readFileSync").mockReturnValueOnce(malformed);
+
+    expect(() => readTrustedSecurityRubric()).toThrow(message);
+  });
+
   it("renders summaries and sticky comments with maintainer-review framing", () => {
     const result = validResult();
     const summary = renderSummary(result);
