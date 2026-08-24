@@ -15,7 +15,7 @@ export type InferenceProviderProfileDeps = {
   readonly runOpenshell: EndpointlessProviderProfileRunner;
   readonly root?: string;
   readonly log?: (message: string) => void;
-  readonly exit?: (code: number) => void;
+  readonly exit?: (code: number) => never;
 };
 
 /**
@@ -49,14 +49,21 @@ export function ensureOpenAiInferenceProviderProfile(deps: InferenceProviderProf
   });
   if (result.ok) return;
 
-  errorLog(
-    `\n  ✗ Failed to register the '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile with OpenShell (${result.reason}).`,
-  );
-  const diagnostic = result.diagnostic.slice(0, 500);
-  if (diagnostic) errorLog(`    ${diagnostic}`);
-  errorLog(
-    "    Without it the sandbox supervisor rejects the provider environment as unclassified.",
-  );
-  errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-  exit(1);
+  if (result.reason === "import-failed") {
+    errorLog(
+      `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
+    );
+    errorLog("    Confirm the NemoClaw checkout is complete, then re-run onboarding.");
+  } else if (result.reason === "export-failed") {
+    errorLog(
+      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but could not be read for validation.`,
+    );
+    errorLog("    Repair or remove that profile, then re-run onboarding.");
+  } else {
+    errorLog(
+      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
+    );
+    errorLog("    Remove the conflicting profile, then re-run onboarding.");
+  }
+  return exit(1);
 }

@@ -14,10 +14,6 @@ import {
 } from "../../inference/ollama/proxy";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
-import {
-  ensureOpenAiInferenceProviderProfile,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "./provider-profile";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import {
   gatewayReachableCompatibleEndpointUrl,
@@ -273,18 +269,6 @@ export async function setupRemoteProviderInference(
         const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
         const gatewayEndpointUrl =
           proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
-        // #9895: OpenShell ships no built-in `openai` provider profile, so the
-        // sandbox supervisor cannot classify an OpenAI-surface credential key
-        // and fails the whole provider environment closed. Declare the profile
-        // immediately before registration — never earlier, so the stale-provider
-        // replacement sequence keeps its established command order. Idempotent,
-        // so re-onboard and gateway reuse stay safe.
-        const registerProvider: typeof upsertProvider = (name, type, ...rest) => {
-          if (type === OPENAI_GATEWAY_PROVIDER_TYPE) {
-            ensureOpenAiInferenceProviderProfile({ runOpenshell, log: error, exit: exitProcess });
-          }
-          return upsertProvider(name, type, ...rest);
-        };
         let providerResult;
         if (reuseGatewayCredentialWithoutLocalKey) {
           providerResult = reuseRegisteredProviderWithGatewayEndpoint({
@@ -294,7 +278,7 @@ export async function setupRemoteProviderInference(
             endpointUrl: resolvedEndpointUrl,
             gatewayEndpointUrl,
             runOpenshell,
-            upsertProvider: registerProvider,
+            upsertProvider,
           });
         } else {
           const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
@@ -352,7 +336,7 @@ export async function setupRemoteProviderInference(
                 compactText,
               });
               providerResult = replaced.ok
-                ? registerProvider(
+                ? upsertProvider(
                     provider,
                     "openai",
                     resolvedCredentialEnv,
@@ -366,7 +350,7 @@ export async function setupRemoteProviderInference(
                   };
             }
           } else {
-            providerResult = registerProvider(
+            providerResult = upsertProvider(
               provider,
               config.providerType,
               resolvedCredentialEnv,
