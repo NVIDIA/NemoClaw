@@ -123,6 +123,50 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("uses the live OpenShell CA bundle before the pre-resume fallback (#9360)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-live-ca-"));
+    try {
+      const liveCaFile = path.join(tempDir, "openshell-live-ca.pem");
+      const fallbackCaFile = path.join(tempDir, "managed-startup-ca.pem");
+      fs.writeFileSync(liveCaFile, "live OpenShell CA\n", { mode: 0o444 });
+      fs.writeFileSync(fallbackCaFile, "pre-resume fallback CA\n", { mode: 0o444 });
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
+        liveCaFile,
+        fallbackCaFile,
+      });
+
+      const liveResult = spawnSync("bash", [scriptPath, "true"], {
+        env: {
+          PATH: DEFAULT_TEST_PATH,
+          SSL_CERT_FILE: "/ambient-live-ca.pem",
+          REQUESTS_CA_BUNDLE: "/ambient-live-ca.pem",
+          NODE_EXTRA_CA_CERTS: "/ambient-live-ca.pem",
+        },
+        encoding: "utf8",
+      });
+      expect(liveResult.status, liveResult.stderr).toBe(0);
+      const liveEnvironment = fs.readFileSync(envFile, "utf8");
+      expect(liveEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${liveCaFile}`);
+      expect(liveEnvironment).toContain("export SSL_CERT_FILE=/ambient-live-ca.pem");
+      expect(liveEnvironment).toContain("export REQUESTS_CA_BUNDLE=/ambient-live-ca.pem");
+      expect(liveEnvironment).toContain("export NODE_EXTRA_CA_CERTS=/ambient-live-ca.pem");
+
+      fs.rmSync(liveCaFile);
+      const fallbackResult = spawnSync("bash", [scriptPath, "true"], {
+        env: { PATH: DEFAULT_TEST_PATH },
+        encoding: "utf8",
+      });
+      expect(fallbackResult.status, fallbackResult.stderr).toBe(0);
+      const fallbackEnvironment = fs.readFileSync(envFile, "utf8");
+      expect(fallbackEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export SSL_CERT_FILE=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export REQUESTS_CA_BUNDLE=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export NODE_EXTRA_CA_CERTS=${fallbackCaFile}`);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps read-only identity commands outside the session supervisor", () => {
     const launcher = readAgentFile("dcode-launcher.sh");
     const directIdentity =

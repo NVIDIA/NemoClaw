@@ -86,6 +86,19 @@ function replaceExactHermesPortableDockerArg(source: string, name: string, value
   return source.replace(pattern, `ARG ${name}=${sanitized}`);
 }
 
+function pinHermesPortableTargetArchitecture(source: string): string {
+  const firstStage = source.search(/^FROM\s/gmu);
+  if (firstStage < 0) {
+    throw new Error("Hermes Dockerfile must declare at least one build stage.");
+  }
+  const globalArguments = source.slice(0, firstStage);
+  const targetArchitecture = /^ARG TARGETARCH$/gmu;
+  if ((globalArguments.match(targetArchitecture) ?? []).length !== 1) {
+    throw new Error("Hermes Dockerfile must declare one unpinned global TARGETARCH argument.");
+  }
+  return `${globalArguments.replace(targetArchitecture, "ARG TARGETARCH=amd64")}${source.slice(firstStage)}`;
+}
+
 /** Render the reviewed non-secret schema-5 Hermes image settings from the shared route owner. */
 export function renderHermesPortableDockerfileBuildSettings(
   source: string,
@@ -125,7 +138,7 @@ export function renderHermesPortableDockerfileBuildSettings(
   ] as const;
   return replacements.reduce(
     (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
-    source,
+    pinHermesPortableTargetArchitecture(source),
   );
 }
 

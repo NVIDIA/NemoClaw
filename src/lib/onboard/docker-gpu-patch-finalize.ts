@@ -128,7 +128,7 @@ export function finalizeDockerGpuPatchBackup(
         ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, {
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,
-            soleLabeledReplacementCorroboratesError: (remainingMs) =>
+            soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) =>
               isSoleLabeledReplacement(
                 sandboxName,
                 options.result.newContainerId,

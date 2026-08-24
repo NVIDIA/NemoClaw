@@ -1160,6 +1160,7 @@ class SandboxStateFlow<
       if (state.sandboxName) {
         this.deps.updateSandboxRegistry(state.sandboxName, {
           pendingRouteReservation: undefined,
+          reservationSessionId: undefined,
         });
       }
       this.deps.skippedStepMessage("sandbox", state.sandboxName);
@@ -1648,6 +1649,8 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
+      recreateJournalTargetIntentFingerprint:
+        this.options.recreateJournalTargetIntentFingerprint ?? undefined,
       ...rebuildPolicyPresetSelection,
       extraProviders,
     };

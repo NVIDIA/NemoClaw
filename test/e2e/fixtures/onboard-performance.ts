@@ -24,6 +24,7 @@ const COLD_ONBOARD_BUDGET_KEYS = new Set([
   "authoritativeLocalBaseBuildAllowanceMs",
   "rootStartToFirstTurnCompletionBudgetMs",
   "rootEndToFirstTurnCompletionBudgetMs",
+  "sandboxPhaseSingleObservationMaxOverageMs",
   "phaseBudgetsMs",
 ]);
 
@@ -39,6 +40,7 @@ export interface ColdOnboardPerformanceBudget {
   phaseBudgetsMs: Record<OnboardPhaseName, number>;
   rootEndToFirstTurnCompletionBudgetMs: number;
   rootStartToFirstTurnCompletionBudgetMs: number;
+  sandboxPhaseSingleObservationMaxOverageMs: number;
 }
 
 export interface ColdOnboardPerformanceEvaluation {
@@ -52,7 +54,7 @@ export interface ColdOnboardPerformanceEvaluation {
 
 export interface ColdOnboardPerformanceAnomaly {
   budgetMs: number;
-  kind: "first-turn-latency-tail";
+  kind: "first-turn-latency-tail" | "sandbox-phase-tail";
   measurementMs: number;
   overageMs: number;
 }
@@ -60,6 +62,7 @@ export interface ColdOnboardPerformanceAnomaly {
 interface ColdOnboardPerformanceFinding {
   kind: "phase" | "root-end-to-first-turn" | "root-start-to-first-turn";
   message: string;
+  phaseName?: OnboardPhaseName;
 }
 
 interface ParsedSpan {
@@ -137,9 +140,13 @@ function asColdOnboardBudget(value: unknown): ColdOnboardPerformanceBudget | nul
   const authoritativeLocalBaseBuildAllowanceMs = nonNegativeMilliseconds(
     record.authoritativeLocalBaseBuildAllowanceMs,
   );
+  const sandboxPhaseSingleObservationMaxOverageMs = nonNegativeMilliseconds(
+    record.sandboxPhaseSingleObservationMaxOverageMs,
+  );
   const phaseBudgets = asRecord(record.phaseBudgetsMs);
   if (
     authoritativeLocalBaseBuildAllowanceMs === null ||
+    sandboxPhaseSingleObservationMaxOverageMs === null ||
     rootStartToFirstTurnCompletionBudgetMs === null ||
     rootEndToFirstTurnCompletionBudgetMs === null ||
     rootEndToFirstTurnCompletionBudgetMs > rootStartToFirstTurnCompletionBudgetMs ||
@@ -160,6 +167,7 @@ function asColdOnboardBudget(value: unknown): ColdOnboardPerformanceBudget | nul
     authoritativeLocalBaseBuildAllowanceMs,
     rootStartToFirstTurnCompletionBudgetMs,
     rootEndToFirstTurnCompletionBudgetMs,
+    sandboxPhaseSingleObservationMaxOverageMs,
     phaseBudgetsMs,
   };
 }
@@ -302,6 +310,7 @@ export function evaluateColdOnboardPerformance(
       findings.push({
         kind: "phase",
         message: `${phaseName} ${phaseDurationMs}ms exceeds ${phaseBudgetMs}ms`,
+        phaseName,
       });
     }
   }
@@ -317,6 +326,16 @@ export function evaluateColdOnboardPerformance(
     ) &&
     trace.finishedAtMs - trace.startedAtMs <=
       rootStartBudgetMs - budget.rootEndToFirstTurnCompletionBudgetMs;
+  const sandboxPhaseName = "nemoclaw.onboard.phase.sandbox";
+  const sandboxPhaseMeasurementMs = trace.phaseDurationsMs[sandboxPhaseName];
+  const sandboxPhaseOverageMs = sandboxPhaseMeasurementMs - sandboxBudgetMs;
+  const onlyBoundedPublishedBaseSandboxTailExceeded =
+    !authoritativeLocalBaseBuild &&
+    findings.length === 1 &&
+    findings[0]?.kind === "phase" &&
+    findings[0].phaseName === sandboxPhaseName &&
+    sandboxPhaseOverageMs > 0 &&
+    sandboxPhaseOverageMs <= budget.sandboxPhaseSingleObservationMaxOverageMs;
   const anomalies: ColdOnboardPerformanceAnomaly[] = onlyFirstTurnTailExceeded
     ? [
         {
@@ -326,7 +345,16 @@ export function evaluateColdOnboardPerformance(
           overageMs: rootEndToFirstTurnCompletionMs - budget.rootEndToFirstTurnCompletionBudgetMs,
         },
       ]
-    : [];
+    : onlyBoundedPublishedBaseSandboxTailExceeded
+      ? [
+          {
+            budgetMs: sandboxBudgetMs,
+            kind: "sandbox-phase-tail",
+            measurementMs: sandboxPhaseMeasurementMs,
+            overageMs: sandboxPhaseOverageMs,
+          },
+        ]
+      : [];
   const violations = anomalies.length === 0 ? findings.map((finding) => finding.message) : [];
 
   return {

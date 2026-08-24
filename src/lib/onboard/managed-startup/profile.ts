@@ -5,7 +5,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
-import { authorizeMessagingManagedStartupPlaceholders } from "../../messaging/managed-startup-placeholders.ts";
+import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -1004,8 +1004,15 @@ function isMessagingCredentialPlaceholder(
   path: readonly string[],
   value: unknown,
   allowedBuildStepPlaceholders: ReadonlySet<string>,
+  allowedMessagingCredentialFields: ReadonlySet<string>,
 ): boolean {
   if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+    return false;
+  }
+  if (
+    requiresMessagingSchemaFieldAuthorization(path) &&
+    !allowedMessagingCredentialFields.has(messagingAuthorizedFieldKey(path))
+  ) {
     return false;
   }
   const isCredentialBindingPlaceholder =
@@ -1030,6 +1037,15 @@ function isMessagingCredentialPlaceholder(
     isAgentRenderValuePlaceholder ||
     isAuthorizedBuildStepPlaceholder
   );
+}
+
+function requiresMessagingSchemaFieldAuthorization(path: readonly string[]): boolean {
+  const fieldName = path[path.length - 1];
+  return fieldName === "webhook";
+}
+
+function messagingAuthorizedFieldKey(path: readonly string[]): string {
+  return JSON.stringify(path);
 }
 
 function buildStepPlaceholderKey(path: readonly string[], value: string): string {
@@ -1540,6 +1556,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
+  const allowedMessagingCredentialFields = new Set<string>();
   const allowedBuildStepPlaceholders = new Set<string>();
   const selectedAgent = isPlainObject(root) ? ownDataPropertyValue(root, "agent") : undefined;
   let discoveredNodes = 1;
@@ -1574,6 +1591,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           current.path,
           current.value,
           allowedBuildStepPlaceholders,
+          allowedMessagingCredentialFields,
         ) &&
         !isMessagingCredentialPlaceholderAssignment(
           selectedAgent,
@@ -1640,17 +1658,25 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
+      const messagingPlanSection = current.path[2];
       if (
         current.path.length === 4 &&
         current.path[0] === "messaging" &&
         current.path[1] === "plan" &&
-        current.path[2] === "buildSteps" &&
+        (messagingPlanSection === "buildSteps" || messagingPlanSection === "agentRender") &&
         JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
       ) {
-        for (const authorization of authorizeMessagingManagedStartupPlaceholders(current.value)) {
-          allowedBuildStepPlaceholders.add(
-            buildStepPlaceholderKey([...current.path, ...authorization.path], authorization.value),
-          );
+        for (const authorization of authorizeMessagingManagedStartupFields(
+          current.value,
+          messagingPlanSection,
+        )) {
+          const authorizedPath = [...current.path, ...authorization.path];
+          allowedMessagingCredentialFields.add(messagingAuthorizedFieldKey(authorizedPath));
+          if (typeof authorization.value === "string") {
+            allowedBuildStepPlaceholders.add(
+              buildStepPlaceholderKey(authorizedPath, authorization.value),
+            );
+          }
         }
       }
       const keys = Object.getOwnPropertyNames(current.value);
@@ -1682,10 +1708,14 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         const child = descriptor.value;
         if (
           isCredentialShapedName(key) &&
+          !allowedMessagingCredentialFields.has(
+            messagingAuthorizedFieldKey([...current.path, key]),
+          ) &&
           !isMessagingCredentialPlaceholder(
             [...current.path, key],
             child,
             allowedBuildStepPlaceholders,
+            allowedMessagingCredentialFields,
           ) &&
           !isMessagingPackagePin([...current.path, key], child) &&
           !isStockTeamsOpenClawWebhook(root, [...current.path, key], child)

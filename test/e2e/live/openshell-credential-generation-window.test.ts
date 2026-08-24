@@ -650,26 +650,14 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
       "credential-window-signal-fallback-after-eviction",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction, "allowed");
-    await expect
-      .poll(
-        () =>
-          requestEvidence(
-            fakeMcp,
-            credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
-            rotatedSecret,
-          ),
-        {
-          interval: 500,
-          timeout: 30_000,
-          message: "old revision current-key fallback",
-        },
-      )
-      .toEqual({
-        seen: true,
-        credentialRewritten: true,
-        placeholderAbsent: true,
-      });
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction, "denied");
+    expect(
+      requestEvidence(
+        fakeMcp,
+        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
+        rotatedSecret,
+      ).seen,
+    ).toBe(false);
 
     const freshAfterEvictionId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-eviction`;
     const freshAfterEviction = await runFreshRequest(
@@ -838,7 +826,7 @@ test("openshell-credential-generation-window", {
     outcomes: [
       {
         step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-        outcome: "allowed",
+        outcome: "denied",
       },
       { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
       { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
@@ -908,6 +896,9 @@ test("openshell-credential-generation-window", {
   const upstreamRequestIds = fakeMcp.requests.map((request) => requestId(request.body));
   expect(upstreamRequestIds).not.toContain(
     credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
+  );
+  expect(upstreamRequestIds).not.toContain(
+    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
   );
   expect(upstreamRequestIds).not.toContain(
     credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),

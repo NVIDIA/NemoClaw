@@ -20,6 +20,8 @@ export type ManagedProxyScriptOptions = {
 
 export type StartScriptFixtureOptions = ManagedProxyScriptOptions & {
   envDir?: string;
+  fallbackCaFile?: string;
+  liveCaFile?: string;
   markerDir?: string;
 };
 
@@ -90,7 +92,16 @@ export function makeStartScriptFixture(
   const envFile = path.join(envDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
   const markerDir = options.markerDir;
-  const original = fs.readFileSync(START_SCRIPT, "utf8");
+  const original = fs
+    .readFileSync(START_SCRIPT, "utf8")
+    .replaceAll(
+      "/etc/openshell-tls/ca-bundle.pem",
+      options.liveCaFile ?? "/etc/openshell-tls/ca-bundle.pem",
+    )
+    .replaceAll(
+      "/run/nemoclaw/managed-startup-ca-bundle.pem",
+      options.fallbackCaFile ?? "/run/nemoclaw/managed-startup-ca-bundle.pem",
+    );
   assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
   assert.ok(original.includes("local marker_dir=/sandbox/.deepagents"));

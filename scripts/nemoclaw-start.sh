@@ -4807,6 +4807,15 @@ start_plugin_registry_refresh() {
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
         "$OPENCLAW" plugins registry --refresh || true
     fi
+
+    # The registry refresh may rewrite openclaw.json after the gateway reports
+    # ready. Keep the mutable integrity metadata ordered after that writer so a
+    # rebuild cannot observe the refreshed config with its previous hash. Run
+    # this even when the best-effort refresh fails because it may have written
+    # part of the config before returning nonzero.
+    if ! ensure_mutable_openclaw_config_hash; then
+      echo "[plugin-refresh] mutable OpenClaw config hash refresh failed" >&2
+    fi
   ) &
   PLUGIN_REFRESH_PID=$!
   if ! capture_openclaw_pid_start_identity "$PLUGIN_REFRESH_PID" PLUGIN_REFRESH_PID_START_IDENTITY; then
