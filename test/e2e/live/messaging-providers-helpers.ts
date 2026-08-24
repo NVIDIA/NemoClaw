@@ -92,6 +92,7 @@ export { shellQuote };
 export type FakeDockerApi = {
   kind: string;
   port: string;
+  alternatePort?: string;
   dir: string;
   captureFile: string;
   container: string;
@@ -319,11 +320,13 @@ export async function runHost(
     artifactName: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
+    cwd?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
   return host.command(command, args, {
     artifactName: options.artifactName,
+    cwd: options.cwd,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
@@ -602,6 +605,9 @@ export async function startFakeDockerApi(
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
+  if (options.kind === "slack") {
+    dockerArgs.splice(7, 0, "-p", "0:8080");
+  }
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     dockerArgs.push("-e", `${key}=${value}`);
   }
@@ -647,9 +653,24 @@ export async function startFakeDockerApi(
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
       });
-      const published = port.stdout.trim().split(":").at(-1)?.trim();
-      if (published) {
-        return { kind: options.kind, port: published, dir, captureFile, container };
+      const published = [
+        ...new Set(
+          port.stdout
+            .trim()
+            .split(/\r?\n/u)
+            .map((line) => line.split(":").at(-1)?.trim() ?? "")
+            .filter(Boolean),
+        ),
+      ];
+      if (published.length >= (options.kind === "slack" ? 2 : 1)) {
+        return {
+          kind: options.kind,
+          port: published[0],
+          ...(options.kind === "slack" ? { alternatePort: published[1] } : {}),
+          dir,
+          captureFile,
+          container,
+        };
       }
     }
     await sleep(100);
@@ -663,6 +684,7 @@ export async function applyRestRewritePolicy(
   api: FakeDockerApi,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
+  providerName?: string,
 ): Promise<void> {
   const result = await runHost(
     host,
@@ -691,6 +713,35 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
+  if (!providerName) return;
+
+  const binding = await runHost(
+    host,
+    "bash",
+    [
+      "-lc",
+      String.raw`set -eu
+policy_file="$(mktemp)"
+trap 'rm -f "$policy_file"' EXIT
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
+"$1" policy set --policy "$policy_file" --wait "$2"`,
+      `bind-fake-${api.kind}-rest-policy`,
+      host.openshellCommandPath,
+      SANDBOX_NAME,
+      providerName,
+      api.port,
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+    ],
+    {
+      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+      cwd: REPO_ROOT,
+      env,
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
 }
 
 export async function applyWebSocketRewritePolicy(

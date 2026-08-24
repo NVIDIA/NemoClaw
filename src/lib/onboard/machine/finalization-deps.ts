@@ -222,7 +222,7 @@ export async function settleOrdinaryOpenClawPairing(
             );
             sawCanonicalPairing = true;
           } catch {
-            // Pairing may not have appeared yet; the producer handles that path.
+            // Pairing may not have appeared yet; the bounded observer handles that path.
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
@@ -232,14 +232,36 @@ export async function settleOrdinaryOpenClawPairing(
           }
           if (initial?.state === "settled") return { kind: "settled" };
 
-          let baseline: PairingWaitResult;
-          if (initial?.state === "scope-upgrade-pending") {
-            baseline = { kind: "observed", value: initial };
-          } else {
-            // A valid non-interactive path can reach finalization before the
-            // startup watcher publishes its first CLI request. Run the bounded
-            // direct producer once, then require canonical evidence that its
-            // exact write upgrade is pending before the approval pass (#10014).
+          const pairingAppearanceDeadline = Math.min(
+            settlementDeadline,
+            deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+          );
+          let baseline: PairingWaitResult = initial
+            ? { kind: "observed", value: initial }
+            : await waitForPairingObservation(
+                name,
+                target,
+                pairingAppearanceDeadline,
+                (value) => {
+                  sawCanonicalPairing = true;
+                  return true;
+                },
+                deps,
+              );
+          if (baseline.kind === "target-changed") {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (baseline.kind === "timeout") {
+            return { kind: "incomplete", reason: "pairing-unavailable" };
+          }
+          if (baseline.value.state === "settled") return { kind: "settled" };
+
+          if (baseline.value.state === "pairing-only") {
+            // Wait for the startup watcher to publish the canonical CLI
+            // pairing before issuing the one bounded write-scope producer.
+            // Running the producer before that identity exists can create no
+            // upgrade and leaves an otherwise healthy fresh onboard stuck at
+            // pairing-only (#10014).
             try {
               await deps.runWarmup(name, target.gatewayName);
             } catch {
@@ -248,14 +270,14 @@ export async function settleOrdinaryOpenClawPairing(
             if (!samePairingTarget(target, deps.getTarget(name))) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
-            const pairingAppearanceDeadline = Math.min(
+            const scopeUpgradeDeadline = Math.min(
               settlementDeadline,
               deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
             );
             baseline = await waitForPairingObservation(
               name,
               target,
-              pairingAppearanceDeadline,
+              scopeUpgradeDeadline,
               (value) => {
                 sawCanonicalPairing = true;
                 return value.state !== "pairing-only";

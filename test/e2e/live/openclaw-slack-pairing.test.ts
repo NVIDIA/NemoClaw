@@ -173,10 +173,17 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     redactions,
     artifactName: "apply-slack-rest-policy",
   });
+  const websocketPort = fakeSlack.alternatePort ?? "";
+  expect(websocketPort, "fake Slack API must publish an independent websocket port").toMatch(
+    /^[1-9][0-9]*$/u,
+  );
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
+    api: {
+      ...fakeSlack,
+      port: websocketPort,
+    },
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-app`,
@@ -191,7 +198,8 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackPort: fakeSlack.port,
+    fakeSlackRestPort: fakeSlack.port,
+    fakeSlackWebsocketPort: websocketPort,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");

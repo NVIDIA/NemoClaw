@@ -329,8 +329,8 @@ test("openshell-credential-generation-window", {
       "attach the MCP provider and observe its initial generation",
       "prove a retained credential generation expires",
       "rotate beyond the retained generation window",
-      "prove key removal and provider detach revoke access",
-      "restart the bridge and confirm old-process fallback",
+      "prove key and bridge removal revoke access",
+      "re-add the bridge and confirm old-process fallback",
       "rebuild the sandbox and confirm credential reuse",
       "remove the MCP bridge and audit denied requests",
     ],
@@ -677,7 +677,7 @@ test("openshell-credential-generation-window", {
       placeholderAbsent: true,
     });
 
-    progress.phase("prove key removal and provider detach revoke access");
+    progress.phase("prove key and bridge removal revoke access");
     await updateProviderCredential(
       sandbox,
       providerName,
@@ -736,16 +736,15 @@ test("openshell-credential-generation-window", {
       placeholderAbsent: true,
     });
 
-    const detach = await sandbox.openshell(
-      ["sandbox", "provider", "detach", SANDBOX_NAME, providerName],
+    const removeBeforeReadd = await host.nemoclaw(
+      [SANDBOX_NAME, "mcp", "remove", SERVER_NAME],
       {
-        artifactName: "credential-window-direct-provider-detach",
-        env: openshellEnv(),
-        timeoutMs: 90_000,
+        artifactName: "credential-window-remove-before-readd",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 4 * 60_000,
       },
     );
-    expectExitZero(detach, "detach credential-window provider");
-    expect(resultText(detach)).toMatch(/Detached provider/iu);
+    expectExitZero(removeBeforeReadd, "remove credential-window bridge before re-add");
     await expectFreshCredentialAbsent(
       sandbox,
       "credential-window-fresh-credential-absent-after-detach",
@@ -765,14 +764,30 @@ test("openshell-credential-generation-window", {
       ).seen,
     ).toBe(false);
 
-    progress.phase("restart the bridge and confirm old-process fallback");
-    await rotateCredential(
-      host,
-      fakeMcp,
-      restartSecret,
-      CREDENTIAL_WINDOW_ROTATION_COUNT + 1,
-      allSecrets,
+    progress.phase("re-add the bridge and confirm old-process fallback");
+    fakeMcp.setSecret(restartSecret);
+    const readd = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "mcp",
+        "add",
+        SERVER_NAME,
+        "--url",
+        tunnel.url,
+        "--env",
+        CREDENTIAL_WINDOW_ENV_NAME,
+      ],
+      {
+        artifactName: "credential-window-readd-after-removal",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_WINDOW_ENV_NAME]: restartSecret,
+        },
+        redactionValues: [...allSecrets],
+        timeoutMs: 4 * 60_000,
+      },
     );
+    expectExitZero(readd, "re-add credential-window bridge");
     restartedRevision = await observeFreshRevision(
       sandbox,
       "credential-window-fresh-revision-after-restart",

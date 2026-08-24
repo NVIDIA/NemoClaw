@@ -382,10 +382,10 @@ NODE
 // Slack probe delegates Socket Mode/REST traffic to a shared fake-provider client
 // instead of hand-rolled sockets.
 export const SLACK_PROBE_INPUT_VALIDATION_SOURCE = String.raw`
-function parseFakeSlackPort() {
-  const raw = process.env.FAKE_SLACK_API_PORT || "";
+function parseFakeSlackPort(name) {
+  const raw = process.env[name] || "";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("FAKE_SLACK_API_PORT must be an integer in 1..65535");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(name + " must be an integer in 1..65535");
   return port;
 }
 function parseProxyTarget() {
@@ -410,13 +410,14 @@ set -eu
 set -a
 [ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh
 set +a
-fake_slack_api_port="$1"
-slack_pairing_user="$2"
+fake_slack_rest_port="$1"
+fake_slack_websocket_port="$2"
+slack_pairing_user="$3"
 : "${"$"}{OPENCLAW_HOME:?OPENCLAW_HOME missing}"
 : "${"$"}{OPENCLAW_STATE_DIR:?OPENCLAW_STATE_DIR missing}"
 : "${"$"}{OPENCLAW_CONFIG_PATH:?OPENCLAW_CONFIG_PATH missing}"
 : "${"$"}{OPENCLAW_OAUTH_DIR:?OPENCLAW_OAUTH_DIR missing}"
-exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_API_PORT="$fake_slack_api_port" SLACK_PAIRING_USER="$slack_pairing_user" node --input-type=module <<'NODE'
+exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_REST_PORT="$fake_slack_rest_port" FAKE_SLACK_WEBSOCKET_PORT="$fake_slack_websocket_port" SLACK_PAIRING_USER="$slack_pairing_user" node --input-type=module <<'NODE'
 __LOAD_CONVERSATION_RUNTIME_SOURCE__
 import crypto from "node:crypto";
 import http from "node:http";
@@ -454,7 +455,7 @@ function decodeServerFrame(buffer) {
 }
 function receiveSlackSocketEvent() {
   const host = "host.openshell.internal";
-  const port = parseFakeSlackPort();
+  const port = parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT");
   const proxy = parseProxyTarget();
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
@@ -512,7 +513,7 @@ function receiveSlackSocketEvent() {
 }
 function postPairingReply(text, channel) {
   const host = "host.openshell.internal";
-  const port = parseFakeSlackPort();
+  const port = parseFakeSlackPort("FAKE_SLACK_REST_PORT");
   const token = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
   const data = new URLSearchParams({ token, channel, text }).toString();
   return new Promise((resolve, reject) => {
@@ -597,12 +598,17 @@ export async function issuePairingRequest(options: {
   sandboxName: string;
   channel: PairingChannel;
   redactions: string[];
-  fakeSlackPort?: string;
+  fakeSlackRestPort?: string;
+  fakeSlackWebsocketPort?: string;
 }): Promise<ShellProbeResult> {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [options.fakeSlackPort ?? "", PAIRING_USER.slack]
+      ? [
+          options.fakeSlackRestPort ?? "",
+          options.fakeSlackWebsocketPort ?? "",
+          PAIRING_USER.slack,
+        ]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
