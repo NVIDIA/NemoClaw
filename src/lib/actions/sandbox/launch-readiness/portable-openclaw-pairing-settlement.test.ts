@@ -17,11 +17,16 @@ import {
   parsePortableOpenClawPairingApprovalReceipt,
   type PortableOpenClawPairingApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
 } from "../auto-pair-approval";
 import { settlePortableOpenClawPairing } from "../launch-readiness";
 import { buildTrustedProxyEnvSourceShell } from "../trusted-proxy-env";
-import type { OpenClawPairingSettlementObservation } from "./openclaw-pairing-qualification";
+import {
+  OpenClawPairingObservationRetryableError,
+  type OpenClawPairingRepairObservation,
+  type OpenClawPairingSettlementObservation,
+} from "./openclaw-pairing-qualification";
 
 const AUTHORITY: CheckpointPortableRuntimeAuthority = {
   schemaVersion: 1,
@@ -62,25 +67,38 @@ function currentReceipt() {
 
 function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairing>[2] = {}) {
   const calls: string[] = [];
-  const observePairing = vi.fn((): OpenClawPairingSettlementObservation => ({
+  const observePairing = vi.fn((): OpenClawPairingRepairObservation => ({
+    state: "settled" as const,
+    deviceIdentitySha256: "a".repeat(64),
+  }));
+  const observeFinalPairing = vi.fn((): OpenClawPairingSettlementObservation => ({
     state: "settled" as const,
     deviceIdentitySha256: "a".repeat(64),
   }));
   const runProducer = vi.fn();
   const runApproval = vi.fn((): PortableOpenClawPairingApprovalReceipt => "approved");
+  let now = 0;
+  const sleep = vi.fn(async (milliseconds: number) => {
+    now += milliseconds;
+  });
   return {
     calls,
     observePairing,
+    observeFinalPairing,
     runProducer,
     runApproval,
+    sleep,
     deps: {
       classifyPortableLifecycleReceipt: vi.fn(() => currentReceipt()),
       getSandbox: vi.fn(() => ENTRY),
       listAgents: vi.fn(() => ["openclaw"]),
       loadAgent: vi.fn(() => AGENT),
-      observeOpenClawPairingSettlement: observePairing,
+      observeOpenClawPairingRepairSettlement: observePairing,
+      observeOpenClawPairingSettlement: observeFinalPairing,
       runPortablePairingProducer: runProducer,
       runPortablePairingApproval: runApproval,
+      now: () => now,
+      sleep,
       withSandboxLock: vi.fn(async (_name, operation) => {
         calls.push("sandbox-lock");
         return operation();
@@ -116,6 +134,38 @@ function expectApprovalScriptRejectsRequests(
     expect(parsePortableOpenClawPairingApprovalReceipt(rejectedResult.stdout)).toBe("rejected");
     expect(fs.existsSync(approvalLog)).toBe(false);
   }
+}
+
+function createPortableApprovalFixture(temporaryDirectories: string[]) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-pairing-"));
+  temporaryDirectories.push(root);
+  const approvalLog = path.join(root, "approvals.log");
+  const publicKey = Buffer.alloc(32, 9).toString("base64url");
+  const deviceId = createHash("sha256").update(Buffer.alloc(32, 9)).digest("hex");
+  const identityDigest = createHash("sha256")
+    .update(JSON.stringify({ deviceId, publicKey }))
+    .digest("hex");
+  fs.writeFileSync(
+    path.join(root, "openclaw"),
+    `#!${process.execPath}\nconst fs=require("fs");\nconst args=process.argv.slice(2);\nif(args[1]==="list"){process.stdout.write(JSON.stringify({pending:JSON.parse(process.env.PENDING_JSON || "[]")})+"\\n");process.exit(0);}\nif(args[1]==="approve"){fs.appendFileSync(process.env.APPROVAL_LOG,args[2]+"\\n");process.stdout.write("{}\\n");process.exit(0);}\nprocess.exit(2);\n`,
+    { mode: 0o755 },
+  );
+  return {
+    root,
+    approvalLog,
+    identityDigest,
+    request: {
+      requestId: "request-1",
+      deviceId,
+      publicKey,
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.pairing", "operator.write"],
+      isRepair: true,
+    },
+  };
 }
 
 describe("Portable OpenClaw pairing settlement", () => {
@@ -371,7 +421,14 @@ describe("Portable OpenClaw pairing settlement", () => {
         state: "pairing-only",
         deviceIdentitySha256: "b".repeat(64),
       })
-      .mockReturnValueOnce({ state: "settled", deviceIdentitySha256: "b".repeat(64) });
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
 
     await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
       kind: "settled",
@@ -379,6 +436,178 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runProducer).toHaveBeenCalledOnce();
     expect(scope.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw", "b".repeat(64));
     expect(scope.observePairing).toHaveBeenCalledTimes(2);
+    expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the canonical Portable device to appear before producing one repair (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockImplementationOnce(() => {
+        throw new OpenClawPairingObservationRetryableError();
+      })
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValue({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.observePairing).toHaveBeenCalledTimes(3);
+    expect(scope.sleep).toHaveBeenCalledOnce();
+    expect(scope.runProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the approved Portable scopes to persist before strict settlement (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValue({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(3);
+    expect(scope.observeFinalPairing).toHaveBeenCalledTimes(2);
+    expect(scope.sleep).toHaveBeenCalledOnce();
+  });
+
+  it("approves one canonical pending transition without producing a second request (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw", "b".repeat(64));
+    expect(scope.observePairing).toHaveBeenCalledTimes(2);
+    expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+  });
+
+  it("settles a write-only pending repair through the production approval wrapper (#9817)", async () => {
+    const fixture = createPortableApprovalFixture(temporaryDirectories);
+    const writeOnlyRequest = { ...fixture.request, scopes: ["operator.write"] };
+    const runApproval = vi.fn(
+      (sandboxName: string, gatewayName: string, expectedDeviceIdentitySha256: string) =>
+        runPortableOpenClawPairingApproval(sandboxName, gatewayName, expectedDeviceIdentitySha256, {
+          getOpenshellBinary: () => "openshell",
+          spawnSync: ((_command: string, _args: readonly string[], options: { input?: unknown }) =>
+            spawnSync("sh", ["-s"], {
+              encoding: "utf8",
+              input: String(options.input ?? ""),
+              env: {
+                ...process.env,
+                PATH: `${fixture.root}:${process.env.PATH}`,
+                APPROVAL_LOG: fixture.approvalLog,
+                PENDING_JSON: JSON.stringify([writeOnlyRequest]),
+              },
+            })) as never,
+        }),
+    );
+    const scope = settlementDeps({ runPortablePairingApproval: runApproval });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: fixture.identityDigest,
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: fixture.identityDigest,
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: fixture.identityDigest,
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(runApproval).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "nemoclaw",
+      fixture.identityDigest,
+    );
+    expect(fs.readFileSync(fixture.approvalLog, "utf8")).toBe("request-1\n");
+  });
+
+  it("performs no pairing writes when repair observation rejects pending state (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing.mockImplementationOnce(() => {
+      throw new Error("pending state is not canonical");
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-pairing-incomplete",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observeFinalPairing).not.toHaveBeenCalled();
+  });
+
+  it("rejects a settled replacement identity after canonical approval (#9817)", async () => {
+    const scope = settlementDeps();
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-pending",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockReturnValueOnce({
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      });
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "d".repeat(64),
+    });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-pairing-incomplete",
+    });
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+    expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
   });
 
   it("does not produce or approve a request when authority changes during initial observation (#9833)", async () => {
@@ -469,6 +698,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   it("does not publish settled pairing when authority changes during final observation (#9833)", async () => {
     let revalidatePolicyRequirements = () => undefined;
     const scope = settlementDeps();
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
     scope.observePairing
       .mockReturnValueOnce({
         state: "pairing-only",
@@ -503,7 +736,16 @@ describe("Portable OpenClaw pairing settlement", () => {
     "does not retry a %s approval and reports incomplete after one re-observation (#9207)",
     async (receipt) => {
       const scope = settlementDeps();
-      scope.observePairing.mockReturnValue({
+      scope.observePairing
+        .mockReturnValueOnce({
+          state: "pairing-only",
+          deviceIdentitySha256: "c".repeat(64),
+        })
+        .mockReturnValue({
+          state: "settled",
+          deviceIdentitySha256: "c".repeat(64),
+        });
+      scope.observeFinalPairing.mockReturnValue({
         state: "pairing-only",
         deviceIdentitySha256: "c".repeat(64),
       });
@@ -514,7 +756,8 @@ describe("Portable OpenClaw pairing settlement", () => {
         reason: "portable-pairing-incomplete",
       });
       expect(scope.runApproval).toHaveBeenCalledOnce();
-      expect(scope.observePairing).toHaveBeenCalledTimes(2);
+      expect(scope.observePairing).toHaveBeenCalledTimes(31);
+      expect(scope.observeFinalPairing).toHaveBeenCalledTimes(30);
     },
   );
 
@@ -541,31 +784,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   it("approves only the exact bounded request and emits only a fixed receipt (#9207)", () => {
     const approvalPolicy = readAutoPairApprovalPolicyModule();
     expect(approvalPolicy).toBeTruthy();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-pairing-"));
-    temporaryDirectories.push(root);
-    const approvalLog = path.join(root, "approvals.log");
-    const publicKey = Buffer.alloc(32, 9).toString("base64url");
-    const deviceId = createHash("sha256").update(Buffer.alloc(32, 9)).digest("hex");
-    const identityDigest = createHash("sha256")
-      .update(JSON.stringify({ deviceId, publicKey }))
-      .digest("hex");
-    fs.writeFileSync(
-      path.join(root, "openclaw"),
-      `#!${process.execPath}\nconst fs=require("fs");\nconst args=process.argv.slice(2);\nif(args[1]==="list"){process.stdout.write(JSON.stringify({pending:JSON.parse(process.env.PENDING_JSON || "[]")})+"\\n");process.exit(0);}\nif(args[1]==="approve"){fs.appendFileSync(process.env.APPROVAL_LOG,args[2]+"\\n");process.stdout.write("{}\\n");process.exit(0);}\nprocess.exit(2);\n`,
-      { mode: 0o755 },
-    );
-    const request = {
-      requestId: "request-1",
-      deviceId,
-      publicKey,
-      clientId: "cli",
-      clientMode: "cli",
-      role: "operator",
-      roles: ["operator"],
-      scopes: ["operator.pairing", "operator.write"],
-      isRepair: true,
-    };
+    const { root, approvalLog, identityDigest, request } =
+      createPortableApprovalFixture(temporaryDirectories);
     const { role: _role, roles: _roles, ...requestWithoutRoleFields } = request;
+    const { isRepair: _isRepair, ...requestWithoutRepair } = request;
     const script = buildPortableOpenClawPairingApprovalScript(
       Buffer.from(approvalPolicy as string, "utf8").toString("base64"),
       identityDigest,
@@ -606,6 +828,8 @@ describe("Portable OpenClaw pairing settlement", () => {
         [{ ...request, publicKey: "different-public-key" }],
         [{ ...request, publicKeyPem: "conflicting-public-key" }],
         [{ ...request, publicKeyPem: null }],
+        [{ ...request, isRepair: false }],
+        [requestWithoutRepair],
         [{ ...request, isRepair: "true" }],
         [{ ...request }, { ...request, requestId: "request-2" }],
       ],

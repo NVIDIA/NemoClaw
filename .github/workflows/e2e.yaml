@@ -101,6 +101,7 @@ jobs:
     outputs:
       dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
     permissions:
       actions: read
       contents: read
@@ -152,6 +153,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -5327,8 +5329,8 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   jetson-nvmap-gpu:
-    needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
+    needs: [base-image-publication, generate-matrix]
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
       group: jetson-nvmap-gpu-dispatch
       cancel-in-progress: false
@@ -5354,6 +5356,7 @@ jobs:
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          JETSON_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
           JETSON_DISPATCH_URL: ${{ vars.JETSON_DISPATCH_URL }}
         run: node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts
 
