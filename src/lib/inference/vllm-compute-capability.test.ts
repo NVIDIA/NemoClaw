@@ -524,7 +524,9 @@ describe("managed vLLM GPU memory preflight", () => {
         "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n" +
         "1, GPU-00000000-0000-0000-0000-000000000001, [N/A], 1000\n" +
         "2, GPU-00000000-0000-0000-0000-000000000002, 1000, [N/A]\n" +
-        "3, malformed-uuid, [N/A], [N/A]\n",
+        "3, malformed-uuid, [N/A], [N/A]\n" +
+        ", GPU-00000000-0000-0000-0000-000000000004, [N/A], [N/A]\n" +
+        "5e0, GPU-00000000-0000-0000-0000-000000000005, [N/A], [N/A]\n",
     });
 
     expect(readGpuMemoryDevices()).toEqual([
