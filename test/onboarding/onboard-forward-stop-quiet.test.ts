@@ -18,7 +18,7 @@ describe("onboard bestEffortForwardStop (#3971)", () => {
   it("calls forward stop with ignoreError and suppressOutput", () => {
     const sourcePath = path.join(
       import.meta.dirname,
-      "..",
+      "../..",
       "src",
       "lib",
       "onboard",
@@ -52,7 +52,7 @@ describe("onboard bestEffortForwardStop (#3971)", () => {
   it("coerces numeric and string ports to string in argv", () => {
     const sourcePath = path.join(
       import.meta.dirname,
-      "..",
+      "../..",
       "src",
       "lib",
       "onboard",

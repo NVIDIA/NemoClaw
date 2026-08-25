@@ -165,7 +165,7 @@ describe("source-shape scanner", () => {
       import { readFileSync } from "node:fs";
       import { spawnSync } from "node:child_process";
       import { it } from "vitest";
-      import { validateBlueprint } from "../../src/lib/config-validator";
+      import { validateBlueprint } from "../src/lib/config-validator";
 
       const cjsSame = require("node:assert").deepEqual;
       const esmSame = nodeAssert.deepStrictEqual;
@@ -411,7 +411,7 @@ describe("source-shape scanner", () => {
       import { readFileSync } from "node:fs";
       import YAML from "yaml";
       import { expect, it } from "vitest";
-      import { validateBlueprint } from "../../src/lib/config-validator";
+      import { validateBlueprint } from "../src/lib/config-validator";
 
       it("asserts validator behavior", () => {
         const raw = YAML.parse(readFileSync("nemoclaw-blueprint/blueprint.yaml", "utf8"));
@@ -433,7 +433,7 @@ describe("source-shape scanner", () => {
   it("detects explicit raw-config accessors and local selectors", () => {
     const cases = detectedCaseNames(`
       import { expect, it } from "vitest";
-      import { readWorkflow } from "../helpers/e2e-workflow-contract";
+      import { readWorkflow } from "./helpers/e2e-workflow-contract";
       import { listTargets } from "./e2e/registry/registry";
 
       it("mirrors workflow jobs through a selector", () => {
@@ -491,7 +491,7 @@ describe("source-shape scanner", () => {
   it("tracks namespace accessors but not derived registry and manifest helpers", () => {
     const cases = detectedCaseNames(`
       import { expect, it } from "vitest";
-      import * as workflows from "../helpers/e2e-workflow-contract";
+      import * as workflows from "./helpers/e2e-workflow-contract";
       import * as registry from "./e2e/registry/registry";
       import { probesForState } from "./e2e/registry/expected-states";
       import { loadManifest, loadManifestsFromDir } from "./e2e/registry/manifests";
@@ -516,7 +516,7 @@ describe("source-shape scanner", () => {
     const cases = detectedCaseNames(`
       import { spawnSync } from "node:child_process";
       import { expect, it } from "vitest";
-      import { readWorkflow } from "../helpers/e2e-workflow-contract";
+      import { readWorkflow } from "./helpers/e2e-workflow-contract";
 
       it("asserts executed behavior", () => {
         const workflow = readWorkflow();
@@ -531,7 +531,7 @@ describe("source-shape scanner", () => {
   it("does not taint execution of a program extracted from config", () => {
     const cases = detectedCaseNames(`
       import { expect, it } from "vitest";
-      import { readWorkflow } from "../helpers/e2e-workflow-contract";
+      import { readWorkflow } from "./helpers/e2e-workflow-contract";
 
       const DynamicFunction = Object.getPrototypeOf(async () => undefined).constructor;
       const workflow = readWorkflow();

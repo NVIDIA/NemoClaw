@@ -477,7 +477,7 @@ describe("attaching NVD reconciliations to signals", () => {
 describe("advisory early-warning CLI --nvd-records", () => {
   const SCAN_CLI = path.join(
     import.meta.dirname,
-    "..",
+    "../../..",
     "scripts",
     "advisory-early-warning-scan.mts",
   );

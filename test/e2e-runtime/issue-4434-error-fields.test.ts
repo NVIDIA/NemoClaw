@@ -10,7 +10,7 @@ import {
   type Issue4434AcceptanceFields,
 } from "../e2e/support/issue-4434-tui-capture.ts";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.7.1";
 const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
