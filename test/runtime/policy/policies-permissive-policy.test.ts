@@ -24,6 +24,7 @@ function parseResultPayload(stdout: string): { error: string } {
 function runPermissivePolicy(options: {
   agent?: "hermes" | "openclaw";
   livePolicy?: string;
+  livePolicyStatus?: number;
   policySetStatus: number;
   sandboxName: string;
 }): {
@@ -74,6 +75,10 @@ if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
     cat ${JSON.stringify(livePolicyResponsePath)}
   else
+    if [ "${options.livePolicyStatus ?? 0}" -ne 0 ]; then
+      printf 'message: fixture live policy read failure\n' >&2
+      exit "${options.livePolicyStatus ?? 0}"
+    fi
     cat ${JSON.stringify(livePolicyPath)}
   fi
   exit 0
@@ -192,6 +197,28 @@ describe("applyPermissivePolicy", () => {
       expect(policy.network_policies.telegram).toBeUndefined();
       expect(policy.network_policies.slack).toBeUndefined();
       expect(observed.policy).not.toContain("{sandboxName}");
+    } finally {
+      observed.cleanup();
+    }
+  });
+
+  it("reports an unreadable live policy before omitting credential-bound routes (#10153)", () => {
+    const sandboxName = "unreadable-openclaw";
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      livePolicyStatus: 23,
+      policySetStatus: 0,
+      sandboxName,
+    });
+    try {
+      expect(observed.result.status).toBe(0);
+      expect(observed.result.stderr).toContain(
+        `Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
+          "'nemoclaw'; credential-bound messaging routes will be omitted.",
+      );
+      const policy = YAML.parse(observed.policy);
+      expect(policy.network_policies.telegram).toBeUndefined();
+      expect(policy.network_policies.slack).toBeUndefined();
     } finally {
       observed.cleanup();
     }

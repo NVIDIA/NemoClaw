@@ -3376,10 +3376,16 @@ function applyPermissivePolicy(sandboxName: string): void {
   } catch {
     // Unregistered or unreadable legacy state uses the OpenClaw fallback.
   }
-  const livePolicy = readCurrentSandboxPolicy(sandboxName, authority.gatewayName) ?? "";
+  const livePolicy = readCurrentSandboxPolicy(sandboxName, authority.gatewayName);
+  if (!livePolicy) {
+    console.warn(
+      `  Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
+        `'${authority.gatewayName}'; credential-bound messaging routes will be omitted.`,
+    );
+  }
   const composedPolicy = composeCredentialBoundMessagingPolicies(
     policyDocument,
-    livePolicy,
+    livePolicy ?? "",
     sandboxName,
     messagingAgent,
   );
