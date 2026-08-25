@@ -635,6 +635,13 @@ export function finalizeCreatedSandbox(
       deps.error(
         `  Warning: workspace state restore was incomplete for sandbox '${options.sandboxName}'.`,
       );
+      if (restore.failedDirs.length > 0) {
+        deps.error(`  Failed directories: ${restore.failedDirs.join(", ")}`);
+      }
+      if (restore.failedFiles.length > 0) {
+        deps.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+      }
+      if (restore.error) deps.error(`  Restore reason: ${restore.error}`);
       deps.error("  NemoClaw will register the sandbox with its current configuration.");
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       deps.error("  Recover the missing state before you use or rebuild the sandbox.");

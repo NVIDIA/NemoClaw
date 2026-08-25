@@ -491,7 +491,13 @@ describe("created DCode sandbox finalization", () => {
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
           restoreRecreatedSandboxState: (name, backup, options) => {
             const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
-            return { ...restored, success: false, failedDirs: ["skills"] };
+            return {
+              ...restored,
+              success: false,
+              failedDirs: ["skills"],
+              failedFiles: ["settings.json"],
+              error: "copy failed",
+            };
           },
           getDcodeSelectionDrift: (name, provider, model, api) =>
             getDcodeSelectionDrift(name, provider, model, api, {
@@ -513,6 +519,9 @@ describe("created DCode sandbox finalization", () => {
       expect(error).toHaveBeenCalledWith(
         "  Warning: workspace state restore was incomplete for sandbox 'dcode'.",
       );
+      expect(error).toHaveBeenCalledWith("  Failed directories: skills");
+      expect(error).toHaveBeenCalledWith("  Failed files: settings.json");
+      expect(error).toHaveBeenCalledWith("  Restore reason: copy failed");
       expect(error).toHaveBeenCalledWith(
         "  NemoClaw will register the sandbox with its current configuration.",
       );
