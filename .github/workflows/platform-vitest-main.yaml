@@ -368,7 +368,7 @@ jobs:
             test/agents/hermes/hermes-restart-config-seal-recovery.test.ts \
             -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
           npx vitest run --project integration \
-            test/nemoclaw-start-perms.test.ts \
+            test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts \
             -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
