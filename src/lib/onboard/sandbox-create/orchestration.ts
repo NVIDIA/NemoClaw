@@ -292,7 +292,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       validateName,
       verifyDirectSandboxGpu,
       waitForSandboxRecreateDeleteAbsence,
-      wasSandboxDefault,
       updateReusedSandboxMetadata,
       getSandboxInferenceConfig,
       redact,
@@ -545,10 +544,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         workloadKind: workload.source.kind,
       });
-    // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
-    const sandboxWasLiveDefault =
-      liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
-
     let pendingStateRestore: BackupResult | null = null;
     let notReadyRecreateInProgress = false;
     const customOpenClawImage =
@@ -1307,13 +1302,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     return completeOrdinaryOnboardSandboxCreation(
       {
         sandboxName,
-        sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
         liveExists,
       },
       {
-        setDefault: registry.setDefault,
         runFile,
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,

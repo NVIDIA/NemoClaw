@@ -20,7 +20,6 @@ import {
 import * as sandboxState from "../state/sandbox";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
-import { restoreDefaultAfterRecreate } from "./default-preservation";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
@@ -218,13 +217,11 @@ export function createOnboardCreatedSandboxRegistration(input: {
 export function completeOrdinaryOnboardSandboxCreation(
   input: {
     readonly sandboxName: string;
-    readonly sandboxWasLiveDefault: boolean;
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
     readonly liveExists: boolean;
   },
   deps: {
-    readonly setDefault: (sandboxName: string) => void;
     readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
     readonly scriptsDir: string;
     readonly gatewayName: string;
@@ -234,7 +231,6 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
   },
 ): string {
-  restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
   if (input.runtimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     deps.runFile(
@@ -357,6 +353,10 @@ export function createCreatedSandboxCompletionActions(
         register: (openclawImagePluginInstalls) =>
           (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
             ...options.registration,
+            reservationSessionId:
+              configuredReceipt === null
+                ? options.registration.reservationSessionId
+                : undefined,
             runtimeFields: {
               ...options.registration.runtimeFields,
               sandboxGpuProof:

@@ -16,6 +16,7 @@ import {
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
@@ -860,11 +861,11 @@ describe("created OpenClaw sandbox finalization", () => {
 
 describe("created sandbox completion actions", () => {
   it.each([
-    ["ordinary", true],
-    ["schema-5", false],
+    ["ordinary", true, false],
+    ["schema-5", false, true],
   ] as const)(
     "keeps %s dashboard completion ordered and bounded (#9203)",
-    async (_route, manageDashboard) => {
+    async (_route, manageDashboard, schema5) => {
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,
@@ -925,6 +926,7 @@ describe("created sandbox completion actions", () => {
             hermesToolGateways: [],
             gatewayName: "nemoclaw",
             gatewayPort: 8080,
+            reservationSessionId: "session-owner",
           },
           gpu: {
             config: gpuConfig,
@@ -1010,10 +1012,17 @@ describe("created sandbox completion actions", () => {
           return registration;
         },
       };
+      const configuredReceipt = schema5
+        ? ({
+            lifecycleGeneration: "generation-1",
+            openshellExecutableAuthority: { version: "0.0.106" },
+            container: { imageId: "hermes:test" },
+          } as unknown as HermesPortableConfiguredReceipt)
+        : null;
 
       await completion.complete(
-        created,
-        null,
+        schema5 ? null : created,
+        configuredReceipt,
         "hermes",
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
@@ -1023,7 +1032,7 @@ describe("created sandbox completion actions", () => {
       expect(order).toEqual([
         "gpu",
         ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
-        "workload",
+        ...(schema5 ? [] : ["workload"]),
         "lifecycle-capture",
         "lifecycle-revalidate",
         "registry",
@@ -1032,6 +1041,8 @@ describe("created sandbox completion actions", () => {
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
+          hermesPortableLifecycle: schema5,
+          reservationSessionId: schema5 ? undefined : "session-owner",
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",

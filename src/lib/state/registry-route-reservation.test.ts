@@ -406,6 +406,61 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("restores the recreated default when its owner publishes the registration", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.registerSandbox({
+        name: "beta",
+        provider: "compatible-endpoint",
+        model: "model-b",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      expect(registry.getDefault()).toBe("alpha");
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      registry.registerSandbox(
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(registry.setDefault("alpha")).toBe(false);
+      expect(registry.getDefault()).toBe("beta");
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+      expect(registry.getDefault()).toBe("alpha");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("refuses generic pending-registration publication for a session-owned row", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
