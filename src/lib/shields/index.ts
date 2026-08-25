@@ -1775,10 +1775,8 @@ function commitExternalPolicyRecoveryArtifactRetirement(
     }
   }
 
-  let removed = false;
   try {
     fs.rmSync(artifactPath);
-    removed = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       commitState();
@@ -1814,7 +1812,7 @@ function commitExternalPolicyRecoveryArtifactRetirement(
   } catch (error) {
     const rollbackErrors: string[] = [];
     let artifactRestored = false;
-    if (removed && binding && content) {
+    if (binding && content) {
       try {
         restoreExternalPolicyRecoveryArtifact(binding, content);
         artifactRestored = true;
