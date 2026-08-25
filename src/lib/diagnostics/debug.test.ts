@@ -95,7 +95,6 @@ describe("createTarball", () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     if (outputDir) rmSync(outputDir, { recursive: true, force: true });
     process.exitCode = undefined;
-    vi.doUnmock("node:crypto");
     vi.resetModules();
   });
 
@@ -143,7 +142,7 @@ describe("createTarball", () => {
     expect(existsSync(output)).toBe(true);
   });
 
-  it("writes the bundle owner-only so a shared output directory cannot expose it", () => {
+  it("writes the bundle owner-only and removes the protected staging directory", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
     writeFileSync(join(tempDir, "env.txt"), "PROXY_USER=example-not-a-real-value-1");
     outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
@@ -153,9 +152,10 @@ describe("createTarball", () => {
     // test/helpers/normalize-fixture-umask.ts pins every worker to umask 0o022,
     // under which an unstaged archive is published 644.
     expect((statSync(output).mode & 0o777).toString(8)).toBe("600");
+    expect(readdirSync(outputDir)).toEqual(["owner-only.tar.gz"]);
   });
 
-  it("refuses to stage the bundle through a symbolic link planted at the staging path", async () => {
+  it("does not use the legacy predictable staging path", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
     writeFileSync(join(tempDir, "payload.txt"), "test data");
     outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
@@ -163,33 +163,15 @@ describe("createTarball", () => {
     const bystander = join(outputDir, "bystander.txt");
     const bystanderContents = "bystander content that must survive";
     writeFileSync(bystander, bystanderContents);
-    // Pin the staging suffix so the planted link sits exactly where this
-    // process stages; the second link covers the pre-fix `.partial.<pid>` name.
-    const suffix = "0".repeat(16);
-    vi.resetModules();
-    vi.doMock("node:crypto", async () => {
-      const actual = await vi.importActual<typeof import("node:crypto")>("node:crypto");
-      return { ...actual, randomBytes: () => actual.randomBytes(8).fill(0) };
-    });
-    const { createTarball: stageTarball } = await import("./tarball");
     const legacyStagingPath = `${output}.partial.${process.pid}`;
     symlinkSync(bystander, legacyStagingPath);
-    symlinkSync(bystander, `${legacyStagingPath}.${suffix}`);
-    const messages: string[] = [];
-    const record = (level: string) => (message: string) => messages.push(`${level}: ${message}`);
-    const ok = stageTarball(tempDir, output, {
-      info: record("info"),
-      warn: record("warn"),
-      error: record("error"),
-    });
-    expect(ok).toBe(false);
-    expect(process.exitCode).toBe(1);
-    // The refusal is reported, not silent.
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toContain(`error: Failed to stage tarball for ${output}`);
-    expect(messages.join("\n")).not.toContain("Tarball written to");
+
+    const ok = createTarball(tempDir, output);
+
+    expect(ok).toBe(true);
+    expect(process.exitCode).toBeUndefined();
     expect(readFileSync(bystander, "utf-8")).toBe(bystanderContents);
-    expect(existsSync(output)).toBe(false);
+    expect(existsSync(output)).toBe(true);
     expect(lstatSync(legacyStagingPath).isSymbolicLink()).toBe(true);
   });
 });
