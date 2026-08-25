@@ -9,8 +9,8 @@ Pick one CPU-only agent to run inside the OpenShell sandbox:
 [OpenClaw](https://openclaw.ai) (default), [Hermes](https://github.com/NousResearch/hermes-agent),
 or [Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview) — all
 three mirror [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents).
-Selection is a single flag (`AGENT_NAME`) to the same generic scripts — there is no
-per-agent folder or duplicated chart. All three route inference identically — through
+Selection uses a single flag (`AGENT_NAME`) with the same generic scripts. All three
+route inference identically — through
 OpenShell's `https://inference.local/v1` proxy to the GPU inference pods this recipe
 deploys (see [`README.md`](README.md#inference-runtimes)) — so the GPU HPA and monitoring
 stack are unaffected by which agent you choose. That routing is uniform, but not every
