@@ -73,7 +73,7 @@ export function checkOpenAiInferenceProviderProfile(deps: {
       ok: false,
       messages: [
         `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
-        "    Confirm the NemoClaw checkout is complete, then re-run onboarding.",
+        "    Confirm OpenShell is available and authorized, then rerun onboarding.",
       ],
     };
   }
@@ -82,7 +82,7 @@ export function checkOpenAiInferenceProviderProfile(deps: {
       ok: false,
       messages: [
         `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
-        "    Repair or remove that profile, then re-run onboarding.",
+        "    Confirm OpenShell is available, authorized, and the profile is readable, then rerun onboarding.",
       ],
     };
   }

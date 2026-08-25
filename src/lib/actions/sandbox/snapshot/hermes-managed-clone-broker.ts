@@ -9,12 +9,14 @@ import {
   type HermesToolGatewayCloneBroker,
 } from "../../../hermes-tool-gateway-clone-broker";
 import type { PreparedManagedWorkloadCloneHandoff } from "../../../onboard/workload/clone";
+import { checkOpenAiInferenceProviderProfile } from "../../../onboard/inference-providers/provider-profile";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import {
   cleanupManagedCloneProviderTransaction,
   type ManagedCloneProviderBinding,
   type ManagedCloneProviderCleanupResult,
+  MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
   type ManagedCloneProviderRunner,
   type ManagedCloneProviderTransactionReceipt,
   type PreparedManagedCloneProviderTransaction,
@@ -197,6 +199,20 @@ function isUnknownActivationOutcome(error: unknown): boolean {
   );
 }
 
+function ensureHermesCloneInferenceProviderProfile(
+  runOpenshell: ManagedCloneProviderRunner,
+): void {
+  const profile = checkOpenAiInferenceProviderProfile({
+    runOpenshell: (args, options) =>
+      runOpenshell(args, {
+        ...options,
+        timeout: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
+      }),
+  });
+  if (profile.ok) return;
+  throw new HermesManagedCloneBrokerTransactionError(profile.messages.join("\n"));
+}
+
 export function provisionHermesManagedCloneBrokerTransaction(
   prepared: PreparedHermesManagedCloneBrokerTransaction,
   input: {
@@ -219,6 +235,7 @@ export function provisionHermesManagedCloneBrokerTransaction(
   }
 
   revalidateManagedCloneMutationAuthority(prepared.providerTransaction, input);
+  ensureHermesCloneInferenceProviderProfile(input.runOpenshell);
   let staged: ReturnType<HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]>;
   try {
     staged = broker.stageHermesToolGatewayCloneBinding(

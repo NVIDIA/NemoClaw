@@ -8,7 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
-import { managedProviderProfileResult } from "../helpers/provider-profile-test-runner";
+import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
 
 const testState = vi.hoisted(() => {
   const home = `/tmp/nemoclaw-mcp-destroy-${process.pid}-${Date.now()}`;
@@ -256,7 +256,7 @@ beforeEach(() => {
         return { status: 0, stdout: "ready", stderr: "" };
     }
     switch (true) {
-      case args[0] === "provider" && args[1] === "profile": return managedProviderProfileResult(args) ?? { status: 0, stdout: "Imported provider profile", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile": return mockManagedEndpointlessProviderProfileRun(args) ?? { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get": {
         const provider = testState.providers.get(args[2]);
         return provider

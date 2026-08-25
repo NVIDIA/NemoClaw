@@ -87,11 +87,13 @@ describe("bindOpenAiProviderProfile", () => {
         { status: 1, stdout: "", stderr: "sensitive-import-output" },
       ],
       expected: "could not import the checked-in 'openai' inference provider profile",
+      guidance: "OpenShell is available and authorized",
     },
     {
       reason: "export failure",
       results: [{ status: 1, stdout: "sensitive-export-output", stderr: "" }],
       expected: "could not be read for validation",
+      guidance: "OpenShell is available, authorized, and the profile is readable",
     },
     {
       reason: "incompatible profile",
@@ -109,8 +111,9 @@ describe("bindOpenAiProviderProfile", () => {
         },
       ],
       expected: "does not match NemoClaw's endpointless inference contract",
+      guidance: "Remove the conflicting profile",
     },
-  ])("fails closed with fixed guidance for $reason", ({ results, expected }) => {
+  ])("fails closed with fixed guidance for $reason", ({ results, expected, guidance }) => {
     let resultIndex = 0;
     const runOpenshell = vi.fn(() => results[resultIndex++]!);
     const upsertProvider = vi.fn(() => ({ ok: true }));
@@ -137,6 +140,7 @@ describe("bindOpenAiProviderProfile", () => {
     expect(upsertProvider).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain(expected);
+    expect(output).toContain(guidance);
     expect(output).not.toMatch(/sensitive-(?:import|export|profile)-/u);
   });
 });

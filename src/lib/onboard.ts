@@ -742,7 +742,8 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
-    getGatewayCompatContainerName: () => gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    getGatewayCompatContainerName: () =>
+      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
@@ -1667,7 +1668,6 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
-
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
@@ -2810,7 +2810,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false, preserveDeferredExitSession = false, preserveIncompleteSession = false;
+  let completed = false,
+    preserveDeferredExitSession = false,
+    preserveIncompleteSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const lockedRuntime = await resumeRuntime.prepare(
@@ -2919,7 +2921,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
 
-      registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed || preserveIncompleteSession);
+      registerIncompleteOnboardExitHandlerForSession(
+        onboardSession,
+        () => completed || preserveIncompleteSession,
+      );
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,
@@ -3095,8 +3100,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         recordRepairEvent,
       });
 
-      // #2753: for an unfinished sandbox, an explicit requested name precedes
-      // the checkpointed name from the interrupted session.
+      // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
         recordedSandboxName,
@@ -3175,7 +3179,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 recoverySessionId,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection: setupNimFlow.createHermesPortableOllamaInferenceResolver({ runtimeContext: lockedRuntime.portableRuntimeContext, credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV, getReservationSessionId: () => session?.sessionId, runGatewayOpenshell: runCoreGatewayOpenshell }),
+            resolveHostLocalInferenceStartupSelection:
+              setupNimFlow.createHermesPortableOllamaInferenceResolver({
+                runtimeContext: lockedRuntime.portableRuntimeContext,
+                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+                getReservationSessionId: () => session?.sessionId,
+                runGatewayOpenshell: runCoreGatewayOpenshell,
+              }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3196,21 +3206,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             isInferenceRouteReady,
             isRoutedInferenceProvider,
             reconcileModelRouter,
-            reupsertRoutedProvider: (gatewayName, p, url, ce) => {
-              const r = routedInference.upsertRoutedProvider(p, url, ce, {
-                upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(
-                  upsertProvider,
-                  gatewayName,
-                ),
-                hydrateCredentialEnv,
-              });
-              return {
-                ok: r.ok,
-                endpointUrl: r.endpointUrl,
-                message: r.result.message,
-                status: r.result.status,
-              };
-            },
+            reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
+              upsertProvider,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+              hydrateCredentialEnv,
+            }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
@@ -3308,7 +3308,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
-
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
@@ -3487,7 +3486,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exitCode = completed ? 0 : 1;
     });
   } catch (error) {
-    preserveDeferredExitSession = onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
+    preserveDeferredExitSession =
+      onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
     try {

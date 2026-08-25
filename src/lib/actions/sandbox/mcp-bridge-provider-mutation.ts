@@ -21,6 +21,7 @@ import {
   endpointlessProviderProfilePath,
   ensureEndpointlessProviderProfile,
 } from "../../messaging/provider-profile";
+import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../onboard/inference-providers/provider-profile";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
@@ -46,8 +47,6 @@ export {
   detachProvider,
   providerDetachChangedState,
 } from "./mcp-bridge-provider-attachments";
-
-const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
 
 /**
  * OpenShell 0.0.106 still accepts the legacy `openai` provider type without a

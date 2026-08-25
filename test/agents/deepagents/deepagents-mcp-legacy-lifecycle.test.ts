@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { managedProviderProfileResult } from "../../helpers/provider-profile-test-runner";
+import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard-script-mocks.cjs";
 
 const mocks = vi.hoisted(() => ({
   applyPresetContent: vi.fn(),
@@ -119,7 +119,7 @@ beforeEach(() => {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
       case args[0] === "provider" && args[1] === "profile":
-        return managedProviderProfileResult(args) ??
+        return mockManagedEndpointlessProviderProfileRun(args) ??
           { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
