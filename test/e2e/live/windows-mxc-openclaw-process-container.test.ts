@@ -5,10 +5,23 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   parseWindowsMxcOpenClawQualificationEnvironment,
   runWindowsMxcOpenClawProcessContainerQualification,
+  type WindowsMxcOpenClawQualificationReceipt,
 } from "./windows-mxc-openclaw-process-container-helpers.ts";
 
 const qualificationTest =
   process.env.NEMOCLAW_RUN_WINDOWS_MXC_OPENCLAW_E2E === "1" ? test : test.skip;
+
+function expectQualificationReceipt(
+  receipt: WindowsMxcOpenClawQualificationReceipt,
+  expectedConfiguration: WindowsMxcOpenClawQualificationReceipt["configuration"],
+  expectedCleanup: WindowsMxcOpenClawQualificationReceipt["cleanup"],
+): void {
+  expect(receipt.verdict).toBe("pass");
+  expect(receipt.configuration).toEqual(expectedConfiguration);
+  expect(receipt.checks.forwardAuthenticatedHealth).toBe(true);
+  expect(receipt.checks.forwardedChatExactReply).toBe(true);
+  expect(receipt.cleanup).toEqual(expectedCleanup);
+}
 
 qualificationTest(
   "repeats forwarded chat and cleanup for the inactive native OpenClaw process_container candidate (#8178)",
@@ -51,21 +64,13 @@ qualificationTest(
 
     progress.phase("start OpenClaw and verify in-sandbox readiness plus filesystem enforcement");
     const firstReceipt = await runWindowsMxcOpenClawProcessContainerQualification(inputs, progress);
-    expect(firstReceipt.verdict).toBe("pass");
-    expect(firstReceipt.configuration).toEqual(expectedConfiguration);
-    expect(firstReceipt.checks.forwardAuthenticatedHealth).toBe(true);
-    expect(firstReceipt.checks.forwardedChatExactReply).toBe(true);
-    expect(firstReceipt.cleanup).toEqual(expectedCleanup);
+    expectQualificationReceipt(firstReceipt, expectedConfiguration, expectedCleanup);
 
     progress.phase("repeat sandbox creation, chat, and cleanup without stale state");
     const secondReceipt = await runWindowsMxcOpenClawProcessContainerQualification(
       inputs,
       progress,
     );
-    expect(secondReceipt.verdict).toBe("pass");
-    expect(secondReceipt.configuration).toEqual(expectedConfiguration);
-    expect(secondReceipt.checks.forwardAuthenticatedHealth).toBe(true);
-    expect(secondReceipt.checks.forwardedChatExactReply).toBe(true);
-    expect(secondReceipt.cleanup).toEqual(expectedCleanup);
+    expectQualificationReceipt(secondReceipt, expectedConfiguration, expectedCleanup);
   },
 );

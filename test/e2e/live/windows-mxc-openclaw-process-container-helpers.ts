@@ -1700,9 +1700,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     ["System32", "taskkill.exe"],
     "Windows taskkill",
   );
+  const hostProcessEnvironment = allowlistedWindowsProcessEnvironment(environment);
   const processElevated = await observeHostProcessElevation(
     powershellPath,
-    allowlistedWindowsProcessEnvironment(environment),
+    hostProcessEnvironment,
     progress,
   );
 
@@ -1710,7 +1711,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const version = await runCommand(
     inputs.openClaw.nodePath,
     [inputs.openClaw.entryPath, "--version"],
-    environment,
+    hostProcessEnvironment,
     progress,
     "command: windows-mxc-openclaw-version",
   );
