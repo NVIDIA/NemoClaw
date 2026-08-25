@@ -145,6 +145,91 @@ function networkPoliciesUseExactCredentialProviders(
   );
 }
 
+function endpointRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function endpointProvider(endpoint: Record<string, unknown>): string | null {
+  const binding = endpointRecord(endpoint.credential_binding);
+  return typeof binding?.provider === "string" ? binding.provider : null;
+}
+
+function sameEndpointIdentity(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): boolean {
+  if (
+    target.host !== source.host ||
+    target.port !== source.port ||
+    (target.protocol !== undefined &&
+      source.protocol !== undefined &&
+      target.protocol !== source.protocol)
+  ) {
+    return false;
+  }
+  const targetProvider = endpointProvider(target);
+  const sourceProvider = endpointProvider(source);
+  if (targetProvider && sourceProvider) return targetProvider === sourceProvider;
+  return target.path === source.path;
+}
+
+function loadCredentialBoundPermissiveEndpoints(
+  policy: CredentialBoundMessagingPolicy,
+  sandboxName: string,
+  agent: MessagingAgentId,
+  targetEndpoints: readonly unknown[],
+): unknown[] | null {
+  const content = loadMessagingChannelPolicyPreset(policy.permissivePolicyKey, {
+    agent,
+    sandboxName,
+  });
+  const boundPolicy = content ? parsePolicyMapping(content) : null;
+  if (
+    !networkPoliciesUseExactCredentialProviders(
+      boundPolicy,
+      policy.livePolicyKeys,
+      policy.providerNames,
+    )
+  ) {
+    return null;
+  }
+  const networkPolicies = boundPolicy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return null;
+  }
+  const sourceEndpoints = policy.livePolicyKeys.flatMap((policyName) => {
+    const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
+    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+      return [];
+    }
+    const value = (networkPolicy as Record<string, unknown>).endpoints;
+    return Array.isArray(value) ? value : [];
+  });
+  if (sourceEndpoints.length === 0) return null;
+
+  const unmatchedTargets = [...targetEndpoints];
+  const merged = sourceEndpoints.map((sourceValue) => {
+    const source = endpointRecord(sourceValue);
+    if (!source) return sourceValue;
+    const targetIndex = unmatchedTargets.findIndex((targetValue) => {
+      const target = endpointRecord(targetValue);
+      return target ? sameEndpointIdentity(target, source) : false;
+    });
+    if (targetIndex < 0) return source;
+    const target = endpointRecord(unmatchedTargets.splice(targetIndex, 1)[0]);
+    if (!target) return source;
+    const result: Record<string, unknown> = { ...target };
+    const binding = endpointRecord(source.credential_binding);
+    if (binding) result.credential_binding = binding;
+    else delete result.credential_binding;
+    if (typeof source.path === "string") result.path = source.path;
+    return result;
+  });
+  return [...merged, ...unmatchedTargets];
+}
+
 /**
  * Keep credential-bound messaging routes only when the live policy proves the
  * complete provider set for an enabled channel. Disabled channels and missing,
@@ -158,7 +243,11 @@ export function composeCredentialBoundMessagingPolicies(
   agent: MessagingAgentId,
   messagingPlan: EnabledPlanSelection | null,
 ): string {
-  const target = parsePolicyMapping(targetPolicyYaml);
+  if (!isValidName(sandboxName)) {
+    throw new Error("Cannot materialize the Shields-down credential provider binding");
+  }
+  const materializedTarget = materializeMessagingPolicySandboxName(targetPolicyYaml, sandboxName);
+  const target = materializedTarget ? parsePolicyMapping(materializedTarget) : null;
   if (!target) throw new Error("Credential-bound messaging target policy must be a YAML mapping");
   const live = parsePolicyMapping(livePolicyYaml);
   const enabledChannels = enabledPlanChannelIds(messagingPlan ?? { channels: [] });
@@ -167,23 +256,31 @@ export function composeCredentialBoundMessagingPolicies(
   if (targetPolicies && typeof targetPolicies === "object" && !Array.isArray(targetPolicies)) {
     const networkPolicies = targetPolicies as Record<string, unknown>;
     for (const policy of messagingPolicies) {
-      if (
-        !enabledChannels.has(normalizeMessagingChannelId(policy.channelId)) ||
-        !networkPoliciesUseExactCredentialProviders(
+      const targetPolicy = networkPolicies[policy.permissivePolicyKey];
+      const targetPolicyRecord = endpointRecord(targetPolicy);
+      const targetEndpoints = targetPolicyRecord?.endpoints;
+      const providersMatch =
+        enabledChannels.has(normalizeMessagingChannelId(policy.channelId)) &&
+        networkPoliciesUseExactCredentialProviders(
           live,
           policy.livePolicyKeys,
           policy.providerNames,
-        )
-      ) {
+        );
+      const boundEndpoints =
+        providersMatch && Array.isArray(targetEndpoints)
+          ? loadCredentialBoundPermissiveEndpoints(policy, sandboxName, agent, targetEndpoints)
+          : null;
+      if (!boundEndpoints || !targetPolicyRecord) {
         delete networkPolicies[policy.permissivePolicyKey];
+      } else {
+        networkPolicies[policy.permissivePolicyKey] = {
+          ...targetPolicyRecord,
+          endpoints: boundEndpoints,
+        };
       }
     }
   }
-  const materialized = materializeMessagingPolicySandboxName(YAML.stringify(target), sandboxName);
-  if (materialized === null) {
-    throw new Error("Cannot materialize the Shields-down credential provider binding");
-  }
-  return materialized;
+  return YAML.stringify(target);
 }
 
 function normalizeAgent(

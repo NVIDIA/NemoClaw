@@ -131,12 +131,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        credential_binding:
-          provider: "{sandboxName}-telegram-bridge"
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
+        access: full
     binaries:
       - { path: "/**" }
 
@@ -182,45 +177,27 @@ network_policies:
     endpoints:
       - host: slack.com
         port: 443
-        path: "/api/apps.connections.open"
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-app"
-        rules:
-          - allow: { method: POST, path: "/api/apps.connections.open" }
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: api.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: hooks.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: wss-primary.slack.com
         port: 443
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -229,8 +206,6 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
