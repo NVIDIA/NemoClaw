@@ -1175,7 +1175,7 @@ RUN set -eu; \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
-    # Executable fixture proof lives in test/fetch-guard-patch-regression.test.ts; \
+    # Executable fixture proof lives in test/security/fetch-guard-patch-regression.test.ts; \
     # the live network-policy E2E exercises this path in the assembled image. \
     web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$web_guard_files" ]; then \
@@ -2163,7 +2163,7 @@ RUN set -eu; \
 # dropped. The `id -nG` checks make this idempotent. Remove this block after
 # the minimum supported OpenClaw sandbox base tag is v0.0.71 or newer and
 # Dockerfile.base guarantees both memberships; keep that base contract covered
-# by test/sandbox-provisioning.test.ts.
+# by test/runtime/sandbox/sandbox-provisioning.test.ts.
 # hadolint ignore=DL4006
 RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
@@ -2203,7 +2203,7 @@ RUN set -eu; \
 # /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
 # the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
 # three artifacts are guaranteed by the base image and covered by
-# test/sandbox-provisioning.test.ts.
+# test/runtime/sandbox/sandbox-provisioning.test.ts.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
 # hadolint ignore=SC2028,DL4006
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \

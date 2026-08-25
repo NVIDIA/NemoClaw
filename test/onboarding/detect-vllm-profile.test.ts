@@ -1,0 +1,200 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  buildHfTokenDockerArgs,
+  buildHfTokenForwardEnv,
+} from "../../src/lib/inference/model-acquisition/hugging-face.js";
+import { detectVllmProfile } from "../../src/lib/inference/vllm.js";
+
+describe("detectVllmProfile", () => {
+  it("returns the Spark profile when gpu.platform === 'spark'", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    expect(profile!.name).toBe("DGX Spark");
+    expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
+    expect(profile!.imageDownloadSizeBytes).toBe(9_603_085_145);
+    expect(profile!.imageUnpackedSizeBytes).toBe(27_658_526_720);
+  });
+
+  it("returns the Spark profile when legacy gpu.spark is true", () => {
+    const profile = detectVllmProfile({ spark: true, type: "nvidia" });
+    expect(profile).not.toBeNull();
+    expect(profile!.name).toBe("DGX Spark");
+  });
+
+  it("returns a distinct N1x profile with the DGX Spark default model (#8574)", () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" });
+
+    expect(profile).not.toBeNull();
+    expect(profile!.name).toBe("N1x");
+    expect(profile!.platform).toBe("n1x");
+    expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
+  });
+
+  it("returns the Station profile when gpu.platform === 'station'", () => {
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    expect(profile!.name).toBe("DGX Station");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
+    expect(profile!.imageDownloadSizeBytes).toBe(9_603_085_145);
+    expect(profile!.imageUnpackedSizeBytes).toBe(27_658_526_720);
+    expect(profile!.defaultModel.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
+    expect(profile!.defaultModel.envValue).toBe("deepseek-v4-flash");
+  });
+
+  it.each([
+    {
+      arch: "arm64",
+      image:
+        "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
+      imageDownloadSizeBytes: 9_278_081_698,
+    },
+    {
+      arch: "x64",
+      image:
+        "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
+      imageDownloadSizeBytes: 8_928_665_752,
+    },
+  ] as const)("returns the generic Linux profile for non-Spark/Station NVIDIA $arch hosts", async ({
+    arch,
+    image,
+    imageDownloadSizeBytes,
+  }) => {
+    const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    try {
+      Object.defineProperty(process, "arch", { configurable: true, value: arch });
+      vi.resetModules();
+      const { detectVllmProfile: detectVllmProfileForArch } = await import(
+        "../../src/lib/inference/vllm.js"
+      );
+
+      const profile = detectVllmProfileForArch({ type: "nvidia" });
+      expect(profile).not.toBeNull();
+      expect(profile!.name).toBe("Linux + NVIDIA GPU");
+      expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+      expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+      expect(profile!.image).toBe(image);
+      expect(profile!.imageDownloadSizeBytes).toBe(imageDownloadSizeBytes);
+    } finally {
+      Object.defineProperty(process, "arch", originalArch);
+      vi.resetModules();
+    }
+  });
+
+  it("prefers Spark over generic when both flags qualify", () => {
+    const profile = detectVllmProfile({ spark: true, type: "nvidia" });
+    expect(profile!.name).toBe("DGX Spark");
+  });
+
+  it("returns Spark when both legacy spark flag and platform field are set", () => {
+    const profile = detectVllmProfile({ platform: "spark", spark: true, type: "nvidia" });
+    expect(profile!.name).toBe("DGX Spark");
+  });
+
+  it("platform field is authoritative over the legacy spark flag", () => {
+    // Conflicting payload: platform says station, legacy spark says true.
+    // platform must win.
+    const profile = detectVllmProfile({ platform: "station", spark: true, type: "nvidia" });
+    expect(profile!.name).toBe("DGX Station");
+  });
+
+  it("returns null when gpu is null or undefined", () => {
+    expect(detectVllmProfile(null)).toBeNull();
+    expect(detectVllmProfile(undefined)).toBeNull();
+  });
+
+  it("returns null for non-NVIDIA GPUs", () => {
+    expect(detectVllmProfile({ type: "apple" })).toBeNull();
+    expect(detectVllmProfile({ type: "amd" })).toBeNull();
+    expect(detectVllmProfile({})).toBeNull();
+  });
+
+  it("shares Spark timeout budgets with the generic profile", () => {
+    const spark = detectVllmProfile({ spark: true, type: "nvidia" });
+    const generic = detectVllmProfile({ type: "nvidia" });
+    expect(generic!.pullTimeoutSec).toBe(spark!.pullTimeoutSec);
+    expect(generic!.loadTimeoutSec).toBe(spark!.loadTimeoutSec);
+  });
+});
+
+describe("buildHfTokenDockerArgs", () => {
+  it("returns no extra env when neither HF token is set", () => {
+    expect(buildHfTokenDockerArgs({} as NodeJS.ProcessEnv)).toEqual([]);
+  });
+
+  it("emits the bare `-e KEY` form so the token never enters the docker run argv", () => {
+    // Docker reads the value from its inherited environment when -e is given
+    // without =value; this keeps the secret out of /proc/<pid>/cmdline for
+    // the multi-minute hf-download and long-lived vllm-serve containers.
+    expect(buildHfTokenDockerArgs({ HF_TOKEN: "hf_abc123" } as NodeJS.ProcessEnv)).toEqual([
+      "-e",
+      "HF_TOKEN",
+    ]);
+  });
+
+  it("falls back to HUGGING_FACE_HUB_TOKEN when HF_TOKEN is empty", () => {
+    expect(
+      buildHfTokenDockerArgs({
+        HF_TOKEN: "",
+        HUGGING_FACE_HUB_TOKEN: "hf_xyz",
+      } as NodeJS.ProcessEnv),
+    ).toEqual(["-e", "HUGGING_FACE_HUB_TOKEN"]);
+  });
+
+  it("prefers HF_TOKEN when both env vars are set", () => {
+    expect(
+      buildHfTokenDockerArgs({
+        HF_TOKEN: "hf_primary",
+        HUGGING_FACE_HUB_TOKEN: "hf_secondary",
+      } as NodeJS.ProcessEnv),
+    ).toEqual(["-e", "HF_TOKEN"]);
+  });
+
+  it("ignores tokens that are whitespace-only", () => {
+    expect(buildHfTokenDockerArgs({ HF_TOKEN: "   " } as NodeJS.ProcessEnv)).toEqual([]);
+  });
+});
+
+describe("buildHfTokenForwardEnv", () => {
+  it("returns an empty map when no HF token is set", () => {
+    expect(buildHfTokenForwardEnv({} as NodeJS.ProcessEnv)).toEqual({});
+  });
+
+  it("re-exports HF_TOKEN so runner-allowlisted subprocesses can see it", () => {
+    // The runner's allowlist (subprocess-env.ts) drops HF_TOKEN by default;
+    // this map is what callers pass via `env:` so docker can pick the
+    // value up when the argv only carries `-e HF_TOKEN` (key-only).
+    expect(buildHfTokenForwardEnv({ HF_TOKEN: "hf_abc" } as NodeJS.ProcessEnv)).toEqual({
+      HF_TOKEN: "hf_abc",
+    });
+  });
+
+  it("falls back to HUGGING_FACE_HUB_TOKEN when HF_TOKEN is missing", () => {
+    expect(
+      buildHfTokenForwardEnv({
+        HUGGING_FACE_HUB_TOKEN: "hf_xyz",
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ HUGGING_FACE_HUB_TOKEN: "hf_xyz" });
+  });
+
+  it("only forwards one key when both are set, matching the argv builder", () => {
+    expect(
+      buildHfTokenForwardEnv({
+        HF_TOKEN: "hf_primary",
+        HUGGING_FACE_HUB_TOKEN: "hf_secondary",
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ HF_TOKEN: "hf_primary" });
+  });
+});
