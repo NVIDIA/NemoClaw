@@ -144,6 +144,41 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("preserves the existing port when reserving a route on the same gateway", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "nvidia-prod",
+        model: "model-a",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      });
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-b",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("preserves an omitted host-local receipt through creation registration", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

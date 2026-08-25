@@ -395,7 +395,9 @@ export function reserveSandboxInferenceRoute(
         : {}),
       ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
       gatewayName: route.gatewayName,
-      gatewayPort: route.gatewayPort,
+      gatewayPort:
+        route.gatewayPort ??
+        (existing?.gatewayName === route.gatewayName ? existing.gatewayPort : undefined),
       ...(route.openshellDriver === undefined ? {} : { openshellDriver: route.openshellDriver }),
     };
     data.sandboxes[name] = next;
