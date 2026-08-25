@@ -406,6 +406,12 @@ describe("shields — unit logic", () => {
 
         expect(deriveShieldsMode({}, false)).toBe("mutable_default");
         expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
+        expect(
+          deriveShieldsMode(
+            { shieldsDown: true, policyRecoveryConfigLocked: true },
+            true,
+          ),
+        ).toBe("locked_recovery");
         expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
         expect(deriveShieldsMode({}, true)).toBe("mutable_default");
       },

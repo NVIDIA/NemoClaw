@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -269,7 +270,7 @@ describe("external Shields policy recovery", () => {
       "policy verification after config lock failed",
     );
 
-    expect(harness.isShieldsDown(sandboxName)).toBe(true);
+    expect(harness.isShieldsDown(sandboxName)).toBe(false);
     expect(harness.getOpenClawPosture()).toBe("locked");
     expect(countPolicySets(harness)).toBe(policySetsAfterDown);
     const errors = harness.errorSpy.mock.calls.flat().join("\n");
@@ -280,10 +281,77 @@ describe("external Shields policy recovery", () => {
     expect(harness.auditSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "shields_up" }),
     );
+    expect(harness.getShieldsPosture(sandboxName, false).mode).toBe("locked_recovery");
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
+    expect(harness.getOpenClawPosture()).toBe("locked");
 
     harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
     harness.shieldsUp(sandboxName, { throwOnError: true });
     expect(harness.isShieldsDown(sandboxName)).toBe(false);
     expect(harness.getOpenClawPosture()).toBe("locked");
+  });
+});
+
+describe("locked Shields policy recovery status", () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-locked-policy-recovery-"));
+    vi.stubEnv("HOME", homeDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("verifies Hermes locked recovery status without mutating provider state (#9833)", () => {
+    const sandboxName = "hermes";
+    const target = {
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      configPath: "/sandbox/.hermes/config.yaml",
+      format: "yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.env"],
+      stateLockPlanInImage: true,
+    };
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      agentConfigTarget: target,
+      sandboxName,
+    });
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({
+        shieldsDown: true,
+        policyRecoveryConfigLocked: true,
+        chattrApplied: true,
+        fileHashes: { [target.configPath]: "a".repeat(64) },
+      }),
+    );
+    const mutationCount = harness.dockerSpawnCalls.length;
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+
+    expect(() =>
+      harness.shieldsStatus(sandboxName, false, {
+        inspectPolicyRecovery: () => ({ status: "external", handoff: "policy handoff" }),
+        resolveConfig: () => target,
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        verifyStateLockPlan: () => [],
+      }),
+    ).toThrow("process exit 2");
+
+    expect(harness.dockerSpawnCalls).toHaveLength(mutationCount);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "DOWN (CONFIG LOCKED — POLICY RECOVERY REQUIRED)",
+    );
   });
 });
