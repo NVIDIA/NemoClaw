@@ -4,7 +4,9 @@
 import type { StdioOptions } from "node:child_process";
 
 import { buildSubprocessEnv } from "../../subprocess-env";
-import { runOpenshell } from "./runtime";
+import { OPENSHELL_OPERATION_TIMEOUT_MS, runOpenshell } from "./runtime";
+
+export { OPENSHELL_OPERATION_TIMEOUT_MS };
 
 export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;

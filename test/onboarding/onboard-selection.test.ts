@@ -4124,8 +4124,8 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
-// provider get: exit 1 so upsertProvider uses "create"
-if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); } // Force provider creation.
 process.exit(0);
 `,
       { mode: 0o755 },
