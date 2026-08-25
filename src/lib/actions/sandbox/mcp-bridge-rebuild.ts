@@ -3,7 +3,6 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import {
-  captureMcpAdapterRollbackState,
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
   type ScrubbedMcpAdapter,
@@ -44,7 +43,7 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: ScrubbedMcpAdapter[];
   /** Full read-only target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
@@ -198,14 +197,14 @@ export async function prepareMcpBridgesForRebuild(
   return {
     entries,
     detachedProviderEntries: detached,
-    scrubbedAdapterEntries: scrubbedAdapters.map(({ entry }) => entry),
+    scrubbedAdapterEntries: scrubbedAdapters,
   };
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly ScrubbedMcpAdapter[] = [],
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);
@@ -228,14 +227,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
     }
   }
   if (!runtimeRestored) {
-    try {
-      const rollbackState = scrubbedAdapterEntries.map((entry) =>
-        captureMcpAdapterRollbackState(sandboxName, sandbox, entry),
-      );
-      failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, rollbackState));
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
-    }
+    failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
   }
   if (failures.length > 0) {
     throw new McpBridgeError(failures.join("; "));

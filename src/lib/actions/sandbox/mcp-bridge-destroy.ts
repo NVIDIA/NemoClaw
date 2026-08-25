@@ -211,7 +211,9 @@ export async function prepareMcpBridgesForDestroy(
   return {
     entries,
     detachedProviderEntries: detached,
-    scrubbedAdapterEntries: scrubbedAdapters.map(({ entry }) => entry),
+    scrubbedAdapterEntries: scrubbedAdapters.map(({ credentialRevision: _revision, ...entry }) =>
+      entry,
+    ),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
   };

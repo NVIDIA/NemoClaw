@@ -11,10 +11,9 @@ import {
 } from "./mcp-bridge-provider-readiness";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
-export interface ScrubbedMcpAdapter {
-  entry: McpBridgeEntry;
+export type ScrubbedMcpAdapter = McpBridgeEntry & {
   credentialRevision?: McpAttachedCredentialRevision;
-}
+};
 
 /** Capture the attached revision required for a fail-closed adapter rollback. */
 export function captureMcpAdapterRollbackState(
@@ -23,9 +22,14 @@ export function captureMcpAdapterRollbackState(
   entry: McpBridgeEntry,
 ): ScrubbedMcpAdapter {
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
-  if (adapter === "deepagents-config") return { entry };
+  if (adapter !== "hermes-config") return entry;
   const credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
-  return credentialRevision === "absent" ? { entry } : { entry, credentialRevision };
+  if (credentialRevision === "absent") {
+    throw new McpBridgeError(
+      `Could not prove an attached credential revision before changing Hermes MCP adapter '${entry.server}'.`,
+    );
+  }
+  return { ...entry, credentialRevision };
 }
 
 /** Resolve the exact persisted adapter, falling back only for legacy entries. */
@@ -65,10 +69,11 @@ export function rollbackScrubbedMcpAdapters(
   scrubbedAdapters: readonly ScrubbedMcpAdapter[],
 ): string[] {
   const failures: string[] = [];
-  for (const { entry, credentialRevision } of scrubbedAdapters) {
+  for (const scrubbedAdapter of scrubbedAdapters) {
     try {
+      const { credentialRevision, ...entry } = scrubbedAdapter;
       const adapter = resolveManagedMcpAdapter(sandbox, entry);
-      if (adapter !== "deepagents-config" && credentialRevision === undefined) {
+      if (adapter === "hermes-config" && credentialRevision === undefined) {
         throw new McpBridgeError(
           `Could not prove an attached credential revision while rolling back MCP adapter '${entry.server}'.`,
         );

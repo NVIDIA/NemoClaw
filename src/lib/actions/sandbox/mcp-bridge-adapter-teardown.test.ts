@@ -44,35 +44,37 @@ describe("MCP adapter teardown rollback", () => {
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
   });
 
-  it("restores the revision observed before a later teardown step fails (#10155)", () => {
-    const rollbackState = scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry);
+  it.each(["rebuild", "destroy"])(
+    "restores the revision observed before a later %s step fails (#10155)",
+    () => {
+      const rollbackState = scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry);
 
-    expect(mocks.observeMcpCredentialRevision.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.unregisterAgentAdapter.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
-    );
-    expect(rollbackScrubbedMcpAdapters("alpha", sandbox, [rollbackState])).toEqual([]);
-    expect(mocks.registerAgentAdapter).toHaveBeenCalledWith(
-      "alpha",
-      "hermes-config",
-      entry,
-      {},
-      {
-        credentialRevision: "v12",
-        replaceExisting: true,
-        teardownRollback: true,
-      },
-    );
-  });
+      expect(rollbackState).toMatchObject({ ...entry, credentialRevision: "v12" });
+      expect(mocks.observeMcpCredentialRevision.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.unregisterAgentAdapter.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+      );
+      expect(rollbackScrubbedMcpAdapters("alpha", sandbox, [rollbackState])).toEqual([]);
+      expect(mocks.registerAgentAdapter).toHaveBeenCalledWith(
+        "alpha",
+        "hermes-config",
+        entry,
+        {},
+        {
+          credentialRevision: "v12",
+          replaceExisting: true,
+          teardownRollback: true,
+        },
+      );
+    },
+  );
 
-  it("does not write a canonical placeholder when no attached revision can be proved", () => {
+  it("does not scrub Hermes when no attached revision can be proved", () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("absent");
 
-    const rollbackState = scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry);
-
-    expect(rollbackScrubbedMcpAdapters("alpha", sandbox, [rollbackState])).toEqual([
-      "Could not prove an attached credential revision while rolling back MCP adapter 'github'.",
-    ]);
-    expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
+    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toThrow(
+      "Could not prove an attached credential revision before changing Hermes MCP adapter 'github'.",
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.registerAgentAdapter).not.toHaveBeenCalled();
   });
 });
