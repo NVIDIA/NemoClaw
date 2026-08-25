@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 const windowsPreparationDoc = path.join(repoRoot, "docs", "get-started", "windows-preparation.mdx");
 const contributingDoc = path.join(repoRoot, "docs", "CONTRIBUTING.md");
 const codeRabbitConfig = path.join(repoRoot, ".coderabbit.yaml");

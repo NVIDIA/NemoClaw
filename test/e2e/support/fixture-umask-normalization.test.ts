@@ -11,7 +11,7 @@ import vitestConfig from "../../../vitest.config";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "hermes",
   "runtime-config-guard.py",
@@ -150,7 +150,7 @@ it("derives npm test projects and keeps omitted live projects off the fixture um
     );
 
     const result = spawnSync(process.execPath, [npmCli, "test"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../../.."),
       encoding: "utf8",
       env: {
         ...process.env,
