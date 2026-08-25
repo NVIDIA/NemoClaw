@@ -909,7 +909,7 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=7468555c7596b3b95732fb98aec6152537778d8519a4409c3da8aa6a76c9a3f7
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=424336d2ee3a12b4fb979ed84401ef105bf9c70e36dc3aa27a70f2a46b46def9
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
