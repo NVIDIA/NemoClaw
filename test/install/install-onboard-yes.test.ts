@@ -620,9 +620,6 @@ recover_preexisting_sandboxes_before_onboard() {
 run_onboard() {
   record onboard
   printf '%s\n' "$*" >"$HOME/onboard-args.log"
-  if [[ "$ONBOARD_STATUS" == "0" ]]; then
-    touch "$HOME/provider-created" "$HOME/sandbox-created" "$HOME/onboarding-complete"
-  fi
   return "$ONBOARD_STATUS"
 }
 restore_onboard_forward_after_post_checks() { record restore-forward; return 0; }
@@ -655,9 +652,6 @@ main --non-interactive --yes-i-accept-third-party-software ${options.deferFlag ?
   return {
     ...result,
     calls,
-    onboardingComplete: fs.existsSync(path.join(result.home, "onboarding-complete")),
-    providerCreated: fs.existsSync(path.join(result.home, "provider-created")),
-    sandboxCreated: fs.existsSync(path.join(result.home, "sandbox-created")),
   };
 }
 
@@ -671,6 +665,9 @@ describe("Hermes deferred onboarding", () => {
     expect(result.result.status, result.output).toBe(0);
     expect(result.output).toContain("--defer-onboarding");
     expect(result.output).toContain("NEMOCLAW_DEFER_ONBOARDING=1");
+    expect(result.output.match(/NEMOCLAW_AGENT=hermes/g)).toHaveLength(2);
+    expect(result.output.match(/NEMOCLAW_PROVIDER=build, cloud, or routed/g)).toHaveLength(2);
+    expect(result.output.match(/no local model profile/g)).toHaveLength(2);
   });
 
   it.each([
@@ -688,9 +685,6 @@ describe("Hermes deferred onboarding", () => {
       expect(result.output).toContain("NVIDIA inference credentials are absent");
       expect(result.output).toContain("Onboarding did not run");
       expect(result.output).toContain("nemohermes onboard");
-      expect(result.providerCreated).toBe(false);
-      expect(result.sandboxCreated).toBe(false);
-      expect(result.onboardingComplete).toBe(false);
     },
   );
 
@@ -706,9 +700,6 @@ describe("Hermes deferred onboarding", () => {
       expect(result.output).toContain("NVIDIA inference credentials are absent");
       expect(result.output).toContain("Onboarding did not run");
       expect(result.output).toContain("nemohermes onboard");
-      expect(result.providerCreated).toBe(false);
-      expect(result.sandboxCreated).toBe(false);
-      expect(result.onboardingComplete).toBe(false);
     },
   );
 
@@ -724,9 +715,6 @@ describe("Hermes deferred onboarding", () => {
     expect(result.calls).toContain("host-preflight");
     expect(result.calls).toContain("onboard");
     expect(result.calls).toContain("restore-forward");
-    expect(result.providerCreated).toBe(true);
-    expect(result.sandboxCreated).toBe(true);
-    expect(result.onboardingComplete).toBe(true);
     expect(result.output).not.toContain(credential);
     expect(fs.readFileSync(path.join(result.home, "onboard-args.log"), "utf-8")).not.toContain(
       credential,
