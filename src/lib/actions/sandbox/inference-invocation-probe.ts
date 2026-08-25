@@ -14,7 +14,11 @@ import { buildOpenShellRuntimeSelectionEnv } from "../../adapters/openshell/runt
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
-import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
+import {
+  GEMINI_PROBE_REPLY_TOKENS,
+  MIN_PROBE_REPLY_TOKENS,
+  resolveMaxTokensField,
+} from "../../inference/max-tokens-field";
 import {
   NVCF_FUNCTION_NOT_FOUND_MARKER,
   NVCF_FUNCTION_NOT_FOUND_SHELL_ERE,
@@ -100,7 +104,10 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: MIN_PROBE_REPLY_TOKENS,
+      [resolveMaxTokensField(input.model)]:
+        input.provider === "gemini-api"
+          ? GEMINI_PROBE_REPLY_TOKENS
+          : MIN_PROBE_REPLY_TOKENS,
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },
