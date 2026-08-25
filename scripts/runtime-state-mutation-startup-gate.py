@@ -616,6 +616,7 @@ def _publish_retry_ack(binding: dict[str, object], retry_payload: bytes) -> None
         _fail("retry-ack-write-failed")
     finally:
         os.close(directory_fd)
+    return
 
 
 def _prepare_release_ack(binding: dict[str, object]) -> str:

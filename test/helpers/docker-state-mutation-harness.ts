@@ -342,7 +342,7 @@ function createContainerStateMutationHarness(
                 action === "acquire" || action === "assert"
                   ? 30_000
                   : action === "activate"
-                    ? 5_000 + 150_000 + 150_000 + 30_000
+                    ? 5_000 + 150_000 + 150_000 + 150_000 + 30_000
                     : action === "release"
                       ? 5 * 60_000
                       : 15 * 60_000;

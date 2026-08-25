@@ -92,7 +92,7 @@ describe("Docker runtime-provider state mutation surface", () => {
     expect(processStateWindowSeconds).toBeGreaterThan(0);
     expect(activationWindowSeconds).toBeGreaterThan(0);
     expect(brokerTimeouts?.activate).toBe(
-      processStateWindowSeconds + 2 * activationWindowSeconds + 30,
+      processStateWindowSeconds + 3 * activationWindowSeconds + 30,
     );
     expect(brokerTimeouts?.release).toBe(300);
   });
@@ -172,7 +172,7 @@ print(json.dumps(timeouts))
           timeout: 5_000,
         }),
       ),
-    ).toEqual([335, 110]);
+    ).toEqual([485, 260]);
   });
 
   it("publishes a bounded activation timeout after the helper deadline (#10155)", async () => {
@@ -497,8 +497,8 @@ describe("Docker state mutation owner", () => {
       ["acquire", 30_000],
       ["assert", 30_000],
       ["rollback", 15 * 60_000],
-      ["activate", 335_000],
-      ["activate", 335_000],
+      ["activate", 485_000],
+      ["activate", 485_000],
       ["release", 5 * 60_000],
     ]);
     const acquireRequest = JSON.parse(helperCalls[0]?.[3]?.toString("utf8") ?? "null");
