@@ -326,7 +326,7 @@ repos:
 
       - id: codebase-growth-guardrails
         name: Codebase growth guardrails
-        entry: npx vitest run --project integration test/growth-guardrails.test.ts
+        entry: npx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts
         language: system
         always_run: true
         pass_filenames: false
