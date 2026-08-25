@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard-script-mocks.cjs";
+
 const mocks = vi.hoisted(() => ({
   applyPresetContent: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
@@ -20,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
@@ -116,8 +119,9 @@ beforeEach(() => {
     switch (true) {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
-      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
-        return { status: 0, stdout: "Imported provider profile", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile":
+        return mockManagedEndpointlessProviderProfileRun(args) ??
+          { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {

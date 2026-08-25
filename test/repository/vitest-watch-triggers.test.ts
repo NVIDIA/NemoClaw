@@ -66,6 +66,8 @@ const OPAQUE_INPUTS = [
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
+  "nemoclaw/src/shared/openshell-policy-boundary.cts",
+  "nemoclaw/tsconfig.shared.json",
   "scripts/setup-jetson.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
@@ -84,6 +86,7 @@ const OPAQUE_INPUTS = [
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/pr-self-hosted.yaml",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
@@ -147,6 +150,15 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
       "test/e2e-runtime/brev-launchable-e2e.test.ts",
       "test/e2e-runtime/brev-launchable-gateway-diagnostics.test.ts",
+    ]);
+  });
+
+  it.each([
+    "nemoclaw/src/shared/openshell-policy-boundary.cts",
+    "nemoclaw/tsconfig.shared.json",
+  ])("maps each policy compiler input to its spawned fixture contract [%s] (#10016)", (inputPath) => {
+    expect(triggeredBy(inputPath)).toEqual([
+      "test/e2e/support/hermes-discord-policy-binding.test.ts",
     ]);
   });
 
@@ -296,6 +308,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
 
     expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
