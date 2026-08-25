@@ -102,7 +102,7 @@ nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => false;
-nimMod.stopNimContainerByName = (name) => { stoppedContainer = name; };
+nimMod.stopNimContainerByNameOrThrow = (name) => { stoppedContainer = name; };
 nimMod.isNgcLoggedIn = () => true;
 installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
@@ -125,6 +125,48 @@ reportChildScenario(async () => {
       assert.equal(payload.stoppedContainer, "nemoclaw-nim-test");
       assert.notEqual(payload.result.provider, "vllm-local");
       assert.equal(payload.result.nimContainer, null);
+    } finally {
+      workspace.remove();
+    }
+  });
+
+  it("stops instead of selecting cloud inference when NIM removal is not confirmed", () => {
+    const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-cleanup-failure-");
+    const script = String.raw`
+${onboardChildRuntimeSource}
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const nimMod = require(${nimPath});
+nimMod.pullNimImage = () => {};
+nimMod.containerName = () => "nemoclaw-nim-test";
+nimMod.startNimContainerByName = () => "nemoclaw-nim-test";
+nimMod.waitForNimHealth = () => false;
+nimMod.stopNimContainerByNameOrThrow = () => {
+  throw new Error("Could not remove NIM container 'nemoclaw-nim-test'. Refusing to continue because it may still own its credentials and port.");
+};
+nimMod.isNgcLoggedIn = () => true;
+installPromptQueue(credentials, ["8", "1", "ngc-test"]);
+credentials.ensureApiKey = async () => {};
+runner.runCapture = () => "";
+const { setupNim } = require(${onboardPath});
+setupNim(${unifiedGpu}).then(() => {
+  console.error("unexpected cloud fallback");
+  process.exit(2);
+});
+`;
+
+    try {
+      const result = workspace.runNodeSource(script, {
+        name: "nim-cleanup-failure.js",
+        cwd: repoRoot,
+        env: workspace.environment({ NEMOCLAW_EXPERIMENTAL: "1" }),
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(
+        result.stderr,
+        /Refusing to continue because it may still own its credentials and port/,
+      );
+      assert.doesNotMatch(result.stderr, /unexpected cloud fallback/);
     } finally {
       workspace.remove();
     }

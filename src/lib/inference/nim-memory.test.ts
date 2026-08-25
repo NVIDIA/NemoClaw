@@ -1,10 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const dockerMocks = vi.hoisted(() => ({
+  remove: vi.fn(),
+  stop: vi.fn(),
+}));
+
+vi.mock("../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker")>()),
+  dockerRm: dockerMocks.remove,
+  dockerStop: dockerMocks.stop,
+}));
+
 import * as nim from "./nim";
 
 describe("NIM memory selection", () => {
+  beforeEach(() => {
+    dockerMocks.remove.mockReset().mockReturnValue({ status: 0 });
+    dockerMocks.stop.mockReset().mockReturnValue({ status: 0 });
+  });
+
   it("caps NIM usable memory at 50 percent on unified-memory hosts", () => {
     expect(
       nim.nimUsableMemoryMB({
@@ -76,5 +93,20 @@ describe("NIM memory selection", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("reports whether the NIM container removal completed", () => {
+    expect(nim.stopNimContainerByName("nemoclaw-nim-test", { silent: true })).toBe(true);
+
+    dockerMocks.remove.mockReturnValueOnce({ status: 1 });
+    expect(nim.stopNimContainerByName("nemoclaw-nim-test", { silent: true })).toBe(false);
+  });
+
+  it("stops the fallback path when NIM container removal is not confirmed", () => {
+    dockerMocks.remove.mockReturnValueOnce({ status: 1 });
+
+    expect(() => nim.stopNimContainerByNameOrThrow("nemoclaw-nim-test")).toThrow(
+      "Refusing to continue because it may still own its credentials and port",
+    );
   });
 });

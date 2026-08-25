@@ -1107,21 +1107,29 @@ export function waitForNimHealth(
 export function stopNimContainer(
   sandboxName: string,
   { silent = false }: { silent?: boolean } = {},
-): void {
+): boolean {
   const name = containerName(sandboxName);
-  stopNimContainerByName(name, { silent });
+  return stopNimContainerByName(name, { silent });
 }
 
 export function stopNimContainerByName(
   name: string,
   { silent = false }: { silent?: boolean } = {},
-): void {
+): boolean {
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
   const stdio: ["ignore", "ignore", "ignore"] | undefined = silent
     ? ["ignore", "ignore", "ignore"]
     : undefined;
   dockerStop(name, { ignoreError: true, ...(stdio && { stdio }) });
-  dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
+  const removed = dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
+  return removed.status === 0;
+}
+
+export function stopNimContainerByNameOrThrow(name: string): void {
+  if (stopNimContainerByName(name)) return;
+  throw new Error(
+    `Could not remove NIM container '${name}'. Refusing to continue because it may still own its credentials and port.`,
+  );
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {
