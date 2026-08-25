@@ -11,7 +11,7 @@ import {
   ADMIN_REQUEST_SELECTOR_PY,
   adminApprovalConnectScript,
   extractPendingRequestId,
-} from "./e2e/live/issue-4462-admin-approval-helper.ts";
+} from "../e2e/live/issue-4462-admin-approval-helper.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
 

@@ -8,11 +8,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { redact as debugRedact } from "../src/lib/diagnostics/debug";
-import { redactSensitiveText } from "../src/lib/state/onboard-session";
+import { redact as debugRedact } from "../../src/lib/diagnostics/debug";
+import { redactSensitiveText } from "../../src/lib/state/onboard-session";
 
 const require = createRequire(import.meta.url);
-const { redact: runnerRedact } = require("../src/lib/runner");
+const { redact: runnerRedact } = require("../../src/lib/runner");
 
 describe("secret redaction consistency (#1736)", () => {
   // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.
@@ -95,7 +95,7 @@ describe("secret redaction consistency (#1736)", () => {
       try {
         const result = spawnSync(
           "bash",
-          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          [join(import.meta.dirname, "../..", "scripts", "debug.sh"), "--quick"],
           {
             encoding: "utf-8",
             env: {
@@ -151,7 +151,7 @@ describe("secret redaction consistency (#1736)", () => {
       try {
         const result = spawnSync(
           "/bin/bash",
-          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          [join(import.meta.dirname, "../..", "scripts", "debug.sh"), "--quick"],
           {
             encoding: "utf-8",
             env: {
