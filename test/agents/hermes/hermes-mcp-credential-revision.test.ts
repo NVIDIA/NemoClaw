@@ -13,7 +13,7 @@ const TRANSACTION = path.resolve(
 );
 
 describe("Hermes MCP credential revision transaction", () => {
-  it("accepts bounded revisions and preserves exact revision comparison (#10155)", () => {
+  it("accepts the declared bounded revision and preserves exact comparison (#10155)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -24,38 +24,53 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-def payload(authorization):
-    return {
-        "server": "fake",
-        "url": "https://mcp.example.test/mcp",
-        "headers": {"Authorization": authorization},
-        "replace_existing": True,
-    }
-
-canonical = payload("Bearer openshell:resolve:env:FAKE_TOKEN")
-revisioned = payload("Bearer openshell:resolve:env:v12_FAKE_TOKEN")
 os.environ["FAKE_TOKEN"] = "openshell:resolve:env:v12_FAKE_TOKEN"
-invalid = {
-    "malformed": payload("Bearer openshell:resolve:env:v12-FAKE_TOKEN"),
-    "overlong": payload("Bearer openshell:resolve:env:v" + "1" * 21 + "_FAKE_TOKEN"),
-    "reservedName": payload("Bearer openshell:resolve:env:v12_GCP_PROJECT_ID"),
-    "unobserved": payload("Bearer openshell:resolve:env:v12_OTHER_TOKEN"),
-    "unsupportedMetadata": {**revisioned, "credential_revision": "v12"},
+base = {
+    "server": "fake",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:v12_FAKE_TOKEN"},
+    "replace_existing": True,
+    "credential_name": "FAKE_TOKEN",
+    "credential_revision": "v12",
 }
-
-validation = {}
-for name, candidate in {"canonical": canonical, "revisioned": revisioned, **invalid}.items():
+canonical = {
+    "server": "fake",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
+    "replace_existing": True,
+}
+cases = {
+    "exact": base,
+    "canonical": canonical,
+    "missingRevision": {key: value for key, value in base.items() if key != "credential_revision"},
+    "missingName": {key: value for key, value in base.items() if key != "credential_name"},
+    "mismatchedRevision": {**base, "credential_revision": "v11"},
+    "malformedRevision": {**base, "credential_revision": "v"},
+    "overlongRevision": {**base, "credential_revision": "v" + "1" * 21},
+    "wrongName": {**base, "headers": {"Authorization": "Bearer openshell:resolve:env:v12_OTHER_TOKEN"}},
+    "unobserved": {
+        **base,
+        "headers": {"Authorization": "Bearer openshell:resolve:env:v12_OTHER_TOKEN"},
+        "credential_name": "OTHER_TOKEN",
+    },
+    "metadataOnRemove": {**base, "force": False},
+}
+cases["metadataOnRemove"].pop("replace_existing")
+results = {}
+for name, payload in cases.items():
     try:
-        module._validate_payload("add", candidate)
-        validation[name] = "accepted"
+        module._validate_payload("remove" if name == "metadataOnRemove" else "add", payload)
+        results[name] = "accepted"
     except ValueError:
-        validation[name] = "rejected"
+        results[name] = "rejected"
 
 canonical_candidate = module._managed_candidate(canonical)
-revisioned_candidate = module._managed_candidate(revisioned)
-stale_candidate = module._managed_candidate(
-    payload("Bearer openshell:resolve:env:v11_FAKE_TOKEN")
-)
+revisioned_candidate = module._managed_candidate(base)
+stale_candidate = module._managed_candidate({
+    **base,
+    "headers": {"Authorization": "Bearer openshell:resolve:env:v11_FAKE_TOKEN"},
+    "credential_revision": "v11",
+})
 comparison = {
     "bounded": module._managed_candidate_matches(
         revisioned_candidate, canonical_candidate, True
@@ -70,7 +85,7 @@ comparison = {
         revisioned_candidate, revisioned_candidate, False
     ),
 }
-print(json.dumps({"validation": validation, "comparison": comparison}))`,
+print(json.dumps({"validation": results, "comparison": comparison}))`,
         TRANSACTION,
       ],
       { encoding: "utf8" },
@@ -80,12 +95,15 @@ print(json.dumps({"validation": validation, "comparison": comparison}))`,
     expect(JSON.parse(result.stdout)).toEqual({
       validation: {
         canonical: "accepted",
-        revisioned: "accepted",
-        malformed: "rejected",
-        overlong: "rejected",
-        reservedName: "rejected",
+        exact: "accepted",
+        malformedRevision: "rejected",
+        metadataOnRemove: "rejected",
+        mismatchedRevision: "rejected",
+        missingName: "rejected",
+        missingRevision: "rejected",
+        overlongRevision: "rejected",
         unobserved: "rejected",
-        unsupportedMetadata: "rejected",
+        wrongName: "rejected",
       },
       comparison: {
         bounded: true,

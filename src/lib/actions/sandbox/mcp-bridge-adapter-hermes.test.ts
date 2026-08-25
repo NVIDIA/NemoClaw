@@ -28,10 +28,7 @@ import {
   buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
 } from "./mcp-bridge-adapter-hermes";
-import {
-  buildHermesMcpStatusCommand,
-  HERMES_MCP_TRANSACTION_HELPER,
-} from "./mcp-bridge-adapter-status";
+import { buildHermesMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 const baseEntry: McpBridgeEntry = {
   server: "github",
@@ -97,7 +94,7 @@ describe("Hermes MCP config adapter", () => {
     ]);
   });
 
-  it("projects the readiness-proven credential revision without helper-only metadata (#10155)", () => {
+  it("declares the readiness-proven credential revision for transaction validation (#10155)", () => {
     const command = buildHermesMcpRegisterCommand(baseEntry, false, "v12");
 
     expect(JSON.parse(command[3] ?? "{}")).toEqual({
@@ -105,6 +102,8 @@ describe("Hermes MCP config adapter", () => {
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
       replace_existing: false,
+      credential_name: "GITHUB_TOKEN",
+      credential_revision: "v12",
     });
   });
 
@@ -124,7 +123,6 @@ describe("Hermes MCP config adapter", () => {
   it("accepts a revision on resumed inspection and rejects a stale exact revision (#10155)", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-revision-"));
     const configPath = path.join(temp, "config.yaml");
-    const helperPath = path.resolve("agents/hermes/mcp-config-transaction.py");
     fs.writeFileSync(
       configPath,
       JSON.stringify({
@@ -149,15 +147,12 @@ describe("Hermes MCP config adapter", () => {
       expect(scriptEnd, "Hermes status command Python end").toBeGreaterThanOrEqual(scriptStart);
       const script = command
         .slice(scriptStart, scriptEnd)
-        .replace(
-          `module_path = ${JSON.stringify(HERMES_MCP_TRANSACTION_HELPER)}`,
-          "module_path = sys.argv[2]",
-        )
+        .replace("import json, pathlib, yaml", "import json, pathlib, sys, yaml")
         .replace(
           'config_path = pathlib.Path("/sandbox/.hermes/config.yaml")',
           "config_path = pathlib.Path(sys.argv[1])",
         );
-      return spawnSync("python3", ["-", configPath, helperPath], {
+      return spawnSync("python3", ["-", configPath], {
         encoding: "utf8",
         input: script,
         killSignal: "SIGKILL",

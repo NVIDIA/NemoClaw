@@ -830,32 +830,32 @@ export function restartSandboxGateway(
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
     return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
       restartSandboxGatewayWithDeps(sandboxName, {
-      quiet,
-      deps: {
-        getSessionAgent: agentRuntime.getSessionAgent,
-        getSandbox: registry.getSandbox,
-        resolveSandboxDashboardPort,
-        requestGatewaySupervisorAction: executeGatewaySupervisorAction,
-        executeSandboxExecCommand,
-        waitForRecoveredSandboxGateway: (name, options) =>
-          waitForRecoveredSandboxGateway(name, {
-            ...options,
-            initialManagedHealthPassed: true,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
-            managedProbeImpl: (sandboxName) =>
-              confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl:
-                  deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
-              }),
-          }),
-        ensureSandboxPortForward,
-        ensureHermesDashboardPortForwardIfEnabled,
-        recoverMessagingHostForward,
-        recoverDeclaredAgentForwardPorts,
-        printGatewayWedgeDiagnostics,
-        inspectHermesMcpReconciliationRefusal,
-        ...deps,
-      },
+        quiet,
+        deps: {
+          getSessionAgent: agentRuntime.getSessionAgent,
+          getSandbox: registry.getSandbox,
+          resolveSandboxDashboardPort,
+          requestGatewaySupervisorAction: executeGatewaySupervisorAction,
+          executeSandboxExecCommand,
+          waitForRecoveredSandboxGateway: (name, options) =>
+            waitForRecoveredSandboxGateway(name, {
+              ...options,
+              initialManagedHealthPassed: true,
+              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+              managedProbeImpl: (sandboxName) =>
+                confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                  requestGatewaySupervisorActionImpl:
+                    deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
+                }),
+            }),
+          ensureSandboxPortForward,
+          ensureHermesDashboardPortForwardIfEnabled,
+          recoverMessagingHostForward,
+          recoverDeclaredAgentForwardPorts,
+          printGatewayWedgeDiagnostics,
+          inspectHermesMcpReconciliationRefusal,
+          ...deps,
+        },
       }),
     );
   });
@@ -879,7 +879,10 @@ const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (o
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
 function normalizeOpenshellStructuredError(value: string): string {
-  return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
+  return stripAnsi(value)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {
@@ -1628,7 +1631,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           quiet,
           initialManagedHealthPassed: recovery.kind === "managed",
           requireManagedProbe: recovery.kind === "relaunched",
-          timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+          // A legacy keepalive relaunch starts a new OpenClaw container. The
+          // #10153 failure exhausted the ordinary 30-second health budget
+          // during that full recreation. Give only this OpenClaw transition
+          // the existing 120-second recreated-sandbox readiness budget;
+          // other agents retain their declared gateway health timeout.
+          timeoutSeconds:
+            relaunch && (recoveryAgent === null || recoveryAgent.name === "openclaw")
+              ? Math.max(
+                  gatewayRecoveryTimeoutSeconds(recoveryAgent),
+                  GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
+                )
+              : gatewayRecoveryTimeoutSeconds(recoveryAgent),
           managedProbeImpl: relaunch
             ? () => confirmRelaunchedManagedHealth?.(210000) ?? null
             : (name) =>
