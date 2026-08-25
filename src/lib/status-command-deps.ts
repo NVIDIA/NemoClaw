@@ -249,6 +249,7 @@ function probeGatewayHealth(): GatewayHealth {
 export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   const opsBin = resolveOpenshell();
   const sessionDeps = opsBin ? createSystemDeps(opsBin) : null;
+  const onboardSummary = summarizeForDebug();
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
@@ -282,7 +283,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,
-    getGatewayAuthority: () => summarizeForDebug()?.gatewayAuthority ?? null,
+    getGatewayAuthority: () => onboardSummary?.gatewayAuthority ?? null,
+    loadLastSession: () => onboardSummary,
     getActiveSessionCount: sessionDeps
       ? (name) => {
           try {

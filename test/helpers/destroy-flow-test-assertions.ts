@@ -125,6 +125,15 @@ export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void
   expect(warnOutput).toContain("Could not re-lock shields for 'alpha' before delete");
   expect(warnOutput).toContain("injected hardening failure");
   expect(warnOutput).toContain("Continuing with delete");
+  expect(warnOutput).toContain(
+    "retries the transition to lockdown within its seven-attempt recovery budget",
+  );
+  expect(warnOutput).toContain(
+    "Waiting for a verified live sandbox mutation owner does not consume that budget",
+  );
+  expect(warnOutput).toContain("durable containment blocks sandbox mutations");
+  expect(warnOutput).toContain("nemoclaw alpha shields status");
+  expect(warnOutput).toContain("exact-generation recovery guidance");
 }
 
 export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarness): void {
