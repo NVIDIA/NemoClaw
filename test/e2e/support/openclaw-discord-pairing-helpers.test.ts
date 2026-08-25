@@ -11,11 +11,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   closeServer,
-  createRejectedSlackConnectProxy,
+  createRejectedSlackForwardProxy,
   createSlackSocketClient,
-  createSuccessfulSlackConnectProxy,
+  createSuccessfulSlackForwardProxy,
   listenOnLoopback,
-} from "./fixtures/slack-connect-proxy.ts";
+} from "./fixtures/slack-forward-proxy.ts";
 import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
@@ -132,10 +132,10 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
 }
 
 describe("OpenClaw pairing helper contracts", () => {
-  it("establishes an HTTP CONNECT tunnel before the fake Slack WebSocket upgrade", async () => {
+  it("sends an absolute-form fake Slack WebSocket upgrade through the proxy", async () => {
     const targetPort = 4443;
     const envelope = { payload: { event: { type: "message" } } };
-    const proxy = createSuccessfulSlackConnectProxy(envelope);
+    const proxy = createSuccessfulSlackForwardProxy(envelope);
     const proxyPort = await listenOnLoopback(proxy.server);
 
     try {
@@ -144,24 +144,25 @@ describe("OpenClaw pairing helper contracts", () => {
         interval: 10,
         timeout: 1_000,
       });
-      expect(proxy.requests).toHaveLength(2);
+      expect(proxy.requests).toHaveLength(1);
       expect(proxy.requests[0]).toMatch(
-        new RegExp(`^CONNECT host\\.openshell\\.internal:${targetPort} HTTP/1\\.1`, "u"),
+        new RegExp(
+          `^GET http://host\\.openshell\\.internal:${targetPort}/socket-mode HTTP/1\\.1`,
+          "u",
+        ),
       );
-      expect(proxy.requests[1]).toMatch(/^GET \/socket-mode HTTP\/1\.1/u);
-      expect(proxy.requests[1]).not.toContain("http://");
     } finally {
       await closeServer(proxy.server);
     }
   });
 
-  it("rejects a non-200 OpenShell proxy CONNECT response", async () => {
-    const proxy = createRejectedSlackConnectProxy();
+  it("rejects a non-101 fake Slack WebSocket proxy response", async () => {
+    const proxy = createRejectedSlackForwardProxy();
     const proxyPort = await listenOnLoopback(proxy);
 
     try {
       await expect(createSlackSocketClient(proxyPort, 4443)()).rejects.toThrow(
-        "OpenShell proxy CONNECT failed: HTTP/1.1 502 Bad Gateway",
+        "fake Slack websocket upgrade failed: HTTP/1.1 502 Bad Gateway",
       );
     } finally {
       await closeServer(proxy);

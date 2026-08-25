@@ -53,7 +53,7 @@ export async function closeServer(server: net.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-export function createSuccessfulSlackConnectProxy(envelope: Record<string, unknown>): {
+export function createSuccessfulSlackForwardProxy(envelope: Record<string, unknown>): {
   server: net.Server;
   requests: string[];
   websocketBytes: () => number;
@@ -62,9 +62,9 @@ export function createSuccessfulSlackConnectProxy(envelope: Record<string, unkno
   let receivedWebsocketBytes = 0;
   const server = net.createServer((socket) => {
     let buffer = Buffer.alloc(0);
-    let phase: "connect" | "upgrade" | "websocket" = "connect";
+    let upgraded = false;
     socket.on("data", (chunk) => {
-      if (phase === "websocket") {
+      if (upgraded) {
         receivedWebsocketBytes += chunk.length;
         return;
       }
@@ -72,14 +72,7 @@ export function createSuccessfulSlackConnectProxy(envelope: Record<string, unkno
       const end = buffer.indexOf("\r\n\r\n");
       if (end === -1) return;
       requests.push(buffer.slice(0, end).toString("latin1"));
-      buffer = buffer.slice(end + 4);
-      if (phase === "connect") {
-        phase = "upgrade";
-        socket.write("HTTP/1.1 200 Connection Established\r\n");
-        setImmediate(() => socket.write("\r\n"));
-        return;
-      }
-      phase = "websocket";
+      upgraded = true;
       socket.write(
         Buffer.concat([
           Buffer.from(
@@ -98,7 +91,7 @@ export function createSuccessfulSlackConnectProxy(envelope: Record<string, unkno
   };
 }
 
-export function createRejectedSlackConnectProxy(): net.Server {
+export function createRejectedSlackForwardProxy(): net.Server {
   return net.createServer((socket) => {
     socket.once("data", () => {
       socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");

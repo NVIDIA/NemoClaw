@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,16 +10,95 @@ import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
+  parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ManagedImageContractV1,
+  type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
+import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
 import { readConfigFile } from "../../../src/lib/state/config-io.ts";
 import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
 import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
+
+function readCandidateCatalog(
+  environment: NodeJS.ProcessEnv,
+): ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1> {
+  const selected = liveE2eManagedImageCatalog(environment);
+  if (!selected) {
+    throw new Error("stock onboarding requires a selected candidate managed-image catalog");
+  }
+
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(selected.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const metadata = fs.fstatSync(descriptor);
+    const pathMetadata = fs.lstatSync(selected.path);
+    if (
+      pathMetadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.dev !== pathMetadata.dev ||
+      metadata.ino !== pathMetadata.ino ||
+      metadata.size < 2 ||
+      metadata.size > 64 * 1024
+    ) {
+      throw new Error();
+    }
+    const parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    const catalog = parsed as Record<string, unknown>;
+    if (
+      JSON.stringify(Object.keys(catalog).sort()) !==
+      JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
+    ) {
+      throw new Error();
+    }
+
+    const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
+    let cohort: string | null = null;
+    let platform: ManagedImagePlatform | null = null;
+    let release: string | null = null;
+    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+      const contract = parseManagedImageContractV1(catalog[agent], agent);
+      cohort ??= contract.source.cohort;
+      platform ??= contract.platform;
+      release ??= contract.source.release;
+      if (
+        contract.source.revision !== selected.revision ||
+        contract.source.cohort !== cohort ||
+        contract.platform !== platform ||
+        contract.source.release !== release
+      ) {
+        throw new Error();
+      }
+      contracts.set(agent, contract);
+    }
+    return contracts;
+  } catch {
+    throw new Error("stock onboarding candidate managed-image catalog is invalid");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
+  const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
+  if (revision) {
+    if (!REVISION_PATTERN.test(revision)) {
+      throw new Error("stock onboarding requires one exact managed-image cohort revision");
+    }
+    return revision;
+  }
+  const catalog = liveE2eManagedImageCatalog(environment);
+  if (!catalog) {
+    throw new Error("stock onboarding requires one exact managed-image cohort revision");
+  }
+  return catalog.revision;
+}
 
 export function assertManagedImageReceiptMatchesSelectedCohort(options: {
   readonly environment: NodeJS.ProcessEnv;
@@ -27,6 +107,33 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
 }): void {
   const revision = options.environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
   const rawReceipt = options.environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim() ?? "";
+  if (!revision) {
+    if (rawReceipt) {
+      throw new Error(
+        "stock onboarding requires the complete selected managed-image cohort receipt",
+      );
+    }
+    const platform = options.workload?.platform;
+    if (
+      typeof platform !== "string" ||
+      !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform)
+    ) {
+      throw new Error("stock onboarding candidate managed-image catalog is invalid");
+    }
+    const contract = readCandidateCatalog(options.environment).get(options.expectedAgent);
+    if (
+      !contract ||
+      contract.platform !== platform ||
+      options.workload?.kind !== "managed-image" ||
+      options.workload.reference !== contract.reference ||
+      options.workload.release !== contract.source.release ||
+      options.workload.sourceRevision !== contract.source.revision ||
+      options.workload.sourceCohort !== contract.source.cohort
+    ) {
+      throw new Error("stock onboarding must use the exact agent image from the selected cohort");
+    }
+    return;
+  }
   if (!REVISION_PATTERN.test(revision) || !rawReceipt || Buffer.byteLength(rawReceipt) > 8 * 1024) {
     throw new Error("stock onboarding requires the complete selected managed-image cohort receipt");
   }
@@ -114,10 +221,7 @@ export function assertStockManagedImageReceipt(options: {
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence {
   const environment = options.environment ?? process.env;
-  const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
-  if (!REVISION_PATTERN.test(revision)) {
-    throw new Error("stock onboarding requires one exact managed-image cohort revision");
-  }
+  const revision = selectedManagedImageRevision(environment);
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(
     nemoclawStateRoot(home, gatewayPort(environment)),
@@ -169,7 +273,9 @@ export function shouldAssertStockManagedImageReceipt(
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
 ): boolean {
-  if (!environment.E2E_MANAGED_IMAGE_REVISION?.trim()) return false;
+  const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  const selectedCatalog = selectedRevision ? null : liveE2eManagedImageCatalog(environment);
+  if (!selectedRevision && !selectedCatalog) return false;
   const selectedAgent = environment.NEMOCLAW_AGENT?.trim();
   if (selectedAgent && !isShippedManagedImageAgent(selectedAgent)) return false;
   if (environment.NEMOCLAW_FROM_DOCKERFILE?.trim()) return false;

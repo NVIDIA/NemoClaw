@@ -35,6 +35,7 @@ function artifacts(): ArtifactSink {
 
 function secrets(values: Record<string, string | undefined>) {
   return {
+    optional: (name: string) => values[name],
     required: (name: string) => {
       const value = values[name];
       return (
@@ -382,6 +383,46 @@ describe("E2E inference adapter", () => {
         secrets: { NVIDIA_INFERENCE_API_KEY: "nvapi-wrong-source" },
       }),
     ).rejects.toThrow(/missing NVIDIA_API_KEY/);
+  });
+
+  it("accepts the public credential alias from a trusted-main manual PR controller", async () => {
+    const adapter = await createAdapter({
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_SHA: "a".repeat(40),
+        NEMOCLAW_E2E_CORRELATION_ID: "6ce998a3-52f6-4e91-8b2d-089110070e74",
+        NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
+        NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      },
+      secrets: { NVIDIA_INFERENCE_API_KEY: "nvapi-trusted-controller-key" },
+    });
+
+    expect(adapter.env()).toMatchObject({
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-trusted-controller-key",
+    });
+  });
+
+  it("rejects conflicting public credential sources without exposing either value", async () => {
+    const create = createAdapter({
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_SHA: "a".repeat(40),
+        NEMOCLAW_E2E_CORRELATION_ID: "6ce998a3-52f6-4e91-8b2d-089110070e74",
+        NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
+        NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      },
+      secrets: {
+        NVIDIA_API_KEY: "nvapi-current-controller-key",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-historical-controller-key",
+      },
+    });
+
+    await expect(create).rejects.toThrow(
+      /^NVIDIA_API_KEY and NVIDIA_INFERENCE_API_KEY contain different values$/u,
+    );
   });
 
   it("rejects unknown explicit modes instead of silently falling back", async () => {

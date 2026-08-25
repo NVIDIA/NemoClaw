@@ -11,8 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
@@ -20,11 +23,17 @@ import {
   assertStockManagedImageReceipt,
   shouldAssertStockManagedImageReceipt,
 } from "../fixtures/managed-image-receipt.ts";
+import { readFullE2eColdWorkloadEvidence } from "../live/full-e2e-workload-evidence.ts";
 
 const SANDBOX_NAME = "managed-only-stock";
 const REVISION = "d".repeat(40);
 const COHORT = "ghrun-32707920950-1";
 const REFERENCE = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`;
+const CATALOG_REFERENCES = {
+  openclaw: REFERENCE,
+  hermes: `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`,
+  "langchain-deepagents-code": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"e".repeat(64)}`,
+} as const;
 const temporaryHomes: string[] = [];
 
 afterEach(() => {
@@ -80,6 +89,42 @@ function selectedEnvironment(home: string): NodeJS.ProcessEnv {
   };
 }
 
+function candidateCatalogEnvironment(home: string): NodeJS.ProcessEnv {
+  const catalog = Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
+      const reference = CATALOG_REFERENCES[agent];
+      return [
+        agent,
+        {
+          agent,
+          capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+          contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
+          digest: reference.slice(reference.indexOf("@") + 1),
+          image: MANAGED_IMAGE_REPOSITORIES[agent],
+          platform: "linux/amd64",
+          reference,
+          source: {
+            cohort: COHORT,
+            release: "v0.0.100",
+            repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
+            revision: REVISION,
+          },
+          startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+        },
+      ];
+    }),
+  );
+  const catalogPath = path.join(home, "candidate-managed-image-catalog.json");
+  fs.writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
+  return {
+    GITHUB_ACTIONS: "true",
+    HOME: home,
+    NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
+}
+
 function writeRegistry(workload: Record<string, unknown>): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-only-receipt-"));
   temporaryHomes.push(home);
@@ -114,6 +159,144 @@ describe("stock E2E managed-image receipt assertion", () => {
         sandboxName: SANDBOX_NAME,
       }),
     ).toMatchObject({ agent: "openclaw", sourceRevision: REVISION });
+  });
+
+  it("accepts the durable receipt from the trusted candidate catalog", () => {
+    const home = writeRegistry(managedReceipt());
+
+    expect(
+      assertStockManagedImageReceipt({
+        environment: candidateCatalogEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toMatchObject({ agent: "openclaw", sourceRevision: REVISION });
+  });
+
+  it("uses the trusted candidate catalog for full E2E workload evidence", () => {
+    const home = writeRegistry(managedReceipt());
+
+    expect(
+      readFullE2eColdWorkloadEvidence(SANDBOX_NAME, false, candidateCatalogEnvironment(home)),
+    ).toMatchObject({ kind: "managed-image", sourceRevision: REVISION });
+  });
+
+  it("rejects a candidate catalog whose source revision differs from the exact candidate revision", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!;
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as Record<
+      string,
+      { source: { revision: string } }
+    >;
+    catalog.openclaw!.source.revision = "b".repeat(40);
+    catalog.hermes!.source.revision = "b".repeat(40);
+    catalog["langchain-deepagents-code"]!.source.revision = "b".repeat(40);
+    fs.writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("candidate managed-image catalog is invalid");
+  });
+
+  it("rejects a candidate catalog that mixes releases", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!;
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as Record<
+      string,
+      { source: { release: string } }
+    >;
+    catalog.hermes!.source.release = "v0.0.101";
+    fs.writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("candidate managed-image catalog is invalid");
+  });
+
+  it("rejects a candidate catalog with an extra agent", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!;
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as Record<string, unknown>;
+    catalog.extra = catalog.openclaw;
+    fs.writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("candidate managed-image catalog is invalid");
+  });
+
+  it("rejects a candidate catalog that exceeds the size limit", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    fs.writeFileSync(
+      environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!,
+      JSON.stringify({ padding: "x".repeat(64 * 1024) }),
+      "utf8",
+    );
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("candidate managed-image catalog is invalid");
+  });
+
+  it("rejects a durable workload release that differs from the candidate catalog", () => {
+    const home = writeRegistry({ ...managedReceipt(), release: "v0.0.101" });
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment: candidateCatalogEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("exact agent image from the selected cohort");
+  });
+
+  it("does not replace a missing selected-cohort receipt with the candidate catalog", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    environment.E2E_MANAGED_IMAGE_REVISION = REVISION;
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("complete selected managed-image cohort receipt");
+  });
+
+  it("does not replace a missing selected revision with the candidate catalog", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = candidateCatalogEnvironment(home);
+    environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT =
+      selectedEnvironment(home).E2E_MANAGED_IMAGE_COHORT_RECEIPT;
+
+    expect(() =>
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toThrow("complete selected managed-image cohort receipt");
   });
 
   it("rejects a stock legacy Dockerfile receipt", () => {
@@ -212,6 +395,23 @@ describe("stock E2E managed-image receipt assertion", () => {
         E2E_MANAGED_IMAGE_REVISION: REVISION,
         NEMOCLAW_FROM_DOCKERFILE: "/workspace/CustomDockerfile",
       }),
+    ).toBe(false);
+    const home = writeRegistry(managedReceipt());
+    expect(
+      shouldAssertStockManagedImageReceipt(
+        "/workspace/bin/nemoclaw.js",
+        ["onboard"],
+        candidateCatalogEnvironment(home),
+      ),
+    ).toBe(true);
+    const nonLiveEnvironment = candidateCatalogEnvironment(home);
+    nonLiveEnvironment.GITHUB_ACTIONS = "false";
+    expect(
+      shouldAssertStockManagedImageReceipt(
+        "/workspace/bin/nemoclaw.js",
+        ["onboard"],
+        nonLiveEnvironment,
+      ),
     ).toBe(false);
     expect(
       shouldAssertStockManagedImageReceipt(

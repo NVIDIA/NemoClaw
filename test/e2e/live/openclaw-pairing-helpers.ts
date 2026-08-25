@@ -460,15 +460,14 @@ function receiveSlackSocketEvent() {
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
     const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
-    let proxyHandshake = Buffer.alloc(0);
     let handshake = Buffer.alloc(0);
     let framed = Buffer.alloc(0);
-    let tunnelEstablished = !proxy;
     let upgraded = false;
-    function sendUpgradeRequest() {
+    socket.on("connect", () => {
       const key = crypto.randomBytes(16).toString("base64");
+      const requestTarget = proxy ? "http://" + host + ":" + port + "/socket-mode" : "/socket-mode";
       socket.write([
-        "GET /socket-mode HTTP/1.1",
+        "GET " + requestTarget + " HTTP/1.1",
         "Host: " + host + ":" + port,
         "Upgrade: websocket",
         "Connection: Upgrade",
@@ -476,36 +475,8 @@ function receiveSlackSocketEvent() {
         "Sec-WebSocket-Version: 13",
         "\r\n",
       ].join("\r\n"));
-    }
-    socket.on("connect", () => {
-      if (!proxy) {
-        sendUpgradeRequest();
-        return;
-      }
-      socket.write([
-        "CONNECT " + host + ":" + port + " HTTP/1.1",
-        "Host: " + host + ":" + port,
-        "\r\n",
-      ].join("\r\n"));
     });
     socket.on("data", (chunk) => {
-      if (!tunnelEstablished) {
-        proxyHandshake = Buffer.concat([proxyHandshake, chunk]);
-        const end = proxyHandshake.indexOf("\r\n\r\n");
-        if (end === -1) return;
-        const statusLine = proxyHandshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
-        if (!/^HTTP\/1\.[01] 200(?: |$)/.test(statusLine)) {
-          clearTimeout(timer);
-          socket.destroy();
-          reject(new Error("OpenShell proxy CONNECT failed: " + statusLine));
-          return;
-        }
-        tunnelEstablished = true;
-        chunk = proxyHandshake.slice(end + 4);
-        proxyHandshake = Buffer.alloc(0);
-        sendUpgradeRequest();
-        if (chunk.length === 0) return;
-      }
       if (!upgraded) {
         handshake = Buffer.concat([handshake, chunk]);
         const end = handshake.indexOf("\r\n\r\n");
