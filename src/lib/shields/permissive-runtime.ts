@@ -89,9 +89,9 @@ export interface PermissiveRuntimeDeps {
   // coordinator. These entries remain active while the static policy replaces
   // the rest of the complete gateway policy.
   managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
-  // Hermes permissive messaging routes carry sandbox-scoped credential
-  // bindings. Supplying the target name makes composition fail closed unless
-  // every retained placeholder can be materialized before the policy is staged.
+  // Agent permissive messaging routes carry sandbox-scoped credential bindings.
+  // Supplying the target name makes composition fail closed unless every
+  // retained placeholder can be materialized before the policy is staged.
   sandboxName?: string;
 }
 
@@ -103,16 +103,21 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
+  const telegramProviderNames = deps.sandboxName ? [`${deps.sandboxName}-telegram-bridge`] : [];
   const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
   const slackProviderNames = deps.sandboxName
     ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
     : [];
+  const preserveTelegramBinding =
+    telegramProviderNames.length > 0 &&
+    networkPolicyUsesExactCredentialProviders(live, "telegram_bot", telegramProviderNames);
   const preserveDiscordBinding =
     discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
   const preserveSlackBinding =
     slackProviderNames.length > 0 &&
     networkPolicyUsesExactCredentialProviders(live, "slack", slackProviderNames);
-  const preserveCredentialBinding = preserveDiscordBinding || preserveSlackBinding;
+  const preserveCredentialBinding =
+    preserveTelegramBinding || preserveDiscordBinding || preserveSlackBinding;
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -157,6 +162,7 @@ export function buildRuntimePermissivePolicy(
     const networkPolicies = base.network_policies;
     if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
       const policies = networkPolicies as Record<string, unknown>;
+      if (!preserveTelegramBinding) delete policies.telegram;
       if (!preserveDiscordBinding) delete policies.discord;
       if (!preserveSlackBinding) delete policies.slack;
     }

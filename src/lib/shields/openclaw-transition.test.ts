@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
 import {
   createHermesUnsafeConfigHarness,
   expectHermesShieldsUpRecord,
@@ -517,6 +518,61 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it("preserves OpenClaw messaging provider bindings in the applied Shields-down policy (#10153)", () => {
+    const sandboxName = "openclaw-messaging";
+    const harness = createHarness({
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: {
+          telegram_bot: {
+            endpoints: [
+              {
+                credential_binding: { provider: `${sandboxName}-telegram-bridge` },
+              },
+            ],
+          },
+          slack: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-slack-app` } },
+              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
+            ],
+          },
+        },
+      }),
+      processStartIdentity: "issue-10153-openclaw-owner",
+      sandboxName,
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, "permissive.yaml"),
+      fs.readFileSync(
+        path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
+        "utf8",
+      ),
+    );
+
+    harness.shieldsDown(sandboxName, {
+      timeout: "5m",
+      reason: "messaging provider binding",
+      throwOnError: true,
+    });
+
+    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
+    const providers = Object.values(applied.network_policies)
+      .flatMap((policy) => (policy as { endpoints?: unknown[] }).endpoints ?? [])
+      .flatMap((endpoint) => {
+        const provider = (endpoint as { credential_binding?: { provider?: string } })
+          .credential_binding?.provider;
+        return provider ? [provider] : [];
+      });
+    expect(new Set(providers)).toEqual(
+      new Set([
+        `${sandboxName}-telegram-bridge`,
+        `${sandboxName}-slack-app`,
+        `${sandboxName}-slack-bridge`,
+      ]),
+    );
   });
 
   it.each(retryAgentCases)(

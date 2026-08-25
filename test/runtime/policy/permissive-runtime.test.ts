@@ -61,6 +61,11 @@ const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
   "utf8",
 );
 
+const OPENCLAW_MESSAGING_PERMISSIVE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
+  "utf8",
+);
+
 type SlackEndpoint = {
   access?: string;
   credential_binding?: { provider?: string };
@@ -75,8 +80,9 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
       host: endpoint.host,
       provider: endpoint.credential_binding?.provider,
       routes:
-        endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
-        [],
+        endpoint.rules?.map(
+          (rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`,
+        ) ?? [],
     })),
   ).toEqual([
     {
@@ -146,6 +152,79 @@ afterEach(() => {
 });
 
 describe("buildRuntimePermissivePolicy (#3942)", () => {
+  it("keeps exact OpenClaw Telegram and Slack providers together in Shields down (#10153)", () => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          telegram_bot: {
+            endpoints: [
+              {
+                credential_binding: { provider: "openclaw-box-telegram-bridge" },
+              },
+            ],
+          },
+          slack: {
+            endpoints: [
+              {
+                credential_binding: { provider: "openclaw-box-slack-app" },
+              },
+              {
+                credential_binding: { provider: "openclaw-box-slack-bridge" },
+              },
+            ],
+          },
+        },
+      }),
+      readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+      sandboxName: "openclaw-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-openclaw-permissive.yaml";
+      },
+    });
+
+    const policies = YAML.parse(stagedPolicy).network_policies;
+    expect(
+      new Set(
+        policies.telegram.endpoints.map(
+          (endpoint: SlackEndpoint) => endpoint.credential_binding?.provider,
+        ),
+      ),
+    ).toEqual(new Set(["openclaw-box-telegram-bridge"]));
+    expect(
+      new Set(
+        policies.slack.endpoints.map(
+          (endpoint: SlackEndpoint) => endpoint.credential_binding?.provider,
+        ),
+      ),
+    ).toEqual(new Set(["openclaw-box-slack-app", "openclaw-box-slack-bridge"]));
+    expect(
+      policies.slack.endpoints.find(
+        (endpoint: SlackEndpoint) =>
+          endpoint.host === "slack.com" &&
+          endpoint.credential_binding?.provider === "openclaw-box-slack-app",
+      ),
+    ).toMatchObject({ path: "/api/apps.connections.open" });
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("omits OpenClaw Telegram egress when the live provider binding is absent (#10153)", () => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({ network_policies: {} }),
+      readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+      sandboxName: "openclaw-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-openclaw-permissive.yaml";
+      },
+    });
+
+    expect(YAML.parse(stagedPolicy).network_policies.telegram).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
