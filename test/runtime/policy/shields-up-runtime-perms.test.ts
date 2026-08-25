@@ -45,7 +45,7 @@ function guardAction(command, helper) {
 }
 
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "../../../adapters/docker/exec") {
+  if (request === "../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const command = commandFromArgs(args);
@@ -127,7 +127,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
       },
     };
   }
-  if (request === "../../../sandbox/privileged-exec") {
+  if (request === "../sandbox/privileged-exec") {
     return {
       capturePrivilegedSandboxCommand(_sandboxName, cmd) {
         const docker = Module._load("../adapters/docker/exec", parent, isMain);
@@ -153,7 +153,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
 };
 
 try {
-  const { lockAgentConfig } = require("../.././src/lib/shields/index.ts");
+  const { lockAgentConfig } = require("./src/lib/shields/index.ts");
   lockAgentConfig(
     "sandbox-pod",
     {

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(__dirname, "../../..");
 const FIXTURES_ROOT = path.join(REPO_ROOT, "test", "e2e", "fixtures");
 const REVIEW_PATH = path.join(
   REPO_ROOT,
