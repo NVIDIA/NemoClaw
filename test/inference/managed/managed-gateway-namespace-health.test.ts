@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-const HELPER = path.join(import.meta.dirname, "..", "scripts", "managed-gateway-control.py");
+const HELPER = path.join(import.meta.dirname, "../../..", "scripts", "managed-gateway-control.py");
 
 const SAME_NAMESPACE_HARNESS = String.raw`
 import importlib.util

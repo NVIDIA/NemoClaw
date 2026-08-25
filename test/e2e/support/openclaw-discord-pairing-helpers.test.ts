@@ -292,20 +292,25 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       env: { HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Discord Gateway proof",
     },
-  ])("fails closed on invalid Discord Gateway proxy input before network access: $name", ({
-    env,
-    error,
-  }) => {
-    const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
-      encoding: "utf8",
-      env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
-    });
+  ])(
+    "fails closed on invalid Discord Gateway proxy input before network access: $name",
+    ({ env, error }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCORD_BOT_TOKEN: "openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+          FAKE_DISCORD_GATEWAY_PORT: "12345",
+          ...env,
+        },
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toEqual(expect.stringContaining(error));
-    expect(result.stderr).not.toContain("ECONNREFUSED");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toEqual(expect.stringContaining(error));
+      expect(result.stderr).not.toContain("ECONNREFUSED");
+    },
+  );
 
   it("rejects malformed sandboxNode env keys before sandbox execution", async () => {
     const execShell = vi.fn(async () => {

@@ -129,12 +129,14 @@ on:
         "scripts/checks/run-managed-image-openshell-e2e.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/maintenance.ts",
+        "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts",
         "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
         "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
+        "src/lib/inference/serving/profile-list.test.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
@@ -177,9 +179,7 @@ on:
     expect(source).not.toContain(
       "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
     );
-    expect(source).not.toContain(
-      "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
-    );
+    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-image-transaction.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/runtime-create.ts");
     expect(source).not.toContain("src/lib/onboard/managed-startup/state-roots.ts");

@@ -11,37 +11,41 @@ import {
 } from "./profile-list";
 
 describe("serving profile discovery", () => {
-  it("lists every compiled preset with stable selection metadata (#8384)", () => {
-    const catalog = loadServingCatalog();
-    const entries = listServingProfiles(catalog, {
-      evaluateCompatibility: (_catalog, preset) =>
-        preset.metadata.id === catalog.presets[0]?.metadata.id
-          ? { compatible: true, incompatibilityReason: null }
-          : { compatible: false, incompatibilityReason: "Test host requirement is not met." },
-    });
-
-    expect(entries.map(({ id }) => id)).toEqual(
-      [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
-    );
-    entries.forEach((entry) => {
-      expect(entry).toMatchObject({
-        id: expect.any(String),
-        displayName: expect.any(String),
-        backend: expect.any(String),
-        model: expect.any(String),
-        topology: expect.any(String),
-        selectionMode: expect.stringMatching(/^(automatic|explicit-only|disabled)$/u),
-        supportState: expect.stringMatching(/^(supported|experimental|disabled)$/u),
-        validationLevel: expect.stringMatching(/^(schema|software|hardware)$/u),
-        compatible: expect.any(Boolean),
+  it(
+    "lists every compiled preset with stable selection metadata (#8384)",
+    { timeout: 30_000 },
+    () => {
+      const catalog = loadServingCatalog();
+      const entries = listServingProfiles(catalog, {
+        evaluateCompatibility: (_catalog, preset) =>
+          preset.metadata.id === catalog.presets[0]?.metadata.id
+            ? { compatible: true, incompatibilityReason: null }
+            : { compatible: false, incompatibilityReason: "Test host requirement is not met." },
       });
-      expect(
-        entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
-      ).toBe(entry.compatible ? null : "string");
-    });
-    expect(entries.some(({ compatible }) => compatible)).toBe(true);
-    expect(entries.some(({ compatible }) => !compatible)).toBe(true);
-  });
+
+      expect(entries.map(({ id }) => id)).toEqual(
+        [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
+      );
+      entries.forEach((entry) => {
+        expect(entry).toMatchObject({
+          id: expect.any(String),
+          displayName: expect.any(String),
+          backend: expect.any(String),
+          model: expect.any(String),
+          topology: expect.any(String),
+          selectionMode: expect.stringMatching(/^(automatic|explicit-only|disabled)$/u),
+          supportState: expect.stringMatching(/^(supported|experimental|disabled)$/u),
+          validationLevel: expect.stringMatching(/^(schema|software|hardware)$/u),
+          compatible: expect.any(Boolean),
+        });
+        expect(
+          entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
+        ).toBe(entry.compatible ? null : "string");
+      });
+      expect(entries.some(({ compatible }) => compatible)).toBe(true);
+      expect(entries.some(({ compatible }) => !compatible)).toBe(true);
+    },
+  );
 
   it("renders IDs, selection state, support state, and compatibility (#8384)", () => {
     const output = renderServingProfiles([

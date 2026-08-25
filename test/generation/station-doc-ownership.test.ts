@@ -154,8 +154,8 @@ describe("DGX Station documentation ownership", () => {
     );
     expect(quickstart).toContain("additional-setup/dgx-station-preparation");
     expect(quickstart).toContain("additional-setup/windows-preparation");
-    expect(quickstart).toContain("../../inference/local-inference/set-up-vllm");
-    expect(quickstart).toContain("../../reference/platform-support");
+    expect(quickstart).toContain("../inference/local-inference/set-up-vllm");
+    expect(quickstart).toContain("../reference/platform-support");
     expect(quickstart).toContain("switches the remaining onboarding to non-interactive mode");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).not.toContain("DGX Station is Tested with limitations");
