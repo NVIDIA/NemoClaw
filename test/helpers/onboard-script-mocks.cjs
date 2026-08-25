@@ -308,6 +308,9 @@ function mockSandboxExecCurl(command, options = {}) {
 }
 
 function mockOnboardRunCapture(command, options = {}) {
+  // The companion runner seam models the exact post-commit Docker proof. Install
+  // it lazily after each scenario has replaced runner.run with its local recorder.
+  mockDockerSandboxLifecycleReleaseFromRunner();
   const normalized = normalizeCommand(command);
   if (
     normalized.startsWith("docker ps -a --no-trunc ") &&
@@ -388,11 +391,35 @@ function mockStandaloneGatewayTeardownAuthority() {
 
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  if (runner.run.__nemoclawDockerLifecycleFixture === true) return;
   const run = runner.run;
+  let finalCommitReleased = false;
   let lifecycleReleased = false;
-  runner.run = (command, options) => {
+  const wrappedRun = (command, options) => {
     const normalized = normalizeCommand(command);
-    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (
+      finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.endsWith("--format {{.ID}}")
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    if (
+      finalCommitReleased &&
+      normalized ===
+        `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from("true\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
     if (lifecycleReleased && normalized.includes("sandbox list")) {
       return {
         status: 0,
@@ -400,8 +427,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
         stderr: Buffer.alloc(0),
       };
     }
-    return run(command, options);
+    const result = run(command, options);
+    if (normalized.startsWith("docker rm ") && result?.status === 0) {
+      lifecycleReleased = true;
+      if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
+        finalCommitReleased = true;
+      }
+    }
+    return result;
   };
+  wrappedRun.__nemoclawDockerLifecycleFixture = true;
+  runner.run = wrappedRun;
 }
 
 function mockManagedImageFallback() {

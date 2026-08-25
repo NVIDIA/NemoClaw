@@ -72,11 +72,15 @@ function composedRelaunchTransaction(
         : { backupRemoved: false, rolledBack: true };
     },
   ),
+  containerIds: { old: string; replacement: string } = {
+    old: "old-container-id",
+    replacement: "replacement-container-id",
+  },
 ) {
   const resolveContainer = vi
     .fn()
-    .mockReturnValueOnce("old-container-id")
-    .mockReturnValue("replacement-container-id");
+    .mockReturnValueOnce(containerIds.old)
+    .mockReturnValue(containerIds.replacement);
   const runOpenshell = vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" }));
   const relaunchManagedSupervisorSessionImpl = vi.fn(
     (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
@@ -113,8 +117,8 @@ function composedRelaunchTransaction(
           runOpenshell,
           recreate: vi.fn(() => ({
             applied: true as const,
-            oldContainerId: "old-container-id",
-            newContainerId: "replacement-container-id",
+            oldContainerId: containerIds.old,
+            newContainerId: containerIds.replacement,
             originalName: "openshell-recovery-box",
             backupContainerName: "openshell-recovery-box-nemoclaw-backup",
             mode: {
@@ -454,11 +458,14 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
         sandboxName: "recovered-box",
         supervisorReady: true,
       }),
-      { runOpenshell },
+      {
+        runCaptureOpenshell: expect.any(Function),
+        runOpenshell,
+      },
     );
   });
 
@@ -470,15 +477,30 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
+    const oldContainerId = "a".repeat(64);
+    const replacementContainerId = "b".repeat(64);
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? { status: 0, stdout: `${replacementContainerId}\n` }
+        : { status: 0, stdout: "true\n" },
+    );
     const finalizeTransaction = vi.fn(
       (
         options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
         deps: Parameters<typeof finalizeDockerGpuPatchBackup>[1],
-      ) => finalizeDockerGpuPatchBackup(options, { ...deps, dockerStop, dockerRm, dockerStart }),
+      ) =>
+        finalizeDockerGpuPatchBackup(options, {
+          ...deps,
+          dockerRm,
+          dockerRun,
+          dockerStart,
+          dockerStop,
+        }),
     );
     const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
       order,
       finalizeTransaction,
+      { old: oldContainerId, replacement: replacementContainerId },
     );
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
@@ -501,13 +523,18 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         options?.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((args) => {
+    const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
+    captureOpenshell.mockImplementation((args) => {
       const responses = {
         "forward list": () => ({
           status: 0,
           output: forwardStarted
             ? "SANDBOX  BIND  PORT  PID  STATUS\nlegacy-handoff-box  127.0.0.1  18789  12345  running"
             : "SANDBOX  BIND  PORT  PID  STATUS",
+        }),
+        "sandbox list": () => ({
+          status: 0,
+          output: "legacy-handoff-box  2026-08-23 10:00:00  Ready\n",
         }),
       };
       return (
@@ -540,15 +567,15 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardRecovered: true,
     });
     expect(dockerStop).toHaveBeenCalledWith(
-      "replacement-container-id",
+      replacementContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
     expect(dockerRm).toHaveBeenCalledWith(
-      "openshell-recovery-box-nemoclaw-backup",
+      oldContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
     expect(dockerStart).toHaveBeenCalledWith(
-      "replacement-container-id",
+      replacementContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledTimes(2);
@@ -561,6 +588,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "legacy-handoff-box"],
       expect.objectContaining({ ignoreError: true }),
+    );
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+      }),
     );
   });
 
@@ -579,7 +613,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
-      condition: "OpenShell does not release the sandbox name",
+      condition: "OpenShell does not retire the previous lifecycle record",
       finalizeOutcome: () => ({
         backupRemoved: true,
         lifecycleReleaseObserved: false,
@@ -588,7 +622,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         rolledBack: false,
         stateRestored: true,
       }),
-      expectedDetail: "OpenShell did not release the sandbox name",
+      expectedDetail: "OpenShell did not retire the previous lifecycle record",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,
