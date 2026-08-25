@@ -17,7 +17,7 @@ vi.mock("../../helpers/child-process-lifecycle.ts", () => ({
   ownChildProcess: ownerMocks.ownChildProcess,
 }));
 
-import { forceKill, freePort, startProxy, terminate } from "./ollama-auth-proxy-handler-helpers.ts";
+import { forceKill, freePort, startProxy, terminate } from "../../ollama-auth-proxy-handler-helpers.ts";
 
 const TOKEN = "unit-test-secret-token";
 

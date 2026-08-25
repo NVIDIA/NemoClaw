@@ -32,7 +32,7 @@ import {
   startProxy,
   terminate,
   waitForProxyReadiness,
-} from "./ollama-auth-proxy-handler-helpers.ts";
+} from "../../ollama-auth-proxy-handler-helpers.ts";
 
 const TOKEN = "unit-test-secret-token";
 
