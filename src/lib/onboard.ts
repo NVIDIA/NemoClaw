@@ -3228,7 +3228,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
-
         sandbox: {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
