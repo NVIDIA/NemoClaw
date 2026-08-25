@@ -17,8 +17,11 @@ import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { installMalformedSourceMapCompatibility } from "./test/helpers/vitest-malformed-source-map-compat";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
 import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
+
+installMalformedSourceMapCompatibility();
 
 const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -185,29 +188,7 @@ export default defineConfig({
             "test/e2e/live/**",
             "test/e2e/support/**",
             "test/package-contract/**",
-            "test/install-express-prompt.test.ts",
-            "test/install-express-wsl-ollama.test.ts",
-            "test/install-external-gateway-supervision.test.ts",
-            "test/install-station-vllm-continuation.test.ts",
-            "test/install-build-dependency-preflight.test.ts",
-            "test/install-clone-ref.test.ts",
-            "test/install-forward-restore-diagnostics.test.ts",
-            "test/install-hermes-portable-active.test.ts",
-            "test/install-hermes-forward-restore.test.ts",
-            "test/install-managed-cli-reuse.test.ts",
-            "test/install-preflight.test.ts",
-            "test/install-preflight-docker-bootstrap.test.ts",
-            "test/install-station-controller-binding.test.ts",
-            "test/install-station-pair-preparation.test.ts",
-            "test/install-station-resume-cleanup.test.ts",
-            "test/install-station-dgx-os.test.ts",
-            "test/install-station-docker-repository.test.ts",
-            "test/install-station-host-preparation.test.ts",
-            "test/install-station-package-state.test.ts",
-            "test/install-station-package-transaction.test.ts",
-            "test/install-openshell-e2e-artifact.test.ts",
-            "test/install-openshell-version-pin.test.ts",
-            "test/install-openshell-version-check.test.ts",
+            "test/installer-integration/**",
           ],
         },
       },
@@ -224,31 +205,7 @@ export default defineConfig({
           ...integrationProjectScheduling,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
-          include: [
-            "test/install-express-prompt.test.ts",
-            "test/install-express-wsl-ollama.test.ts",
-            "test/install-external-gateway-supervision.test.ts",
-            "test/install-station-vllm-continuation.test.ts",
-            "test/install-build-dependency-preflight.test.ts",
-            "test/install-clone-ref.test.ts",
-            "test/install-forward-restore-diagnostics.test.ts",
-            "test/install-hermes-portable-active.test.ts",
-            "test/install-hermes-forward-restore.test.ts",
-            "test/install-managed-cli-reuse.test.ts",
-            "test/install-preflight.test.ts",
-            "test/install-preflight-docker-bootstrap.test.ts",
-            "test/install-station-controller-binding.test.ts",
-            "test/install-station-pair-preparation.test.ts",
-            "test/install-station-resume-cleanup.test.ts",
-            "test/install-station-dgx-os.test.ts",
-            "test/install-station-docker-repository.test.ts",
-            "test/install-station-host-preparation.test.ts",
-            "test/install-station-package-state.test.ts",
-            "test/install-station-package-transaction.test.ts",
-            "test/install-openshell-e2e-artifact.test.ts",
-            "test/install-openshell-version-pin.test.ts",
-            "test/install-openshell-version-check.test.ts",
-          ],
+          include: ["test/installer-integration/**/*.test.ts"],
           // Slow tests that spawn real bash install.sh processes. Explicit
           // project selection keeps them out of the fast source-test command.
         },

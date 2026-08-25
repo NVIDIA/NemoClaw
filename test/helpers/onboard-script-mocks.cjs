@@ -55,6 +55,47 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "profile") return null;
+  const profileActionIndex = providerIndex + 2;
+  const profileAction =
+    args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
+  if (profileAction === "export") {
+    const requestedProfile = args[args.indexOf("export") + 1];
+    if (requestedProfile !== profileId) return null;
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        id: profileId,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inference_capable: inferenceCapable,
+      }),
+      stderr: "",
+    };
+  }
+  const fileIndex = args.indexOf("--file");
+  if (
+    profileAction === "import" &&
+    (fileIndex < 0 || !String(args[fileIndex + 1] ?? "").endsWith(`/${profileId}.yaml`))
+  ) {
+    return null;
+  }
+  return profileAction === "import"
+    ? { status: 0, stdout: "", stderr: "" }
+    : { status: 1, stdout: "", stderr: "unsupported provider profile command" };
+}
+
+function mockManagedEndpointlessProviderProfileRun(command) {
+  return (
+    mockEndpointlessProviderProfileRun(command, "openai", true) ??
+    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
 function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
@@ -63,6 +104,14 @@ function createStatefulMessagingProviderRunner({
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
+  const messagingProfile = JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  });
+  let messagingProfileImported = false;
   let lifecycleReleased = false;
   return (command, options = {}) => {
     const normalized = normalizeCommand(command);
@@ -77,10 +126,17 @@ function createStatefulMessagingProviderRunner({
         args[profileActionIndex] === "-g"
           ? args[profileActionIndex + 2]
           : args[profileActionIndex];
+      if (profileAction === "export") {
+        return messagingProfileImported
+          ? { status: 0, stdout: messagingProfile, stderr: "" }
+          : { status: 1, stdout: "", stderr: "provider profile not found" };
+      }
       const fileIndex = args.indexOf("--file");
-      return profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]
-        ? { status: 0 }
-        : { status: 1, stderr: "unsupported provider profile command" };
+      if (profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]) {
+        messagingProfileImported = true;
+        return { status: 0 };
+      }
+      return { status: 1, stderr: "unsupported provider profile command" };
     }
     if (
       args[providerIndex - 1] === "sandbox" &&
@@ -359,15 +415,228 @@ function mockManagedImageFallback() {
   };
 }
 
+function mockFreshOpenClawPluginDiscovery() {
+  const pluginRestore = require(
+    path.resolve(__dirname, "../../src/lib/state/openclaw-plugin-restore.ts"),
+  );
+  pluginRestore.discoverFreshOpenClawImagePluginInstalls = () => ({
+    ok: true,
+    extensionDirs: [],
+    pluginInstalls: [],
+  });
+}
+
+function mockManagedImageCatalog() {
+  const catalog = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
+  );
+  const contract = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-image/contract.ts"),
+  );
+  catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
+    Object.fromEntries(
+      contract.SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const image = contract.MANAGED_IMAGE_REPOSITORIES[agent];
+        const digest = `sha256:${String(index + 1).repeat(64)}`;
+        return [
+          agent,
+          {
+            contractVersion: contract.MANAGED_IMAGE_CONTRACT_VERSION,
+            agent,
+            platform,
+            image,
+            digest,
+            reference: `${image}@${digest}`,
+            source: {
+              repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
+              revision: "a".repeat(40),
+              release,
+              cohort: "ghrun-9068-1",
+            },
+            startupProfileContractVersion:
+              contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+            capabilityContractVersion: contract.MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+          },
+        ];
+      }),
+    );
+}
+
+function mockManagedImageBootstrap() {
+  const crypto = require("node:crypto");
+  const adapter = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/adapter.ts"),
+  );
+  const bootstrap = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker.ts"),
+  );
+  const authorityStore = require(
+    path.resolve(
+      __dirname,
+      "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts",
+    ),
+  );
+  const sandboxIdentity = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
+  );
+
+  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-managed-fixture";
+  authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
+    async recordPreparedAuthority(authority) {
+      return {
+        schemaVersion: authority.schemaVersion,
+        sandbox: authority.sandbox,
+        bootstrapIdentity: authority.bootstrapIdentity,
+        authorityFingerprint: authority.authorityFingerprint,
+        recordId: "test-managed-onboard-authority",
+        recordedAt: "2026-08-04T12:00:00.000Z",
+      };
+    },
+  });
+  bootstrap.createDockerManagedBootstrapAdapter = () => {
+    const runtimeId = "a".repeat(64);
+    const replacementRuntimeId = "c".repeat(64);
+    const runtimeImageContentId = `sha256:${"b".repeat(64)}`;
+    const originalSpecCanonicalJson = '{"runtime":"original"}\n';
+    const preparedSpecCanonicalJson = '{"runtime":"prepared"}\n';
+    const replacementSpecCanonicalJson = '{"runtime":"replacement"}\n';
+    const digest = (value) => crypto.createHash("sha256").update(value, "utf8").digest("hex");
+    const originalSpecHash = digest(originalSpecCanonicalJson);
+    const preparedSpecHash = digest(preparedSpecCanonicalJson);
+    const replacementSpecHash = digest(replacementSpecCanonicalJson);
+    return {
+      async recoverUnfinishedTransactions() {
+        return { receipts: [], failures: [] };
+      },
+      async createHeldWorkload(input) {
+        const bootstrapIdentity = input.bootstrapIdentity;
+        const heldWorkloadArgv = adapter.renderManagedBootstrapHeldCommand(
+          input.request,
+          bootstrapIdentity,
+          input.plan.intendedWorkloadArgv,
+        );
+        const createReceipt = await input.launch({ heldWorkloadArgv, bootstrapIdentity });
+        return {
+          schemaVersion: 1,
+          sandbox: createReceipt.sandbox,
+          bootstrapIdentity,
+          heldWorkloadArgv,
+          intendedWorkloadArgv: input.plan.intendedWorkloadArgv,
+          plan: input.plan,
+          createReceipt,
+        };
+      },
+      async cleanupIncompleteCreate({ createReceipt, bootstrapIdentity }) {
+        return {
+          schemaVersion: 1,
+          sandbox: createReceipt.sandbox,
+          bootstrapIdentity,
+          outcome: "rolled-back",
+          restoredRuntimeId: null,
+          restoredSpecHash: null,
+          heldWorkloadRemoved: true,
+          alreadyRolledBack: false,
+          finalizedAt: "2026-08-04T12:00:00.000Z",
+        };
+      },
+      async discoverHeldWorkload(input) {
+        return { sandbox: input.sandbox, runtimeId, bootstrapIdentity: input.bootstrapIdentity };
+      },
+      async inspectHeldWorkload({ handle, discovered }) {
+        return {
+          schemaVersion: 1,
+          sandbox: handle.sandbox,
+          runtimeId: discovered.runtimeId,
+          bootstrapIdentity: handle.bootstrapIdentity,
+          image: handle.plan.image,
+          runtimeImageContentId,
+          specHash: originalSpecHash,
+          specCanonicalJson: originalSpecCanonicalJson,
+          agentIdentity: handle.plan.agentIdentity,
+          supervisorArgv: handle.plan.expectedSupervisorArgv,
+          heldWorkloadArgv: handle.heldWorkloadArgv,
+          metadata: handle.plan.metadata,
+        };
+      },
+      async prepareBootstrapReplacement({ handle, snapshot, request }) {
+        return {
+          schemaVersion: 1,
+          sandbox: handle.sandbox,
+          bootstrapIdentity: handle.bootstrapIdentity,
+          originalRuntimeId: snapshot.runtimeId,
+          preparedRuntimeId: replacementRuntimeId,
+          image: handle.plan.image,
+          runtimeImageContentId,
+          originalSpecHash,
+          preparedSpecHash,
+          preparedSpecCanonicalJson,
+          expectedActivatedSpecHash: replacementSpecHash,
+          expectedActivatedSpecCanonicalJson: replacementSpecCanonicalJson,
+          profileFingerprint: request.profileFingerprint,
+          rollbackAuthority: "test-managed-onboard-rollback-authority",
+        };
+      },
+      async activateBootstrapReplacement({ handle, prepared }) {
+        return {
+          schemaVersion: 1,
+          sandbox: handle.sandbox,
+          bootstrapIdentity: handle.bootstrapIdentity,
+          originalRuntimeId: prepared.originalRuntimeId,
+          replacementRuntimeId: prepared.preparedRuntimeId,
+          image: prepared.image,
+          runtimeImageContentId: prepared.runtimeImageContentId,
+          originalSpecHash: prepared.originalSpecHash,
+          replacementSpecHash,
+          replacementSpecCanonicalJson,
+          profileFingerprint: prepared.profileFingerprint,
+        };
+      },
+      async awaitBootstrap({ handle, replacement }) {
+        return {
+          schemaVersion: 1,
+          sandbox: handle.sandbox,
+          runtimeId: replacement.replacementRuntimeId,
+          image: handle.plan.image,
+          runtimeImageContentId,
+          originalSpecHash,
+          replacementSpecHash,
+          profileFingerprint: handle.plan.profile.fingerprint,
+          bootstrapIdentity: handle.bootstrapIdentity,
+          transactionPending: true,
+          completedAt: "2026-07-29T12:01:00.000Z",
+        };
+      },
+      async finalizeBootstrap({ outcome, handle, snapshot }) {
+        return {
+          schemaVersion: 1,
+          sandbox: handle.sandbox,
+          bootstrapIdentity: handle.bootstrapIdentity,
+          outcome: outcome === "commit" ? "committed" : "rolled-back",
+          restoredRuntimeId: outcome === "rollback" ? (snapshot?.runtimeId ?? null) : null,
+          restoredSpecHash: outcome === "rollback" ? (snapshot?.specHash ?? null) : null,
+          heldWorkloadRemoved: false,
+          alreadyRolledBack: false,
+          finalizedAt: "2026-07-29T12:02:00.000Z",
+        };
+      },
+    };
+  };
+}
+
 process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
+if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
+  mockManagedImageCatalog();
+  mockManagedImageBootstrap();
+}
 
 module.exports = {
+  mockEndpointlessProviderProfileRun,
+  mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
-  mockManagedImageFallback,
+  mockFreshOpenClawPluginDiscovery,
   mockOnboardRunCapture,
-  mockSandboxExecCurl,
   mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,
 };

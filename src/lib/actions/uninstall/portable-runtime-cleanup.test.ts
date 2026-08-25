@@ -791,6 +791,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(hasPortableRetirementRecord(scope.test.homeDir)).toBe(true);
   });
 
+  const setRegistryAgentDrift = (value: any) => (value.sandboxes["later-sandbox"].agent = "hermes");
   it.each([
     ["an unknown profile", "session", (value: any) => (value.checkpoint.profile.value = "unknown")],
     ["a profile mismatch", "session", (value: any) => (value.checkpoint.profile.value = "default")],
@@ -817,6 +818,7 @@ describe("portable runtime uninstall cleanup", () => {
       "registry",
       (value: any) => delete value.sandboxes["later-sandbox"].openshellDriver,
     ],
+    ["a registry agent identity drift", "registry", setRegistryAgentDrift],
     [
       "a registry gateway drift",
       "registry",

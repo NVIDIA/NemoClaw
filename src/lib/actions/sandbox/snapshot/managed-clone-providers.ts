@@ -30,7 +30,7 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
-const PROVIDER_CREATE_TIMEOUT_MS = 30_000;
+export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_TYPE_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
 const PROVIDER_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/u;
@@ -587,7 +587,7 @@ export function provisionManagedCloneProviderTransaction(
             maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
             stdio: ["ignore", "pipe", "pipe"],
             suppressOutput: true,
-            timeout: PROVIDER_CREATE_TIMEOUT_MS,
+            timeout: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
           },
         );
       } catch (error) {

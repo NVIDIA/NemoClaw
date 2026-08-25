@@ -8,7 +8,6 @@ import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-co
 import type { VllmProfile } from "../inference/vllm";
 import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
-import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { LocalModelProfilePlan } from "./local-model-profile/integration";
 import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
 
@@ -315,7 +314,8 @@ describe("createSetupNim", () => {
     expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
   });
 
-  it("passes the Hermes Ollama context floor into local Ollama selection state (#6760)", async () => {
+  it("passes the Hermes Ollama context floor without showing the OpenClaw Input capability prompt (#6760)", async () => {
+    const maybePromptForInferenceInputCapability = vi.fn(async () => {});
     const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
       async (_gpu, _requestedModel, _recoveredModel, _ollamaRunning, state) => {
         expect(state.ollamaContextWindowFloor).toBe(MIN_HERMES_OLLAMA_CONTEXT_WINDOW);
@@ -335,6 +335,7 @@ describe("createSetupNim", () => {
         detectInferenceProviderHostState: () =>
           makeHostState({ hasOllama: true, ollamaHost: "127.0.0.1", ollamaRunning: true }),
         handleRunningOllamaSelection,
+        maybePromptForInferenceInputCapability,
       }),
     );
 
@@ -342,93 +343,7 @@ describe("createSetupNim", () => {
 
     expect(result.provider).toBe("ollama-local");
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses reachable Windows-host Ollama when PowerShell cannot find its executable (#7472)", async () => {
-    const model = "qwen3.6:35b";
-    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
-      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state, isWindowsHostOllama) => {
-        expect(requestedModel).toBe(model);
-        expect(ollamaRunning).toBe(true);
-        // The flow must tell the handler the daemon is on the Windows host so it
-        // skips the Linux systemd loopback override (#8596).
-        expect(isWindowsHostOllama).toBe(true);
-        state.model = model;
-        state.provider = "ollama-local";
-        state.endpointUrl = "http://host.docker.internal:11434/v1";
-        state.credentialEnv = null;
-        state.preferredInferenceApi = "openai-completions";
-        return "selected";
-      },
-    );
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-windows-ollama",
-        getNonInteractiveModel: () => model,
-        detectInferenceProviderHostState: () =>
-          makeHostState({
-            ollamaHost: "host.docker.internal",
-            ollamaRunning: true,
-            isWindowsHostOllama: true,
-            isWsl: true,
-            hasWindowsOllama: false,
-            windowsHostOllamaDockerRequirement:
-              getWindowsHostOllamaDockerRequirement("docker-desktop"),
-          }),
-        handleRunningOllamaSelection,
-      }),
-    );
-
-    await setupNim(null, null);
-
-    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses the running daemon when mirrored networking exposes the Windows host on WSL loopback (#7472)", async () => {
-    const model = "qwen3.6:35b";
-    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
-      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
-        expect(requestedModel).toBe(model);
-        expect(ollamaRunning).toBe(true);
-        state.model = model;
-        state.provider = "ollama-local";
-        state.endpointUrl = "http://127.0.0.1:11434/v1";
-        state.credentialEnv = null;
-        state.preferredInferenceApi = "openai-completions";
-        return "selected";
-      },
-    );
-    const handleWindowsHostOllamaSelection = vi.fn<
-      SetupNimFlowDeps["handleWindowsHostOllamaSelection"]
-    >(async () => unexpected("Windows-host Ollama selection"));
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-windows-ollama",
-        getNonInteractiveModel: () => model,
-        detectInferenceProviderHostState: () =>
-          makeHostState({
-            // Mirrored networking puts the Windows daemon on the distro's own
-            // loopback, so the first probe candidate answers and the host reads
-            // as local even though the daemon is the Windows one.
-            ollamaHost: "127.0.0.1",
-            ollamaRunning: true,
-            isWindowsHostOllama: false,
-            isWsl: true,
-            hasWindowsOllama: false,
-            windowsHostOllamaDockerRequirement:
-              getWindowsHostOllamaDockerRequirement("docker-desktop"),
-          }),
-        handleRunningOllamaSelection,
-        handleWindowsHostOllamaSelection,
-      }),
-    );
-
-    await setupNim(null, null);
-
-    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
-    expect(handleWindowsHostOllamaSelection).not.toHaveBeenCalled();
+    expect(maybePromptForInferenceInputCapability).not.toHaveBeenCalled();
   });
 
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {

@@ -6243,7 +6243,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -7615,11 +7615,16 @@ describe_hf_download_authentication() {
 }
 
 maybe_offer_express_install() {
-  local platform
+  local platform resume_file
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
+
+  if [ "$platform" = "DGX Station" ]; then
+    resume_file="$(station_express_resume_file)" \
+      || error "Cannot resolve the DGX Station express resume state path. Refusing to continue without resume state."
+  fi
 
   # Pair state is written before remote mutation. It therefore outranks every
   # prompt/skip path and must recover the companion exact-revision mode/model
@@ -7666,7 +7671,9 @@ maybe_offer_express_install() {
       # preparation boundary without forcing the rest of the express policy.
       # Honor an existing exact-revision reboot resume before configuration.
       _STATION_INSTALL_MODE="provider"
-      load_station_express_resume || true
+      if [[ -e "$resume_file" || -L "$resume_file" ]]; then
+        load_station_express_resume
+      fi
       _SELECTED_EXPRESS_PLATFORM="$platform"
       configure_station_express_model
       info "Detected ${platform}. Using Station preparation for the explicitly selected managed-vLLM provider."
@@ -7680,7 +7687,8 @@ maybe_offer_express_install() {
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
-  if [ "$platform" = "DGX Station" ] && load_station_express_resume; then
+  if [ "$platform" = "DGX Station" ] && [[ -e "$resume_file" || -L "$resume_file" ]]; then
+    load_station_express_resume
     resume_loaded_station_install "$platform"
     return 0
   fi

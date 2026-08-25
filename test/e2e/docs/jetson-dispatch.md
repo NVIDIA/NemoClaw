@@ -139,8 +139,12 @@ workflow run ID and attempt, selectors, event, and hardware opt-in decisions.
 
 The Jetson controller writes private files under the target artifact directory:
 
-- `jetson-dispatch.json` contains the validated completed status and bounded
-  log. It excludes the base64 archive payload.
+- `jetson-dispatch.json` records the validated request and derived job ID before
+  submission begins. It records the cancellation reason and final outcome. If
+  cancellation reports that the job is absent after submission may have reached
+  the dispatcher, the controller records one follow-up request. A completed
+  artifact replaces this recovery state with the validated status and bounded
+  log. The file excludes the base64 archive payload.
 - `jetson-e2e-artifacts.tar.gz` contains the decoded target evidence when the
   service returns an archive.
 
@@ -148,6 +152,13 @@ The workflow uploads that directory as `e2e-jetson-nvmap-gpu`, including on job
 failure. A successful proof requires the exact candidate request, a conclusion
 of `success`, `cleanup: "succeeded"`, a device identity, and the artifact
 archive.
+
+If a workflow fails after submission begins, inspect `jetson-dispatch.json`
+before another dispatch. Use its job ID to inspect the operator-service job,
+even when the receipt has no `cancellation` record. If artifact upload failed
+and the file is unavailable, use the job ID from the workflow error or logs.
+Cancel the job or confirm completion before another dispatch, regardless of
+whether the cancellation outcome is absent, pending, succeeded, or failed.
 
 ## Live Target
 
@@ -165,6 +176,9 @@ The test verifies these requirements:
 - `/dev/nvmap` is a character device on the host.
 - Docker reports the NVIDIA runtime.
 - NemoClaw installation completes without prompts.
+- The sandbox registry records the immutable published
+  `ghcr.io/nvidia/nemoclaw/openclaw-sandbox` digest selected for `linux/arm64`,
+  and its source revision matches the separately dispatched publication commit.
 - The installed commands resolve inside the Jetson job workspace.
 
 The live test runs `bash install.sh --non-interactive` with
@@ -178,6 +192,10 @@ A passing test requires these results:
 - `nemoclaw e2e-jetson-nvmap status` does not report a CUDA result,
   `/dev/nvmap`, or `/opt/nvidia`.
 - `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
+
+The test writes `phase-2-published-managed-image.json` with the registry
+workload receipt, digest-qualified managed-image reference, and inspected image
+labels used to prove its agent, contracts, source revision, and platform.
 
 The test result verifies CPU-only onboarding for the named commit and Jetson
 device. It does not verify CUDA or OpenClaw Jetson device-group preservation.
