@@ -190,6 +190,20 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("normalizes the provider before matching the Deep Agents Code 404 exception", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: true },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: " openrouter-api ",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
   it("does not extend the DCode 404 tolerance to a different provider", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),

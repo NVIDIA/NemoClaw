@@ -222,7 +222,7 @@ export function isDcodeOpenRouterModelsRoute404(
 ): boolean {
   return (
     context.agentName === DCODE_AGENT_NAME &&
-    context.provider === "openrouter-api" &&
+    context.provider?.trim() === "openrouter-api" &&
     httpStatus === 404
   );
 }
