@@ -39,6 +39,7 @@ vi.mock("node:fs", async (importOriginal) => {
     ...original,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
     realpathSync: memory.realpathSync,
