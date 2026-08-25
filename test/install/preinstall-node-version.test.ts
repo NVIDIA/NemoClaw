@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const SCRIPT_PATH = path.join(REPO_ROOT, "scripts/check-node-version.js");
 describe("preinstall node-version guard (#2399)", () => {
   it("scripts/check-node-version.js exists and is executable", () => {

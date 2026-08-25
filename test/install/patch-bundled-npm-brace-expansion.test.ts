@@ -14,7 +14,7 @@ import {
   patchBundledNpmBraceExpansion,
   patchBundledNpmBraceExpansionFromRegistry,
   verifyBundledNpmBraceExpansion,
-} from "../scripts/patch-bundled-npm-brace-expansion.mts";
+} from "../../scripts/patch-bundled-npm-brace-expansion.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -48,7 +48,7 @@ function fixture(braceExpansionVersion: string) {
   fs.writeFileSync(arboristBin, "#!/usr/bin/env node\n");
   const npmBin = path.join(npmRoot, "node_modules", ".bin");
   fs.mkdirSync(npmBin);
-  fs.symlinkSync("../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
+  fs.symlinkSync("../../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
   writeJson(path.join(replacementRoot, "package.json"), {
     dependencies: { "balanced-match": "^4.0.2" },
     name: "brace-expansion",
@@ -261,7 +261,7 @@ describe("npm bundled brace-expansion remediation", () => {
     const outsideNodeModules = path.join(path.dirname(escapingBinLink.npmRoot), "outside.js");
     fs.writeFileSync(outsideNodeModules, "outside\n");
     fs.symlinkSync(
-      "../../../outside.js",
+      "../../../../outside.js",
       path.join(escapingBinLink.npmRoot, "node_modules", ".bin", "escape"),
     );
     expect(() => patchBundledNpmBraceExpansion(escapingBinLink)).toThrow(

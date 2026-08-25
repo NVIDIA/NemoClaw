@@ -14,7 +14,7 @@ import {
   verifyReviewedNpmCache,
   verifyReviewedNpmLockPackages,
   verifyReviewedNpmMetadata,
-} from "../scripts/lib/reviewed-npm-archive.mts";
+} from "../../scripts/lib/reviewed-npm-archive.mts";
 
 const INTEGRITY = `sha512-${"a".repeat(88)}`;
 const PACKAGE_SPEC = "@example/reviewed@1.2.3";
@@ -169,7 +169,7 @@ describe("reviewed npm archive", () => {
   });
 
   it.each([
-    "../reviewed.tgz",
+    "../../reviewed.tgz",
     "/tmp/reviewed.tgz",
     "nested/reviewed.tgz",
     "nested\\reviewed.tgz",
@@ -281,7 +281,7 @@ describe("reviewed npm archive", () => {
     },
     {
       expected: "reported unsafe archive filename",
-      mutation: { filename: "../qrcode-terminal.tgz", packageSpec: "qrcode-terminal@0.12.0" },
+      mutation: { filename: "../../qrcode-terminal.tgz", packageSpec: "qrcode-terminal@0.12.0" },
       name: "an unsafe packed filename",
     },
   ])("rejects $name in the final cache", ({ expected, mutation }) => {

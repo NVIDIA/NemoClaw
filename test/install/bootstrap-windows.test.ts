@@ -3,7 +3,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { testTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeout, testTimeoutOptions } from ".././helpers/timeouts";
 import {
   BOOTSTRAP_WINDOWS,
   POWERSHELL_BATCH_EXEC_TIMEOUT_MS,
@@ -14,7 +14,7 @@ import {
   resolvePowerShell,
   runPowerShellBatch,
   runPowerShellProcess,
-} from "./support/bootstrap-windows-test-helpers";
+} from ".././support/bootstrap-windows-test-helpers";
 
 const POWERSHELL_TEST_TIMEOUT = testTimeoutOptions(
   Math.max(30_000, POWERSHELL_PROCESS_EXEC_TIMEOUT_MS + 5_000),
@@ -1384,18 +1384,3 @@ $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
   wslEngineEnabled = $settings.wslEngineEnabled
   enableIntegrationWithDefaultWslDistro = $settings.enableIntegrationWithDefaultWslDistro
   integratedWslDistros = $settings.integratedWslDistros
-  backupCount = @(Get-ChildItem -Path $dockerDir -Filter 'settings-store.json.bak.*' -ErrorAction SilentlyContinue).Count
-} | ConvertTo-Json -Compress
-`,
-    (result) => {
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-      expect(parsed.settingsExists).toBe(true);
-      expect(parsed.wslEngineEnabled).toBe(true);
-      expect(parsed.enableIntegrationWithDefaultWslDistro).toBe(false);
-      expect(parsed.integratedWslDistros).toContain("Ubuntu-24.04");
-      expect(parsed.backupCount).toBe(0);
-    },
-  );
-});

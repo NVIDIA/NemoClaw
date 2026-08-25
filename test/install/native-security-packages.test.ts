@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../..");
 const BUILD_SCRIPT = path.join(ROOT, "scripts", "security", "build-native-security-packages.sh");
 const LIBSSH2_PATCH = path.join(
   ROOT,
@@ -121,9 +121,9 @@ describe("native security package remediation", () => {
         .split("\n");
       expect(argumentsList).toEqual([
         ...Array.from({ length: 22 }, (_, index) => `./docker-${index + 1}`),
-        "./sshd-1",
-        "./sshd-2",
-        "./test_read_algos.test",
+        ".././sshd-1",
+        ".././sshd-2",
+        ".././test_read_algos.test",
       ]);
       expect(fs.readFileSync(path.join(harnessLog, "environment"), "utf-8").trim()).toBe(
         "libssh2|libssh2|-o UsePAM=yes -o KbdInteractiveAuthentication=yes -o PasswordAuthentication=yes -o PerSourcePenalties=no",

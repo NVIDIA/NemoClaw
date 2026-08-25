@@ -15,7 +15,7 @@ import {
   patchBundledNpmIpAddressFromRegistry,
   REVIEWED_NPM_VERSION,
   verifyBundledNpmIpAddress,
-} from "../scripts/lib/patch-bundled-npm-ip-address.mts";
+} from "../../scripts/lib/patch-bundled-npm-ip-address.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -59,7 +59,7 @@ function fixture(ipAddressVersion: string) {
   fs.writeFileSync(arboristBin, "#!/usr/bin/env node\n");
   const npmBin = path.join(npmRoot, "node_modules", ".bin");
   fs.mkdirSync(npmBin);
-  fs.symlinkSync("../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
+  fs.symlinkSync("../../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
   writeJson(path.join(replacementRoot, "package.json"), packageManifest(FIXED_IP_ADDRESS_VERSION));
   fs.mkdirSync(path.join(replacementRoot, "dist"));
   fs.writeFileSync(path.join(replacementRoot, "dist", "ip-address.js"), "fixed\n");
@@ -333,7 +333,7 @@ describe("npm bundled ip-address remediation", () => {
     const outsideNodeModules = path.join(path.dirname(escapingBinLink.npmRoot), "outside.js");
     fs.writeFileSync(outsideNodeModules, "outside\n");
     fs.symlinkSync(
-      "../../../outside.js",
+      "../../../../outside.js",
       path.join(escapingBinLink.npmRoot, "node_modules", ".bin", "escape"),
     );
     expect(() => patchBundledNpmIpAddress(escapingBinLink)).toThrow(

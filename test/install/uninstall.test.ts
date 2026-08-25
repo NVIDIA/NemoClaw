@@ -13,17 +13,17 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
-} from "../src/lib/onboard/docker-driver-gateway-config";
-import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../src/lib/onboard/docker-driver-gateway-runtime-marker";
+} from "../../src/lib/onboard/docker-driver-gateway-config";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../../src/lib/onboard/docker-driver-gateway-runtime-marker";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
-} from "../src/lib/onboard/docker-driver-gateway-service";
-import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate";
-import { createSession } from "../src/lib/state/onboard-session";
+} from "../../src/lib/onboard/docker-driver-gateway-service";
+import { deriveCheckpointFromSession } from "../../src/lib/state/onboard-checkpoint-migrate";
+import { createSession } from "../../src/lib/state/onboard-session";
 
-const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
+const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "../..", "uninstall.sh");
 
 describe("uninstall CLI flags", () => {
   function writeFakeTools(fakeBin: string) {
@@ -141,7 +141,7 @@ exit 0
     extraEnv: NodeJS.ProcessEnv = {},
   ): ReturnType<typeof spawnSync> {
     return spawnSync("bash", [UNINSTALL_SCRIPT, ...args], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
         ...sanitizedParentEnv(),
@@ -311,7 +311,7 @@ esac
 
   it("exits 0 and shows usage for --help", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
     });
 
@@ -326,7 +326,7 @@ esac
 
   it("uses NemoHermes branding for --help when Hermes is active", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
         ...process.env,

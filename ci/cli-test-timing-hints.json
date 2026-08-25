@@ -224,8 +224,8 @@
     "test/state/state-dir-guard.test.ts": 10477,
     "test/strict-tool-call-probe.test.ts": 31346,
     "test/telegram-diagnostics.test.ts": 5127,
-    "test/uninstall-prompt-pty.test.ts": 17156,
-    "test/uninstall.test.ts": 14144,
+    "test/install/uninstall-prompt-pty.test.ts": 17156,
+    "test/install/uninstall.test.ts": 14144,
     "test/update.test.ts": 10077,
     "test/wechat-runtime-audit-workflow.test.ts": 26307
   }

@@ -16,7 +16,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+const SCRIPT_PATH = path.join(import.meta.dirname, "../..", "scripts", "setup-jetson.sh");
 
 const HOST_MUTATION_COMMANDS = [
   "sudo",

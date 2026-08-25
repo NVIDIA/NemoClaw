@@ -7,12 +7,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { wechatManifest } from "../src/lib/messaging/channels/wechat/manifest.ts";
+import { wechatManifest } from "../../src/lib/messaging/channels/wechat/manifest.ts";
 import {
   applyMessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
   requireWritableRuntimeInstallCache,
-} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+} from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const WECHAT_INTEGRITY =
   "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";

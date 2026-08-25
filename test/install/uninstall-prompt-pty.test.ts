@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from ".././helpers/timeouts";
 
 // Deterministic runtime validation for #5188: the uninstall confirm prompts
 // must wait for typed input on a real terminal even when fd 0 is already
@@ -20,7 +20,7 @@ import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 // Linux-only: `script -qec` is util-linux; macOS ships BSD script with a
 // different CLI. CI runs on Linux. Refs #5188, #5020, #5163.
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const DRIVER = path.join(import.meta.dirname, "fixtures", "uninstall-prompt-pty-driver.ts");
 const UNINSTALL_SH = path.join(REPO_ROOT, "uninstall.sh");

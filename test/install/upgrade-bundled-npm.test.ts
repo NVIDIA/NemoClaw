@@ -11,14 +11,14 @@ import {
   FIXED_TAR_VERSION,
   patchBundledNpmTar,
   verifyBundledNpmTar,
-} from "../scripts/patch-bundled-npm-tar.mts";
+} from "../../scripts/patch-bundled-npm-tar.mts";
 import {
   REVIEWED_NPM_PACKAGES,
   REVIEWED_NPM_VERSION,
   upgradeBundledNpm,
   verifyReviewedNpm,
   verifyReviewedNpmArchive,
-} from "../scripts/upgrade-bundled-npm.mts";
+} from "../../scripts/upgrade-bundled-npm.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -72,7 +72,7 @@ function reviewedNpm(): string {
   writePackage(root, "tar", "tar", REVIEWED_NPM_PACKAGES.tar);
   const binDirectory = path.join(root, "node_modules", ".bin");
   fs.mkdirSync(binDirectory);
-  fs.symlinkSync("../brace-expansion/index.js", path.join(binDirectory, "brace-expansion"));
+  fs.symlinkSync("../../brace-expansion/index.js", path.join(binDirectory, "brace-expansion"));
   return root;
 }
 

@@ -18,7 +18,7 @@ import {
   patchBundledNpmTarFromArchive,
   patchBundledNpmTarFromRegistry,
   verifyBundledNpmTar,
-} from "../scripts/patch-bundled-npm-tar.mts";
+} from "../../scripts/patch-bundled-npm-tar.mts";
 
 const temporaryDirectories: string[] = [];
 

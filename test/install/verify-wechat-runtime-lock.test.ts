@@ -11,7 +11,7 @@ import {
   expectedWechatGraph,
   verifyOpenClawPeerCompatibility,
   verifyWechatRuntimeLock,
-} from "../scripts/verify-wechat-runtime-lock.mts";
+} from "../../scripts/verify-wechat-runtime-lock.mts";
 
 const tempDirs: string[] = [];
 

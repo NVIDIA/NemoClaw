@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SMOKE_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "smoke-macos-install.sh");
+const SMOKE_SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "smoke-macos-install.sh");
 
 describe("macOS smoke install sandbox-name guard", () => {
   it.each([
@@ -23,7 +23,7 @@ describe("macOS smoke install sandbox-name guard", () => {
         'set --; source "$SMOKE_SCRIPT_PATH"; SANDBOX_NAME="$SMOKE_SANDBOX_NAME"; validate_sandbox_name',
       ],
       {
-        cwd: path.join(import.meta.dirname, ".."),
+        cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -41,7 +41,7 @@ describe("macOS smoke install sandbox-name guard", () => {
 describe.skip("macOS smoke install script guardrails", () => {
   it("prints help", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
     });
 
@@ -51,7 +51,7 @@ describe.skip("macOS smoke install script guardrails", () => {
 
   it("requires NVIDIA_INFERENCE_API_KEY", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "" },
     });
@@ -62,7 +62,7 @@ describe.skip("macOS smoke install script guardrails", () => {
 
   it("rejects invalid sandbox names", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--sandbox-name", "Bad Name"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
     });
@@ -73,7 +73,7 @@ describe.skip("macOS smoke install script guardrails", () => {
 
   it("rejects unsupported runtimes", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "lxc"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
     });
@@ -84,7 +84,7 @@ describe.skip("macOS smoke install script guardrails", () => {
 
   it("accepts podman as a runtime option", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "podman"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -99,7 +99,7 @@ describe.skip("macOS smoke install script guardrails", () => {
 
   it("fails when a requested runtime socket is unavailable", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "docker-desktop"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -134,7 +134,7 @@ describe.skip("macOS smoke install script guardrails", () => {
     `;
 
     const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
       timeout: 10_000,

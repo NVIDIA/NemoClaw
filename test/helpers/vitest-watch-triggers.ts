@@ -171,7 +171,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
-    testsToRun: runTests("test/setup-jetson.test.ts"),
+    testsToRun: runTests("test/install/setup-jetson.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/e2e\/contracts\/v1\/jetson-dispatch\.json$/,
@@ -209,7 +209,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
-      "test/perl-critical-cve-remediation.test.ts",
+      "test/install/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
     ),
   },

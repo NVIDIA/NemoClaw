@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
 const policies = requireForTest(
-  path.join(import.meta.dirname, "..", "src", "lib", "policy", "index.ts"),
-) as typeof import("../src/lib/policy");
+  path.join(import.meta.dirname, "../..", "src", "lib", "policy", "index.ts"),
+) as typeof import("../../src/lib/policy");
 
 interface NetworkPolicyEntry {
   endpoints?: Array<{ host?: string; port?: number }>;

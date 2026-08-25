@@ -23,7 +23,7 @@ import {
   type LockedArchive,
   materializeLockedNpmCacheSeed,
   verifyAndCopyLockedNpmCacheSeed,
-} from "../scripts/checks/materialize-locked-npm-cache-seed.mts";
+} from "../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 
 const TARGET = { cpu: "x64", libc: "glibc", os: "linux" } as const;
 

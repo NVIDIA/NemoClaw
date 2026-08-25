@@ -222,7 +222,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",
     ]);
-    expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/install/setup-jetson.test.ts"]);
     expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
@@ -252,7 +252,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
-      "test/perl-critical-cve-remediation.test.ts",
+      "test/install/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([

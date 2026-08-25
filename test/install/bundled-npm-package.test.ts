@@ -12,7 +12,7 @@ import {
   readJsonObject,
   rejectUnsafePackageTree,
   requireRealDirectory,
-} from "../scripts/lib/bundled-npm-package.mts";
+} from "../../scripts/lib/bundled-npm-package.mts";
 
 const temporaryDirectories: string[] = [];
 

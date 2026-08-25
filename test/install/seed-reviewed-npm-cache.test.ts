@@ -12,7 +12,7 @@ import {
   type CachePut,
   lockedArchivesFromDirectory,
   seedReviewedNpmCache,
-} from "../scripts/lib/seed-reviewed-npm-cache.mts";
+} from "../../scripts/lib/seed-reviewed-npm-cache.mts";
 
 const PACKAGE_NAME = "@example/reviewed";
 const PACKAGE_SPEC = `${PACKAGE_NAME}@1.2.3`;

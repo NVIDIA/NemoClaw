@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "update-hermes-agent.sh");
+const SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "update-hermes-agent.sh");
 const HERMES_BASE_DOCKERFILE = path.join(
   import.meta.dirname,
   "..",
@@ -15,7 +15,7 @@ const HERMES_BASE_DOCKERFILE = path.join(
   "hermes",
   "Dockerfile.base",
 );
-const HERMES_MANIFEST = path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml");
+const HERMES_MANIFEST = path.join(import.meta.dirname, "../..", "agents", "hermes", "manifest.yaml");
 const TARGET_TAG = "v2026.7.20";
 
 const CURRENT_INSTALLED_BASE = [

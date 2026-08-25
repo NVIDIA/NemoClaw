@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 const scriptUnderTest = path.join(repoRoot, "scripts", "dev-setup.sh");
 const tempRoots: string[] = [];
 
