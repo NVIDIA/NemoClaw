@@ -11,7 +11,7 @@ import {
   assertMcpAgentMatrixArtifacts,
   REQUIRED_MCP_AGENT_TEST_IDS,
   writeMcpAgentMatrixProof,
-} from "../tools/e2e/assert-mcp-agent-matrix-artifacts.mts";
+} from "../../tools/e2e/assert-mcp-agent-matrix-artifacts.mts";
 
 const directories: string[] = [];
 

@@ -390,7 +390,7 @@ function addInstallerReleaseTable(
 }
 
 function applyReviewedReleaseCohorts(source: string): string {
-  const currentComment = `# regressionTest: test/install/install-openshell-version-check.test.ts exercises all
+  const currentComment = `# regressionTest: test/install-openshell-version-check.test.ts exercises all
 # nine mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
 # removalCondition: remove these entries only when NemoClaw drops that
@@ -709,10 +709,8 @@ function removeV00106OperationalTrust(source: string): string {
 }
 
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
-  const selected = INSTALLER_TEMPLATE.replace(
-    /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
-    `MIN_VERSION="${openshellVersion}"`,
-  )
+  const selected = INSTALLER_TEMPLATE.replaceAll("test/install/", "test/")
+    .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
     .replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`)
     .replace(
       /^DEV_MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,

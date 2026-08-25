@@ -14,7 +14,7 @@ import {
   reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "../../helpers/timeouts";
-import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const original =
@@ -35,7 +35,7 @@ beforeEach(() => {
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
-  "../..",
+  "../../..",
   "src",
   "lib",
   "messaging",
@@ -47,7 +47,7 @@ const OPENCLAW_SLACK_2026_7_1_INTEGRITY =
   "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==";
 const OPENCLAW_SLACK_2026_7_1_TARBALL =
   "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz";
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 
 function channelsB64(channels: string[]): string {
   return Buffer.from(JSON.stringify(channels)).toString("base64");
