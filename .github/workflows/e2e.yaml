@@ -99,12 +99,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
-      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
-      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
-      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
+      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract }}
+      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha }}
+      workload_source: ${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     steps:
       - id: publication_mode
         name: Classify base-image publication requirement
@@ -116,14 +118,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reuse=0
+          pr=0
           case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
             NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
               required=1
               ;;
             NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
               required=0
-              reuse=1
+              pr=1
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -131,10 +133,10 @@ jobs:
               ;;
           esac
           printf 'required=%s\n' "${required}" >> "${GITHUB_OUTPUT}"
-          printf 'reuse=%s\n' "${reuse}" >> "${GITHUB_OUTPUT}"
+          printf 'pr=%s\n' "${pr}" >> "${GITHUB_OUTPUT}"
 
       - name: Check out trusted E2E workflow
-        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.pr == '1' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.workflow_sha || github.workflow_sha }}
@@ -142,16 +144,45 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for publication verification
-        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.pr == '1' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
+      - id: select_pr_source
+        name: Select PR workload source
+        if: ${{ steps.publication_mode.outputs.pr == '1' }}
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_path="${RUNNER_TEMP}/pr-managed-image-source"
+          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-source.mts select "$source_path"
+          workload_source="$(cat "$source_path")"
+          case "$workload_source" in
+            managed-image|local-dockerfile) ;;
+            *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;
+          esac
+          printf 'workload_source=%s\n' "$workload_source" >>"$GITHUB_OUTPUT"
+
+      - name: Check out trusted PR base
+        if: ${{ steps.select_pr_source.outputs.workload_source == 'managed-image' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: publication
         name: Verify applicable base-image publication
-        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
-          EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
+          EXPECTED_SHA: ${{ steps.publication_mode.outputs.required == '1' && (inputs.checkout_sha || github.sha) || inputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
         shell: bash
@@ -162,7 +193,7 @@ jobs:
           node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
       - name: Download immutable Deep Agents Code base contract
-        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
@@ -170,34 +201,17 @@ jobs:
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
 
-      - name: Download reused Deep Agents Code base contract
-        if: ${{ steps.publication_mode.outputs.reuse == '1' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
-        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
-
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
-        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
 
-      - id: validate_reused_dcode_base
-        name: Validate reused Deep Agents Code base
-        if: ${{ steps.publication_mode.outputs.reuse == '1' }}
-        env:
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
-        run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
-
   generate-matrix:
+    needs: base-image-publication
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -206,7 +220,8 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      managed_image_catalog: ${{ steps.package_cli_artifact.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      workload_source: ${{ needs.base-image-publication.outputs.workload_source }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -574,16 +589,6 @@ jobs:
             fi
           fi
 
-      - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
-
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
@@ -699,21 +704,6 @@ jobs:
             .sourceRevision == $candidateSha
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
-
-          managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
-          rm -f -- dist/e2e-managed-image-catalog.json
-          if [[ -e "$managed_catalog" ]]; then
-            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
-              { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
-            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-            jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
-              type == "object" and length > 0 and
-              all(.[]; .source.revision == $revision and .source.release == $release)
-            ' "$managed_catalog" >/dev/null ||
-              { echo "::error::managed-image catalog source identity does not match the candidate"; exit 1; }
-            install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
-            printf 'managed_image_catalog=%s\n' "$(jq -c . "$managed_catalog")" >>"$GITHUB_OUTPUT"
-          fi
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"
@@ -2708,8 +2698,9 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
-      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -2765,7 +2756,7 @@ jobs:
           build-cli: "false"
 
       - name: Record immutable Deep Agents Code base evidence
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' }}
         env:
           BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -2998,7 +2989,8 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3038,7 +3030,8 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3079,7 +3072,8 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3120,7 +3114,8 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3161,7 +3156,8 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -4969,6 +4965,8 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Install onboarding health inference lifecycle dashboard and security succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; mock or NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
@@ -5380,7 +5378,8 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Public install onboarding hosted inference and security checks succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -5430,30 +5429,6 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Materialize cloud-onboard managed-image catalog
-        if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
-        env:
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
-            type == "object" and length > 0 and
-            all(.[]; .source.revision == $revision and .source.release == $release)
-          ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "::error::managed-image catalog source identity does not match the candidate" >&2
-            exit 1
-          }
-          jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
-          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
-            echo "::error::temporary managed-image catalog is invalid" >&2
-            exit 1
-          }
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5529,6 +5504,8 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Provider configuration redaction and optional real sends succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference and messaging providers"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/messaging-providers
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_revision }}
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"

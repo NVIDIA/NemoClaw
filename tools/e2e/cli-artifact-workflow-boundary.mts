@@ -267,9 +267,6 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
-    ".source.revision == $revision",
-    ".source.release == $release",
-    "managed-image catalog source identity does not match the candidate",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",
@@ -349,9 +346,7 @@ function validateConsumer(
 ): void {
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (
-      contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
-    ) {
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
       );
@@ -402,10 +397,7 @@ function validateConsumer(
         ? trustedInstallIndex
         : jobSteps.length - 1
       : restoreIndex;
-  const stepsThroughSecurityBoundary = jobSteps.slice(
-    0,
-    securityBoundaryIndex + 1,
-  );
+  const stepsThroughSecurityBoundary = jobSteps.slice(0, securityBoundaryIndex + 1);
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
   const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
@@ -451,9 +443,7 @@ function validateConsumer(
       contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
         MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
   ) {
-    errors.push(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
+    errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
   }
   if (
     jobName === "mcp-bridge-dev" &&
@@ -485,13 +475,8 @@ function validateConsumer(
   const stepsBeforeRestore = jobSteps
     .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
-  if (
-    prepareIndex >= 0 &&
-    !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
-  ) {
-    errors.push(
-      `${jobName} must preserve its reviewed steps through CLI artifact restore`,
-    );
+  if (prepareIndex >= 0 && !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)) {
+    errors.push(`${jobName} must preserve its reviewed steps through CLI artifact restore`);
   }
 }
 
