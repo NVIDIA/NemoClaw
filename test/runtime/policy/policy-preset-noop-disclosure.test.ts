@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import * as policies from "../../../src/lib/policy";
 
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const POLICY_MODULE = JSON.stringify(path.join(REPO_ROOT, "src/lib/policy/index.ts"));
 const REGISTRY_MODULE = JSON.stringify(path.join(REPO_ROOT, "src/lib/state/registry.ts"));
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
