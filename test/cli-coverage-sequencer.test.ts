@@ -103,7 +103,7 @@ describe("stable CLI coverage sharding", () => {
 
   it("keeps recorded project and path keys on their stable shards", () => {
     const keys = [
-      "integration:test/local-credential-helper-fields.test.ts",
+      "integration:test/credentials/local-credential-helper-fields.test.ts",
       "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "integration:test/regular-0.test.ts",
       "cli:src/lib/example.test.ts",
@@ -118,7 +118,7 @@ describe("stable CLI coverage sharding", () => {
       "cli:src/lib/example.test.ts": 6,
       "e2e-support:test/e2e/support/example.test.ts": 8,
       "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 1,
-      "integration:test/local-credential-helper-fields.test.ts": 6,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 6,
       "integration:test/regular-0.test.ts": 1,
     });
   });
@@ -155,7 +155,7 @@ describe("stable CLI coverage sharding", () => {
 
   it("wires stable project and path ownership into the Vitest sequencer", async () => {
     const specifications = [
-      testSpecification("test/local-credential-helper-fields.test.ts", "local-credentials"),
+      testSpecification("test/credentials/local-credential-helper-fields.test.ts", "local-credentials"),
       testSpecification("test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
       ...Array.from({ length: 8 }, (_, index) =>
         testSpecification(`test/regular-${index}.test.ts`, `regular-${index}`),

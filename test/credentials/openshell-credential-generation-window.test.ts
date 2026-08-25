@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { MCP_BRIDGE_TEST_CREDENTIALS } from "./e2e/fixtures/mcp-bridge-credentials.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../e2e/fixtures/mcp-bridge-credentials.ts";
 import {
   buildCredentialWindowChildScript,
   buildCredentialWindowOneShotScript,
@@ -18,7 +18,7 @@ import {
   credentialWindowRequestId,
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
-} from "./e2e/live/openshell-credential-generation-window.ts";
+} from "../e2e/live/openshell-credential-generation-window.ts";
 
 describe("OpenShell exact-main credential generation-window proof", () => {
   it("crosses the complete upstream retention window with unique scannable values", () => {

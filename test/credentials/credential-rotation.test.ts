@@ -35,20 +35,20 @@ function isCredentialRotationInternals(value: unknown): value is CredentialRotat
   );
 }
 
-function isRegistryModule(value: unknown): value is typeof import("../src/lib/state/registry.js") {
+function isRegistryModule(value: unknown): value is typeof import("../../src/lib/state/registry.js") {
   return isObjectRecord(value) && typeof value.getSandbox === "function";
 }
 
 function loadCredentialRotationInternals(): CredentialRotationInternals {
-  const loaded: unknown = require("../src/lib/onboard.js");
+  const loaded: unknown = require("../../src/lib/onboard.js");
   if (!isCredentialRotationInternals(loaded)) {
     throw new Error("Expected onboard internals to expose credential rotation helpers");
   }
   return loaded;
 }
 
-function loadRegistryModule(): typeof import("../src/lib/state/registry.js") {
-  const loaded: unknown = require("../src/lib/state/registry.js");
+function loadRegistryModule(): typeof import("../../src/lib/state/registry.js") {
+  const loaded: unknown = require("../../src/lib/state/registry.js");
   if (!isRegistryModule(loaded)) {
     throw new Error("Expected registry module to expose getSandbox");
   }
@@ -58,7 +58,7 @@ function loadRegistryModule(): typeof import("../src/lib/state/registry.js") {
 describe("credential rotation detection", () => {
   let hashCredential: CredentialRotationInternals["hashCredential"];
   let detectMessagingCredentialRotation: CredentialRotationInternals["detectMessagingCredentialRotation"];
-  let registry: typeof import("../src/lib/state/registry.js");
+  let registry: typeof import("../../src/lib/state/registry.js");
 
   beforeEach(() => {
     // Fresh imports to avoid cross-test contamination

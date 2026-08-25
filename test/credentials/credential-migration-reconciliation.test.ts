@@ -9,15 +9,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   removeLegacyCredentialsFile,
   stageLegacyCredentialsToEnv,
-} from "../src/lib/credentials/store.js";
+} from "../../src/lib/credentials/store.js";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
-} from "../src/lib/onboard/credential-provider-registration.js";
-import { handleFinalizationState } from "../src/lib/onboard/machine/handlers/finalization.js";
-import type { MessagingTokenDef } from "../src/lib/onboard/messaging-prep.js";
-import type { Session } from "../src/lib/state/onboard-session.js";
-import { withProcessEnv } from "./support/setup-inference-test-harness.js";
+} from "../../src/lib/onboard/credential-provider-registration.js";
+import { handleFinalizationState } from "../../src/lib/onboard/machine/handlers/finalization.js";
+import type { MessagingTokenDef } from "../../src/lib/onboard/messaging-prep.js";
+import type { Session } from "../../src/lib/state/onboard-session.js";
+import { withProcessEnv } from "../support/setup-inference-test-harness.js";
 
 const LEGACY_SECRET = "sk-TEST-NOT-A-REAL-STORED-KEY";
 
@@ -135,7 +135,7 @@ describe("legacy credential reconciliation", () => {
             stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
           }));
           const deps: CredentialProviderRegistrationDeps = {
-            root: path.join(import.meta.dirname, ".."),
+            root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
               runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
             redact: (input) => input,

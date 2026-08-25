@@ -44,7 +44,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/credential-migration.test.ts",
     tests: [
       {
-        files: ["test/credential-migration-reconciliation.test.ts"],
+        files: ["test/credentials/credential-migration-reconciliation.test.ts"],
         project: "integration",
       },
     ],

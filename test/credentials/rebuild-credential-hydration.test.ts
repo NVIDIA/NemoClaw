@@ -22,9 +22,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout, testTimeout } from "./helpers/timeouts";
+import { execTimeout, testTimeout } from "../helpers/timeouts";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const tmpFixtures: string[] = [];
 
 const CHILD_PROCESS_TIMEOUT_MS = Math.max(execTimeout(10_000), testTimeout(10_000));

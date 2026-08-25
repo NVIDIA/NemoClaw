@@ -14,7 +14,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { findDirectCredentialEnvReads } from "../scripts/checks/direct-credential-env.mts";
+import { findDirectCredentialEnvReads } from "../../scripts/checks/direct-credential-env.mts";
 
 describe("direct credential env guard", () => {
   it.each([
@@ -91,7 +91,7 @@ describe("direct credential env guard", () => {
   });
 
   it("onboarding credential boundary files have zero violations", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const repoRoot = path.join(import.meta.dirname, "../..");
     const result = spawnSync(
       "npx",
       [

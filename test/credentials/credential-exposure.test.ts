@@ -12,14 +12,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
-} from "../nemoclaw/src/lib/subprocess-env";
+} from "../../nemoclaw/src/lib/subprocess-env";
 import {
   buildSubprocessEnv as buildCliSubprocessEnv,
   withLocalNoProxy as withCliLocalNoProxy,
-} from "../src/lib/subprocess-env";
+} from "../../src/lib/subprocess-env";
 
 const require = createRequire(import.meta.url);
-const { buildProviderArgs } = require("../src/lib/onboard/providers.js") as {
+const { buildProviderArgs } = require("../../src/lib/onboard/providers.js") as {
   buildProviderArgs: (
     action: "create" | "update",
     name: string,

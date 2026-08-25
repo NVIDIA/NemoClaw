@@ -10,7 +10,7 @@ import {
   extractStringSet,
   immutableRawArtifactUrlPattern,
   verifyFieldSafetySourceParity,
-} from "../scripts/checks/local-credential-helper-pin.mts";
+} from "../../scripts/checks/local-credential-helper-pin.mts";
 
 const FUNCTION_NAME = "isBlocked";
 const SET_NAME = "BLOCKED_NAMES";

@@ -15,9 +15,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const NODE_BIN = path.dirname(process.execPath);
 const DOCKER_OPERATING_SYSTEM =
   ({ darwin: "Docker Desktop" } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ??

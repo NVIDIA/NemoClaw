@@ -17,9 +17,9 @@ import {
   parseCredentialField,
   sanitizeInheritedChildEnvironment,
   startLocalCredentialHelper,
-} from "../scripts/local-credential-helper.mts";
+} from "../../scripts/local-credential-helper.mts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const HELPER_PATH = path.join(REPO_ROOT, "scripts", "local-credential-helper.mts");
 const FORM_PATH = path.join(REPO_ROOT, "docs", "resources", "local-credential-form.html");
 const READINESS_URL_PATTERN = /http:\/\/127\.0\.0\.1:\d+\/\S*#cap=[A-Za-z0-9_-]{43}/;
