@@ -400,22 +400,47 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       timeoutMs: 30_000,
     },
   );
-  expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
-  expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(restartManagedControl.timedOut, resultText(restartManagedControl)).toBe(false);
-  expect(restartManagedControl.exitCode, resultText(restartManagedControl)).toBe(0);
-  expect(restartManagedControl.stderr, resultText(restartManagedControl)).toBe("");
-  expect(restartManagedControl.stdout).toMatch(
-    new RegExp(
-      `^v1 ${restartControlNonce} complete already-running ([1-9][0-9]*) \\1\\r?\\nGATEWAY_PID=\\1\\r?\\n?$`,
-    ),
+  expect(trustedRecovery.timedOut, "trusted recovery should complete before timeout").toBe(false);
+  expect(trustedRecovery.exitCode, "trusted recovery should exit successfully").toBe(0);
+  expect(
+    restartManagedControl.timedOut,
+    "managed control probe should complete before timeout",
+  ).toBe(false);
+  expect(restartManagedControl.exitCode, "managed control probe should exit successfully").toBe(0);
+  expect(restartManagedControl.stderr, "managed control probe should keep stderr empty").toBe("");
+  const restartControlProof = restartManagedControl.stdout.match(
+    /^v1 ([0-9a-f]{64}) complete already-running ([1-9][0-9]*) \2\r?\nGATEWAY_PID=\2\r?\n?$/,
   );
-  expect(restartProcessState.timedOut, resultText(restartProcessState)).toBe(false);
-  expect(restartProcessState.exitCode, resultText(restartProcessState)).toBe(0);
-  expect(restartProcessState.stdout).toMatch(/^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m);
-  expect(restartProcessState.stdout).toMatch(
-    /^\s*[0-9]+\s+[0-9]+\s+\S+\s+\S+\s+(?:bash|nemoclaw-start)\s*$/m,
+  expect(
+    restartControlProof?.[1] === restartControlNonce,
+    "managed control should return the nonce-bound running proof",
+  ).toBe(true);
+  const restartGatewayPid = restartControlProof?.[2];
+  expect(
+    /^[1-9][0-9]*$/.test(restartGatewayPid ?? ""),
+    "managed control should report the gateway PID",
+  ).toBe(true);
+  expect(restartProcessState.timedOut, "process-state probe should complete before timeout").toBe(
+    false,
   );
+  expect(restartProcessState.exitCode, "process-state probe should exit successfully").toBe(0);
+  expect(
+    /^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m.test(restartProcessState.stdout),
+    "process-state probe should return the expected columns",
+  ).toBe(true);
+  const restartGatewayProcess = restartProcessState.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .find(
+      (columns) =>
+        columns.length === 5 &&
+        columns[0] === restartGatewayPid &&
+        /^(?:bash|nemoclaw-start)$/.test(columns[4] ?? ""),
+    );
+  expect(
+    restartGatewayProcess !== undefined,
+    "process-state probe should include the reported gateway process",
+  ).toBe(true);
   const restartStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
