@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Repository-verifiable acceptance evidence for [PR #5085](https://github.com/NVIDIA/NemoClaw/pull/5085).
 
-The unit tests in `test/nemotron-inference-fix.test.ts` prove request mutation, Content-Length refresh, and the 12 inject/skip branches via stubbed http + real fetch/undici. They do not prove the upstream model-output behavior the issue's expected result asks for. That requires a live call to NVIDIA Endpoints, which can't run in unit CI without API-key secret infrastructure.
+The unit tests in `test/inference/managed/nemotron-inference-fix.test.ts` prove request mutation, Content-Length refresh, and the 12 inject/skip branches via stubbed http + real fetch/undici. They do not prove the upstream model-output behavior the issue's expected result asks for. That requires a live call to NVIDIA Endpoints, which can't run in unit CI without API-key secret infrastructure.
 
 This runbook is the maintained runtime-validation path. Anyone reviewing #4851 acceptance can run it directly against `inference-api.nvidia.com` and confirm the model returns `content` with both file-creation code and the run command after the preload's system message is injected.
 
