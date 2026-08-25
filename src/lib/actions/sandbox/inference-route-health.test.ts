@@ -151,6 +151,31 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.failureLabel).toBe("unreachable");
   });
 
+  it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
+    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
+      agentName: "langchain-deepagents-code",
+      provider: "openrouter-api",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.okLabel).toBeUndefined();
+    expect(result.detail).toContain("no inference request confirmed the selected model");
+  });
+
+  it("fails closed for Deep Agents Code on OpenRouter when the invocation fails", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: false, detail: "provider rejected the request", httpStatus: 401 },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
   it("still tolerates a 404 for Deep Agents Code on OpenRouter when invocation succeeds", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),

@@ -205,22 +205,41 @@ export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
 };
 
-// A route status outside 200-299 only counts toward health for the one
-// combination known to intentionally 404 its models route: Deep Agents Code
-// on OpenRouter (#9834). Every other agent and provider must fail closed on
-// a non-2xx route status, even when a bounded inference request happens to
-// succeed against it, so `status` cannot report Ready for a route that
-// genuine model-list validation would reject (#10080).
-function routeStatusAccepted(
-  gateway: SandboxInferenceRouteHealth,
+/**
+ * The one agent and provider combination whose models route intentionally
+ * answers HTTP 404: Deep Agents Code on OpenRouter (#9834). This is the
+ * authoritative rule for that exception; launch readiness and status both
+ * call it so the two cannot drift apart again (#10080).
+ *
+ * Matching this predicate is necessary but not sufficient. Both callers must
+ * additionally require a successful bounded inference request before they
+ * accept the 404, because the route status alone proves nothing about whether
+ * the sandbox can invoke its selected model.
+ */
+export function isDcodeOpenRouterModelsRoute404(
   context: SandboxInferenceRouteHealthContext,
+  httpStatus: number,
 ): boolean {
-  if (gateway.httpStatus >= 200 && gateway.httpStatus < 300) return true;
   return (
     context.agentName === DCODE_AGENT_NAME &&
     context.provider === "openrouter-api" &&
-    gateway.httpStatus === 404
+    httpStatus === 404
   );
+}
+
+// A route status outside 200-299 only counts toward health for the Deep Agents
+// Code and OpenRouter exception above, and only when a bounded inference
+// request proves the route serves the selected model. Every other agent and
+// provider must fail closed on a non-2xx route status, even when an invocation
+// happens to succeed against it, so `status` cannot report Ready for a route
+// that genuine model-list validation would reject (#10080).
+function routeStatusAccepted(
+  gateway: SandboxInferenceRouteHealth,
+  invocation: SandboxInferenceInvocationResult | null,
+  context: SandboxInferenceRouteHealthContext,
+): boolean {
+  if (gateway.httpStatus >= 200 && gateway.httpStatus < 300) return true;
+  return isDcodeOpenRouterModelsRoute404(context, gateway.httpStatus) && invocation?.ok === true;
 }
 
 export function buildSandboxInferenceRouteHealth(
@@ -231,7 +250,8 @@ export function buildSandboxInferenceRouteHealth(
 ): ProviderHealthStatus {
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
   const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
-  const accepted = gateway !== null && gateway.ok && routeStatusAccepted(gateway, context);
+  const accepted =
+    gateway !== null && gateway.ok && routeStatusAccepted(gateway, invocation, context);
   let routeHealth: ProviderHealthStatus;
   if (gateway?.ok && invocation) {
     const invoked = buildInvokedRouteHealth(gateway, endpoint, invocation);
@@ -248,12 +268,19 @@ export function buildSandboxInferenceRouteHealth(
         : invoked;
   } else if (gateway) {
     const ok = accepted;
+    // The probe reads any HTTP 200-499 as reachable, so its own detail says the
+    // chain is reachable. Name the reason a non-2xx status was declined instead,
+    // so that wording cannot read as a healthy result next to `ok: false`.
+    const declined = gateway.ok && !ok;
     routeHealth = {
       ok,
       probed: true,
       providerLabel: "Inference route",
       endpoint,
-      detail: gateway.detail,
+      detail: declined
+        ? `Inference gateway returned HTTP ${gateway.httpStatus} on ${endpoint} and no inference ` +
+          `request confirmed the selected model; treating this route as not ready.`
+        : gateway.detail,
       ...(ok
         ? { okLabel: "reachable" }
         : {
