@@ -3582,7 +3582,7 @@ async function withSelectedSandboxMutationLocks<T>(
           return operation();
         })
       : lock(names[index]!, () => acquire(index + 1), {
-          stateDir: prepared.paths.nemoclawStateDir,
+          stateDir: path.join(prepared.paths.nemoclawStateDir, "state"),
         });
   try {
     return await acquire(0);

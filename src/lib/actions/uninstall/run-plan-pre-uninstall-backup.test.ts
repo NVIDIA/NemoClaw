@@ -108,9 +108,11 @@ describe("pre-uninstall sandbox backup", () => {
     const backup = vi.fn(async () => {
       fixture.events.push("backup");
     });
+    const lockStateDirs: string[] = [];
     const withSandboxMutationLock: NonNullable<
       UninstallRunDeps["withSandboxMutationLock"]
-    > = async (sandboxName, operation) => {
+    > = async (sandboxName, operation, options) => {
+      lockStateDirs.push(options.stateDir);
       fixture.events.push(`acquire:${sandboxName}`);
       try {
         return await operation();
@@ -127,6 +129,7 @@ describe("pre-uninstall sandbox backup", () => {
     expect(result.exitCode).toBe(0);
     expect(backup).toHaveBeenCalledOnce();
     expect(backup).toHaveBeenCalledWith(["alpha"]);
+    expect(lockStateDirs).toEqual([path.join(fixture.home, ".nemoclaw", "state")]);
     expect(fixture.events).toEqual(["acquire:alpha", "backup", "delete", "release:alpha"]);
     expect(fixture.logs).toContain("Backing up current sandbox state before uninstall...");
   });
