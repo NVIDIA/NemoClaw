@@ -78,7 +78,10 @@ export function isPublishedSandboxRegistration(entry: {
 
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */
 export function isPendingReservationForSession(
-  entry: SandboxEntry | null,
+  entry: {
+    pendingRouteReservation?: true;
+    reservationSessionId?: string;
+  } | null,
   sessionId: string | null | undefined,
 ): boolean {
   return (
