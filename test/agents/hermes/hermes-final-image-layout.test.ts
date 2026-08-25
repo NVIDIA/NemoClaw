@@ -6,13 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-<<<<<<< HEAD
-import { requireSingleReviewedDockerfileRunCommand } from "../../helpers/dockerfile-run-commands";
 import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
-import { expectManagedBootstrapNativeImageContract } from "../../support/managed-bootstrap-image-contract";
-=======
-import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
->>>>>>> origin/main
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
@@ -170,8 +164,6 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-
-
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -212,7 +204,6 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
-
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
     try {
@@ -255,22 +246,21 @@ describe("Hermes final image layout", () => {
     }
   });
 
-  it.each([
-    "directory-symlink",
-    "entry-symlink",
-    "nested-symlink",
-  ] as const)("refuses a legacy data %s before migration", (legacyData) => {
-    const run = runFinalLayout({ legacyData });
-    try {
-      expect(run.result.status).toBe(1);
-      expect(run.result.stderr).toContain("refusing legacy layout cleanup");
-      const sentinel =
-        legacyData === "directory-symlink"
-          ? path.join(run.legacyTarget, "sentinel")
-          : run.legacyTarget;
-      expect(readText(sentinel)).toBe("keep\n");
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
+  it.each(["directory-symlink", "entry-symlink", "nested-symlink"] as const)(
+    "refuses a legacy data %s before migration",
+    (legacyData) => {
+      const run = runFinalLayout({ legacyData });
+      try {
+        expect(run.result.status).toBe(1);
+        expect(run.result.stderr).toContain("refusing legacy layout cleanup");
+        const sentinel =
+          legacyData === "directory-symlink"
+            ? path.join(run.legacyTarget, "sentinel")
+            : run.legacyTarget;
+        expect(readText(sentinel)).toBe("keep\n");
+      } finally {
+        fs.rmSync(run.tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
