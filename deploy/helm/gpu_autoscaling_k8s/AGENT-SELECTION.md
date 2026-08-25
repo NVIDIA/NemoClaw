@@ -142,27 +142,12 @@ NemoClaw/Deep Agents Code has no long-running gateway; run one-shot prompts with
   AGENT_NAME=deepagents ./scripts/run-agent-prompt.sh "your prompt here"
 ```
 
-## Shared policy notes
+## Sandbox policies
 
-`create-agent-sandbox.sh` clones the pinned `NVIDIA/NemoClaw` release and passes the
-selected agent's own upstream OpenShell sandbox policy file to `openshell sandbox create
---policy`:
-
-- OpenClaw: `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`
-- Hermes: `agents/hermes/policy-additions.yaml`
-- Deep Agents Code: `agents/langchain-deepagents-code/policy-additions.yaml`
-
-Despite the `policy-additions.yaml` filename, both files are complete, self-contained
-OpenShell policies (not deltas merged onto another file) — verified against the upstream
-schema (`version`, `filesystem_policy`, `landlock`, `process`, `network_policies`) before
-this recipe used them the same way it already used `openclaw-sandbox.yaml`.
-
-OpenClaw's and Hermes's upstream policies both grant `integrate.api.nvidia.com` as a
-default inference endpoint; `create-agent-sandbox.sh` removes it after sandbox creation
-because this recipe is on-premises-only (see `agent_common_grants_nvidia_endpoint` in
-[`scripts/agent-common.sh`](scripts/agent-common.sh)). Deep Agents Code's policy
-does not grant that endpoint in the first place, so its script only verifies the endpoint
-is absent.
+- Each agent uses its official NemoClaw OpenShell policy.
+- This on-premises recipe removes the default `integrate.api.nvidia.com` access from
+  the OpenClaw and Hermes policies.
+- The Deep Agents Code policy does not grant access to that endpoint.
 
 ## Notes
 
