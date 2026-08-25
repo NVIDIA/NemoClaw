@@ -6,7 +6,11 @@ import {
   DCODE_MANAGED_EXEC_LAUNCHER,
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
 } from "./connect-inference-route-probe";
-import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
+import {
+  buildSandboxInferenceRouteHealth,
+  probeSandboxInferenceGatewayHealth,
+  type SandboxInferenceRouteHealth,
+} from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
   const makeCapture =
@@ -109,5 +113,165 @@ describe("sandbox inference route health", () => {
       endpoint: "https://inference.local/v1/models",
       detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
     });
+  });
+});
+
+describe("buildSandboxInferenceRouteHealth (#10080)", () => {
+  const gateway = (httpStatus: number, ok = true): SandboxInferenceRouteHealth => ({
+    ok,
+    endpoint: "https://inference.local/v1/models",
+    httpStatus,
+    detail: `probe returned ${httpStatus}`,
+  });
+
+  it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: true },
+      {
+        agentName: "openclaw",
+        provider: "openrouter-api",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failureLabel).toBe("unreachable");
+    expect(result.detail).toContain("never validated against a model catalog");
+  });
+
+  it("fails closed for a non-DCode agent when the route 404s and invocation was never attempted", () => {
+    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
+      agentName: "openclaw",
+      provider: "openrouter-api",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.okLabel).toBeUndefined();
+    expect(result.failureLabel).toBe("unreachable");
+  });
+
+  it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
+    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
+      agentName: "langchain-deepagents-code",
+      provider: "openrouter-api",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.okLabel).toBeUndefined();
+    expect(result.detail).toContain("no inference request confirmed the selected model");
+  });
+
+  it("fails closed for Deep Agents Code on OpenRouter when the invocation fails", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: false, detail: "provider rejected the request", httpStatus: 401 },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("still tolerates a 404 for Deep Agents Code on OpenRouter when invocation succeeds", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: true },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("normalizes the provider before matching the Deep Agents Code 404 exception", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: true },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: " openrouter-api ",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not extend the DCode 404 tolerance to a different provider", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(404),
+      null,
+      { ok: true },
+      {
+        agentName: "langchain-deepagents-code",
+        provider: "nvidia-nim",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([401, 403])(
+    "keeps a credential-gated HTTP %s route healthy when the invocation succeeds (#6192)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: true },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it.each([401, 403])(
+    "fails a credential-gated HTTP %s route when the invocation fails (#6192)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: false, detail: "provider rejected the request", httpStatus },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(false);
+    },
+  );
+
+  it.each([302, 400, 405, 410, 429])(
+    "fails closed for HTTP %s when an inference request succeeds",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: true },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.failureLabel).toBe("unreachable");
+    },
+  );
+
+  it("leaves a strictly healthy 2xx route unaffected for any agent", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      { ok: true },
+      {
+        agentName: "openclaw",
+        provider: "openrouter-api",
+      },
+    );
+
+    expect(result.ok).toBe(true);
   });
 });

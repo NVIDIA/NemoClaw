@@ -16,9 +16,10 @@ import {
 } from "./messaging-policy-presets";
 
 describe("messaging policy presets", () => {
-  it("maps Slack messaging to the Slack network policy preset", () => {
+  it("maps create-time messaging channels to their network policy presets", () => {
     expect(requiredMessagingChannelPolicyPresets(["slack"])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets([" Slack "])).toEqual(["slack"]);
+    expect(requiredMessagingChannelPolicyPresets(["discord"])).toEqual(["discord"]);
   });
 
   it("names the channel behind an applied network policy preset (#9283)", () => {
@@ -37,15 +38,15 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  // #5967: a channel that is not flagged requiredAtCreate (Discord, Telegram,
-  // WhatsApp, Teams, WeChat) still needs its egress preset merged so policy
+  // #5967: a channel that is not flagged requiredAtCreate (Telegram, WhatsApp,
+  // Teams, WeChat) still needs its egress preset merged so policy
   // finalization persists it and policy-list marks it applied.
   it("merges an enabled channel preset that is not required at create time", () => {
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["discord"])).toEqual([
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
       "npm",
-      "discord",
+      "telegram",
     ]);
-    expect(requiredMessagingChannelPolicyPresets(["discord"])).toEqual([]);
+    expect(requiredMessagingChannelPolicyPresets(["telegram"])).toEqual([]);
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "discord"])).toEqual([
       "npm",
       "slack",
@@ -133,10 +134,10 @@ describe("messaging policy presets", () => {
   });
 
   // #5967 is channel-agnostic: every non-`requiredAtCreate` channel (Telegram,
-  // Teams, WhatsApp, WeChat) must merge and prune exactly like Discord. Cover the
+  // Teams, WhatsApp, WeChat) must merge and prune through the same registry path. Cover the
   // remaining channels explicitly so a future channel-table regression cannot pass
   // on Slack/Discord alone.
-  it("merges every enabled non-required channel preset, not just Slack and Discord (#5967)", () => {
+  it("merges every enabled non-required channel preset (#5967)", () => {
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
       "npm",
       "telegram",

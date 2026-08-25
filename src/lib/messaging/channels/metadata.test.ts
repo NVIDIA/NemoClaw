@@ -155,7 +155,7 @@ describe("built-in messaging channel metadata", () => {
       whatsapp: ["whatsapp"],
       teams: ["teams"],
     });
-    expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual(["slack"]);
+    expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual(["discord", "slack"]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
       "https://discord.com/api/v10/gateway or validate the configured",
     );

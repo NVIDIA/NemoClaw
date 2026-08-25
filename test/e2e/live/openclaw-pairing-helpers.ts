@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -11,14 +10,17 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
+import {
+  type FakeDockerApi,
+  runDiscordGatewayClient,
+  startFakeDockerApi,
+} from "./messaging-providers-helpers.ts";
 import {
   cleanupSandbox,
   expectExitZero,
   phase6Env,
   resultText,
   runSecondaryCleanup,
-  sandboxNode,
   sandboxSh,
   sandboxShWithArgs,
   shellQuote,
@@ -32,23 +34,6 @@ export const PAIRING_USER = {
 };
 
 export const DISCORD_DM_CHANNEL = process.env.NEMOCLAW_DISCORD_DM_CHANNEL ?? "1199988877766655554";
-
-export function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify).not.toHaveProperty("token");
-  expect(JSON.stringify(rows), "fake Discord Gateway capture persisted raw token").not.toContain(
-    expectedToken,
-  );
-  expect(identify?.tokenMatchesExpected, "Discord token rewrite").toBe(true);
-  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
-}
 
 export function pairingEnv(options: {
   sandboxName: string;
@@ -703,208 +688,18 @@ export async function approveAndAssertPairing(options: {
   }
 }
 
-// Ported from test/e2e/lib/discord-gateway-proof.sh run_fake_discord_gateway_node_client.
-// Keep the request framing as raw source so CRLF sequences remain JavaScript
-// escapes inside the sandbox node heredoc rather than literal line breaks.
-// Source-of-truth boundary: the Discord Gateway proof owns validation for its
-// localized sandbox HTTP proxy env because it opens a raw Node socket to the fake
-// gateway. Invalid state: malformed proxy env, non-HTTP proxies, invalid ports,
-// or proxy destinations other than the NemoClaw/OpenShell gateway proxy would
-// hide handshake failures behind low-level network errors or route the proof
-// through an unexpected host. Source-fix constraint: keep global sandbox proxy
-// generation unchanged; fail closed here before network access. Remove this
-// parser once the proof uses a shared fake-provider websocket client.
-export const DISCORD_GATEWAY_PROOF_SOURCE = String.raw`
-import crypto from "node:crypto";
-import net from "node:net";
-
-const host = "host.openshell.internal";
-const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = "openshell:resolve:env:DISCORD_BOT_TOKEN";
-const results = [];
-
-function finish(message) {
-  if (message) results.push(message);
-  console.log(results.join("\n"));
-  process.exit(0);
-}
-
-function encodeClientText(payload) {
-  const body = Buffer.from(payload, "utf8");
-  const mask = crypto.randomBytes(4);
-  const masked = Buffer.alloc(body.length);
-  for (let i = 0; i < body.length; i += 1) masked[i] = body[i] ^ mask[i % 4];
-  if (body.length < 126) {
-    return Buffer.concat([Buffer.from([0x81, 0x80 | body.length]), mask, masked]);
-  }
-  if (body.length <= 0xffff) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 0x80 | 126;
-    header.writeUInt16BE(body.length, 2);
-    return Buffer.concat([header, mask, masked]);
-  }
-  const header = Buffer.alloc(10);
-  header[0] = 0x81;
-  header[1] = 0x80 | 127;
-  header.writeBigUInt64BE(BigInt(body.length), 2);
-  return Buffer.concat([header, mask, masked]);
-}
-
-function encodeClientClose(code) {
-  const body = Buffer.alloc(2);
-  body.writeUInt16BE(code, 0);
-  const mask = crypto.randomBytes(4);
-  for (let i = 0; i < body.length; i += 1) body[i] ^= mask[i % 4];
-  return Buffer.concat([Buffer.from([0x88, 0x80 | 2]), mask, body]);
-}
-
-function decodeFrame(buffer) {
-  if (buffer.length < 2) return null;
-  const opcode = buffer[0] & 0x0f;
-  let payloadLength = buffer[1] & 0x7f;
-  let offset = 2;
-  if (payloadLength === 126) {
-    if (buffer.length < 4) return null;
-    payloadLength = buffer.readUInt16BE(2);
-    offset = 4;
-  } else if (payloadLength === 127) {
-    if (buffer.length < 10) return null;
-    payloadLength = Number(buffer.readBigUInt64BE(2));
-    offset = 10;
-  }
-  if (buffer.length < offset + payloadLength) return null;
-  return {
-    opcode,
-    payload: buffer.slice(offset, offset + payloadLength),
-    totalLength: offset + payloadLength,
-  };
-}
-
-function parseProxyTarget() {
-  const raw = process.env.HTTP_PROXY || process.env.http_proxy || "";
-  if (!raw) return null;
-  let parsed;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error("HTTP proxy for Discord Gateway proof is malformed");
-  }
-  if (parsed.protocol !== "http:") throw new Error("Discord Gateway proof only supports HTTP proxies");
-  const proxyPort = Number(parsed.port || "80");
-  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) throw new Error("HTTP proxy port for Discord Gateway proof is invalid");
-  if (parsed.hostname !== "10.200.0.1" || proxyPort !== 3128) throw new Error("unexpected HTTP proxy for Discord Gateway proof");
-  return { host: parsed.hostname, port: proxyPort };
-}
-
-const proxy = parseProxyTarget();
-const socket = proxy
-  ? net.createConnection({ host: proxy.host, port: proxy.port })
-  : net.createConnection({ host, port });
-const timer = setTimeout(() => {
-  try { socket.destroy(); } catch {}
-  finish("TIMEOUT");
-}, 20000);
-let handshake = Buffer.alloc(0);
-let framed = Buffer.alloc(0);
-let upgraded = false;
-let sawReady = false;
-
-socket.on("connect", () => {
-  const key = crypto.randomBytes(16).toString("base64");
-  const requestTarget = proxy
-    ? "http://" + host + ":" + port + "/gateway?v=10&encoding=json"
-    : "/gateway?v=10&encoding=json";
-  socket.write([
-    "GET " + requestTarget + " HTTP/1.1",
-    "Host: " + host + ":" + port,
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    "Sec-WebSocket-Key: " + key,
-    "Sec-WebSocket-Version: 13",
-    "\r\n",
-  ].join("\r\n"));
-});
-
-socket.on("data", (chunk) => {
-  if (!upgraded) {
-    handshake = Buffer.concat([handshake, chunk]);
-    const end = handshake.indexOf("\r\n\r\n");
-    if (end === -1) return;
-    const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
-    if (!statusLine.includes("101")) {
-      clearTimeout(timer);
-      finish("HTTP_" + statusLine);
-    }
-    upgraded = true;
-    results.push("UPGRADE");
-    framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-  } else {
-    framed = Buffer.concat([framed, chunk]);
-  }
-
-  while (framed.length > 0) {
-    const frame = decodeFrame(framed);
-    if (!frame) break;
-    framed = framed.slice(frame.totalLength);
-    if (frame.opcode === 1) {
-      const message = JSON.parse(frame.payload.toString("utf8"));
-      if (message.op === 10) {
-        results.push("HELLO");
-        socket.write(encodeClientText(JSON.stringify({
-          op: 2,
-          d: {
-            token: identifyToken,
-            intents: 0,
-            properties: { os: "linux", browser: "nemoclaw-e2e", device: "nemoclaw-e2e" },
-          },
-        })));
-        results.push("IDENTIFY_SENT_PLACEHOLDER");
-      } else if (message.op === 0 && message.t === "READY") {
-        sawReady = true;
-        results.push("READY");
-        socket.write(encodeClientText(JSON.stringify({ op: 1, d: message.s ?? null })));
-      } else if (message.op === 11) {
-        results.push("HEARTBEAT_ACK");
-        socket.write(encodeClientClose(1000));
-        clearTimeout(timer);
-        finish();
-      }
-    } else if (frame.opcode === 8) {
-      const code = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 0;
-      clearTimeout(timer);
-      finish("CLOSE_" + code);
-    }
-  }
-});
-
-socket.on("error", (error) => {
-  clearTimeout(timer);
-  finish("ERROR " + error.message);
-});
-socket.on("close", () => {
-  clearTimeout(timer);
-  if (!sawReady) finish("CLOSED");
-});
-`;
-
 export async function runDiscordGatewayProof(options: {
   sandbox: SandboxClient;
   sandboxName: string;
   port: string;
   redactions: string[];
-}): Promise<ShellProbeResult> {
-  return sandboxNode(
-    options.sandbox,
-    options.sandboxName,
-    DISCORD_GATEWAY_PROOF_SOURCE,
-    { FAKE_DISCORD_GATEWAY_PORT: options.port },
-    {
-      artifactName: "discord-gateway-proof",
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
+}): Promise<string> {
+  return runDiscordGatewayClient(options.sandbox, {
+    sandboxName: options.sandboxName,
+    port: options.port,
+    identifyToken: { kind: "revisioned-discord-env" },
+    redactionValues: options.redactions,
+  });
 }
 
 export async function writePairingArtifacts(

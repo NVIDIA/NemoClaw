@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
@@ -97,8 +98,23 @@ interface PolicySetBehavior {
  * the `policy set --wait` result is what each scenario varies.
  */
 function buildOpenshellStub(policySet: PolicySetBehavior, basePolicy: string): string {
+  const policyMetadata = JSON.stringify({
+    scope: "sandbox",
+    sandbox: SANDBOX_NAME,
+    status: "effective",
+    policy_source: "sandbox",
+    policy: YAML.parse(basePolicy),
+  });
   return `#!/bin/sh
 if [ "$1" = "policy" ] && [ "$2" = "get" ]; then
+  case " $* " in
+    *" --output json "*)
+      cat <<'JSON'
+${policyMetadata}
+JSON
+      exit 0
+      ;;
+  esac
   cat <<'YAML'
 ${basePolicy}
 YAML
@@ -136,12 +152,14 @@ const APPLY_PRESETS_DRIVER =
  * `removePreset` and `applyPreset` bypass the batch path that `applyPresets`
  * takes, and each composes its own policy document through its own temp file.
  */
-const REMOVE_PRESET_DRIVER = buildDriver(
-  `removePreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`,
-);
-const APPLY_PRESET_DRIVER = buildDriver(
-  `applyPreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`,
-);
+const REMOVE_PRESET_DRIVER =
+  `const registry = require(${JSON.stringify(registryModulePath)});\n` +
+  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [${JSON.stringify(PRESET_NAME)}] });\n` +
+  buildDriver(`removePreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
+const APPLY_PRESET_DRIVER =
+  `const registry = require(${JSON.stringify(registryModulePath)});\n` +
+  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [] });\n` +
+  buildDriver(`applyPreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
 
 interface ChildRun {
   readonly result: SpawnSyncReturns<string>;
@@ -309,7 +327,7 @@ describe.each(POLICY_SET_FAILURES)(
   },
 );
 
-describe("applyPresets when openshell policy set succeeds", () => {
+describe("applyPresets when OpenShell policy set succeeds", () => {
   let run: ChildRun;
 
   beforeAll(() => {

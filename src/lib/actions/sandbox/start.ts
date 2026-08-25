@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { cliName } from "../../onboard/branding";
-import type { captureOpenshell } from "../../adapters/openshell/runtime";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -42,20 +42,17 @@ function restoreLockedStartupAccess(sandboxName: string): void {
 }
 
 /** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
-function waitForSandboxReady(
+async function waitForSandboxReady(
   sandboxName: string,
-  captureSandboxList?: (
-    args: string[],
-    options: { readonly ignoreError: true; readonly timeout: number },
-  ) => ReturnType<typeof captureOpenshell>,
+  observer?: OpenShellSandboxObserver,
   allowDockerRuntimeInspection = true,
-): void {
+): Promise<void> {
   const { waitForSandboxReadyOrExit, SANDBOX_REPAIR_READY_TIMEOUT_SEC } =
     require("./connect") as typeof import("./connect");
-  waitForSandboxReadyOrExit(sandboxName, {
+  await waitForSandboxReadyOrExit(sandboxName, {
     allowInitialErrorAfterStart: true,
     allowDockerRuntimeInspection,
-    ...(captureSandboxList ? { captureSandboxList } : {}),
+    ...(observer ? { observer } : {}),
     defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
     retryCommand: "start",
   });
@@ -64,33 +61,32 @@ function waitForSandboxReady(
 export interface SandboxStartupStateDeps {
   agent?: SandboxEntry["agent"];
   restoreLockedStartupAccess?: (sandboxName: string) => void;
-  waitForSandboxReady?: (sandboxName: string) => void;
+  waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
 }
 
-export function restoreStoppedSandboxStartupState(
+export async function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
-): SandboxStartupRecoveryResult {
+): Promise<SandboxStartupRecoveryResult> {
   if ((deps.agent ?? "openclaw") === "openclaw") {
     (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
   }
-  (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
+  await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
   return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
 export interface SandboxStartDeps {
   allowDockerRuntimeInspection?: boolean;
-  captureSandboxList?: (
-    args: string[],
-    options: { readonly ignoreError: true; readonly timeout: number },
-  ) => ReturnType<typeof captureOpenshell>;
+  observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   restoreLockedStartupAccess?: (sandboxName: string) => void;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  restoreStartupState?: (
+    sandboxName: string,
+  ) => SandboxStartupRecoveryResult | Promise<SandboxStartupRecoveryResult>;
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
@@ -221,15 +217,11 @@ async function startSandboxWithinLifecycleFence(
           restoreLockedStartupAccess: deps.restoreLockedStartupAccess,
           restoreProcessState: deps.restoreProcessState,
           waitForSandboxReady: (readyName) =>
-            waitForSandboxReady(
-              readyName,
-              deps.captureSandboxList,
-              deps.allowDockerRuntimeInspection,
-            ),
+            waitForSandboxReady(readyName, deps.observer, deps.allowDockerRuntimeInspection),
         }));
     let recovery: SandboxStartupRecoveryResult;
     try {
-      recovery = restoreStartupState(name);
+      recovery = await restoreStartupState(name);
     } catch (error) {
       throw startupRecoveryError(name, error);
     }
@@ -247,7 +239,7 @@ async function startSandboxWithinLifecycleFence(
       }
       if (supervisorReady) {
         try {
-          recovery = restoreStartupState(name);
+          recovery = await restoreStartupState(name);
         } catch (error) {
           throw startupRecoveryError(name, error);
         }

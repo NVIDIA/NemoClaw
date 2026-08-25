@@ -424,7 +424,11 @@ export function createHermesPortableTransactionFixture(
           })();
         revalidate();
         events.push("registry");
-        registryEntry = matchingRegistryEntry(input);
+        registryEntry = {
+          ...matchingRegistryEntry(input),
+          pendingRouteReservation: true,
+          reservationSessionId: input.inferenceRouteReservation.sessionId,
+        };
         return registryEntry;
       }),
     afterRegistryCommit: async () => {
@@ -442,5 +446,10 @@ export function createHermesPortableTransactionFixture(
           },
         }),
   };
-  return { value, events, podman };
+  return {
+    value,
+    events,
+    podman,
+    readRegistry: () => (registryEntry ? structuredClone(registryEntry) : null),
+  };
 }
