@@ -5132,7 +5132,7 @@ function shieldsDownWithoutHostLock(
         managedMcpPolicies,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
         ...(target.agentName === "hermes" || target.agentName === "openclaw"
-          ? { sandboxName }
+          ? { messagingAgent: target.agentName, sandboxName }
           : {}),
       });
       policyFileIsTemp = policyFile !== basePath;

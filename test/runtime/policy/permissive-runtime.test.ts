@@ -11,6 +11,11 @@ import {
   buildRuntimePermissivePolicy,
   type ExactManagedMcpPolicy,
 } from "../../../src/lib/shields/permissive-runtime.js";
+import {
+  listMessagingPolicyPresetMetadata,
+  listMessagingProviderNamesForChannel,
+} from "../../../src/lib/messaging/channels/metadata.js";
+import type { MessagingAgentId } from "../../../src/lib/messaging/manifest";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -65,6 +70,33 @@ const OPENCLAW_MESSAGING_PERMISSIVE = fs.readFileSync(
   path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
   "utf8",
 );
+
+const MESSAGING_PERMISSIVE_BY_AGENT: Record<MessagingAgentId, string> = {
+  hermes: HERMES_MESSAGING_PERMISSIVE,
+  openclaw: OPENCLAW_MESSAGING_PERMISSIVE,
+};
+
+const SLACK_PROVIDER_CASES = (["openclaw", "hermes"] as const).flatMap((agent) => {
+  const sandboxName = `${agent}-box`;
+  const expectedProviders = listMessagingProviderNamesForChannel(sandboxName, "slack", { agent });
+  const slackPolicy = listMessagingPolicyPresetMetadata({ agent }).find(
+    (policy) => policy.channelId === "slack",
+  )!;
+  const livePolicyKey = (slackPolicy.agentPolicyKeys[agent] ?? slackPolicy.policyKeys)[0]!;
+  return [
+    [agent, "exact", sandboxName, livePolicyKey, expectedProviders, true],
+    [agent, "absent", sandboxName, livePolicyKey, [], false],
+    [agent, "partial", sandboxName, livePolicyKey, expectedProviders.slice(0, 1), false],
+    [
+      agent,
+      "mismatched",
+      sandboxName,
+      livePolicyKey,
+      [...expectedProviders, `${sandboxName}-unexpected-provider`],
+      false,
+    ],
+  ] as const;
+});
 
 type SlackEndpoint = {
   access?: string;
@@ -176,6 +208,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
+      messagingAgent: "openclaw",
       readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
@@ -215,6 +248,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     let stagedPolicy = "";
     buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
       livePolicyYaml: YAML.stringify({ network_policies: {} }),
+      messagingAgent: "openclaw",
       readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
@@ -242,6 +276,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
+      messagingAgent: "hermes",
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -279,6 +314,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: "",
+      messagingAgent: "hermes",
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -311,6 +347,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
+      messagingAgent: "hermes",
       readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -349,6 +386,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
+      messagingAgent: "hermes",
       readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -364,32 +402,32 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
-  it.each([
-    ["absent", []],
-    ["bot only", ["hermes-box-slack-bridge"]],
-    ["app only", ["hermes-box-slack-app"]],
-    ["conflicting", ["hermes-box-slack-app", "hermes-box-slack-bridge", "other-slack-provider"]],
-  ])("omits Hermes Slack egress when the live provider pair is %s", (_name, providers) => {
-    let stagedPolicy = "";
-    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-      livePolicyYaml: YAML.stringify({
-        network_policies: {
-          slack: {
-            endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+  it.each(SLACK_PROVIDER_CASES)(
+    "%s Slack egress reflects an %s live credential-provider set",
+    (agent, _providerState, sandboxName, livePolicyKey, providers, shouldKeep) => {
+      let stagedPolicy = "";
+      buildRuntimePermissivePolicy(`/unused-${agent}-permissive.yaml`, {
+        livePolicyYaml: YAML.stringify({
+          network_policies: {
+            [livePolicyKey]: {
+              endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+            },
           },
+        }),
+        messagingAgent: agent,
+        readBasePolicy: () => MESSAGING_PERMISSIVE_BY_AGENT[agent],
+        sandboxName,
+        writeTempPolicy: (yaml) => {
+          stagedPolicy = yaml;
+          return `/staged-${agent}-permissive.yaml`;
         },
-      }),
-      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
-      sandboxName: "hermes-box",
-      writeTempPolicy: (yaml) => {
-        stagedPolicy = yaml;
-        return "/staged-hermes-permissive.yaml";
-      },
-    });
+      });
 
-    expect(YAML.parse(stagedPolicy).network_policies.slack).toBeUndefined();
-    expect(stagedPolicy).not.toContain("{sandboxName}");
-  });
+      const slackPolicy = YAML.parse(stagedPolicy).network_policies.slack;
+      expect(slackPolicy !== undefined).toBe(shouldKeep);
+      expect(stagedPolicy).not.toContain("{sandboxName}");
+    },
+  );
 
   it("rejects an unsafe Hermes sandbox name before staging Slack Shields down", () => {
     const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
@@ -407,6 +445,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
             },
           },
         }),
+        messagingAgent: "hermes",
         readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,
@@ -435,6 +474,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
             },
           },
         }),
+        messagingAgent: "hermes",
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,

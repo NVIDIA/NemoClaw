@@ -16,6 +16,11 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
+import {
+  listMessagingPolicyPresetMetadata,
+  listMessagingProviderNamesForChannel,
+} from "../messaging/channels/metadata.js";
+import type { MessagingAgentId } from "../messaging/manifest";
 import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
@@ -93,6 +98,8 @@ export interface PermissiveRuntimeDeps {
   // Supplying the target name makes composition fail closed unless every
   // retained placeholder can be materialized before the policy is staged.
   sandboxName?: string;
+  // Manifest metadata owns the policy keys and provider names for this agent.
+  messagingAgent?: MessagingAgentId;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -103,21 +110,25 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  const telegramProviderNames = deps.sandboxName ? [`${deps.sandboxName}-telegram-bridge`] : [];
-  const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
-  const slackProviderNames = deps.sandboxName
-    ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
-    : [];
-  const preserveTelegramBinding =
-    telegramProviderNames.length > 0 &&
-    networkPolicyUsesExactCredentialProviders(live, "telegram_bot", telegramProviderNames);
-  const preserveDiscordBinding =
-    discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
-  const preserveSlackBinding =
-    slackProviderNames.length > 0 &&
-    networkPolicyUsesExactCredentialProviders(live, "slack", slackProviderNames);
-  const preserveCredentialBinding =
-    preserveTelegramBinding || preserveDiscordBinding || preserveSlackBinding;
+  if (deps.sandboxName !== undefined && deps.messagingAgent === undefined) {
+    throw new Error("Cannot compose messaging bindings without an agent identity");
+  }
+  const messagingPolicies =
+    deps.sandboxName && deps.messagingAgent
+      ? listCredentialBoundMessagingPolicies(deps.sandboxName, deps.messagingAgent)
+      : [];
+  const preservedMessagingPolicyKeys = new Set(
+    messagingPolicies
+      .filter((policy) =>
+        networkPoliciesUseExactCredentialProviders(
+          live,
+          policy.livePolicyKeys,
+          policy.providerNames,
+        ),
+      )
+      .map((policy) => policy.permissivePolicyKey),
+  );
+  const preserveCredentialBinding = preservedMessagingPolicyKeys.size > 0;
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -162,9 +173,11 @@ export function buildRuntimePermissivePolicy(
     const networkPolicies = base.network_policies;
     if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
       const policies = networkPolicies as Record<string, unknown>;
-      if (!preserveTelegramBinding) delete policies.telegram;
-      if (!preserveDiscordBinding) delete policies.discord;
-      if (!preserveSlackBinding) delete policies.slack;
+      for (const policy of messagingPolicies) {
+        if (!preservedMessagingPolicyKeys.has(policy.permissivePolicyKey)) {
+          delete policies[policy.permissivePolicyKey];
+        }
+      }
     }
   }
   if (deps.sandboxName !== undefined && preserveCredentialBinding) {
@@ -370,15 +383,43 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
-function policyUsesCredentialProvider(
+interface CredentialBoundMessagingPolicy {
+  livePolicyKeys: readonly string[];
+  permissivePolicyKey: string;
+  providerNames: readonly string[];
+}
+
+function listCredentialBoundMessagingPolicies(
+  sandboxName: string,
+  agent: MessagingAgentId,
+): CredentialBoundMessagingPolicy[] {
+  return listMessagingPolicyPresetMetadata({ agent }).flatMap((policy) => {
+    const providerNames = listMessagingProviderNamesForChannel(sandboxName, policy.channelId, {
+      agent,
+    });
+    if (providerNames.length === 0) return [];
+    return [
+      {
+        livePolicyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
+        permissivePolicyKey: policy.presetName,
+        providerNames,
+      },
+    ];
+  });
+}
+
+function networkPoliciesUseExactCredentialProviders(
   policy: Record<string, unknown> | null,
-  providerName: string,
+  policyNames: readonly string[],
+  providerNames: readonly string[],
 ): boolean {
   const networkPolicies = policy?.network_policies;
   if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
     return false;
   }
-  for (const networkPolicy of Object.values(networkPolicies)) {
+  const liveProviders = new Set<string>();
+  for (const policyName of policyNames) {
+    const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
     if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
       continue;
     }
@@ -388,34 +429,9 @@ function policyUsesCredentialProvider(
       if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
       const binding = (endpoint as Record<string, unknown>).credential_binding;
       if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
-      if ((binding as Record<string, unknown>).provider === providerName) return true;
+      const provider = (binding as Record<string, unknown>).provider;
+      if (typeof provider === "string") liveProviders.add(provider);
     }
-  }
-  return false;
-}
-
-function networkPolicyUsesExactCredentialProviders(
-  policy: Record<string, unknown> | null,
-  policyName: string,
-  providerNames: readonly string[],
-): boolean {
-  const networkPolicies = policy?.network_policies;
-  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
-    return false;
-  }
-  const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
-  if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
-    return false;
-  }
-  const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
-  if (!Array.isArray(endpoints)) return false;
-  const liveProviders = new Set<string>();
-  for (const endpoint of endpoints) {
-    if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
-    const binding = (endpoint as Record<string, unknown>).credential_binding;
-    if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
-    const provider = (binding as Record<string, unknown>).provider;
-    if (typeof provider === "string") liveProviders.add(provider);
   }
   return (
     liveProviders.size === providerNames.length &&

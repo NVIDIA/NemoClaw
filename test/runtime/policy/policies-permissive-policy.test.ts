@@ -21,7 +21,11 @@ function parseResultPayload(stdout: string): { error: string } {
   return JSON.parse(stdout.slice(markerIndex + marker.length));
 }
 
-function runHermesPermissivePolicy(policySetStatus: number): {
+function runPermissivePolicy(options: {
+  agent?: "hermes" | "openclaw";
+  policySetStatus: number;
+  sandboxName: string;
+}): {
   result: ReturnType<typeof spawnSync>;
   policy: string;
   stagedPath: string;
@@ -32,11 +36,18 @@ function runHermesPermissivePolicy(policySetStatus: number): {
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const policyOut = path.join(tmpDir, "policy.yaml");
   const stagedRecord = path.join(tmpDir, "staged.txt");
+  const registration = options.agent
+    ? `registry.registerSandbox(${JSON.stringify({
+        name: options.sandboxName,
+        agent: options.agent,
+        policies: [],
+      })});`
+    : "";
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
-policies.applyPermissivePolicy("hermes-sandbox");
+${registration}
+policies.applyPermissivePolicy(${JSON.stringify(options.sandboxName)});
 `;
   fs.writeFileSync(
     fakeOpenshell,
@@ -54,12 +65,12 @@ if [ "$1 $2" = "policy set" ]; then
   mode="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$policy_file")"
   printf '%s\n%s\n' "$policy_file" "$mode" > ${JSON.stringify(stagedRecord)}
   cp "$policy_file" ${JSON.stringify(policyOut)}
-  if [ "${policySetStatus}" -eq 0 ]; then
+  if [ "${options.policySetStatus}" -eq 0 ]; then
     printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
     exit 0
   fi
   printf 'message: fixture rejection\n' >&2
-  exit "${policySetStatus}"
+  exit "${options.policySetStatus}"
 fi
 exit 1
 `,
@@ -92,7 +103,11 @@ describe("applyPermissivePolicy", () => {
   ])(
     "materializes the Hermes Discord provider and removes staged policy material after %s",
     (_case, policySetStatus) => {
-      const observed = runHermesPermissivePolicy(policySetStatus);
+      const observed = runPermissivePolicy({
+        agent: "hermes",
+        policySetStatus,
+        sandboxName: "hermes-sandbox",
+      });
       try {
         expect(observed.result.status).toBe(policySetStatus);
         expect(observed.stagedMode).toBe("600");
@@ -123,6 +138,43 @@ describe("applyPermissivePolicy", () => {
       }
     },
   );
+
+  it("binds Telegram and Slack credentials in the unregistered OpenClaw fallback policy", () => {
+    const sandboxName = "fallback-openclaw";
+    const observed = runPermissivePolicy({ policySetStatus: 0, sandboxName });
+    try {
+      expect(observed.result.status).toBe(0);
+      expect(observed.stagedMode).toBe("600");
+      expect(fs.existsSync(observed.stagedPath)).toBe(false);
+      const policy = YAML.parse(observed.policy);
+      const telegramProviders = policy.network_policies.telegram.endpoints.map(
+        (endpoint: { credential_binding?: { provider?: string } }) =>
+          endpoint.credential_binding?.provider,
+      );
+      expect(new Set(telegramProviders)).toEqual(new Set([`${sandboxName}-telegram-bridge`]));
+
+      const slackEndpoints = policy.network_policies.slack.endpoints as Array<{
+        credential_binding?: { provider?: string };
+        host?: string;
+        rules?: Array<{ allow?: { method?: string; path?: string } }>;
+      }>;
+      expect(
+        new Set(slackEndpoints.map((endpoint) => endpoint.credential_binding?.provider)),
+      ).toEqual(new Set([`${sandboxName}-slack-app`, `${sandboxName}-slack-bridge`]));
+      expect(
+        slackEndpoints.find(
+          (endpoint) =>
+            endpoint.host === "slack.com" &&
+            endpoint.credential_binding?.provider === `${sandboxName}-slack-app`,
+        ),
+      ).toMatchObject({
+        rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+      });
+      expect(observed.policy).not.toContain("{sandboxName}");
+    } finally {
+      observed.cleanup();
+    }
+  });
 
   it("rejects an invalid sandbox name before the permissive policy command", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-permissive-invalid-"));
