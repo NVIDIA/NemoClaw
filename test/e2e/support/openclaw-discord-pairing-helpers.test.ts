@@ -23,6 +23,7 @@ import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
+const GATEWAY_ASSERTION_SENTINEL = "test-sentinel-discord-token";
 
 let child: ChildProcess | undefined;
 
@@ -470,4 +471,52 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    {
+      caseName: "IDENTIFY includes a token field",
+      expectedMessage: "persisted token field",
+      rows: [
+        {
+          event: "identify",
+          token: GATEWAY_ASSERTION_SENTINEL,
+          tokenMatchesExpected: true,
+          tokenLooksPlaceholder: false,
+        },
+      ],
+    },
+    {
+      caseName: "another capture row includes the raw token",
+      expectedMessage: "persisted raw token",
+      rows: [
+        { event: "identify", tokenMatchesExpected: true, tokenLooksPlaceholder: false },
+        { event: "diagnostic", value: GATEWAY_ASSERTION_SENTINEL },
+      ],
+    },
+  ])(
+    "does not include the Discord token in gateway assertion failures when $caseName",
+    (testCase) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fake-discord-gateway-failure-"));
+      const captureFile = path.join(tmp, "capture.jsonl");
+
+      try {
+        fs.writeFileSync(
+          captureFile,
+          `${testCase.rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+        );
+        let failure: unknown;
+        try {
+          assertDiscordGatewayCapture(captureFile, GATEWAY_ASSERTION_SENTINEL);
+        } catch (error) {
+          failure = error;
+        }
+
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toContain(testCase.expectedMessage);
+        expect((failure as Error).message).not.toContain(GATEWAY_ASSERTION_SENTINEL);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -97,11 +97,15 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify).not.toHaveProperty("token");
-  expect(JSON.stringify(rows), "fake Discord Gateway capture persisted raw token").not.toContain(
-    expectedToken,
-  );
+  expect(identify !== undefined, "fake Discord Gateway did not capture IDENTIFY").toBe(true);
+  expect(
+    identify !== undefined && !Object.hasOwn(identify, "token"),
+    "fake Discord Gateway capture persisted token field",
+  ).toBe(true);
+  expect(
+    !rows.some((row) => JSON.stringify(row).includes(expectedToken)),
+    "fake Discord Gateway capture persisted raw token",
+  ).toBe(true);
   expect(identify?.tokenMatchesExpected, "Discord token rewrite").toBe(true);
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
