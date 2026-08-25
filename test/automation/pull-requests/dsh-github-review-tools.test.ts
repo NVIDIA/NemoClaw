@@ -16,6 +16,7 @@ let prepareIsolatedPrWorktree: (input: any) => Promise<any>;
 let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
 let runIndependentDocumentationWriterReview: (input: any) => Promise<any>;
 let summarizeNemoclawPlanningItems: (input: any) => Promise<any>;
+let collectPrFeedback: (input: any) => Promise<any>;
 const fixtureRoots: string[] = [];
 
 beforeAll(async () => {
@@ -32,6 +33,7 @@ beforeAll(async () => {
     await load("run_independent_documentation_writer_review")
   ).default;
   summarizeNemoclawPlanningItems = (await load("summarize_nemoclaw_planning_items")).default;
+  collectPrFeedback = (await load("collect_pr_feedback")).default;
 });
 
 const HEAD_SHA = "a".repeat(40);
@@ -422,7 +424,12 @@ describe("isolated worktree namespace guards", () => {
         path: target,
         isolationKey: "session",
       }),
-    ).resolves.toMatchObject({ action: "planned", dryRun: true, path: "1" });
+    ).resolves.toMatchObject({
+      action: "planned",
+      dryRun: true,
+      path: "1",
+      absolutePath: target,
+    });
   });
 
   it.each(["root", "intermediate"] as const)(
@@ -515,5 +522,74 @@ describe("isolated worktree namespace guards", () => {
     ).rejects.toThrow("outside the primary checkout");
     expect(bash.mock.calls.some(([call]) => call.command.includes("mkdir -p"))).toBe(false);
     expect(bash.mock.calls.some(([call]) => call.command.includes("git worktree"))).toBe(false);
+  });
+});
+
+describe("bounded PR feedback pagination", () => {
+  it("treats ten full pages without a next link as complete", async () => {
+    const pullResponse = {
+      ok: true,
+      code: 0,
+      stdout: JSON.stringify({
+        url: "https://github.com/NVIDIA/NemoClaw/pull/1",
+        state: "OPEN",
+        headRefOid: HEAD_SHA,
+        baseRefOid: "b".repeat(40),
+        mergeStateStatus: "CLEAN",
+        reviewDecision: "",
+      }),
+      stderr: "",
+    };
+    const checksResponse = { ok: true, code: 0, stdout: "[]", stderr: "" };
+    const runGithubCli = vi.fn(async ({ args }: { args: string[] }) => {
+      const endpoint = args.find((arg) => arg.startsWith("repos/")) ?? "";
+      const page = Number(new URL("https://github.invalid/" + endpoint).searchParams.get("page"));
+      const isReviews = endpoint.includes("/reviews?");
+      const values = isReviews
+        ? Array.from({ length: 10 }, (_, index) => ({
+            id: (page - 1) * 10 + index + 1,
+            user: "reviewer",
+            state: "COMMENTED",
+            commitId: HEAD_SHA,
+            body: "r".repeat(100),
+          }))
+        : [];
+      const link =
+        isReviews && page < 10 ? 'Link: <https://api.github.com/next>; rel="next"\n' : "";
+      const apiResponse = {
+        ok: true,
+        code: 0,
+        stdout: "HTTP/2.0 200 OK\r\n" + link + "\r\n" + JSON.stringify(values),
+        stderr: "",
+      };
+      const command = args[0] + " " + args[1];
+      return command === "pr view"
+        ? pullResponse
+        : command === "pr checks"
+          ? checksResponse
+          : apiResponse;
+    });
+    vi.stubGlobal("tools", { run_github_cli: runGithubCli });
+
+    const result = await collectPrFeedback({
+      repository: "NVIDIA/NemoClaw",
+      pullNumber: 1,
+      workdir: "/workspace",
+      bodyLimit: 100,
+    });
+
+    expect(result.reviews).toHaveLength(100);
+    expect(result.reviews[0].body).toBe("r".repeat(100));
+    expect(result.truncation.reviews).toBe(false);
+    expect(
+      runGithubCli.mock.calls
+        .filter(([call]) => call.args.some((arg: string) => arg.includes("/reviews?")))
+        .every(([call]) => call.args.some((arg: string) => arg.includes("[:100]"))),
+    ).toBe(true);
+    expect(
+      runGithubCli.mock.calls.filter(([call]) =>
+        call.args.some((arg: string) => arg.includes("/reviews?")),
+      ),
+    ).toHaveLength(10);
   });
 });
