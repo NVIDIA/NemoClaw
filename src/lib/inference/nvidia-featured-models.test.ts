@@ -34,6 +34,7 @@ describe("NVIDIA featured model catalog", () => {
         JSON.stringify({
           "featured-models": [
             { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
+            { model: "z-ai/glm-5.2", "model-name": "GLM 5.2" },
             { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
             {
               model: "nvidia/nemotron-3-super-120b-a12b",
@@ -315,7 +316,7 @@ describe("NVIDIA featured model catalog", () => {
     );
   });
 
-  it("filters the retired DeepSeek V4 Pro entry the featured feed still lists (#9611)", () => {
+  it("filters retired featured-feed entries the live NVIDIA catalog no longer serves (#9611, #10222)", () => {
     const options = getNvidiaFeaturedModelPromptOptions(null, {
       runCurlProbeImpl: () => ({
         ok: true,
@@ -338,7 +339,6 @@ describe("NVIDIA featured model catalog", () => {
     expect(options.cloudModelOptions.map((option) => option.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "z-ai/glm-5.2",
       "minimaxai/minimax-m3",
     ]);
   });

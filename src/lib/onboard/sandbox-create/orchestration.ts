@@ -354,7 +354,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       validateName,
       verifyDirectSandboxGpu,
       waitForSandboxRecreateDeleteAbsence,
-      wasSandboxDefault,
       updateReusedSandboxMetadata,
       getSandboxInferenceConfig,
       redact,
@@ -516,6 +515,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hermesDashboardForwarding,
         updateReusedSandboxMetadata,
       }));
+      note(`  [reuse] Skipping sandbox (${sandboxName})`);
     };
     if (recreateRuntime.acceptedTarget) {
       await restoreReusedSandboxDashboard(true);
@@ -627,10 +627,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         },
       );
-    // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
-    const sandboxWasLiveDefault =
-      liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
-
     let pendingStateRestore: BackupResult | null = null;
     let notReadyRecreateInProgress = false;
     const customOpenClawImage =
@@ -807,9 +803,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   "  [non-interactive] Set NEMOCLAW_RECREATE_SANDBOX=1 (or --recreate-sandbox) to force recreation.",
                 );
               } else {
-                note(
-                  `  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`,
-                );
                 note(
                   "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
                 );
@@ -1277,6 +1270,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesDashboardForwarding.ensureForState,
       managedWorkloadRuntime,
       preparedSandboxWorkload,
+      inferenceRouteReservationAuthority?.sessionId ?? null,
       note,
     );
     const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
@@ -1398,13 +1392,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     return completeOrdinaryOnboardSandboxCreation(
       {
         sandboxName,
-        sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
         liveExists,
       },
       {
-        setDefault: registry.setDefault,
         runFile,
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,

@@ -3,7 +3,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stripAnsi } from "../../adapters/openshell/client";
+import {
+  createCliOpenShellSandboxObserver,
+  stripOpenShellCliAnsi,
+} from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-observer";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -31,7 +38,6 @@ import {
   type BaselineExclusionRuntimeStatus,
 } from "../../policy/baseline-exclusion";
 import { ROOT } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
@@ -59,8 +65,6 @@ import {
 import {
   cloudflaredDoctorCheck,
   dockerInspectGateway,
-  findSandboxListLine,
-  inferSandboxReadyFromLine,
   inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
@@ -242,7 +246,7 @@ async function probeOpenShellGateway(
   connected: boolean;
 }> {
   const lifecycle = await gatewayLifecycle(gatewayName, recoverGateway);
-  const cleanStatus = stripAnsi(lifecycle?.status || "");
+  const cleanStatus = stripOpenShellCliAnsi(lifecycle?.status || "");
   const connected = lifecycle?.state === "healthy_named";
   return {
     connected,
@@ -262,11 +266,11 @@ function liveSandboxDetail(
   sandboxName: string,
   present: boolean,
   ready: boolean | null,
-  line: string | null,
+  phase: string | null,
 ): string {
   if (!present) return `${sandboxName} not present in live OpenShell sandbox list`;
   if (ready) return `${sandboxName} present (Ready)`;
-  return `${sandboxName} present${line ? ` (${oneLine(line)})` : ""}`;
+  return `${sandboxName} present${phase ? ` (${oneLine(phase)})` : ""}`;
 }
 
 function liveSandboxHint(
@@ -281,15 +285,52 @@ function liveSandboxHint(
   return `run \`${CLI_NAME} ${sandboxName} status\` or \`${CLI_NAME} ${sandboxName} logs --follow\``;
 }
 
-function liveSandboxCheck(sandboxName: string): SandboxProbe {
-  const list = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+function liveSandboxObservationFailureHint(
+  sandboxName: string,
+  gatewayName: string,
+  error: OpenShellSandboxError,
+): string {
+  switch (error.kind) {
+    case "authentication":
+      return `restore OpenShell authentication for gateway '${gatewayName}', then retry`;
+    case "transport":
+      return error.reason === "identity_mismatch"
+        ? `run \`${CLI_NAME} ${sandboxName} status\` to inspect the recorded gateway identity, then retry`
+        : `run \`openshell status\`, restore gateway '${gatewayName}', then retry`;
+    case "schema":
+      return "use matching supported OpenShell CLI and gateway versions, then retry";
+    case "timeout":
+      return `check that gateway '${gatewayName}' responds, then retry`;
+    case "command":
+      return `run \`openshell sandbox list -g ${gatewayName}\` and correct the reported command failure`;
+  }
+}
+
+async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promise<SandboxProbe> {
+  const list = await createCliOpenShellSandboxObserver({
+    capture: captureOpenshell,
+    defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+  }).listSandboxes({
+    target: namedOpenShellGateway(gatewayName),
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  const liveNames = parseLiveSandboxNames(list.output || "");
-  const present = list.status === 0 && liveNames.has(sandboxName);
-  const line = findSandboxListLine(list.output || "", sandboxName);
-  const ready = inferSandboxReadyFromLine(line);
+  if (!list.ok) {
+    return {
+      reachable: false,
+      checks: [
+        {
+          group: "Sandbox",
+          label: "Live sandbox",
+          status: "fail",
+          detail: `OpenShell sandbox observation failed: ${oneLine(list.error.message)}`,
+          hint: liveSandboxObservationFailureHint(sandboxName, gatewayName, list.error),
+        },
+      ],
+    };
+  }
+  const observed = list.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
+  const present = observed !== null;
+  const ready = observed ? observed.readiness === "ready" : null;
   const reachable = present && ready === true;
   return {
     reachable,
@@ -298,19 +339,22 @@ function liveSandboxCheck(sandboxName: string): SandboxProbe {
         group: "Sandbox",
         label: "Live sandbox",
         status: reachable ? "ok" : "fail",
-        detail: liveSandboxDetail(sandboxName, present, ready, line),
+        detail: liveSandboxDetail(sandboxName, present, ready, observed?.phase ?? null),
         hint: liveSandboxHint(sandboxName, present, ready),
       },
     ],
   };
 }
 
-function collectSandboxReadinessChecks(
+async function collectSandboxReadinessChecks(
   sandboxName: string,
+  gatewayName: string | null,
   openshellBin: ReturnType<typeof resolveOpenshell>,
   openshellConnected: boolean,
-): SandboxProbe {
-  if (openshellBin && openshellConnected) return liveSandboxCheck(sandboxName);
+): Promise<SandboxProbe> {
+  if (gatewayName && openshellBin && openshellConnected) {
+    return liveSandboxCheck(sandboxName, gatewayName);
+  }
   if (!openshellBin) return { checks: [], reachable: false };
   return {
     reachable: false,
@@ -563,7 +607,12 @@ async function collectDoctorChecks(
           },
         ],
       };
-  const sandbox = collectSandboxReadinessChecks(sandboxName, host.openshellBin, gateway.connected);
+  const sandbox = await collectSandboxReadinessChecks(
+    sandboxName,
+    gatewayName,
+    host.openshellBin,
+    gateway.connected,
+  );
   const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected);
   return [
     ...host.checks,
