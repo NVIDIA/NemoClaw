@@ -34,7 +34,7 @@ describe("launch readiness quarantine fence", () => {
         return await callback();
       },
       withGatewayLock: vi.fn(async (_name, callback) => await callback()),
-      checkMutationAuthority: vi.fn(() => "current"),
+      checkMutationAuthority: () => "current",
     };
 
     const recovery = withLaunchReadinessMutationGate(

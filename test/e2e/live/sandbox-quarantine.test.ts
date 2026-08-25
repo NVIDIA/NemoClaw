@@ -24,7 +24,7 @@ import {
 const AGENT_NAME = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const AGENT = loadAgent(AGENT_NAME);
 const QUALIFICATION = AGENT.quarantineQualification!;
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-quarantine-${AGENT_NAME}`;
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-quarantine";
 validateSandboxName(SANDBOX_NAME);
 const IDEMPOTENCY_KEY = `quarantine-live-${AGENT_NAME}-request`;
 const SECRET_CANARY = `quarantine-live-${AGENT_NAME}-secret-canary`;

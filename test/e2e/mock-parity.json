@@ -235,6 +235,16 @@
       "liveOnlyReason": "The resource-limit and final-destroy contracts require real Docker and OpenShell sandboxes, the repository CLI, and host port binding; fast mocks cannot verify these runtime boundaries."
     },
     {
+      "live": "test/e2e/live/sandbox-quarantine.test.ts",
+      "fast": [
+        "src/lib/actions/sandbox/launch-readiness-quarantine-race.test.ts",
+        "src/lib/actions/sandbox/quarantine.test.ts",
+        "src/lib/onboard/runtime-provider/quarantine.test.ts",
+        "src/lib/state/quarantine-receipt.test.ts",
+        "test/e2e/support/quarantine-qualification.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "fast": [
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
