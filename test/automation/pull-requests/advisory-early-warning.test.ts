@@ -9,7 +9,7 @@ import {
   parseInventoryFromAuditConfig,
   parseInventoryFromPackageLock,
   satisfiesVulnerableRange,
-} from "../scripts/lib/advisory-early-warning.mts";
+} from "../../../scripts/lib/advisory-early-warning.mts";
 
 // Upstream repository security advisory (GET /repos/{owner}/{repo}/security-advisories)
 // modeled on GHSA-4c8g-83qw-93j6: published upstream on June 29, weeks before its

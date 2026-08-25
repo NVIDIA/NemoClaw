@@ -9,9 +9,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readYaml, type WorkflowStep } from "./helpers/e2e-workflow-contract";
+import { readYaml, type WorkflowStep } from "../.././helpers/e2e-workflow-contract";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const CHECK_SCRIPT = path.join(ROOT, "scripts", "checks", "check-cloudflared-update.sh");
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/iu;
 

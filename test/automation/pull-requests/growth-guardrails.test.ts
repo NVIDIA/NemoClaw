@@ -11,12 +11,12 @@ import {
   onboardGrowthViolations,
   testOnly as checkTestOnly,
   testSizeViolations,
-} from "./helpers/growth-guardrail-checks";
+} from "../.././helpers/growth-guardrail-checks";
 import {
   type GrowthGuardrailDiff,
   loadGrowthGuardrailDiff,
   testOnly as diffTestOnly,
-} from "./helpers/growth-guardrail-diff";
+} from "../.././helpers/growth-guardrail-diff";
 
 function fixtureDiff(
   files: GrowthGuardrailDiff["files"],

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { recoverHostedRunnerLoss } from "../tools/e2e/hosted-runner-recovery.mts";
+import { recoverHostedRunnerLoss } from "../../../tools/e2e/hosted-runner-recovery.mts";
 import {
   createGitHubFetchRouter,
   githubFetchRoute,
   type RecordedGitHubRequest,
-} from "./support/github-fetch-router.ts";
+} from "../.././support/github-fetch-router.ts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_SHA = "d".repeat(40);

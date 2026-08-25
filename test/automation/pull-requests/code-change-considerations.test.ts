@@ -6,15 +6,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { preparePromptArtifacts } from "../tools/pr-review-advisor/analyze.mts";
-import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
+import { preparePromptArtifacts } from "../../../tools/pr-review-advisor/analyze.mts";
+import { artifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
 import {
   buildSystemPrompt,
   readTrustedCodeChangeConsiderations,
-} from "../tools/pr-review-advisor/trusted-guidance.mts";
-import { metadata } from "./helpers/pr-review-advisor-test-fixtures";
+} from "../../../tools/pr-review-advisor/trusted-guidance.mts";
+import { metadata } from "../.././helpers/pr-review-advisor-test-fixtures";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const RESOURCE_PATH = path.join(
   ROOT,
   ".agents",

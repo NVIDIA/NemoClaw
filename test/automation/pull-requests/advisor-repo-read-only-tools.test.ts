@@ -12,7 +12,7 @@ import {
   canonicalRepoReadPath,
   createRepoConfinedReadOnlyTools,
   MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
-} from "../tools/advisors/repo-read-only-tools.mts";
+} from "../../../tools/advisors/repo-read-only-tools.mts";
 
 const tempDirs: string[] = [];
 const PI_SESSION_READ_LINE_LIMIT_BYTES = 50 * 1024;

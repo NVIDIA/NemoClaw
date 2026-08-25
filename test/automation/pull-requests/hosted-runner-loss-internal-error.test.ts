@@ -7,8 +7,8 @@ import {
   verifiedRunnerLossEvidence,
   type WorkflowJob,
   type WorkflowJobAnnotation,
-} from "../tools/e2e/hosted-runner-loss.mts";
-import { detectRunnerLoss } from "../tools/e2e/runner-pressure-core.mts";
+} from "../../../tools/e2e/hosted-runner-loss.mts";
+import { detectRunnerLoss } from "../../../tools/e2e/runner-pressure-core.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_SHA = "d".repeat(40);

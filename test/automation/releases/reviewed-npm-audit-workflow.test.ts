@@ -17,10 +17,10 @@ import {
   reviewedArchiveGraphManifest,
   selectReviewedLockSha256,
   verifyMaterializedLockedGraph,
-} from "../scripts/audit-reviewed-npm-graph.mts";
-import { verifyInstalledNpmLock } from "../scripts/lib/reviewed-npm-archive.mts";
-import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
-import { readYaml } from "./helpers/e2e-workflow-contract";
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
+import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
+import { readYaml } from "../.././helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
   readonly env?: Record<string, string>;
@@ -41,7 +41,7 @@ type Workflow = {
   readonly jobs: Record<string, WorkflowJob>;
 };
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOMEXCEPTION_INTEGRITY =
   "sha512-tlc/FcYIv5i8RYsl2iDil4A0gOihaas1R5jPcIC4Zw3GhjKsVilw90aHcVlhZPTBLGBzd379S+VcnsDjd9ChiA==";
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { evaluateE2eMaintenancePolicy } from "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
+import { evaluateE2eMaintenancePolicy } from "../../../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
 
 describe("continuous E2E maintenance write policy", () => {
   it("denies an immediate retry after an ambiguous GitHub write", () => {

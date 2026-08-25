@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readYaml } from "./helpers/e2e-workflow-contract";
+import { readYaml } from "../.././helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
   readonly name?: string;
@@ -28,7 +28,7 @@ type Workflow = {
   readonly jobs: Record<string, WorkflowJob>;
 };
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../../..");
 const auditScript = path.join(
   repoRoot,
   ".github",

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "brev-launchable-ci-cpu.sh");
+const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0";
@@ -146,7 +146,7 @@ shape=${JSON.stringify(options.archiveShape ?? "safe")}
 if [ "\${1:-}" = "-tzf" ] && [ "$shape" != "safe" ]; then
   case "$shape" in
     absolute) printf '/tmp/openshell\\n' ;;
-    traversal) printf '../openshell\\n' ;;
+    traversal) printf '../../../openshell\\n' ;;
     duplicate) printf 'openshell\\nopenshell\\n' ;;
     extra) printf 'openshell\\nunexpected\\n' ;;
     *) printf 'openshell\\n' ;;

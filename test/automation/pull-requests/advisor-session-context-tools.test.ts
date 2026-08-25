@@ -10,14 +10,14 @@ import {
   missingRequiredAdvisorToolNames,
   promptWithRequiredContextTools,
   resolveAdvisorTurnTools,
-} from "../tools/advisors/session.mts";
+} from "../../../tools/advisors/session.mts";
 import {
   assistantTextRepairErrors,
   hasCompletedTerminalSubmitRepair,
   repairableAssistantText,
   repairableTerminalSubmitToolName,
   terminalSubmitRepairErrors,
-} from "../tools/advisors/turn-protocol.mts";
+} from "../../../tools/advisors/turn-protocol.mts";
 
 function contextTurn(name: string, content: string): AdvisorPromptTurn {
   return {

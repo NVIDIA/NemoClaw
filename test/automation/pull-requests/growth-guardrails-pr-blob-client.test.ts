@@ -10,7 +10,7 @@ import {
   GRAPHQL_BATCH_SIZE,
   isTransientStatus,
   RATE_LIMIT_DEFAULT_DELAY_MS,
-} from "./helpers/pr-blob-client";
+} from "../.././helpers/pr-blob-client";
 
 const DETERMINISTIC = { sleep: async () => {} } as const;
 

@@ -9,7 +9,7 @@ import {
   type Workflow,
   type WorkflowJob,
   type WorkflowStep,
-} from "./helpers/e2e-workflow-contract";
+} from "../.././helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";

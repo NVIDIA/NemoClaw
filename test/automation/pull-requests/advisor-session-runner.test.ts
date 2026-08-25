@@ -256,7 +256,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   createAgentSession: sdk.createAgentSession,
 }));
 
-vi.mock("../tools/advisors/http-dispatcher.mts", () => ({
+vi.mock("../../../tools/advisors/http-dispatcher.mts", () => ({
   configureAdvisorHttpDispatcher: transport.configure,
 }));
 
@@ -267,7 +267,7 @@ import {
   advisorRetrySettings,
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
-} from "../tools/advisors/session.mts";
+} from "../../../tools/advisors/session.mts";
 
 const tempDirs: string[] = [];
 
@@ -530,7 +530,7 @@ describe("advisor session runner", () => {
       [
         {
           ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "./required.txt"],
+          requiredReadPaths: ["required.txt", "../.././required.txt"],
         },
       ],
       (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),

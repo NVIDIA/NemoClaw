@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildHandoffSummary,
   renderHandoffMarkdown,
-} from "../.agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts";
+} from "../../../.agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts";
 
 const SCRIPT = path.join(
   process.cwd(),

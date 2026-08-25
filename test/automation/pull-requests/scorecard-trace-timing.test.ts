@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import * as traceTiming from "../scripts/scorecard/analyze-trace-timing.mts";
-import { ONBOARD_TRACE_PHASE_NAMES } from "../src/lib/onboard/tracing";
+import * as traceTiming from "../../../scripts/scorecard/analyze-trace-timing.mts";
+import { ONBOARD_TRACE_PHASE_NAMES } from "../../../src/lib/onboard/tracing";
 
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 
@@ -442,7 +442,7 @@ describe("cloud onboard scorecard trace timing", () => {
       execFileSync(
         "python3",
         [
-          path.resolve(import.meta.dirname, "../scripts/e2e/sanitize-trace-timing.py"),
+          path.resolve(import.meta.dirname, "../../../scripts/e2e/sanitize-trace-timing.py"),
           tracePath,
           outputDir,
         ],

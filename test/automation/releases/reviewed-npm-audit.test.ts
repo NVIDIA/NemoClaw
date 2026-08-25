@@ -20,9 +20,9 @@ import {
   runNpmAuditWithRetry,
   runReviewedNpmAudit,
   vulnerabilityCounts,
-} from "../scripts/lib/reviewed-npm-audit.mts";
+} from "../../../scripts/lib/reviewed-npm-audit.mts";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
 ) as {

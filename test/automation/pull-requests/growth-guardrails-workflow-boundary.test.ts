@@ -7,9 +7,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { validateGrowthGuardrailsWorkflowBoundary } from "../scripts/checks/growth-guardrails-workflow-boundary.mts";
+import { validateGrowthGuardrailsWorkflowBoundary } from "../../../scripts/checks/growth-guardrails-workflow-boundary.mts";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_SOURCE = readFileSync(
   path.join(ROOT, ".github/workflows/codebase-growth-guardrails.yaml"),
   "utf8",

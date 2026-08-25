@@ -39,7 +39,7 @@ describe("advisor HTTP dispatcher", () => {
     servers.push(proxy);
     const address = proxy.address() as AddressInfo;
 
-    const moduleUrl = new URL("../tools/advisors/http-dispatcher.mts", import.meta.url).href;
+    const moduleUrl = new URL("../../../tools/advisors/http-dispatcher.mts", import.meta.url).href;
     const script = `
       import { getGlobalDispatcher } from "undici";
       import { configureAdvisorHttpDispatcher } from ${JSON.stringify(moduleUrl)};

@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GitHubApiError, githubApi, githubApiWithResponse } from "../tools/advisors/github.mts";
+import { GitHubApiError, githubApi, githubApiWithResponse } from "../../../tools/advisors/github.mts";
 
 afterEach(() => {
   vi.unstubAllGlobals();

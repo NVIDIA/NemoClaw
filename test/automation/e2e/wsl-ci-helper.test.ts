@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { testTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeout, testTimeoutOptions } from "../.././helpers/timeouts";
 import {
   POWERSHELL_BATCH_EXEC_TIMEOUT_MS,
   type PowerShellBatchCase,
@@ -13,9 +13,9 @@ import {
   requirePowerShellBatchResult,
   resolvePowerShell,
   runPowerShellBatch,
-} from "./support/bootstrap-windows-test-helpers";
+} from "../.././support/bootstrap-windows-test-helpers";
 
-const WSL_CI_HELPER = path.join(import.meta.dirname, "..", "tools", "wsl", "ci-helper.ps1");
+const WSL_CI_HELPER = path.join(import.meta.dirname, "../../..", "tools", "wsl", "ci-helper.ps1");
 const POWERSHELL = resolvePowerShell();
 const CASES: PowerShellBatchCase[] = [];
 let results: ReadonlyMap<string, PowerShellHarnessResult> = new Map();

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 
 function resolveLaunchableVersion(options: { channel: string; explicit?: string }) {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-workflow-contract.ts";
+import { readYaml, type WorkflowJob, type WorkflowStep } from "../.././helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_PATH = ".github/workflows/hosted-runner-recovery.yaml";
 const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";

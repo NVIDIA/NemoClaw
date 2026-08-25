@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildHandoffSummary,
   renderHandoffMarkdown,
-} from "../.agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary";
+} from "../../../.agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary";
 import {
   cleanupFixtures,
   commit,
@@ -24,7 +24,7 @@ import {
   remoteTagText,
   run,
   writeBrief,
-} from "./helpers/historical-release-fixture";
+} from "../.././helpers/historical-release-fixture";
 
 const fixtureEnvironment = { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" };
 const exception = "Urgent QA qualification for issue `#123` requires the preceding main commit.";
