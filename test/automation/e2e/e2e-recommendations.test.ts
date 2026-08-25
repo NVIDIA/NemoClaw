@@ -14,8 +14,8 @@ import {
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
   trustedE2eRecommendationInventory,
-} from "../tools/advisors/e2e-recommendations.mts";
-import { isCommandShapedE2eText } from "../tools/advisors/e2e-text.mts";
+} from "../../../tools/advisors/e2e-recommendations.mts";
+import { isCommandShapedE2eText } from "../../../tools/advisors/e2e-text.mts";
 
 // Tests target the session-free recommendation normalizer shared by the
 // unified PR Review Advisor. Model prompt and comment rendering are covered by
@@ -130,7 +130,7 @@ describe("E2E recommendation normalizer", () => {
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
-        "test/vllm-docker-storage.test.ts",
+        "test/platform/images/vllm-docker-storage.test.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });

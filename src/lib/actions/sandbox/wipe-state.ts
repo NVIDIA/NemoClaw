@@ -52,7 +52,7 @@ export type WipeSandboxStateDeps = {
  *   clean-re-onboard contract today, so the wipe issues `sandbox exec` while
  *   the sandbox is still live and lets the subsequent `sandbox delete` tear
  *   the pod down.
- * - Regression test: test/destroy-wipe-sandbox-state.test.ts covers the
+ * - Regression test: test/runtime/sandbox/destroy-wipe-sandbox-state.test.ts covers the
  *   workspace target, declared prefix expansion, the best-effort warn path, the
  *   path-escape rejection (state_dirs + state_files), and the contract
  *   assertion that the script targets workspace/ under the config dir with
