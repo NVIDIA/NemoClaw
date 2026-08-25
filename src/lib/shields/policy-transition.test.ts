@@ -157,9 +157,30 @@ describe("shields policy transition", () => {
     });
 
     expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
-      "must make the effective policy",
+      /does not match.*canonical JSON SHA-256 [a-f0-9]{64}; network policy keys: test/su,
     );
     expect(runSpy).not.toHaveBeenCalled();
+
+    const matchingExternalAuthority = {
+      authority: "externally-managed" as const,
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "externally-managed" as const,
+        effectivePolicy: { version: 1, network_policies: { test: {} } },
+      },
+    };
+    vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue(matchingExternalAuthority);
+    vi.spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValueOnce(matchingExternalAuthority)
+      .mockReturnValue({
+        ...matchingExternalAuthority,
+        authority: "nemoclaw-managed",
+        inspection: { ...matchingExternalAuthority.inspection, authority: "nemoclaw-managed" },
+      });
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /Policy authority changed.*canonical JSON SHA-256 [a-f0-9]{64}/su,
+    );
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
