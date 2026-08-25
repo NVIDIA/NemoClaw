@@ -162,11 +162,12 @@ describe("doctor inference checks", () => {
   ])("probes inference.local for %s without a direct health check (#6192)", async (provider) => {
     const routeProbe = vi.fn(async () => gateway(false));
     const checks = await collectInferenceChecks("alpha", { provider, model: "model" }, true, {
+      gatewayName: "recorded-gateway",
       probeProviderHealthImpl: () => null,
       probeSandboxInferenceGatewayHealthImpl: routeProbe,
     });
 
-    expect(routeProbe).toHaveBeenCalledWith("alpha");
+    expect(routeProbe).toHaveBeenCalledWith("alpha", { gatewayName: "recorded-gateway" });
     expect(checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Inference route (gateway)", status: "fail" }),
