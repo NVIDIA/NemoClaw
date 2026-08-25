@@ -20,6 +20,7 @@ const requireSource = createRequire(
   path.join(import.meta.dirname, "..", "src", "lib", "shields", "index.js"),
 );
 let tmpDir: string;
+const TEST_PROCESS_START_IDENTITY = "test-process-start-identity";
 
 function externalPolicyMutationAuthority(effectivePolicy: Record<string, unknown>) {
   return {
@@ -38,6 +39,7 @@ function prepareExternalMcpRecoveryFixture() {
       version: 1,
       network_policies: { restrictive_baseline: {}, [alpha.key]: alpha.networkPolicy },
     }),
+    processStartIdentity: TEST_PROCESS_START_IDENTITY,
     sandboxEntry: managedMcpSandbox([alpha]),
   });
   harness.shieldsDown("openclaw", { throwOnError: true });
@@ -103,6 +105,54 @@ function mismatchedExternalAuthority() {
   } as const;
 }
 
+function throwInjectedFailure(message: string): never {
+  throw new Error(message);
+}
+
+function prepareExternalRecoveryRetirementFixture() {
+  const sandboxName = "openclaw";
+  const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+    confirmOpenClawInodeFlags: true,
+    initialOpenClawPosture: "locked",
+    processStartIdentity: TEST_PROCESS_START_IDENTITY,
+  });
+  harness.shieldsDown(sandboxName, { throwOnError: true });
+  harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+  harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+  expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+    "must make the effective policy",
+  );
+  const recoveryState = harness.getShieldsPosture(sandboxName, false).state;
+  const recoveryArtifact = recoveryState.externalPolicyRecoveryArtifact;
+  const recoveryArtifactPath = String(recoveryArtifact?.path);
+  const recoveryArtifactContent = readExternalRecoveryArtifact(recoveryArtifactPath).content;
+  const restoredExternalAuthority = externalPolicyMutationAuthority(
+    readRestrictivePolicy(harness, sandboxName),
+  );
+  harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+  harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+  return {
+    harness,
+    recoveryArtifact,
+    recoveryArtifactContent,
+    recoveryArtifactPath,
+    sandboxName,
+  };
+}
+
+function injectStateCommitFailure(statePath: string, recoveryArtifactPath: string): void {
+  const originalRenameSync = fs.renameSync.bind(fs);
+  let injectedFailure = false;
+  vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+    const shouldInject =
+      !injectedFailure && String(newPath) === statePath && !fs.existsSync(recoveryArtifactPath);
+    injectedFailure = injectedFailure || shouldInject;
+    return shouldInject
+      ? throwInjectedFailure("state commit denied")
+      : originalRenameSync(oldPath, newPath);
+  });
+}
+
 describe("external Shields policy recovery (#9833)", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-external-shields-recovery-`);
@@ -151,6 +201,7 @@ describe("external Shields policy recovery (#9833)", () => {
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       initialOpenClawPosture: "locked",
       livePolicyYaml: YAML.stringify({ version: 1, network_policies: { [unsafeKey]: {} } }),
+      processStartIdentity: TEST_PROCESS_START_IDENTITY,
     });
     harness.shieldsDown("openclaw", { throwOnError: true });
     harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
@@ -166,6 +217,7 @@ describe("external Shields policy recovery (#9833)", () => {
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
       initialOpenClawPosture: "locked",
+      processStartIdentity: TEST_PROCESS_START_IDENTITY,
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     const policySetsAfterDown = countPolicySets(harness);
@@ -224,6 +276,7 @@ describe("external Shields policy recovery (#9833)", () => {
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
       initialOpenClawPosture: "locked",
+      processStartIdentity: TEST_PROCESS_START_IDENTITY,
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
@@ -247,6 +300,7 @@ describe("external Shields policy recovery (#9833)", () => {
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
       initialOpenClawPosture: "locked",
+      processStartIdentity: TEST_PROCESS_START_IDENTITY,
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
@@ -273,11 +327,97 @@ describe("external Shields policy recovery (#9833)", () => {
     ).toBe(recoveryArtifactPath);
   });
 
+  it("restores the bound recovery artifact when its removal cannot be made durable (#9833)", () => {
+    const {
+      harness,
+      recoveryArtifact,
+      recoveryArtifactContent,
+      recoveryArtifactPath,
+      sandboxName,
+    } = prepareExternalRecoveryRetirementFixture();
+    const originalRmSync = fs.rmSync.bind(fs);
+    const originalFsyncSync = fs.fsyncSync.bind(fs);
+    let failNextDirectoryFsync = false;
+    let injectedFailure = false;
+    vi.spyOn(fs, "rmSync").mockImplementation((filePath, options) => {
+      const shouldInject = String(filePath) === recoveryArtifactPath && !injectedFailure;
+      originalRmSync(filePath, options);
+      failNextDirectoryFsync = failNextDirectoryFsync || shouldInject;
+      injectedFailure = injectedFailure || shouldInject;
+    });
+    vi.spyOn(fs, "fsyncSync").mockImplementation((fileDescriptor) => {
+      const shouldInject = failNextDirectoryFsync;
+      failNextDirectoryFsync = false;
+      return shouldInject
+        ? throwInjectedFailure("directory sync denied")
+        : originalFsyncSync(fileDescriptor);
+    });
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "Could not make removal of external Shields policy recovery artifact",
+    );
+
+    expect(readExternalRecoveryArtifact(recoveryArtifactPath).content).toBe(
+      recoveryArtifactContent,
+    );
+    expect(
+      harness.getShieldsPosture(sandboxName, false).state.externalPolicyRecoveryArtifact,
+    ).toEqual(recoveryArtifact);
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).not.toThrow();
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(false);
+  });
+
+  it("restores the bound recovery artifact when the Shields state commit fails (#9833)", () => {
+    const {
+      harness,
+      recoveryArtifact,
+      recoveryArtifactContent,
+      recoveryArtifactPath,
+      sandboxName,
+    } = prepareExternalRecoveryRetirementFixture();
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", `shields-${sandboxName}.json`);
+    injectStateCommitFailure(statePath, recoveryArtifactPath);
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "Could not commit Shields state after removing external policy recovery artifact",
+    );
+
+    expect(readExternalRecoveryArtifact(recoveryArtifactPath).content).toBe(
+      recoveryArtifactContent,
+    );
+    expect(
+      harness.getShieldsPosture(sandboxName, false).state.externalPolicyRecoveryArtifact,
+    ).toEqual(recoveryArtifact);
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).not.toThrow();
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(false);
+  });
+
+  it("does not claim to restore an unbound recovery artifact after a state failure (#9833)", () => {
+    const { harness, recoveryArtifactPath, sandboxName } =
+      prepareExternalRecoveryRetirementFixture();
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", `shields-${sandboxName}.json`);
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+    delete state.externalPolicyRecoveryArtifact;
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    injectStateCommitFailure(statePath, recoveryArtifactPath);
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "restored Shields state; no bound artifact was available to restore",
+    );
+
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(false);
+    expect(harness.getShieldsPosture(sandboxName, false).state).not.toHaveProperty(
+      "externalPolicyRecoveryArtifact",
+    );
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).not.toThrow();
+  });
+
   it("withholds Shields success when external policy changes during config locking (#9833)", () => {
     const sandboxName = "openclaw";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
       initialOpenClawPosture: "locked",
+      processStartIdentity: TEST_PROCESS_START_IDENTITY,
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     const policySetsAfterDown = countPolicySets(harness);

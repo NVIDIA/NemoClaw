@@ -769,11 +769,11 @@ function publishShieldsDownForwardPolicy(
   }
 }
 
-function requireBoundShieldsPolicyArtifact(
+function readBoundShieldsPolicyArtifact(
   binding: BoundShieldsPolicyArtifact,
   expectedPath: string,
   label: string,
-): string {
+): Buffer {
   if (binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
     throw new Error(`${label} path no longer matches its authority`);
   }
@@ -807,10 +807,19 @@ function requireBoundShieldsPolicyArtifact(
     ) {
       throw new Error(`${label} no longer matches its binding`);
     }
-    return binding.path;
+    return content;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
+}
+
+function requireBoundShieldsPolicyArtifact(
+  binding: BoundShieldsPolicyArtifact,
+  expectedPath: string,
+  label: string,
+): string {
+  readBoundShieldsPolicyArtifact(binding, expectedPath, label);
+  return binding.path;
 }
 
 function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): string {
@@ -1734,12 +1743,47 @@ function validatedExternalPolicyRecoveryArtifact(
   }
 }
 
-function clearExternalPolicyRecoveryArtifact(sandboxName: string): void {
+function restoreExternalPolicyRecoveryArtifact(
+  binding: BoundShieldsPolicyArtifact,
+  content: Buffer,
+): void {
+  writeShieldsFileAtomicDurable(binding.path, content);
+  requireBoundShieldsPolicyArtifact(
+    binding,
+    binding.path,
+    "External Shields policy recovery artifact",
+  );
+}
+
+function commitExternalPolicyRecoveryArtifactRetirement(
+  sandboxName: string,
+  commitState: () => void,
+): void {
   const artifactPath = externalPolicyRecoveryArtifactPath(sandboxName);
+  const originalState = loadShieldsState(sandboxName);
+  const binding = originalState.externalPolicyRecoveryArtifact;
+  let content: Buffer | undefined;
+  if (binding) {
+    try {
+      content = readBoundShieldsPolicyArtifact(
+        binding,
+        artifactPath,
+        "External Shields policy recovery artifact",
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  let removed = false;
   try {
     fs.rmSync(artifactPath);
+    removed = true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      commitState();
+      return;
+    }
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Could not remove external Shields policy recovery artifact '${artifactPath}': ${detail}`,
@@ -1749,9 +1793,53 @@ function clearExternalPolicyRecoveryArtifact(sandboxName: string): void {
   try {
     fsyncShieldsStateDirectory();
   } catch (error) {
+    let rollbackDetail = "the artifact had no durable state binding to restore";
+    if (binding && content) {
+      try {
+        restoreExternalPolicyRecoveryArtifact(binding, content);
+        rollbackDetail = "restored its bound content";
+      } catch (rollbackError) {
+        rollbackDetail = `could not restore its bound content: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`;
+      }
+    }
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Removed external Shields policy recovery artifact '${artifactPath}', but could not make its removal durable: ${detail}`,
+      `Could not make removal of external Shields policy recovery artifact '${artifactPath}' durable; ${rollbackDetail}: ${detail}`,
+      { cause: error },
+    );
+  }
+
+  try {
+    commitState();
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    let artifactRestored = false;
+    if (removed && binding && content) {
+      try {
+        restoreExternalPolicyRecoveryArtifact(binding, content);
+        artifactRestored = true;
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `artifact restore failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    try {
+      restoreShieldsStateSnapshot(sandboxName, originalState);
+    } catch (rollbackError) {
+      rollbackErrors.push(
+        `state restore failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    const rollbackDetail =
+      rollbackErrors.length === 0
+        ? artifactRestored
+          ? "restored the bound artifact and Shields state"
+          : "restored Shields state; no bound artifact was available to restore"
+        : `rollback incomplete (${rollbackErrors.join("; ")})`;
+    throw new Error(
+      `Could not commit Shields state after removing external policy recovery artifact '${artifactPath}'; ${rollbackDetail}: ${detail}`,
       { cause: error },
     );
   }
@@ -5008,21 +5096,22 @@ function recoverExpiredAutoRestoreInline(
     return { attempted: true, restored: false };
   }
 
-  clearExternalPolicyRecoveryArtifact(sandboxName);
-  saveShieldsState(sandboxName, {
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    policyRecoveryConfigLocked: false,
-    externalPolicyRecoveryArtifact: undefined,
-    ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
-      ? {
-          chattrApplied: activation.chattrApplied,
-          fileHashes: activation.fileHashes,
-        }
-      : {}),
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      policyRecoveryConfigLocked: false,
+      externalPolicyRecoveryArtifact: undefined,
+      ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
+        ? {
+            chattrApplied: activation.chattrApplied,
+            fileHashes: activation.fileHashes,
+          }
+        : {}),
+    });
   });
   if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     clearShieldsDownTransition(sandboxName, marker.processToken);
@@ -6376,21 +6465,22 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
   //    captured chattrApplied + fileHashes into the persisted state so
   //    drift detection on the next `shields status` has a seal to compare
   //    against. The non-snapshot branch already persisted those above.
-  clearExternalPolicyRecoveryArtifact(sandboxName);
-  saveShieldsState(sandboxName, {
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    policyRecoveryConfigLocked: false,
-    externalPolicyRecoveryArtifact: undefined,
-    ...(snapshotLockResult
-      ? {
-          chattrApplied: snapshotLockResult.chattrApplied,
-          fileHashes: snapshotLockResult.fileHashes,
-        }
-      : {}),
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      policyRecoveryConfigLocked: false,
+      externalPolicyRecoveryArtifact: undefined,
+      ...(snapshotLockResult
+        ? {
+            chattrApplied: snapshotLockResult.chattrApplied,
+            fileHashes: snapshotLockResult.fileHashes,
+          }
+        : {}),
+    });
   });
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
@@ -6760,16 +6850,16 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
  */
 function clearShieldsStateWithoutHostLock(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
-  clearExternalPolicyRecoveryArtifact(sandboxName);
   const timerMarker = readTimerMarker(sandboxName);
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    const filePath = stateFilePath(sandboxName);
+    const stateFileExists = fs.existsSync(filePath);
+    fs.rmSync(filePath, { force: true });
+    if (stateFileExists) fsyncShieldsStateDirectory();
+  });
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
     clearShieldsDownTransition(sandboxName, timerMarker.processToken);
-  }
-  try {
-    fs.rmSync(stateFilePath(sandboxName), { force: true });
-  } catch {
-    /* best effort — absent or unreadable state is already mutable_default */
   }
 }
 
