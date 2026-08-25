@@ -6,7 +6,7 @@ import {
   endpointlessProviderProfilePath,
   ensureEndpointlessProviderProfile,
   type EndpointlessProviderProfileRunner,
-} from "../../messaging/provider-profile";
+} from "../../adapters/openshell/provider-profile";
 
 /** OpenShell provider type registered for every OpenAI-surface inference route. */
 export const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";

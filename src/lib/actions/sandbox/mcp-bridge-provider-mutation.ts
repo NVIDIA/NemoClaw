@@ -16,11 +16,11 @@
  */
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
-import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
   endpointlessProviderProfilePath,
   ensureEndpointlessProviderProfile,
-} from "../../messaging/provider-profile";
+} from "../../adapters/openshell/provider-profile";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../onboard/inference-providers/provider-profile";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
