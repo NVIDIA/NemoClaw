@@ -117,6 +117,27 @@ describe("Deep Agents MCP config adapter registration", () => {
     });
   });
 
+  it("rejects a missing registry sibling before changing the target server", () => {
+    const jiraEntry: McpBridgeEntry = {
+      ...baseEntry,
+      server: "jira",
+      url: "https://mcp.atlassian.com/v1/",
+      env: ["JIRA_MCP_TOKEN"],
+      providerName: "alpha-mcp-jira",
+      policyName: "mcp-bridge-jira",
+    };
+    const initialConfig = { mcpServers: {} };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(jiraEntry, false, [baseEntry, jiraEntry], false, "v12"),
+      initialConfig,
+    );
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain("registry-owned MCP sibling 'github' is absent");
+    expect(registration.config).toEqual(initialConfig);
+    expect(registration.configText).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
+  });
+
   it("rejects a 65-server projection before rendering a mutation command", () => {
     const managedEntries = Array.from({ length: 65 }, (_, index): McpBridgeEntry => ({
       ...baseEntry,

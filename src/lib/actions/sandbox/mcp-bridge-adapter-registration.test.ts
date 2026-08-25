@@ -195,3 +195,36 @@ describe("Deep Agents MCP adapter credential revision", () => {
     );
   });
 });
+
+describe("Hermes MCP adapter credential revision", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+    mocks.runOpenshellProviderCommand.mockReset();
+    mocks.getSandbox.mockReset();
+  });
+
+  it("writes and verifies the readiness-proven revision", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
+    mocks.executeSandboxCommand.mockReturnValue(registered);
+
+    expect(() =>
+      registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        { GITHUB_TOKEN: "host-only-secret" },
+        { credentialRevision: "v12" },
+      ),
+    ).not.toThrow();
+
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0])).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
+      "host-only-secret",
+    );
+  });
+});

@@ -10,6 +10,66 @@ import { buildDeepAgentsMcpRemoveCommand } from "./mcp-bridge-adapter-deepagents
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter v2 removal", () => {
+  it("inspects the installed legacy runtime projection", () => {
+    const legacyConfig = {
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    };
+    const status = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      undefined,
+      "legacy",
+      legacyConfig,
+    );
+
+    expect(status.status, status.stderr).toBe(0);
+    expect(status.stdout.trim()).toBe("registered");
+  });
+
+  it("reports an unknown installed runtime as an inspection failure", () => {
+    const status = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      undefined,
+      "unknown",
+    );
+
+    expect(status.status).toBe(2);
+    expect(status.stderr).toContain("Could not identify the managed Deep Agents MCP runtime");
+    expect(status.stdout.trim()).toBe("");
+  });
+
+  it("reports unsafe legacy state as an inspection failure instead of absence", () => {
+    const legacyConfig = {
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    };
+    const status = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      undefined,
+      "legacy",
+      legacyConfig,
+      0o644,
+    );
+
+    expect(status.status).toBe(2);
+    expect(status.stderr).toContain("legacy MCP config has unsafe ownership, mode, type, or links");
+    expect(status.stdout.trim()).toBe("");
+  });
+
   it("recognizes and removes an exact revision-scoped managed credential", () => {
     const revisionedConfig = {
       mcpServers: {

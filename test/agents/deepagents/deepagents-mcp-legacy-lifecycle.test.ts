@@ -195,13 +195,11 @@ beforeEach(() => {
             stderr: "",
           };
         }
-        case command.includes("data = {'mcpServers': payload['expectedServers']}"):
+        case command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1"):
           adapterRegistered = true;
           return {
             status: 0,
-            stdout: command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED")
-              ? "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n"
-              : "",
+            stdout: "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n",
             stderr: "",
           };
         case command.includes(
@@ -227,7 +225,7 @@ beforeEach(() => {
         !isRevisionObservation && proof.includes('[ -z "${GITHUB_TOKEN+x}" ]');
       return {
         status: isDetachedProof && attached ? 1 : 0,
-        stdout: attached ? "canonical" : "absent",
+        stdout: attached ? `v${String(providerResourceVersion)}` : "absent",
         stderr: "",
       };
     });
@@ -404,6 +402,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       providerExists: true,
       markerCalls: 0,
     });
+    expect(adapterCalls.join("\n")).toContain("v2_GITHUB_TOKEN");
   });
 
   it("restores the old image when rebuild deletion aborts", async () => {
@@ -421,5 +420,6 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       providerExists: true,
       markerCalls: 0,
     });
+    expect(adapterCalls.join("\n")).toContain("v2_GITHUB_TOKEN");
   });
 });
