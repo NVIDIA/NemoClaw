@@ -229,12 +229,13 @@ dgx_station_release_state "$DGX_RELEASE"
   });
 
   it.each([
-    ["7.6.0", "2026-07-14-13-59-06"],
-    ["7.6.1", "2026-08-01-00-00-00"],
+    ["7.6.0", "NVIDIA DGX GB300WS", "2026-07-14-13-59-06"],
+    ["7.6.0", "NVIDIA DGX Server", "2026-07-30-10-25-15"],
+    ["7.6.1", "NVIDIA DGX GB300WS", "2026-08-01-00-00-00"],
   ])(
-    "classifies no-OTA stock DGX OS %s without binding its build date (#7417)",
-    (version, buildDate) => {
-      const release = writeNoOtaDgxOs76Release({ version, buildDate });
+    "classifies no-OTA stock DGX OS %s with the %s display name without binding its build date (#7417, #9898)",
+    (version, pretty, buildDate) => {
+      const release = writeNoOtaDgxOs76Release({ version, pretty, buildDate });
       const { result, output } = runSourced(
         STATION_PREPARE,
         `
@@ -250,7 +251,10 @@ dgx_station_release_state "$DGX_RELEASE"
   );
 
   it.each([
-    ["different lineage", writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Server" })],
+    [
+      "unrecognized display name",
+      writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Customer Image" }),
+    ],
     ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
@@ -465,7 +469,6 @@ dgx_station_release_file_is_safe "$DGX_RELEASE"
 
   it.each([
     ["supported-dgx-os", writeDgxReleaseFixture("7.5.0")],
-    ["supported-dgx-os", writeNoOtaDgxOs76Release()],
     ["unsupported-dgx-os", writeDgxReleaseFixture("7.7.0")],
   ])("classifies a present marker as %s", (expected, release) => {
     const { result, output } = runSourced(
@@ -782,13 +785,83 @@ all_baseos_packages_exact
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
+  it("allows stock DGX OS factory failures only with expected cause fingerprints (#9898)", () => {
+    const qualified = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=stock-dgx-os
+all_baseos_packages_exact() { return 1; }
+factory_cloud_init_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
+factory_fwupd_failure_is_qualified() { return 0; }
+factory_sssd_socket_failure_is_qualified() { return 0; }
+for unit in \
+  cloud-init.service \
+  fluent-bit.service \
+  fwupd-refresh.service \
+  sssd-autofs.socket \
+  sssd-nss.socket \
+  sssd-pam-priv.socket \
+  sssd-pam.socket; do
+  is_qualified_factory_failed_unit "$unit" || exit 1
+done
+! is_qualified_factory_failed_unit unexpected.service
+`,
+    );
+    expect(qualified.result.status, qualified.output).toBe(0);
+
+    const changedCause = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=stock-dgx-os
+all_baseos_packages_exact() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 1; }
+is_qualified_factory_failed_unit fluent-bit.service
+`,
+    );
+    expect(changedCause.result.status, changedCause.output).not.toBe(0);
+  });
+
+  it("requires pinned telemetry evidence for a factory cloud-init bootcmd failure (#9898)", () => {
+    const qualified = runSourced(
+      STATION_PREPARE,
+      `
+NETWORK_VALIDATED=1
+factory_failed_unit_matches() { return 0; }
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+grep() { return 0; }
+file_sha256_matches() {
+  [[ "$1:$2" == "/etc/cloud/cloud.cfg:$FACTORY_CLOUD_CFG_SHA256" \
+    || "$1:$2" == "$FACTORY_CLOUD_INIT_TELEMETRY:$FACTORY_CLOUD_INIT_TELEMETRY_SHA256" ]]
+}
+factory_cloud_init_failure_is_qualified
+`,
+    );
+    expect(qualified.result.status, qualified.output).toBe(0);
+
+    const unrelatedBootcmd = runSourced(
+      STATION_PREPARE,
+      `
+NETWORK_VALIDATED=1
+factory_failed_unit_matches() { return 0; }
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+grep() { return 0; }
+file_sha256_matches() {
+  [[ "$1:$2" == "/etc/cloud/cloud.cfg:$FACTORY_CLOUD_CFG_SHA256" ]]
+}
+factory_cloud_init_failure_is_qualified
+`,
+    );
+    expect(unrelatedBootcmd.result.status, unrelatedBootcmd.output).not.toBe(0);
+  });
+
   it("allows BaseOS failures only with exact packages and the expected cause fingerprint", () => {
     const qualified = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 0; }
-baseos_fluent_bit_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
@@ -799,7 +872,7 @@ is_qualified_factory_failed_unit fluent-bit.service
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 1; }
-baseos_fluent_bit_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
@@ -810,20 +883,20 @@ is_qualified_factory_failed_unit fluent-bit.service
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 0; }
-baseos_fluent_bit_failure_is_qualified() { return 1; }
+factory_fluent_bit_failure_is_qualified() { return 1; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
     expect(changedCause.result.status, changedCause.output).not.toBe(0);
   });
 
-  it("rejects a BaseOS failed unit when any systemd or unit-file fingerprint drifts", () => {
+  it("rejects a factory failed unit when any systemd or unit-file fingerprint drifts", () => {
     const exact = runSourced(
       STATION_PREPARE,
       `
 systemd_property_matches() { return 0; }
 file_sha256_matches() { return 0; }
-baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+factory_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
 `,
     );
     expect(exact.result.status, exact.output).toBe(0);
@@ -833,13 +906,13 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
       `
 systemd_property_matches() { [[ "$2" != Result ]]; }
 file_sha256_matches() { return 0; }
-baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+factory_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
 `,
     );
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
-  it("qualifies the BaseOS Fluent Bit template independently of host identity", () => {
+  it("qualifies the factory Fluent Bit template independently of host identity", () => {
     const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fluent-bit-"));
     const config = path.join(configDir, "fluent-bit.conf");
     fs.writeFileSync(
@@ -869,7 +942,7 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
@@ -884,7 +957,7 @@ baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
@@ -899,7 +972,7 @@ baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
