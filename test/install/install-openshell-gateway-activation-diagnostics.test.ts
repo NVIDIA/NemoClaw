@@ -663,23 +663,29 @@ it("changes a service executable identity after same-inode content replacement (
   const home = makeTempRoot();
   const executablePath = path.join(home, "openshell-gateway");
   writeExecutable(executablePath, "#!/usr/bin/env bash\nexit 0\n");
-  const inodeBefore = fs.lstatSync(executablePath).ino;
+  const descriptor = fs.openSync(executablePath, "r+");
+  const inodeBefore = fs.fstatSync(descriptor).ino;
   const inspect = () =>
     runInstallHelper(
       home,
       `trusted_gateway_service_file_identity ${JSON.stringify(executablePath)} "$EUID" "" true`,
     );
 
-  const first = inspect();
-  fs.writeFileSync(executablePath, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
-  fs.chmodSync(executablePath, 0o755);
-  const inodeAfter = fs.lstatSync(executablePath).ino;
-  const second = inspect();
+  try {
+    const first = inspect();
+    fs.ftruncateSync(descriptor, 0);
+    fs.writeSync(descriptor, "#!/usr/bin/env bash\nexit 1\n", 0, "utf8");
+    fs.fchmodSync(descriptor, 0o755);
+    const inodeAfter = fs.fstatSync(descriptor).ino;
+    const second = inspect();
 
-  expect(first.status, first.stdout + first.stderr).toBe(0);
-  expect(second.status, second.stdout + second.stderr).toBe(0);
-  expect(inodeAfter).toBe(inodeBefore);
-  expect(second.stdout).not.toBe(first.stdout);
+    expect(first.status, first.stdout + first.stderr).toBe(0);
+    expect(second.status, second.stdout + second.stderr).toBe(0);
+    expect(inodeAfter).toBe(inodeBefore);
+    expect(second.stdout).not.toBe(first.stdout);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 });
 
 it("allows a package-qualified upstream service at the default port (#9705)", () => {

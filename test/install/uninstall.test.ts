@@ -279,7 +279,14 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
       servicePath,
       fs
         .readFileSync(
-          path.join(import.meta.dirname, "..", "scripts", "lib", "openshell-gateway.service.in"),
+          path.join(
+            import.meta.dirname,
+            "..",
+            "..",
+            "scripts",
+            "lib",
+            "openshell-gateway.service.in",
+          ),
           "utf-8",
         )
         .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin),

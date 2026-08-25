@@ -344,7 +344,7 @@ describe("installer external gateway supervision", () => {
     expect(fixture.serviceExists).toBe(true);
   });
 
-  it("does not back up or retire an externally supervised gateway (#9705)", () => {
+  it("skips sandbox backup and legacy gateway retirement for external supervision (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("externally-supervised");
 
     expect(fixture.result.status, fixture.output).toBe(0);
@@ -377,7 +377,7 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).toContain("Invalid gateway management declaration");
   });
 
-  it("rejects an invalid declaration before backing up or retiring a gateway (#9705)", () => {
+  it("rejects an invalid declaration before sandbox backup or legacy gateway retirement (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("invalid");
 
     expect(fixture.result.status, fixture.output).toBe(1);
@@ -435,14 +435,17 @@ describe("installer external gateway supervision", () => {
   it.each([
     ["an explicit NemoClaw-managed declaration", "nemoclaw-managed"],
     ["no gateway management declaration", "absent"],
-  ] as const)("backs up and retires the legacy gateway with %s (#9705)", (_context, mode) => {
-    const fixture = runLegacyGatewayRetirement(mode);
+  ] as const)(
+    "runs sandbox backup before retiring the legacy gateway with %s (#9705)",
+    (_context, mode) => {
+      const fixture = runLegacyGatewayRetirement(mode);
 
-    expect(fixture.result.status, fixture.output).toBe(0);
-    expect(fixture.effects).toEqual(["backup-all", "openshell gateway destroy -g nemoclaw"]);
-  });
+      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(fixture.effects).toEqual(["backup-all", "openshell gateway destroy -g nemoclaw"]);
+    },
+  );
 
-  it("backs up but does not retire a gateway when another service can claim its port (#9705)", () => {
+  it("runs sandbox backup but does not retire a gateway when another service can claim its port (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, true);
 
     expect(fixture.result.status, fixture.output).toBe(1);
@@ -450,7 +453,7 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).toContain("competing OpenShell gateway service");
   });
 
-  it("preserves the backup when the initial user-manager query cannot bind service identity (#9705)", () => {
+  it("runs sandbox backup before the initial user-manager identity query fails (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, false, true);
 
     expect(fixture.result.status, fixture.output).toBe(1);
