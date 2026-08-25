@@ -97,7 +97,12 @@ export const teamsManifest = {
       primary: true,
     },
   ],
-  policyPresets: [{ name: "teams", policyKeys: ["teams"] }],
+  // requiredAtCreate - the preset carries this channel's credential_binding:
+  // - The provider profile is endpointless, so the binding is the only thing that
+  //   makes MSTEAMS_APP_PASSWORD injectable.
+  // - The sandbox reads the provider environment once, at boot, so a preset
+  //   applied afterwards never reaches the running agent.
+  policyPresets: [{ name: "teams", policyKeys: ["teams"], requiredAtCreate: true }],
   hostForward: {
     port: "{{teamsConfig.webhookPort}}",
     label: "Microsoft Teams webhook",

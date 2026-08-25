@@ -270,20 +270,17 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
-  // Regression for #5967: Discord (and every messaging channel other than
-  // Slack) is not flagged `requiredAtCreate`, so its policy preset is never
-  // injected into the create-time boot policy. The policy finalization step
-  // must still merge the enabled channel's preset into the effective selection
-  // so it is applied to the gateway and persisted to the registry — otherwise
-  // `policy-list` shows `○ discord` even though Discord was configured during
-  // onboard. The Slack tests above pass purely because Slack happens to be
-  // requiredAtCreate; these tests guard the channels that are not.
+  // Regression for #5967 - when the boot policy did not already carry an enabled
+  // channel's preset, finalization must merge it into the effective selection:
+  // - Otherwise the preset never reaches the gateway or the registry.
+  // - `policy-list` then shows `○ discord` even though Discord was configured
+  //   during onboard.
+  // The scenarios below start from an empty already-applied set to model that.
   it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
-      // Discord is not injected at create time, so it is absent from the
-      // already-applied boot presets — unlike Slack.
+      // Model a boot policy that did not carry the channel preset.
       alreadyApplied: [],
       selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["discord"] },
     });
@@ -325,12 +322,11 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
-  // The #5967 fix is channel-agnostic — it iterates the channel→preset registry
-  // rather than special-casing Slack/Discord. Telegram is another channel that is
-  // not `requiredAtCreate`, so its egress preset is never injected at create time;
-  // exercising it end-to-end through the real `setupPoliciesWithSelection` path
-  // guards the security-critical egress-policy application for a second, distinct
-  // non-required channel (not just Discord).
+  // The #5967 fix is channel-agnostic: it iterates the channel→preset registry
+  // rather than special-casing any channel. Telegram is not `requiredAtCreate`,
+  // so its preset is never injected at create time. Running it through the real
+  // `setupPoliciesWithSelection` path guards egress-policy application for a
+  // second, distinct channel.
   it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
@@ -360,11 +356,10 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
-  // Cover the remaining non-`requiredAtCreate` channels end-to-end through the
-  // real `setupPoliciesWithSelection` path. They flow through the same
-  // channel→preset registry iteration as Discord/Telegram, so each apply/remove
-  // case guards the egress-policy application for every shipped channel — not
-  // only the two already covered above (#5967).
+  // Cover the remaining shipped channels through the same real path. They flow
+  // through the same channel→preset registry iteration as Discord and Telegram,
+  // so each apply/remove case guards egress-policy application for every shipped
+  // channel, not only the two covered above (#5967).
   const optionalChannelPresets = ["teams", "whatsapp", "wechat"].map((channel) => ({ channel }));
 
   it.each(optionalChannelPresets)(

@@ -75,6 +75,14 @@ export const discordManifest = {
   policyPresets: [
     {
       name: "discord",
+      // requiredAtCreate - the preset carries this channel's credential_binding:
+      // - The provider profile is endpointless, so the binding is the only thing
+      //   that makes DISCORD_BOT_TOKEN injectable.
+      // - The sandbox reads the provider environment once, at boot; the agent
+      //   inherits that read for the life of the container.
+      // - A preset applied after boot never reaches the agent, and no restart
+      //   recovers it.
+      requiredAtCreate: true,
       validationWarningLines: [
         "For Discord preset validation, do not use curl as the success signal:",
         "curl is not in the preset binary allowlist, so curl probes can fail even",
