@@ -1081,8 +1081,8 @@ NEMOCLAW_WEB_FETCH_PROBE`,
 // Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
 // variant is deferred to a follow-up nightly extension to keep this
 // scenario's wall-clock to a single onboard. The OTEL suppression contract
-// is covered by `test/policy-tiers-onboard.test.ts` and
-// `test/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
+// is covered by `test/runtime/policy/policy-tiers-onboard.test.ts` and
+// `test/runtime/policy/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
 // real CLI through a stubbed policy API, and by the brave-enabled scenario
 // above which proves `openclaw-diagnostics-otel-local` is absent through the
 // live OpenShell `policy-list`. A regression in `requiredOpenclawOtelPolicyPresets()`

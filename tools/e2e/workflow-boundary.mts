@@ -2753,7 +2753,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
   const defaultTestMappings = [
     {
-      file: "test/onboard-managed-image-buildless-e2e.test.ts",
+      file: "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
       id: "onboard-managed-image-buildless-e2e",
       project: "integration",
     },

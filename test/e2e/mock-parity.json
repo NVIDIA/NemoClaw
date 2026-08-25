@@ -23,11 +23,11 @@
       "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
       "fast": [
         "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/llama-cpp-image.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/inference/llama/llama-cpp-image.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -43,8 +43,8 @@
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/pr-risk-plan.test.ts",
+        "test/inference/managed/managed-image-publication-workflow.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
         "test/protected-managed-image-contract.test.ts"
       ]
     },
@@ -54,8 +54,8 @@
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
-        "test/managed-image-protected-runtime-contract.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -63,8 +63,8 @@
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/onboard-managed-image-buildless-e2e.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts",
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
       ]
     },
     {
@@ -95,7 +95,7 @@
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
-        "test/install-native-runtime-qualification.test.ts"
+        "test/install/install-native-runtime-qualification.test.ts"
       ]
     },
     {
@@ -126,7 +126,7 @@
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
-        "test/onboard-inference-gateway-scope.test.ts"
+        "test/onboarding/onboard-inference-gateway-scope.test.ts"
       ]
     },
     {
@@ -164,7 +164,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
+        "test/install/installer-hash-check.test.ts",
         "test/runner.test.ts"
       ]
     },
@@ -178,7 +178,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
+        "test/install/installer-hash-check.test.ts",
         "test/runner.test.ts"
       ]
     },
@@ -188,8 +188,8 @@
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
-        "test/managed-gateway-control.test.ts",
-        "test/nemoclaw-start-guard-recovery.test.ts",
+        "test/inference/managed/managed-gateway-control.test.ts",
+        "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
       ]
@@ -210,8 +210,8 @@
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
         "test/openshell-credential-generation-window.test.ts",
-        "test/mcp-artifact-secret-scan.test.ts",
-        "test/mcp-agent-matrix-artifact-proof.test.ts",
+        "test/mcp/mcp-artifact-secret-scan.test.ts",
+        "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts"
       ]
     },
@@ -244,7 +244,7 @@
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -263,9 +263,9 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
-        "test/gateway-state.test.ts",
+        "test/runtime/gateway/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
@@ -587,7 +587,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/installer-integration/install-express-prompt.test.ts",
-        "test/install-local-model-profile.test.ts"
+        "test/install/install-local-model-profile.test.ts"
       ]
     },
     {

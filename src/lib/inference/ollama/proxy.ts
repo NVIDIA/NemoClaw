@@ -1303,7 +1303,7 @@ async function prepareOllamaModel(
  * omit it and unload everything; a single-sandbox stop scopes the unload so it
  * cannot evict a model another sandbox is still using (#9110).
  *
- * Keep this logic in sync with `test/ollama-gpu-cleanup.test.ts`.
+ * Keep this logic in sync with `test/inference/ollama/ollama-gpu-cleanup.test.ts`.
  */
 function unloadOllamaModels(onlyModels?: readonly string[]) {
   try {

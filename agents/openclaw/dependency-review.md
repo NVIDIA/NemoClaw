@@ -79,6 +79,6 @@ The lock records the exact version, registry URL, and integrity for every transi
   A matching marker from a local base or mutable tag is package metadata without independent CI attestation.
   It cannot authorize reuse; the existing version checks reinstall the locked runtime or reject a newer base.
 - `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, `reviewed-npm-audit` CI check, and this review synchronized.
-  `test/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
+  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
   `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
