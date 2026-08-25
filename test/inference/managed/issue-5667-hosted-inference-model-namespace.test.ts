@@ -18,11 +18,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const providers = require("../src/lib/onboard/providers.js") as {
+const providers = require("../../../src/lib/onboard/providers.js") as {
   HOSTED_INFERENCE_MODEL: string;
   stageHostedInferenceSourceSecretEnv: () => boolean;
 };
-const { patchStagedDockerfile } = require("../src/lib/onboard/dockerfile-patch.js") as {
+const { patchStagedDockerfile } = require("../../../src/lib/onboard/dockerfile-patch.js") as {
   patchStagedDockerfile: (
     dockerfilePath: string,
     model: string,
@@ -31,7 +31,7 @@ const { patchStagedDockerfile } = require("../src/lib/onboard/dockerfile-patch.j
   ) => void;
 };
 const { collectSandboxStatusSnapshot } =
-  require("../src/lib/actions/sandbox/status-snapshot.js") as {
+  require("../../../src/lib/actions/sandbox/status-snapshot.js") as {
     collectSandboxStatusSnapshot: (
       sandboxName: string,
       opts: {
@@ -48,7 +48,7 @@ const { collectSandboxStatusSnapshot } =
       },
     ) => Promise<{ currentModel: string; currentProvider: string }>;
   };
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 
 // Env keys touched by stageHostedInferenceSourceSecretEnv that we save/restore.
 const TOUCHED_ENV = [

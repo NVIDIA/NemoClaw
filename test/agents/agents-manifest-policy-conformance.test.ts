@@ -21,7 +21,7 @@ import { buildConfig } from "../scripts/generate-openclaw-config.mts";
 import {
   applyMessagingAgentRenderToObject,
   readMessagingBuildPlanFromEnv,
-} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+} from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const validator = path.join(repoRoot, "scripts/checks/validate-managed-base-index.sh");
 const image = "ghcr.io/nvidia/nemoclaw/base";
 const amd64SourceDigest = `sha256:${"a".repeat(64)}`;

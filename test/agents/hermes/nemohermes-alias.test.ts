@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
-const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
-const NEMOCLAW_CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const HERMES_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemohermes.js");
+const NEMOCLAW_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 
 function runHermes(
   args: string,

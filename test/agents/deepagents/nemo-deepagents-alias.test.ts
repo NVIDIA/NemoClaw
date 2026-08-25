@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
-const NEMOCLAW_CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const NEMOCLAW_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 const DEEPAGENTS_ALIAS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-bin-"));
 const DEEPAGENTS_CLI = path.join(DEEPAGENTS_ALIAS_DIR, "nemo-deepagents");
 fs.symlinkSync(NEMOCLAW_CLI, DEEPAGENTS_CLI);

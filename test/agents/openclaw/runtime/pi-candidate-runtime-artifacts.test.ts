@@ -17,10 +17,10 @@ import {
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../src/lib/onboard/managed-image/contract.ts";
+} from "../../../../src/lib/onboard/managed-image/contract.ts";
 import { validateCandidateContract } from "../tools/managed-images/validate-candidate-contract.mts";
 
-const root = path.resolve(import.meta.dirname, "..");
+const root = path.resolve(import.meta.dirname, "../../../..");
 
 function readRepoFile(relativePath: string): string {
   return fs.readFileSync(path.join(root, relativePath), "utf8");

@@ -11,7 +11,7 @@ function isOnboardProbeInternals(value: object | null): value is OnboardProbeInt
   return value !== null && typeof Reflect.get(value, "getProbeAuthMode") === "function";
 }
 
-const loadedOnboardProbeInternals = require("../src/lib/onboard");
+const loadedOnboardProbeInternals = require("../../src/lib/onboard");
 const onboardProbeInternals =
   typeof loadedOnboardProbeInternals === "object" && loadedOnboardProbeInternals !== null
     ? loadedOnboardProbeInternals
