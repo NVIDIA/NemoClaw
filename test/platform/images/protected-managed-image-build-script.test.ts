@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const REPO_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const SCRIPT = path.join(REPO_ROOT, "scripts/checks/build-protected-managed-images.sh");
 const REVISION = "a".repeat(40);
 const DIGEST = "b".repeat(64);

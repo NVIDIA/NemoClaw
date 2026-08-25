@@ -11,10 +11,10 @@ import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
 
-import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../src/lib/inference/serving/vllm-host-local-lifecycle";
-import { detectVllmProfile } from "../src/lib/inference/vllm";
-import { imageStorageRequirementBytes } from "../src/lib/inference/vllm-storage";
-import { test } from "./e2e/fixtures/workflow-e2e-test.ts";
+import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle";
+import { detectVllmProfile } from "../../../src/lib/inference/vllm";
+import { imageStorageRequirementBytes } from "../../../src/lib/inference/vllm-storage";
+import { test } from "../.././e2e/fixtures/workflow-e2e-test.ts";
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";

@@ -8,10 +8,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type CompositeAction, readYaml } from "./helpers/e2e-workflow-contract";
-import { execTimeout } from "./helpers/timeouts";
+import { type CompositeAction, readYaml } from "../.././helpers/e2e-workflow-contract";
+import { execTimeout } from "../.././helpers/timeouts";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const helper = path.join(repoRoot, ".github/actions/base-image-resolver.sh");
 const sandboxAction = readYaml<CompositeAction>(
   ".github/actions/resolve-sandbox-base-image/action.yaml",

@@ -45,7 +45,7 @@
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/protected-managed-image-contract.test.ts"
+        "test/platform/images/protected-managed-image-contract.test.ts"
       ]
     },
     {

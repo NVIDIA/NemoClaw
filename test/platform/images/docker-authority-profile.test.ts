@@ -3,11 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { loadManagedInferenceCatalog } from "../src/lib/inference/serving/catalog-loader";
-import { resolveManagedInferenceServing } from "../src/lib/inference/serving/resolver";
-import type { HostAssessment } from "../src/lib/onboard/preflight";
-import { detectDockerHost } from "../src/lib/platform";
-import { collectHostObservations, projectHostReadiness } from "../src/lib/readiness/host";
+import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader";
+import { resolveManagedInferenceServing } from "../../../src/lib/inference/serving/resolver";
+import type { HostAssessment } from "../../../src/lib/onboard/preflight";
+import { detectDockerHost } from "../../../src/lib/platform";
+import { collectHostObservations, projectHostReadiness } from "../../../src/lib/readiness/host";
 
 const NOW = new Date("2026-08-11T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);

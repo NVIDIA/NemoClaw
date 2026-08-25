@@ -9,14 +9,14 @@ import { describe, expect, it } from "vitest";
 import {
   FIXED_TAR_VERSION,
   NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH,
-} from "../scripts/patch-bundled-npm-tar.mts";
+} from "../../../scripts/patch-bundled-npm-tar.mts";
 import {
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
-} from "./helpers/dockerfile-run-commands";
+} from "../.././helpers/dockerfile-run-commands";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const dockerfiles = [
   {
     file: "Dockerfile.base",

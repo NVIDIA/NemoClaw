@@ -14,7 +14,7 @@ const SHA_CANDIDATE = `sha256:${"c".repeat(64)}`;
 const SHA_PUBLISHED = `sha256:${"d".repeat(64)}`;
 const helper = resolve(
   import.meta.dirname,
-  "../.github/actions/publish-base-image-manifest/publish.sh",
+  "../../../.github/actions/publish-base-image-manifest/publish.sh",
 );
 const temporaryRoots: string[] = [];
 

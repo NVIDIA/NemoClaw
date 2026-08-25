@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { help as renderRootHelp } from "../src/lib/actions/root-help";
+import { help as renderRootHelp } from "../../../src/lib/actions/root-help";
 import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxImage,
@@ -17,15 +17,15 @@ import {
   removeSandboxRegistryEntryWithReceipt,
   removeShieldsState,
   requireSandboxDestructiveCleanupAuthority,
-} from "../src/lib/actions/sandbox/destroy";
-import { requireSnapshotDestinationRegistryRemoval } from "../src/lib/actions/sandbox/snapshot";
-import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
-import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
-import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
-import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
-import { createDockerRuntimeProviderBundle } from "../src/lib/onboard/runtime-provider/docker";
-import { createRuntimeProviderBundleRegistry } from "../src/lib/onboard/runtime-provider/registry";
-import { resolveNemoclawStateDir } from "../src/lib/state/paths";
+} from "../../../src/lib/actions/sandbox/destroy";
+import { requireSnapshotDestinationRegistryRemoval } from "../../../src/lib/actions/sandbox/snapshot";
+import { COMMANDS, globalCommandTokens } from "../../../src/lib/cli/command-registry";
+import { getRegisteredOclifCommandMetadata } from "../../../src/lib/cli/oclif-metadata";
+import { normalizeGarbageCollectImagesOptions } from "../../../src/lib/domain/lifecycle/options";
+import { getSandboxDeleteOutcome } from "../../../src/lib/domain/sandbox/destroy";
+import { createDockerRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "../../../src/lib/onboard/runtime-provider/registry";
+import { resolveNemoclawStateDir } from "../../../src/lib/state/paths";
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("removes sandbox images before deleting the registry entry", () => {
@@ -411,7 +411,7 @@ describe("shields state cleanup on destroy (#3114)", () => {
       fs.writeFileSync(escapedFile, "should survive");
 
       // A name containing ../ should not delete files outside stateDir
-      removeShieldsState("../../shields-traversal", tmpDir);
+      removeShieldsState("../../../../shields-traversal", tmpDir);
 
       expect(fs.existsSync(escapedFile)).toBe(true);
     } finally {

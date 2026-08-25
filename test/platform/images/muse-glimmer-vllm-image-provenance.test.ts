@@ -6,14 +6,14 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { VLLM_MODELS } from "../src/lib/inference/vllm-models.js";
-import { detectVllmProfile, resolveVllmRuntimeProfile } from "../src/lib/inference/vllm.js";
+import { VLLM_MODELS } from "../../../src/lib/inference/vllm-models.js";
+import { detectVllmProfile, resolveVllmRuntimeProfile } from "../../../src/lib/inference/vllm.js";
 import {
   MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
   verifyMuseGlimmerVllmImageProvenance,
-} from "./support/muse-glimmer-vllm-image-provenance-test-support.js";
+} from "../.././support/muse-glimmer-vllm-image-provenance-test-support.js";
 
-const ROOT = path.join(import.meta.dirname, "..");
+const ROOT = path.join(import.meta.dirname, "../../..");
 const RECORD_PATH = path.join(
   ROOT,
   "internal",

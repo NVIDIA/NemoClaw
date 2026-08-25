@@ -170,13 +170,13 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/hermes/hermes-dependency-review.test.ts",
     ]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
-      "test/base-image-resolver-helper.test.ts",
+      "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
     expect(
       triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
     ).toEqual([
       "test/reviewed-hermes-platform-action.test.ts",
-      "test/protected-managed-image-contract.test.ts",
+      "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
@@ -259,7 +259,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/validate-managed-base-index.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
-      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/platform/images/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",

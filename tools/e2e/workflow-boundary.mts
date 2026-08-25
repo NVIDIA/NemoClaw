@@ -2758,7 +2758,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       project: "integration",
     },
     {
-      file: "test/vllm-docker-storage.test.ts",
+      file: "test/platform/images/vllm-docker-storage.test.ts",
       id: "vllm-docker-storage",
       project: "integration",
     },

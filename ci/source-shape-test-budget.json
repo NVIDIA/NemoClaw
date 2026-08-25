@@ -92,17 +92,17 @@
       "category": "security"
     },
     {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
     },
     {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"
     },
     {
-      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },

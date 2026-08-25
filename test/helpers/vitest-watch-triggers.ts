@@ -94,14 +94,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
-    testsToRun: runTests("test/base-image-resolver-helper.test.ts"),
+    testsToRun: runTests("test/platform/images/base-image-resolver-helper.test.ts"),
   },
   {
     pattern:
       /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/reviewed-hermes-platform-action.test.ts",
-      "test/protected-managed-image-contract.test.ts",
+      "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ),
   },
@@ -227,7 +227,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,
     testsToRun: runTests(
-      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/platform/images/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",

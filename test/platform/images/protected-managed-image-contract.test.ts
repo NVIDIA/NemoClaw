@@ -12,7 +12,7 @@ import YAML from "yaml";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../src/lib/onboard/managed-image/contract.ts";
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import {
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   PROTECTED_MANAGED_IMAGE_AGENTS,
@@ -22,7 +22,7 @@ import {
   parseProtectedManagedImageActivation,
   parseProtectedManagedImageContracts,
   parseProtectedManagedImageEvidence,
-} from "../scripts/checks/protected-managed-image-contract.ts";
+} from "../../../scripts/checks/protected-managed-image-contract.ts";
 
 const BASE_REPOSITORIES = {
   openclaw: "sandbox-base",
@@ -49,7 +49,7 @@ const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "c".repeat(40);
 const COHORT = "protected-42-1";
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const REVIEWED_HERMES_INDEX = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"9".repeat(64)}`;
 const PLATFORM_DIGESTS = {
   openclaw: `sha256:${"1".repeat(64)}`,
