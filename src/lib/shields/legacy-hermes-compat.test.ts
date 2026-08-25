@@ -1255,9 +1255,7 @@ describe("legacy Hermes shields compatibility", () => {
       expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
       expect(transitionSpy).not.toHaveBeenCalled();
 
-      runCaptureSpy.mockImplementation(() => {
-        throw new Error("openshell: command not found");
-      });
+      runCaptureSpy.mockReturnValue("");
       expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
       expect(transitionSpy).toHaveBeenCalledWith(
         expect.objectContaining({ target: "mutable", rollback: "mutable" }),
