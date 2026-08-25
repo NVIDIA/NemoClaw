@@ -31,6 +31,7 @@ type PolicyScenarioOptions = {
   policyMode?: string;
   policyPresets?: string;
   alreadyApplied?: string[];
+  customPresetNames?: string[];
   selectionOptions?: SetupPolicySelectionOptions;
 };
 
@@ -51,12 +52,13 @@ async function runPolicyScenario({
   policyMode,
   policyPresets,
   alreadyApplied,
+  customPresetNames = [],
   selectionOptions = {},
 }: PolicyScenarioOptions = {}): Promise<PolicyScenarioResult> {
   const effectiveTier = tierEnv ?? "balanced";
   const effectiveApplied = alreadyApplied ?? ["npm", "pypi", "huggingface", "brew", "brave"];
-  const customPresets = effectiveApplied
-    .filter((name) => !builtInPresetNames.has(name))
+  const customPresets = [...new Set([...effectiveApplied, ...customPresetNames])]
+    .filter((name) => customPresetNames.includes(name) || !builtInPresetNames.has(name))
     .map((name) => ({ name }));
   const appliedCalls: string[] = [];
   const removedCalls: string[] = [];
@@ -268,6 +270,33 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       `Slack must not be removed while Slack messaging is enabled; got removals ${JSON.stringify(payload.removedCalls)}`,
     );
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
+  });
+
+  it("custom Hermes selection excludes an inactive repository-owned messaging preset", async () => {
+    const payload = await runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,slack",
+      alreadyApplied: ["npm", "slack"],
+      selectionOptions: { agent: "hermes", enabledChannels: [] },
+    });
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls, ["slack"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  it("custom Hermes selection preserves operator ownership of a messaging preset name", async () => {
+    const payload = await runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,slack",
+      alreadyApplied: ["npm", "slack"],
+      customPresetNames: ["slack"],
+      selectionOptions: { agent: "hermes", enabledChannels: [] },
+    });
+
+    assert.deepEqual(payload.chosen, ["npm", "slack"]);
+    assert.deepEqual(payload.removedCalls, []);
+    assert.deepEqual(payload.finalApplied, ["npm", "slack"]);
   });
 
   // Regression for #5967: Discord (and every messaging channel other than

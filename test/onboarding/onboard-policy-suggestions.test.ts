@@ -23,6 +23,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
+        customPresetNames?: ReadonlySet<string> | null;
         env?: NodeJS.ProcessEnv;
       },
     ) => string[];
@@ -583,7 +584,7 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
-  it("omits credential-bound Hermes Discord egress until the channel is active", () => {
+  it("omits repository-owned Hermes messaging presets until their channels are active", () => {
     const inactive = computeSetupPresetSuggestions("open", {
       agent: "hermes",
       enabledChannels: [],
@@ -596,7 +597,32 @@ describe("onboard policy preset suggestions", () => {
     });
 
     expect(inactive).not.toContain("discord");
+    expect(inactive).not.toContain("slack");
     expect(active).toContain("discord");
+    expect(active).not.toContain("slack");
+  });
+
+  it("preserves a custom Hermes preset whose name matches an inactive messaging preset", () => {
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+      customPresetNames: new Set(["slack"]),
+    });
+
+    expect(suggestions).toContain("slack");
+    expect(suggestions).not.toContain("discord");
+  });
+
+  it("keeps OpenClaw open-tier messaging suggestions unchanged", () => {
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: [],
+      knownPresetNames: known,
+    });
+
+    expect(suggestions).toContain("discord");
+    expect(suggestions).toContain("slack");
   });
 
   it("drops channel names that are not known presets", () => {
