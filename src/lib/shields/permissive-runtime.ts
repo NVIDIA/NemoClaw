@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import YAML from "yaml";
+
+import { diagnosticPreview } from "../sandbox-name-contract";
 
 export {
   type ExactManagedMcpPolicy,
   hasManagedMcpPolicyClaims,
   inspectExactManagedMcpPolicies,
   inspectProvableManagedMcpPoliciesForDeadline,
+  inspectRecordedManagedMcpPolicies,
   type ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
 
@@ -16,6 +20,35 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
+
+function canonicalPolicyValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalPolicyValue);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalPolicyValue(record[key])]),
+  );
+}
+
+export function serializeCanonicalPolicy(policy: Record<string, unknown>): string {
+  return YAML.stringify(canonicalPolicyValue(policy));
+}
+
+export function describeCanonicalPolicyReference(policy: Record<string, unknown>): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(canonicalPolicyValue(policy)), "utf8")
+    .digest("hex");
+  const networkPolicies = policy.network_policies;
+  const policyKeys =
+    networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)
+      ? Object.keys(networkPolicies).sort()
+      : [];
+  return `canonical JSON SHA-256 ${digest}; network policy keys: ${
+    policyKeys.length > 0 ? policyKeys.map(diagnosticPreview).join(", ") : "(none)"
+  }`;
+}
 import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 

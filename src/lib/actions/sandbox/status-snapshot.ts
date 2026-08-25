@@ -614,6 +614,9 @@ export async function collectSandboxStatusSnapshot(
               ? runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
+                    ...(sb?.agent === "langchain-deepagents-code"
+                      ? { agentName: sb.agent }
+                      : {}),
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
@@ -645,7 +648,10 @@ export async function collectSandboxStatusSnapshot(
       gatewayChain = null;
       invocation = null;
     }
-    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
+    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
+      agentName: sb?.agent ?? null,
+      provider: invocationRoute.provider ?? null,
+    });
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
