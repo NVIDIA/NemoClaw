@@ -161,8 +161,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
   },
   {
-    pattern: /(?:^|\/)agents\/hermes\/(?:mcp-config-transaction|runtime-config-guard)\.py$/,
+    pattern: /(?:^|\/)agents\/hermes\/runtime-config-guard\.py$/,
     testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/mcp-config-transaction\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,

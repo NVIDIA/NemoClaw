@@ -8,6 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
+import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
 
 const testState = vi.hoisted(() => {
@@ -347,16 +348,11 @@ beforeEach(() => {
     const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
     const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
     const isRevisionObservation = proof.includes("printf '%s\\n' absent");
-    const observedCredential = proof.includes("openshell:resolve:env:GITHUB_TOKEN")
-      ? "GITHUB_TOKEN"
-      : proof.includes("openshell:resolve:env:SLACK_TOKEN")
-        ? "SLACK_TOKEN"
-        : null;
-    const credentialAttached =
-      observedCredential !== null &&
-      [...testState.attachedProviders].some(
-        (providerName) => testState.providers.get(providerName)?.credential === observedCredential,
-      );
+    const credentialRevision = findObservedCredentialRevision(
+      proof,
+      testState.attachedProviders,
+      testState.providers,
+    );
     return {
       status:
         isNoopProbe ||
@@ -366,7 +362,7 @@ beforeEach(() => {
         proof.includes("openshell:resolve:env:SLACK_TOKEN")
           ? 0
           : 1,
-      stdout: isRevisionObservation ? (credentialAttached ? "canonical" : "absent") : "",
+      stdout: isRevisionObservation ? (credentialRevision ?? "absent") : "",
       stderr: "",
     };
   });

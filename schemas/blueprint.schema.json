@@ -4,7 +4,23 @@
   "title": "NemoClaw Blueprint",
   "description": "Schema for nemoclaw-blueprint/blueprint.yaml — defines sandbox orchestration, inference profiles, and policy configuration.",
   "type": "object",
-  "required": ["version", "profiles", "components"],
+  "required": ["version"],
+  "oneOf": [
+    {
+      "required": ["profiles", "components"],
+      "not": { "required": ["openshell_target"] }
+    },
+    {
+      "required": ["openshell_target", "min_openshell_version", "max_openshell_version"],
+      "not": {
+        "anyOf": [
+          { "required": ["profiles"] },
+          { "required": ["components"] },
+          { "required": ["min_openclaw_version"] }
+        ]
+      }
+    }
+  ],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -14,13 +30,13 @@
     },
     "min_openshell_version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Minimum compatible OpenShell version."
+      "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+      "description": "Minimum compatible OpenShell release. The Blueprint Runner rejects a range whose minimum exceeds its maximum."
     },
     "max_openshell_version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Maximum compatible OpenShell version."
+      "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+      "description": "Maximum compatible OpenShell release. The Blueprint Runner rejects a range whose minimum exceeds its maximum."
     },
     "min_openclaw_version": {
       "type": "string",
@@ -40,6 +56,9 @@
     },
     "description": {
       "type": "string"
+    },
+    "openshell_target": {
+      "$ref": "#/$defs/externalOpenShellTarget"
     },
     "components": {
       "type": "object",
@@ -139,7 +158,72 @@
       }
     }
   },
+  "dependentRequired": {
+    "openshell_target": ["min_openshell_version", "max_openshell_version"]
+  },
   "$defs": {
+    "externalOpenShellTarget": {
+      "type": "object",
+      "description": "Explicit externally managed OpenShell gateway target for target-only planning. File references use POSIX-rooted absolute paths. This contract does not establish a network connection, TLS trust, authentication, remote readiness, machine-authentication compatibility, or Kubernetes qualification.",
+      "required": [
+        "endpoint",
+        "workspace",
+        "expected_release",
+        "lifecycle",
+        "trust",
+        "authentication"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)|(?:\\[(?![^\\]]*:::)(?=[^\\]]*:)[0-9A-Fa-f:.]+\\]))(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?/?$",
+          "description": "Bare HTTPS gateway origin without credentials, path, query, or fragment. The runner performs final URL, port, loopback, unspecified-address, and IPv6 validation before opening ca_file or credential_file."
+        },
+        "workspace": {
+          "type": "string",
+          "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$",
+          "maxLength": 19,
+          "description": "Explicit OpenShell workspace name for the target-only plan."
+        },
+        "expected_release": {
+          "type": "string",
+          "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+          "description": "Exact OpenShell release expected by the plan. The runner requires safe numeric components and validates this value against min_openshell_version and max_openshell_version."
+        },
+        "lifecycle": {
+          "const": "external",
+          "description": "Declares that NemoClaw does not manage the target gateway lifecycle."
+        },
+        "trust": {
+          "type": "object",
+          "required": ["ca_file"],
+          "additionalProperties": false,
+          "properties": {
+            "ca_file": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^/",
+              "description": "POSIX-rooted absolute path to a regular PEM CA bundle no larger than 1 MiB. Planning parses each certificate, requires the CA flag, and returns a fingerprint. It does not connect to the endpoint or establish TLS trust. Symbolic-link paths are not accepted."
+            }
+          }
+        },
+        "authentication": {
+          "type": "object",
+          "required": ["credential_file"],
+          "additionalProperties": false,
+          "description": "File-backed authentication reference for target-only planning. Planning checks file metadata only; it does not read the contents, authenticate, or select or validate a machine-authentication protocol.",
+          "properties": {
+            "credential_file": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^/",
+              "description": "POSIX-rooted absolute path to a non-empty regular authentication file no larger than 1 MiB. Symbolic-link paths are not accepted. Planning checks metadata without reading the file and does not return the path."
+            }
+          }
+        }
+      }
+    },
     "inferenceProfile": {
       "type": "object",
       "required": ["provider_type", "endpoint"],
