@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const TEXT_REDACTOR = path.resolve(HERE, "e2e/lib/redact-text.py");
+const TEXT_REDACTOR = path.resolve(HERE, "../e2e/lib/redact-text.py");
 const REDACTED = "[REDACTED]";
 
 function runTextRedactor(input: string): { rc: number; stdout: string; stderr: string } {

@@ -769,7 +769,7 @@ describe("sandbox build context staging", () => {
   ])(
     "optimized staging excludes blueprint .venv and extra scripts while preserving required files [$scenario]",
     ({ scenario }) => {
-      const repoRoot = path.join(import.meta.dirname, "../..");
+      const repoRoot = path.join(import.meta.dirname, "../../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
 
       try {
@@ -1003,7 +1003,7 @@ describe("sandbox build context staging", () => {
     },
     () => {
       const buildx = BUILDX_COMMAND as BuildxCommand;
-      const repoRoot = path.join(import.meta.dirname, "../..");
+      const repoRoot = path.join(import.meta.dirname, "../../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-build-"));
       const reviewedRuntimeSource = path.join(
         repoRoot,
@@ -1089,7 +1089,7 @@ describe("sandbox build context staging", () => {
   });
 
   it("optimized staging is smaller than the legacy build context", { timeout: 120_000 }, () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
+    const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-compare-"));
 
     try {

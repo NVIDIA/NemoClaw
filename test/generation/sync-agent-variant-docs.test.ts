@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
 
-const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts/sync-agent-variant-docs.mts");
 const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
 const AGENT_VARIANTS = ["openclaw", "hermes", "deepagents", "pi"] as const;

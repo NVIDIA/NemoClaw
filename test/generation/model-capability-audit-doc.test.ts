@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 const auditDocPath = path.join(repoRoot, "docs", "inference", "model-capability-audit.mdx");
 const navPath = path.join(repoRoot, "docs", "index.yml");
 

@@ -27,7 +27,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
@@ -462,7 +462,7 @@ describe("starter prompt docs CTA", () => {
       expect(prompt).not.toMatch(/<https?:\/\//);
       expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
       expect(read("docs/index.mdx")).toContain(
-        'import { CommandTerminal } from ".././_components/CommandTerminal";\n\n<BadgeLinks',
+        'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
       );
 
       const content = read(page);

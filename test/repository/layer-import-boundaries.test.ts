@@ -46,7 +46,7 @@ describe("CLI layer import boundaries (#6245)", () => {
   it("collects TypeScript import-equals references (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/lib/domain", "import-equals"),
-      'import adapter = require("../../adapters/openshell/client");\nexport const value = adapter;\n',
+      'import adapter = require("../adapters/openshell/client");\nexport const value = adapter;\n',
     );
 
     expect(violations).toEqual(
@@ -122,7 +122,7 @@ describe("CLI layer import boundaries (#6245)", () => {
     {
       name: "the NemoClaw command base",
       source:
-        'import { NemoClawCommand as Base } from "../../lib/cli/nemoclaw-oclif-command";\nexport default class Example extends Base {}\n',
+        'import { NemoClawCommand as Base } from "../lib/cli/nemoclaw-oclif-command";\nexport default class Example extends Base {}\n',
     },
   ])("recognizes $name by its import binding (#6245)", ({ source }) => {
     const violations = scanFixture(fixturePath("src/commands", "command-binding"), source);
