@@ -158,6 +158,88 @@ async function inspectStartupCommand(
   return result.stdout.trim();
 }
 
+async function captureManagedGatewayState(
+  host: HostCliClient,
+  containerId: string,
+  artifactPrefix: string,
+) {
+  const nonce = randomBytes(32).toString("hex");
+  const managedControl = await host.command(
+    "docker",
+    [
+      "exec",
+      "--env",
+      "LD_PRELOAD=",
+      "--env",
+      "PYTHONPATH=",
+      "--user",
+      "root",
+      containerId,
+      "/usr/local/bin/nemoclaw-gateway-control",
+      "probe",
+      nonce,
+    ],
+    {
+      artifactName: `${artifactPrefix}-managed-control-after-recovery`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const processState = await host.command(
+    "docker",
+    ["top", containerId, "-eo", "pid,ppid,stat,user,comm"],
+    {
+      artifactName: `${artifactPrefix}-process-state-after-recovery`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  return { managedControl, nonce, processState };
+}
+
+function expectManagedGatewayState(
+  state: Awaited<ReturnType<typeof captureManagedGatewayState>>,
+): void {
+  expect(state.managedControl.timedOut, "managed control probe should complete before timeout").toBe(
+    false,
+  );
+  expect(state.managedControl.exitCode, "managed control probe should exit successfully").toBe(0);
+  expect(state.managedControl.stderr, "managed control probe should keep stderr empty").toBe("");
+  const controlProof = state.managedControl.stdout.match(
+    /^v1 ([0-9a-f]{64}) complete already-running ([1-9][0-9]*) \2\r?\nGATEWAY_PID=\2\r?\n?$/,
+  );
+  expect(
+    controlProof?.[1] === state.nonce,
+    "managed control should return the nonce-bound running proof",
+  ).toBe(true);
+  const gatewayPid = controlProof?.[2];
+  expect(
+    /^[1-9][0-9]*$/.test(gatewayPid ?? ""),
+    "managed control should report the gateway PID",
+  ).toBe(true);
+  expect(state.processState.timedOut, "process-state probe should complete before timeout").toBe(
+    false,
+  );
+  expect(state.processState.exitCode, "process-state probe should exit successfully").toBe(0);
+  expect(
+    /^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m.test(state.processState.stdout),
+    "process-state probe should return the expected columns",
+  ).toBe(true);
+  const gatewayProcess = state.processState.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .find(
+      (columns) =>
+        columns.length === 5 &&
+        columns[0] === gatewayPid &&
+        /^(?:bash|nemoclaw-start)$/.test(columns[4] ?? ""),
+    );
+  expect(
+    gatewayProcess !== undefined,
+    "process-state probe should include the reported gateway process",
+  ).toBe(true);
+}
+
 async function waitForSandboxExecReady(
   host: HostCliClient,
   sandboxName: string,
@@ -369,78 +451,10 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     redactionValues: [credentialCanary],
     timeoutMs: 240_000,
   });
-  const restartControlNonce = randomBytes(32).toString("hex");
-  const restartManagedControl = await host.command(
-    "docker",
-    [
-      "exec",
-      "--env",
-      "LD_PRELOAD=",
-      "--env",
-      "PYTHONPATH=",
-      "--user",
-      "root",
-      originalContainerId,
-      "/usr/local/bin/nemoclaw-gateway-control",
-      "probe",
-      restartControlNonce,
-    ],
-    {
-      artifactName: "restart-managed-control-after-recovery",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  const restartProcessState = await host.command(
-    "docker",
-    ["top", originalContainerId, "-eo", "pid,ppid,stat,user,comm"],
-    {
-      artifactName: "restart-process-state-after-recovery",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
+  const restartManagedState = await captureManagedGatewayState(host, originalContainerId, "restart");
   expect(trustedRecovery.timedOut, "trusted recovery should complete before timeout").toBe(false);
   expect(trustedRecovery.exitCode, "trusted recovery should exit successfully").toBe(0);
-  expect(
-    restartManagedControl.timedOut,
-    "managed control probe should complete before timeout",
-  ).toBe(false);
-  expect(restartManagedControl.exitCode, "managed control probe should exit successfully").toBe(0);
-  expect(restartManagedControl.stderr, "managed control probe should keep stderr empty").toBe("");
-  const restartControlProof = restartManagedControl.stdout.match(
-    /^v1 ([0-9a-f]{64}) complete already-running ([1-9][0-9]*) \2\r?\nGATEWAY_PID=\2\r?\n?$/,
-  );
-  expect(
-    restartControlProof?.[1] === restartControlNonce,
-    "managed control should return the nonce-bound running proof",
-  ).toBe(true);
-  const restartGatewayPid = restartControlProof?.[2];
-  expect(
-    /^[1-9][0-9]*$/.test(restartGatewayPid ?? ""),
-    "managed control should report the gateway PID",
-  ).toBe(true);
-  expect(restartProcessState.timedOut, "process-state probe should complete before timeout").toBe(
-    false,
-  );
-  expect(restartProcessState.exitCode, "process-state probe should exit successfully").toBe(0);
-  expect(
-    /^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m.test(restartProcessState.stdout),
-    "process-state probe should return the expected columns",
-  ).toBe(true);
-  const restartGatewayProcess = restartProcessState.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .find(
-      (columns) =>
-        columns.length === 5 &&
-        columns[0] === restartGatewayPid &&
-        /^(?:bash|nemoclaw-start)$/.test(columns[4] ?? ""),
-    );
-  expect(
-    restartGatewayProcess !== undefined,
-    "process-state probe should include the reported gateway process",
-  ).toBe(true);
+  expectManagedGatewayState(restartManagedState);
   const restartStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
@@ -567,8 +581,18 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     redactionValues: [legacyCredentialCanary],
     timeoutMs: 240_000,
   });
-  expect(legacyRecovery.timedOut, resultText(legacyRecovery)).toBe(false);
-  expect(legacyRecovery.exitCode, resultText(legacyRecovery)).toBe(0);
+  const legacyRecoveredContainerId = await findSandboxContainer(
+    host,
+    "legacy-restart-container-after",
+  );
+  const legacyManagedState = await captureManagedGatewayState(
+    host,
+    legacyRecoveredContainerId,
+    "legacy-restart",
+  );
+  expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
+  expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
+  expectManagedGatewayState(legacyManagedState);
   const legacyStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
@@ -577,10 +601,6 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   expect(legacyStateLockPlan.exitCode, resultText(legacyStateLockPlan)).toBe(0);
   expect(legacyStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
 
-  const legacyRecoveredContainerId = await findSandboxContainer(
-    host,
-    "legacy-restart-container-after",
-  );
   expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
   const legacyRecoveredStartupCommand = await inspectStartupCommand(
     host,

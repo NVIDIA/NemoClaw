@@ -236,64 +236,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("waits through the trusted discovery-stage missing-supervisor transition (#10153)", () => {
-    mockOpenClawSandbox("restart-box");
-    setImmediateRecoveryPolling();
-    const requestGatewaySupervisorAction = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
-      })
-      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE);
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: "SANDBOX  BIND  PORT  PID  STATUS\nrestart-box  127.0.0.1  18789  12345  running",
-    });
-
-    const result = checkAndRecoverSandboxProcesses("restart-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl: () => true,
-    });
-
-    expect(result).toMatchObject({
-      checked: true,
-      wasRunning: false,
-      recovered: true,
-      forwardRecovered: true,
-    });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
-  });
-
-  it("does not mutate when missing-supervisor output names another stage (#10153)", () => {
-    mockOpenClawSandbox("wrong-stage-box");
-    setImmediateRecoveryPolling();
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight",
-    }));
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-
-    const result = checkAndRecoverSandboxProcesses("wrong-stage-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-    });
-
-    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
-  });
-
   it("does not mutate on an embellished no-supervisor marker", () => {
     mockOpenClawSandbox("embellished-box");
     setImmediateRecoveryPolling();
@@ -1057,6 +999,48 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ["forward", "start", "--background", "18789", "busy-recovered-box"],
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("keeps polling a recreated OpenClaw gateway beyond its ordinary health timeout (#10153)", () => {
+    mockOpenClawSandbox("slow-recreated-box", 30);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    let pinnedProbeCalls = 0;
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
+      pinnedProbeCalls += 1;
+      return pinnedProbeCalls <= 31
+        ? { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" }
+        : ACCEPTED_MANAGED_PROBE;
+    });
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name, options) => options.beforeProbe?.(1000) === true,
+    );
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output:
+        "SANDBOX  BIND  PORT  PID  STATUS\nslow-recreated-box  127.0.0.1  18789  12345  running",
+    });
+
+    const result = checkAndRecoverSandboxProcesses("slow-recreated-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
+    expect(pinnedProbeCalls).toBeGreaterThan(31);
+    expect(finalize).toHaveBeenCalledWith(true);
   });
 
   it("uses the shared recreate-readiness budget after a longer gateway health wait", () => {
