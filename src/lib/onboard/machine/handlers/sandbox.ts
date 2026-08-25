@@ -368,6 +368,7 @@ export interface SandboxStateOptions<
       inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
+    finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -375,7 +376,11 @@ export interface SandboxStateOptions<
     ): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
-    skippedStepMessage(stepName: string, detail?: string | null): void;
+    skippedStepMessage(
+      stepName: string,
+      detail?: string | null,
+      reason?: "resume" | "reuse",
+    ): void;
     recordStateSkipped(
       state: "sandbox",
       metadata?: Record<string, unknown> | null,
@@ -1136,6 +1141,23 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
   }
 
+  private finalizeInferenceRouteReservation(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): void {
+    const sessionId = state.session?.sessionId;
+    if (
+      sessionId &&
+      this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)
+    ) {
+      return;
+    }
+    this.deps.error(
+      `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,
+    );
+    this.deps.exitProcess(1);
+  }
+
   private assertRegistryMessagingPlanUnchanged(
     sandboxName: string,
     expectedAuthority: RegistryMessagingAuthority,
@@ -1184,13 +1206,7 @@ class SandboxStateFlow<
         });
       }
       this.backfillReusedSandboxFidelity(state);
-      if (state.sandboxName) {
-        this.deps.updateSandboxRegistry(state.sandboxName, {
-          pendingRouteReservation: undefined,
-          reservationSessionId: undefined,
-        });
-      }
-      this.deps.skippedStepMessage("sandbox", state.sandboxName);
+      this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
         sandboxName: state.sandboxName,
@@ -1199,6 +1215,7 @@ class SandboxStateFlow<
         skippedSession,
         state.sandboxName,
       );
+      if (state.sandboxName) this.finalizeInferenceRouteReservation(state, state.sandboxName);
       return {
         ...state,
         session: recordedSession,
@@ -2099,6 +2116,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>

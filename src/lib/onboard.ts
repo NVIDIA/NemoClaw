@@ -3217,7 +3217,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
-
         sandbox: {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
@@ -3301,6 +3300,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+            finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>

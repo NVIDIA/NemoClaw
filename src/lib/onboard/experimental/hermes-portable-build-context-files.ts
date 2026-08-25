@@ -180,6 +180,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/types.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/built-ins.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/channel-health.ts", mode: "100644" },
+  { path: "src/lib/messaging/channels/discord/credential-injection.test.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/hooks/index.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/hooks/openclaw-bridge-health.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/manifest.ts", mode: "100644" },
