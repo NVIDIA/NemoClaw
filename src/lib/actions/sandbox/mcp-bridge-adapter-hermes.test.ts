@@ -6,10 +6,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  isShieldsDown: vi.fn(),
+  runOpenshellProviderCommand: vi.fn(),
+}));
+
+vi.mock("../../adapters/openshell/provider-command", () => ({
+  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+}));
+
+vi.mock("../../shields", () => ({
+  isShieldsDown: mocks.isShieldsDown,
+}));
 
 import type { McpBridgeEntry } from "../../state/registry";
 import {
+  assertHermesMcpMutationRuntimeCapability,
   buildHermesMcpExecArgs,
   buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
@@ -31,6 +45,15 @@ const baseEntry: McpBridgeEntry = {
 };
 
 describe("Hermes MCP config adapter", () => {
+  beforeEach(() => {
+    mocks.isShieldsDown.mockReset().mockReturnValue(true);
+    mocks.runOpenshellProviderCommand.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("constructs a Hermes config registration with placeholders", () => {
     const command = buildHermesMcpRegisterCommand(baseEntry);
 
@@ -83,6 +106,19 @@ describe("Hermes MCP config adapter", () => {
       headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
       replace_existing: false,
     });
+  });
+
+  it("uses the invoked CLI name in the managed-lifecycle recovery hint", () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "Hermes gateway is not running under the managed service lifecycle",
+    });
+
+    expect(() => assertHermesMcpMutationRuntimeCapability("hermes-box")).toThrow(
+      "Run `nemohermes hermes-box recover` and retry.",
+    );
   });
 
   it("accepts a revision on resumed inspection and rejects a stale exact revision (#10155)", () => {
