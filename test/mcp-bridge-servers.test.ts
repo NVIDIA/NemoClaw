@@ -118,6 +118,10 @@ describe("authenticated MCP live fixtures", () => {
       resolveResponse = resolve;
       rejectResponse = reject;
     });
+    const observedStatus = responseStatus.then(
+      (status) => ({ ok: true, status }) as const,
+      (error: unknown) => ({ error, ok: false }) as const,
+    );
     const slowRequest = https.request(
       `https://127.0.0.1:${server.port}/mcp`,
       {
@@ -151,7 +155,7 @@ describe("authenticated MCP live fixtures", () => {
     ).toBe(false);
 
     slowRequest.end(body.slice(1));
-    expect(await responseStatus).toBe(200);
+    expect(await observedStatus).toEqual({ ok: true, status: 200 });
     expect(server.requests).toHaveLength(1);
     expect(server.observations[observationOffset]).toBe(arrival);
     expect(server.requests[0]).toBe(arrival);

@@ -1118,14 +1118,14 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const initialDiscoveryRequestOffset = fakeMcp.requests.length;
-    const initialDiscoveryObservationOffset = fakeMcp.observations.length;
     const providerName = await addBridgeAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
+    const initialDiscoveryRequestOffset = fakeMcp.requests.length;
+    const initialDiscoveryObservationOffset = fakeMcp.observations.length;
     await runHermesInitialMcpReadiness({
       discover: () =>
         assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
