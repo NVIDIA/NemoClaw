@@ -570,6 +570,7 @@ async function collectDoctorChecks(
     ...gateway.checks,
     ...sandbox.checks,
     ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable, {
+      gatewayName,
       includeServingProcessCheck: shouldReportServingProcessHealth(sb?.agent),
     })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),

@@ -155,7 +155,9 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha");
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw",
+    });
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
   });
 
@@ -238,6 +240,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         provider: "openai-api",
         model: "gpt-5.2",
         preferredInferenceApi: null,
@@ -273,6 +276,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         provider: "compatible-endpoint",
         model: "nvidia/nemotron",
         preferredInferenceApi: "openai-responses",
