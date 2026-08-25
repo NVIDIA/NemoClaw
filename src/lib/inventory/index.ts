@@ -356,7 +356,7 @@ export async function getSandboxInventory(
 
   return {
     schemaVersion: 1,
-    defaultSandbox: resolvedDefault,
+    defaultSandbox: safeStatusString(resolvedDefault),
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
