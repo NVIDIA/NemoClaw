@@ -1992,7 +1992,7 @@ Use the same reason and idempotency key to reconcile the same request.
 A different idempotency key conflicts with the active fence.
 
 While the fence is active, commands that can reactivate, replace, restore, or upgrade the sandbox fail closed after they acquire the lifecycle lock.
-Status, doctor without `--fix`, and evidence collection remain available when they do not weaken the fence.
+Status, non-fixing doctor inspection, and evidence collection remain available when they do not weaken the fence.
 The existing `destroy` confirmation and exact-target cleanup contract remains available.
 
 Pass `--json` to return the result, fence, operation journal, and receipt metadata as JSON.
