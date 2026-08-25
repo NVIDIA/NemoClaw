@@ -92,22 +92,17 @@
       "category": "security"
     },
     {
-      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
-      "test": "pins $source to its current bytes",
-      "category": "security"
-    },
-    {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
     },
     {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"
     },
     {
-      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },
@@ -192,27 +187,27 @@
       "category": "security"
     },
     {
-      "file": "test/reviewed-hermes-platform-action.test.ts",
+      "file": "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test": "publishes the verified native manifest digest",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
       "category": "security"
     },
     {
-      "file": "test/repro-5978-policy-denial-hint.test.ts",
+      "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
     }

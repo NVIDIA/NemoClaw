@@ -1,0 +1,65 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  classifyIssue4434AcceptanceFields,
+  ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS,
+  type Issue4434AcceptanceFields,
+} from "../e2e/support/issue-4434-tui-capture.ts";
+
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
+const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.7.1";
+const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
+  "run error: LLM request timed out.",
+  "Cause: timed out while reaching the upstream API.",
+  "Reporting layer: gateway proxy / upstream API.",
+  "Recovery hint: check sandbox egress and provider reachability, then retry.",
+  "1m 04s | error",
+].join("\n");
+
+const UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
+  "run error: LLM request timed out.",
+  "1m 04s | error",
+].join("\n");
+
+type Issue4434AcceptanceField = keyof Issue4434AcceptanceFields;
+
+function readDockerfileOpenClawVersion(): string {
+  return fs.readFileSync(DOCKERFILE, "utf-8").match(/^ARG OPENCLAW_VERSION=([^\s]+)/m)?.[1] ?? "";
+}
+
+function detectIssue4434AcceptanceFields(
+  output: string,
+): Record<Issue4434AcceptanceField, boolean> {
+  return classifyIssue4434AcceptanceFields(output);
+}
+
+function missingIssue4434AcceptanceFields(output: string): Issue4434AcceptanceField[] {
+  const present = detectIssue4434AcceptanceFields(output);
+  return (Object.keys(ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS) as Issue4434AcceptanceField[]).filter(
+    (name) => !present[name],
+  );
+}
+
+describe("full OpenClaw TUI error guard (#4434)", () => {
+  it("requires the reviewed patched output to include all full-acceptance fields", () => {
+    expect(readDockerfileOpenClawVersion()).toBe(CURRENT_REVIEWED_OPENCLAW_VERSION);
+    expect(
+      detectIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+    ).toEqual({
+      httpStatusOrCause: true,
+      reportingLayer: true,
+      recoveryHint: true,
+    });
+    expect(
+      missingIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+    ).toEqual([]);
+    expect(
+      missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+    ).toEqual(["httpStatusOrCause", "reportingLayer", "recoveryHint"]);
+  });
+});
