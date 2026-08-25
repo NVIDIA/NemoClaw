@@ -297,6 +297,7 @@ function createPhases(
         }),
       ),
       createSandbox: vi.fn(async () => "created-sandbox"),
+      finalizeSandboxRouteReservation: vi.fn(() => true),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>

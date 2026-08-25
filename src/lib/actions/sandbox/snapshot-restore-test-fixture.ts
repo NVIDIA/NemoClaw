@@ -24,6 +24,7 @@ export type SandboxRecord = {
   name: string;
   createdAt?: string;
   pendingRouteReservation?: true;
+  reservationSessionId?: string;
   agent?: string | null;
   baselineExclusionTransition?: {
     id: string;

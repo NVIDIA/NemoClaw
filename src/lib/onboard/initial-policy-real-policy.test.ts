@@ -70,9 +70,7 @@ function filesystemPolicyAncestors(policyPath: string): string[] {
   const segments = normalizeFilesystemPolicyPath(policyPath).split("/").filter(Boolean);
   return [
     "/",
-    ...segments
-      .slice(0, -1)
-      .map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
+    ...segments.slice(0, -1).map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
   ];
 }
 
@@ -95,9 +93,7 @@ describe("initial sandbox policy real preset merge", () => {
       ["agents", "hermes", "policy-additions.yaml"],
       ["agents", "hermes", "policy-permissive.yaml"],
     ],
-    "langchain-deepagents-code": [
-      ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-    ],
+    "langchain-deepagents-code": [["agents", "langchain-deepagents-code", "policy-additions.yaml"]],
   } as const satisfies Record<
     (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
     readonly (readonly string[])[]
@@ -313,7 +309,11 @@ describe("initial sandbox policy real preset merge", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       [],
-      { agentName: "openclaw", additionalPresets: ["discord"] },
+      {
+        agentName: "openclaw",
+        additionalPresets: ["discord"],
+        sandboxName: "openclaw-discord",
+      },
     );
     const policy = readPreparedPolicy(prepared);
 
@@ -337,6 +337,18 @@ describe("initial sandbox policy real preset merge", () => {
       method: "DELETE",
       path: "/api/v*/guilds/*",
     });
+    const credentialEndpoints = (policy.network_policies?.discord?.endpoints ?? []).filter(
+      (endpoint) =>
+        endpoint.host === "discord.com" ||
+        endpoint.host === "gateway.discord.gg" ||
+        endpoint.host === "*.discord.gg",
+    );
+    expect(credentialEndpoints).toHaveLength(3);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      "openclaw-discord-discord-bridge",
+      "openclaw-discord-discord-bridge",
+      "openclaw-discord-discord-bridge",
+    ]);
   });
 
   it.each(shippingPolicyCases)(
@@ -485,15 +497,18 @@ describe("initial sandbox policy real preset merge", () => {
   it.each([
     ["missing", undefined],
     ["unsafe", "bad:provider"],
-  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
-    expect(() =>
-      prepareInitialSandboxCreatePolicy(
-        repoPath("agents", "hermes", "policy-additions.yaml"),
-        ["discord"],
-        { agentName: "hermes", sandboxName },
-      ),
-    ).toThrow("a valid sandbox name is required to materialize credential bindings");
-  });
+  ])(
+    "rejects a Hermes Discord create policy with a %s target sandbox name",
+    (_case, sandboxName) => {
+      expect(() =>
+        prepareInitialSandboxCreatePolicy(
+          repoPath("agents", "hermes", "policy-additions.yaml"),
+          ["discord"],
+          { agentName: "hermes", sandboxName },
+        ),
+      ).toThrow("a valid sandbox name is required to materialize credential bindings");
+    },
+  );
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(
     "keeps optional Claude hosts out of $agent create policy $path",
