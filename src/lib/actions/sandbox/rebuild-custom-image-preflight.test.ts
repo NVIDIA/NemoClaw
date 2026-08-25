@@ -316,6 +316,8 @@ describe("preflightRebuildImage", () => {
             isolatedConfig = String(options.env?.DOCKER_CONFIG);
             expect(isolatedConfig).toContain("nemoclaw-wsl-buildkit-docker-config-");
             expect(isolatedConfig).not.toBe(dockerConfig);
+            expect(options.env?.DOCKER_HOST).toBe("unix:///selected-docker.sock");
+            expect(options.env?.DOCKER_CONTEXT).toBeUndefined();
             expect(options.env?.DOCKER_BUILDKIT).toBe("1");
             expect(
               JSON.parse(fs.readFileSync(path.join(isolatedConfig, "config.json"), "utf8")),
@@ -323,7 +325,12 @@ describe("preflightRebuildImage", () => {
             return { status: 0 } as never;
           }),
           removeImage: vi.fn(() => ({ status: 0 }) as never),
-          env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
+          env: {
+            DOCKER_CONFIG: dockerConfig,
+            DOCKER_CONTEXT: "ambient-remote",
+            DOCKER_HOST: "unix:///selected-docker.sock",
+            WSL_DISTRO_NAME: "Ubuntu",
+          },
           credentialHelperResponds,
           isWslHost: true,
         }),
@@ -338,6 +345,90 @@ describe("preflightRebuildImage", () => {
       fs.rmSync(dockerConfig, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== "win32")(
+    "uses the isolated config across the WSL helper and Docker subprocess boundary (#7111)",
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-rebuild-process-"));
+      const executableRoot = path.join(root, "bin");
+      const dockerConfig = path.join(root, "docker-config");
+      const buildCtx = path.join(root, "context");
+      const dockerfile = path.join(buildCtx, "Dockerfile");
+      const helperMarker = path.join(root, "helper-invoked");
+      const dockerMarker = path.join(root, "docker-config-used");
+      fs.mkdirSync(executableRoot);
+      fs.mkdirSync(dockerConfig);
+      fs.mkdirSync(buildCtx);
+      fs.writeFileSync(dockerfile, "FROM scratch\n");
+      fs.writeFileSync(
+        path.join(dockerConfig, "config.json"),
+        JSON.stringify({
+          auths: { "registry.example.com": { auth: "must-remain-private" } },
+          credsStore: "desktop.exe",
+        }),
+      );
+      fs.writeFileSync(
+        path.join(executableRoot, "docker-credential-desktop.exe"),
+        ["#!/bin/sh", `printf 'invoked\\n' > "${helperMarker}"`, "exit 1", ""].join("\n"),
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(executableRoot, "docker"),
+        [
+          "#!/bin/sh",
+          "set -eu",
+          'if [ "$1" = "build" ]; then',
+          '  [ "$DOCKER_HOST" = "unix:///selected-docker.sock" ]',
+          '  [ -z "${DOCKER_CONTEXT+x}" ]',
+          '  [ -n "${DOCKER_CONFIG:-}" ]',
+          `  [ "$DOCKER_CONFIG" != "${dockerConfig}" ]`,
+          '  grep -Fqx \'{"auths":{}}\' "$DOCKER_CONFIG/config.json"',
+          `  printf '%s\\n' "$DOCKER_CONFIG" > "${dockerMarker}"`,
+          "fi",
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      vi.stubEnv(
+        "PATH",
+        `${executableRoot}${path.delimiter}${String(process.env.PATH ?? "")}`,
+      );
+
+      try {
+        const result = successful(
+          await preflightRebuildImage(input(null), {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx,
+              stagedDockerfile: dockerfile,
+              cleanupBuildCtx: () => true,
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "wsl-process-boundary",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            })),
+            env: {
+              DOCKER_CONFIG: dockerConfig,
+              DOCKER_CONTEXT: "ambient-remote",
+              DOCKER_HOST: "unix:///selected-docker.sock",
+              WSL_DISTRO_NAME: "Ubuntu",
+            },
+            isWslHost: true,
+          }),
+        );
+
+        expect(fs.readFileSync(helperMarker, "utf8")).toBe("invoked\n");
+        const isolatedConfig = fs.readFileSync(dockerMarker, "utf8").trim();
+        expect(isolatedConfig).toContain("nemoclaw-wsl-buildkit-docker-config-");
+        expect(fs.existsSync(isolatedConfig)).toBe(false);
+        expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves Docker credentials while building the exact staged custom context", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-"));

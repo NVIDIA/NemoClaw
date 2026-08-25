@@ -35,6 +35,7 @@ const DOCKER_ENV_NAMES = [
   "DOCKER_CERT_PATH",
   "DOCKER_CONFIG",
   "DOCKER_CONTEXT",
+  "DOCKER_HOST",
   "DOCKER_TLS_VERIFY",
 ] as const;
 
@@ -177,6 +178,13 @@ export function dockerBuildSubprocessEnv(
     ) {
       delete env[key];
     }
+  }
+  // Match the runner and Docker probe contract: an explicitly selected host
+  // owns daemon authority, so an ambient context and its credentials must not
+  // redirect the build to another daemon.
+  if (env.DOCKER_HOST !== undefined) {
+    delete env.DOCKER_CONFIG;
+    delete env.DOCKER_CONTEXT;
   }
   return env;
 }
