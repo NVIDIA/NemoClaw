@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   listBuiltInMessagingChannelManifests,
@@ -19,6 +20,23 @@ type PolicyFixture = {
   readonly channelId: string;
   readonly presetName: string;
 };
+
+type PolicyRule = { readonly allow?: { readonly method?: string; readonly path?: string } };
+type PolicyEndpoint = {
+  readonly host?: string;
+  readonly credential_binding?: { readonly provider?: string };
+  readonly rules?: readonly PolicyRule[];
+};
+
+const OPENCLAW_CREDENTIAL_ROUTE_CASES = [
+  ["Telegram API", "telegram", "api.telegram.org", "/bot*/**", "telegram-bridge"],
+  ["Slack bot API", "slack", "slack.com", "/**", "slack-bridge"],
+  ["Slack Socket Mode API", "slack", "slack.com", "/api/apps.connections.open", "slack-app"],
+  ["Slack API reference", "slack", "api.slack.com", "/**", "slack-bridge"],
+  ["Slack webhooks", "slack", "hooks.slack.com", "/**", "slack-bridge"],
+  ["Slack primary socket", "slack", "wss-primary.slack.com", "/**", "slack-app"],
+  ["Slack backup socket", "slack", "wss-backup.slack.com", "/**", "slack-app"],
+] as const;
 
 function fixtureContentFor(
   file: string,
@@ -41,6 +59,18 @@ function createPolicyWithFixtures(
     readFileSync: (file) => fixtureContentFor(file, filesByChannel) ?? "",
     listPresetMetadata: () => presets,
   });
+}
+
+function loadedPolicyEndpoints(presetName: string, sandboxName: string): PolicyEndpoint[] {
+  const content = loadMessagingChannelPolicyPreset(presetName, {
+    agent: "openclaw",
+    sandboxName,
+  });
+  expect(content, `no OpenClaw ${presetName} policy preset`).toBeTruthy();
+  const parsed = YAML.parse(content ?? "") as {
+    network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
+  };
+  return Object.values(parsed.network_policies ?? {}).flatMap((policy) => policy.endpoints ?? []);
 }
 
 describe("messaging channel policy presets", () => {
@@ -139,4 +169,18 @@ describe("messaging channel policy presets", () => {
     );
     expect(missing).toEqual([]);
   });
+
+  it.each(OPENCLAW_CREDENTIAL_ROUTE_CASES)(
+    "sets the OpenClaw %s endpoint rule credential binding to its provider profile (#10153)",
+    (_route, presetName, host, rulePath, providerSuffix) => {
+      const sandboxName = "msg-binding-e2e";
+      const endpoint = loadedPolicyEndpoints(presetName, sandboxName).find(
+        (candidate) =>
+          candidate.host === host && candidate.rules?.some((rule) => rule.allow?.path === rulePath),
+      );
+      expect(endpoint).toMatchObject({
+        credential_binding: { provider: `${sandboxName}-${providerSuffix}` },
+      });
+    },
+  );
 });
