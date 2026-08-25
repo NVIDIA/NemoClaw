@@ -510,6 +510,26 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it("does not report a registered gateway binding for an unregistered sandbox name (#10230)", async () => {
+    const harness = createDoctorHarness("ollama-local", { registryEntry: "missing" });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    // resolveDoctorGatewayName falls back to the ambient default gateway for
+    // an unregistered sandbox name, so the Gateway section still runs — but
+    // it must not claim a registered binding that does not exist.
+    expect(
+      report?.checks.some(
+        (check) => check.group === "Gateway" && check.label === "Registered gateway binding",
+      ),
+    ).toBe(false);
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
+      ]),
+    );
+  });
+
   it("fails the JSON host check for an unknown durable runtime provider", async () => {
     const harness = createDoctorHarness();
     harness.getSandboxSpy.mockReturnValue({
