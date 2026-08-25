@@ -19,10 +19,7 @@ import type {
 import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
-export {
-  assertLegacyMcpPolicyRestoreSafe,
-  isManagedMcpPolicyKey,
-} from "./mcp-policy-transition";
+export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
 
 import {
   composeDeadlineManagedMcpPolicies,
@@ -92,9 +89,9 @@ export interface PermissiveRuntimeDeps {
   // coordinator. These entries remain active while the static policy replaces
   // the rest of the complete gateway policy.
   managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
-  // Hermes permissive Discord routes carry a sandbox-scoped credential
-  // binding. Supplying the target name makes composition fail closed unless
-  // every placeholder can be materialized before the policy is staged.
+  // Hermes permissive messaging routes carry sandbox-scoped credential
+  // bindings. Supplying the target name makes composition fail closed unless
+  // every retained placeholder can be materialized before the policy is staged.
   sandboxName?: string;
 }
 
@@ -106,11 +103,16 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  const discordProviderName = deps.sandboxName
-    ? `${deps.sandboxName}-discord-bridge`
-    : null;
+  const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
+  const slackProviderNames = deps.sandboxName
+    ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
+    : [];
   const preserveDiscordBinding =
     discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
+  const preserveSlackBinding =
+    slackProviderNames.length > 0 &&
+    networkPolicyUsesExactCredentialProviders(live, "slack", slackProviderNames);
+  const preserveCredentialBinding = preserveDiscordBinding || preserveSlackBinding;
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -141,14 +143,7 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined && preserveDiscordBinding) {
-    const materialized = materializeMessagingPolicySandboxName(baseYaml, deps.sandboxName);
-    if (materialized === null) {
-      throw new Error("Cannot materialize the Shields-down credential provider binding");
-    }
-    baseYaml = materialized;
-  }
-  const base = safeYamlObject(baseYaml);
+  let base = safeYamlObject(baseYaml);
   if (!base) {
     if (managedMcpPolicies.length > 0) {
       throw new Error("Cannot parse the Shields-down policy while managed MCP policies are active");
@@ -158,10 +153,25 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined && !preserveDiscordBinding) {
+  if (deps.sandboxName !== undefined) {
     const networkPolicies = base.network_policies;
     if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
-      delete (networkPolicies as Record<string, unknown>).discord;
+      const policies = networkPolicies as Record<string, unknown>;
+      if (!preserveDiscordBinding) delete policies.discord;
+      if (!preserveSlackBinding) delete policies.slack;
+    }
+  }
+  if (deps.sandboxName !== undefined && preserveCredentialBinding) {
+    const materialized = materializeMessagingPolicySandboxName(
+      YAML.stringify(base),
+      deps.sandboxName,
+    );
+    if (materialized === null) {
+      throw new Error("Cannot materialize the Shields-down credential provider binding");
+    }
+    base = safeYamlObject(materialized);
+    if (!base) {
+      throw new Error("Cannot parse the materialized Shields-down credential provider binding");
     }
   }
   const fsPolicy =
@@ -376,6 +386,35 @@ function policyUsesCredentialProvider(
     }
   }
   return false;
+}
+
+function networkPolicyUsesExactCredentialProviders(
+  policy: Record<string, unknown> | null,
+  policyName: string,
+  providerNames: readonly string[],
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
+  if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+    return false;
+  }
+  const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+  if (!Array.isArray(endpoints)) return false;
+  const liveProviders = new Set<string>();
+  for (const endpoint of endpoints) {
+    if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+    const binding = (endpoint as Record<string, unknown>).credential_binding;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+    const provider = (binding as Record<string, unknown>).provider;
+    if (typeof provider === "string") liveProviders.add(provider);
+  }
+  return (
+    liveProviders.size === providerNames.length &&
+    providerNames.every((providerName) => liveProviders.has(providerName))
+  );
 }
 
 function readStringList(
