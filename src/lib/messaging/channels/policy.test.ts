@@ -24,6 +24,8 @@ type PolicyFixture = {
 type PolicyRule = { readonly allow?: { readonly method?: string; readonly path?: string } };
 type PolicyEndpoint = {
   readonly host?: string;
+  readonly path?: string;
+  readonly port?: number;
   readonly credential_binding?: { readonly provider?: string };
   readonly rules?: readonly PolicyRule[];
 };
@@ -71,6 +73,10 @@ function loadedPolicyEndpoints(presetName: string, sandboxName: string): PolicyE
     network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
   };
   return Object.values(parsed.network_policies ?? {}).flatMap((policy) => policy.endpoints ?? []);
+}
+
+function endpointPathSpecificity(endpoint: PolicyEndpoint): number {
+  return [...(endpoint.path ?? "")].filter((character) => character !== "*").length;
 }
 
 describe("messaging channel policy presets", () => {
@@ -183,4 +189,23 @@ describe("messaging channel policy presets", () => {
       });
     },
   );
+
+  it("selects the Slack app provider with a more specific endpoint path (#10153)", () => {
+    const sandboxName = "msg-binding-e2e";
+    const endpoints = loadedPolicyEndpoints("slack", sandboxName).filter(
+      (endpoint) => endpoint.host === "slack.com" && endpoint.port === 443,
+    );
+    const appEndpoint = endpoints.find(
+      (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-slack-app`,
+    );
+    const botEndpoint = endpoints.find(
+      (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-slack-bridge`,
+    );
+
+    expect(appEndpoint).toMatchObject({ path: "/api/apps.connections.open" });
+    expect(botEndpoint?.path ?? "").toBe("");
+    expect(endpointPathSpecificity(appEndpoint ?? {})).toBeGreaterThan(
+      endpointPathSpecificity(botEndpoint ?? {}),
+    );
+  });
 });
