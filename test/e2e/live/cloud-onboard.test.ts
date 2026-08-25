@@ -223,7 +223,6 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   );
   expect(install.exitCode, resultText(install)).toBe(0);
   assertStockManagedImageReceipt({
-    commandOutput: resultText(install),
     environment: testEnv(),
     expectedAgent: "openclaw",
     sandboxName: SANDBOX_NAME,

@@ -252,7 +252,6 @@ function mockSandboxExecCurl(command, options = {}) {
 }
 
 function mockOnboardRunCapture(command, options = {}) {
-  mockCustomDockerfilePluginDiscovery();
   const normalized = normalizeCommand(command);
   if (
     normalized.startsWith("docker ps -a --no-trunc ") &&
@@ -278,33 +277,6 @@ function mockOnboardRunCapture(command, options = {}) {
     return "ldd (GNU libc) 2.41";
   }
   return mockSandboxExecCurl(command, options);
-}
-
-let customDockerfilePluginDiscoveryMocked = false;
-function mockCustomDockerfilePluginDiscovery() {
-  if (
-    customDockerfilePluginDiscoveryMocked ||
-    (process.argv[1] || "").toLowerCase().includes("/node_modules/vitest/")
-  ) {
-    return;
-  }
-  customDockerfilePluginDiscoveryMocked = true;
-  const childProcess = require("node:child_process");
-  const originalSpawnSync = childProcess.spawnSync;
-  childProcess.spawnSync = (command, args, options) => {
-    const normalized = normalizeCommand([command, ...(Array.isArray(args) ? args : [])]);
-    if (command === "ssh" && normalized.includes("installed_plugin_index")) {
-      return {
-        status: 0,
-        signal: null,
-        stdout: Buffer.from(
-          JSON.stringify({ version: 1, installRecords: {}, loadPaths: [] }),
-        ),
-        stderr: Buffer.alloc(0),
-      };
-    }
-    return originalSpawnSync(command, args, options);
-  };
 }
 
 function mockStructuredOpenShellCaptureFromRunner() {
@@ -593,7 +565,6 @@ module.exports = {
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
-  mockCustomDockerfilePluginDiscovery,
   mockFreshOpenClawPluginDiscovery,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,

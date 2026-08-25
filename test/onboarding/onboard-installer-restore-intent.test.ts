@@ -80,7 +80,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -161,8 +161,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
 
   // Prove the recreated + restored sandbox is reachable through the real
@@ -200,6 +199,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       NEMOCLAW_SANDBOX_PREBUILD: "1",
     };
     delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -323,7 +323,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "";
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "my-assistant 127.0.0.1 28789 12345 running";
   }
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
     defaultCurlOutput: "ok",
@@ -350,8 +350,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
   try {
     await createSandbox(
-      null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+      null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
     );
     console.log(JSON.stringify({ error: null, mutations }));
   } catch (caught) {
@@ -370,6 +369,8 @@ const { createSandbox } = require(${onboardPath});
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
+        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
         NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
         NEMOCLAW_TEST_REGISTRY_RACE: race,
       },
@@ -427,7 +428,7 @@ runner.runCapture = (command) => {
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (_n(command).includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "my-assistant 127.0.0.1 28789 12345 running";
   }
   return "";
 };
@@ -450,8 +451,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
@@ -466,6 +466,8 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SANDBOX_PREBUILD: "1",
+      NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
     };
     delete env["NEMOCLAW_RECREATE_SANDBOX"];
     delete env["NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE"];

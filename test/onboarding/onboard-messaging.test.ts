@@ -539,7 +539,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
@@ -556,7 +556,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_EXTRA_PLACEHOLDER_KEYS = "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B,GITHUB_TOKEN";
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["slack", "telegram", "whatsapp"])})).toString("base64");
   Object.values(credentialKeys).forEach((key) => delete process.env[key]); delete process.env.GITHUB_TOKEN;
-  const sandboxName = await createSandbox(null, "custom/model", "compatible-endpoint", null, "my-assistant", null, ["slack", "telegram", "whatsapp"], ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))});
+  const sandboxName = await createSandbox(null, "custom/model", "compatible-endpoint", null, "my-assistant", null, ["slack", "telegram", "whatsapp"], null, null, 28789);
   console.log(JSON.stringify({ sandboxName, commands, registered }));
 })().catch((error) => { const temporaryCreateSources = require("node:fs").readdirSync(process.env.TMPDIR).filter((entry) => entry.startsWith("nemoclaw-initial-policy-") || entry.startsWith("nemoclaw-build-")); console.log(JSON.stringify({ commands, registered, error: String(error), providerRevisions: Object.fromEntries(revisions), temporaryCreateSources })); console.error(error); process.exit(1); });
 `;
@@ -1251,7 +1251,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.DISCORD_BOT_TOKEN = "test-discord-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-token";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1348,7 +1348,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1380,7 +1380,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   // Only enable telegram — discord and slack should be filtered out
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], null, null, 28789);
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1481,7 +1481,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1513,7 +1513,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   // Empty array — user deselected all channels
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [], ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [], null, null, 28789);
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);

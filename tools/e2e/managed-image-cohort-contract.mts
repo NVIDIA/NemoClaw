@@ -113,6 +113,10 @@ function validatePlatformEvidence(
     publicationEvidence.workloadDescriptor,
     `${expected.agent} ${expected.platform} workload descriptor`,
   );
+  const workloadDigest = digest(
+    workloadDescriptor.digest,
+    `${expected.agent} ${expected.platform} workload digest`,
+  );
   const workloadPlatform = record(
     workloadDescriptor.platform,
     `${expected.agent} ${expected.platform} workload platform`,
@@ -129,8 +133,30 @@ function validatePlatformEvidence(
     publicationEvidence.attestations,
     `${expected.agent} ${expected.platform} attestations`,
   );
+  const manifestDescriptor = record(
+    attestations.manifestDescriptor,
+    `${expected.agent} ${expected.platform} attestation manifest descriptor`,
+  );
+  const manifestAnnotations = record(
+    manifestDescriptor.annotations,
+    `${expected.agent} ${expected.platform} attestation manifest annotations`,
+  );
+  exactString(
+    manifestAnnotations["vnd.docker.reference.digest"],
+    workloadDigest,
+    `${expected.agent} ${expected.platform} attestation manifest workload digest`,
+  );
   const slsa = record(attestations.slsa, `${expected.agent} ${expected.platform} SLSA evidence`);
   const statement = record(slsa.statement, `${expected.agent} ${expected.platform} SLSA statement`);
+  const slsaSubject = record(
+    statement.subject,
+    `${expected.agent} ${expected.platform} SLSA subject`,
+  );
+  exactString(
+    slsaSubject.digest,
+    workloadDigest,
+    `${expected.agent} ${expected.platform} SLSA subject workload digest`,
+  );
   exactString(
     statement.builderId,
     `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/${expected.runAttempt}`,
@@ -157,6 +183,20 @@ function validatePlatformEvidence(
     bindings.baseReference,
     baseReference,
     `${expected.agent} ${expected.platform} base reference binding`,
+  );
+  const spdx = record(attestations.spdx, `${expected.agent} ${expected.platform} SPDX evidence`);
+  const spdxStatement = record(
+    spdx.statement,
+    `${expected.agent} ${expected.platform} SPDX statement`,
+  );
+  const spdxSubject = record(
+    spdxStatement.subject,
+    `${expected.agent} ${expected.platform} SPDX subject`,
+  );
+  exactString(
+    spdxSubject.digest,
+    workloadDigest,
+    `${expected.agent} ${expected.platform} SPDX subject workload digest`,
   );
 }
 

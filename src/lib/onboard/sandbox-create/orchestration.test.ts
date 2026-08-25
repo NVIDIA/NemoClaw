@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
+import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import { createManagedHermesStateVolumeOnboardLifecycle } from "../managed-workload/onboard-orchestration";
 import {
   applyAbsentSandboxRebuildPolicyCarryForward,
   cleanupRecreatedSourceHermesStateVolume,
@@ -51,7 +53,28 @@ function hermesVolumeCleanupDeps(
 }
 
 describe("recreated managed Hermes state volume", () => {
-  it("preserves the volume when the replacement keeps the managed Docker Hermes lifecycle", () => {
+  it("preserves the volume when managed Docker Hermes replaces managed Docker Hermes", () => {
+    const docker = createHermesStateVolumeDockerHarness({
+      name: "nemoclaw-hermes-state-v1-alpha",
+      labels: {
+        "io.nvidia.nemoclaw.hermes-state.managed": "true",
+        "io.nvidia.nemoclaw.hermes-state.schema": "1",
+        "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+        "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+      },
+    });
+    const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      {
+        runDocker: docker.runDocker as never,
+        registerExitCleanup: () => vi.fn(),
+      },
+    );
     const removeManagedHermesStateVolume =
       vi.fn<HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]>();
     const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
@@ -60,37 +83,61 @@ describe("recreated managed Hermes state volume", () => {
       {
         sandboxName: "alpha",
         sourceEntry: managedHermesSource(),
-        targetKeepsManagedHermesStateVolume: true,
+        targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
       },
       deps,
     );
 
+    expect(targetLifecycle).not.toBeNull();
+    expect(docker.calls.some((args) => args[0] === "create")).toBe(false);
     expect(removeManagedHermesStateVolume).not.toHaveBeenCalled();
+    targetLifecycle?.commit();
   });
 
-  it("removes the owned volume when the replacement changes its lifecycle", () => {
-    const removeManagedHermesStateVolume = vi.fn<
-      HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
-    >(() => ({ status: "removed" as const }));
-    const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
+  it.each([
+    ["OpenClaw", "openclaw", "docker", "managed-image"],
+    ["custom Dockerfile Hermes", "hermes", "docker", "legacy-dockerfile"],
+    ["managed-image Hermes on a non-Docker runtime", "hermes", "kubernetes", "managed-image"],
+  ])(
+    "removes the owned volume when managed Docker Hermes changes to %s",
+    (_replacement, agentName, runtimeProviderId, workloadKind) => {
+      const runDocker = vi.fn(() => {
+        throw new Error("a replacement that does not own the volume must not access Docker");
+      });
+      const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+        {
+          agentName,
+          runtimeProvider: { identity: { id: runtimeProviderId } } as never,
+          sandboxName: "alpha",
+          workloadKind,
+        },
+        { runDocker: runDocker as never },
+      );
+      const removeManagedHermesStateVolume = vi.fn<
+        HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
+      >(() => ({ status: "removed" as const }));
+      const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
 
-    cleanupRecreatedSourceHermesStateVolume(
-      {
+      cleanupRecreatedSourceHermesStateVolume(
+        {
+          sandboxName: "alpha",
+          sourceEntry: managedHermesSource(),
+          targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
+        },
+        deps,
+      );
+
+      expect(targetLifecycle).toBeNull();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(removeManagedHermesStateVolume).toHaveBeenCalledExactlyOnceWith({
+        agentName: "hermes",
+        runtimeProviderId: "docker",
         sandboxName: "alpha",
-        sourceEntry: managedHermesSource(),
-        targetKeepsManagedHermesStateVolume: false,
-      },
-      deps,
-    );
-
-    expect(removeManagedHermesStateVolume).toHaveBeenCalledExactlyOnceWith({
-      agentName: "hermes",
-      runtimeProviderId: "docker",
-      sandboxName: "alpha",
-      workloadKind: "managed-image",
-    });
-    expect(deps.note).toHaveBeenCalledWith("  Removed managed Hermes state volume for 'alpha'.");
-  });
+        workloadKind: "managed-image",
+      });
+      expect(deps.note).toHaveBeenCalledWith("  Removed managed Hermes state volume for 'alpha'.");
+    },
+  );
 
   it("leaves a foreign same-name volume untouched", () => {
     const removeManagedHermesStateVolume = vi.fn<

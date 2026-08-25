@@ -201,18 +201,6 @@ describe("stock E2E managed-image receipt assertion", () => {
     ).toThrow("exact agent image from the selected cohort");
   });
 
-  it("rejects the stock fallback diagnostic before later probes", () => {
-    const home = writeRegistry(managedReceipt());
-
-    expect(() =>
-      assertStockManagedImageReceipt({
-        commandOutput: "Managed image unavailable; using the trusted Dockerfile recipe.",
-        environment: { E2E_MANAGED_IMAGE_REVISION: REVISION, HOME: home },
-        sandboxName: SANDBOX_NAME,
-      }),
-    ).toThrow("fallback diagnostic");
-  });
-
   it("asserts normal stock onboarding and excludes an explicit custom Dockerfile", () => {
     expect(
       shouldAssertStockManagedImageReceipt("/workspace/bin/nemoclaw.js", ["onboard"], {

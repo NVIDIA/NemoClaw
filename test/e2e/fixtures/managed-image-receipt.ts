@@ -19,7 +19,6 @@ import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/wor
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-const FALLBACK_DIAGNOSTIC = "Managed image unavailable; using the trusted Dockerfile recipe.";
 
 export function assertManagedImageReceiptMatchesSelectedCohort(options: {
   readonly environment: NodeJS.ProcessEnv;
@@ -110,7 +109,6 @@ function gatewayPort(environment: NodeJS.ProcessEnv): number {
 
 /** Assert the durable receipt before an E2E test begins post-onboarding probes. */
 export function assertStockManagedImageReceipt(options: {
-  readonly commandOutput?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly expectedAgent?: string;
   readonly sandboxName: string;
@@ -120,10 +118,6 @@ export function assertStockManagedImageReceipt(options: {
   if (!REVISION_PATTERN.test(revision)) {
     throw new Error("stock onboarding requires one exact managed-image cohort revision");
   }
-  if (options.commandOutput?.includes(FALLBACK_DIAGNOSTIC)) {
-    throw new Error("stock onboarding emitted a legacy Dockerfile fallback diagnostic");
-  }
-
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(
     nemoclawStateRoot(home, gatewayPort(environment)),

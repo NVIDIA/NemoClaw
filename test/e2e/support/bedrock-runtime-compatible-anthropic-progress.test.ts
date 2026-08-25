@@ -54,27 +54,6 @@ afterEach(async () => {
 });
 
 describe("Bedrock raw-command progress", () => {
-  it("rejects a stock legacy Dockerfile at the raw spawn boundary", async () => {
-    const artifacts = await artifactSink("bedrock-workload-source");
-    const observation = progressProbe();
-    await expect(
-      runRawCommand(
-        process.execPath,
-        ["-e", "process.stdout.write(process.env.NEMOCLAW_FROM_DOCKERFILE ?? '')"],
-        {
-          artifactName: "bedrock-workload-source",
-          artifacts,
-          env: {
-            E2E_TARGET_ID: "inference-routing",
-            E2E_WORKLOAD_SOURCE: "legacy-dockerfile",
-            NEMOCLAW_AGENT: "langchain-deepagents-code",
-          },
-          progress: observation.progress,
-        },
-      ),
-    ).rejects.toThrow("cannot select a stock legacy Dockerfile");
-  });
-
   it("reports timestamp-only output activity without forwarding child payloads", async () => {
     const secret = "opaque-bedrock-progress-secret";
     const artifacts = await artifactSink("bedrock-progress-output");

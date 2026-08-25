@@ -287,7 +287,6 @@ fi`,
     await artifacts.writeText("install-jetson-nvmap.log", resultText(install));
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
-      commandOutput: resultText(install),
       environment: env(inferenceEnv),
       expectedAgent: "openclaw",
       sandboxName: SANDBOX_NAME,

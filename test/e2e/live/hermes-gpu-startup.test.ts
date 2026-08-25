@@ -459,7 +459,6 @@ test(
       : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
-      commandOutput: resultText(install),
       environment: env,
       expectedAgent: "hermes",
       sandboxName: SANDBOX_NAME,

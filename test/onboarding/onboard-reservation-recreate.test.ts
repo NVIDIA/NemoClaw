@@ -82,7 +82,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -134,8 +134,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {

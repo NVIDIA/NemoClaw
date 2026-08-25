@@ -237,7 +237,7 @@ describe("managed workload onboard orchestration", () => {
       },
     );
 
-    lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
+    lifecycle!.materializeSandboxCreatePlan({} as never, (input) => {
       expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
       return {} as never;
     });

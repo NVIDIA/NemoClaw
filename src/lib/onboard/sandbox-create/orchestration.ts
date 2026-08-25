@@ -1119,10 +1119,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             dependencies: {
               materializeSandboxCreatePlan: (input) =>
-                hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
-                  input,
-                  sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
-                ),
+                hermesStateVolumeLifecycle
+                  ? hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
+                      input,
+                      sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
+                    )
+                  : sandboxCreatePlanMaterialization.materializeSandboxCreatePlan(input),
               prepareSandboxBuildPatchConfig:
                 sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig,
             },
@@ -1390,7 +1392,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
     }
-    hermesStateVolumeLifecycle.commit();
+    hermesStateVolumeLifecycle?.commit();
     if ("complete" in recreateRuntime) recreateRuntime.complete();
     if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
     return completeOrdinaryOnboardSandboxCreation(

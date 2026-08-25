@@ -15,6 +15,16 @@ const RUN_ATTEMPT = 1;
 const COHORT = `ghrun-${RUN_ID}-${RUN_ATTEMPT}`;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 type JsonObject = Record<string, unknown>;
+type PlatformPublication = {
+  publicationEvidence: {
+    workloadDescriptor: JsonObject;
+    attestations: {
+      manifestDescriptor: { annotations: JsonObject };
+      slsa: { statement: { bindings: JsonObject; subject: JsonObject } };
+      spdx: { statement: { subject: JsonObject } };
+    };
+  };
+};
 
 function digest(index: number): `sha256:${string}` {
   return `sha256:${(index % 15).toString(16).repeat(64)}`;
@@ -52,15 +62,44 @@ function cohortContract(): Record<string, unknown> {
                     reference: `${image}@${platformDigest}`,
                     baseReference,
                     publicationEvidence: {
-                      candidateDescriptor: { digest: platformDigest },
+                      candidateDescriptor: {
+                        digest: platformDigest,
+                        mediaType: "application/vnd.oci.image.index.v1+json",
+                        size: 100,
+                      },
                       workloadDescriptor: {
                         digest: workloadDigest,
+                        mediaType: "application/vnd.oci.image.manifest.v1+json",
                         platform: { os, architecture },
+                        size: 200,
                       },
                       attestations: {
+                        manifestDescriptor: {
+                          annotations: {
+                            "vnd.docker.reference.digest": workloadDigest,
+                            "vnd.docker.reference.type": "attestation-manifest",
+                          },
+                          digest: digest(agentIndex + platformIndex + 12),
+                          mediaType: "application/vnd.oci.image.manifest.v1+json",
+                          platform: { os: "unknown", architecture: "unknown" },
+                          size: 300,
+                        },
                         slsa: {
+                          descriptor: {
+                            annotations: {
+                              "in-toto.io/predicate-type": "https://slsa.dev/provenance/v1",
+                            },
+                            digest: digest(agentIndex + platformIndex + 13),
+                            mediaType: "application/vnd.in-toto+json",
+                            size: 400,
+                          },
                           statement: {
+                            type: "https://in-toto.io/Statement/v1",
+                            predicateType: "https://slsa.dev/provenance/v1",
+                            buildType:
+                              "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
                             builderId: `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}`,
+                            subject: { name: image, digest: workloadDigest },
                             bindings: {
                               agent,
                               baseReference,
@@ -69,6 +108,21 @@ function cohortContract(): Record<string, unknown> {
                               revision: REVISION,
                               source: "https://github.com/NVIDIA/NemoClaw",
                             },
+                          },
+                        },
+                        spdx: {
+                          descriptor: {
+                            annotations: {
+                              "in-toto.io/predicate-type": "https://spdx.dev/Document",
+                            },
+                            digest: digest(agentIndex + platformIndex + 14),
+                            mediaType: "application/vnd.in-toto+json",
+                            size: 500,
+                          },
+                          statement: {
+                            type: "https://in-toto.io/Statement/v1",
+                            predicateType: "https://spdx.dev/Document",
+                            subject: { name: image, digest: workloadDigest },
                           },
                         },
                       },
@@ -82,6 +136,11 @@ function cohortContract(): Record<string, unknown> {
       }),
     ),
   };
+}
+
+function platformPublication(value: Record<string, unknown>): PlatformPublication {
+  const agents = value.agents as Record<string, { platforms: Record<string, PlatformPublication> }>;
+  return agents.openclaw.platforms["linux/amd64"];
 }
 
 describe("managed-image cohort publication contract", () => {
@@ -158,5 +217,53 @@ describe("managed-image cohort publication contract", () => {
         runId: RUN_ID,
       }),
     ).toThrow("revision must be");
+  });
+
+  it.each([
+    [
+      "a missing attestation manifest workload digest binding",
+      (publication: PlatformPublication) =>
+        delete publication.publicationEvidence.attestations.manifestDescriptor.annotations[
+          "vnd.docker.reference.digest"
+        ],
+    ],
+    [
+      "a changed attestation manifest workload digest binding",
+      (publication: PlatformPublication) =>
+        (publication.publicationEvidence.attestations.manifestDescriptor.annotations[
+          "vnd.docker.reference.digest"
+        ] = digest(9)),
+    ],
+    [
+      "a missing SLSA subject workload digest binding",
+      (publication: PlatformPublication) =>
+        delete publication.publicationEvidence.attestations.slsa.statement.subject.digest,
+    ],
+    [
+      "a changed SLSA subject workload digest binding",
+      (publication: PlatformPublication) =>
+        (publication.publicationEvidence.attestations.slsa.statement.subject.digest = digest(9)),
+    ],
+    [
+      "a missing SPDX subject workload digest binding",
+      (publication: PlatformPublication) =>
+        delete publication.publicationEvidence.attestations.spdx.statement.subject.digest,
+    ],
+    [
+      "a changed SPDX subject workload digest binding",
+      (publication: PlatformPublication) =>
+        (publication.publicationEvidence.attestations.spdx.statement.subject.digest = digest(9)),
+    ],
+  ])("rejects %s", (_label, corruptBinding) => {
+    const value = cohortContract();
+    corruptBinding(platformPublication(value));
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+      }),
+    ).toThrow("workload digest must be");
   });
 });

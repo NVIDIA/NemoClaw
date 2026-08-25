@@ -79,7 +79,6 @@ export class HostCliClient {
         throw new Error("stock managed-image receipt assertion requires a sandbox name");
       }
       assertStockManagedImageReceipt({
-        commandOutput: resultText(result),
         environment,
         expectedAgent: environment.NEMOCLAW_AGENT?.trim(),
         sandboxName,

@@ -60,7 +60,6 @@ runner.runCapture = (command) => {
 registry.getSandbox = () => ({
   name: "my-assistant",
   toolDisclosure: "progressive",
-  fromDockerfile: ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
 });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
@@ -70,10 +69,7 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
-  );
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
   console.error(error);
@@ -160,7 +156,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + _sandboxId].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -201,8 +197,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, commands, registeredSandbox }));
 })().catch((error) => {
@@ -301,7 +296,7 @@ runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -366,8 +361,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -419,7 +413,7 @@ const { createSandbox } = require(${onboardPath});
     const restoreEvent = events[restoreIndex];
     assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
     assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-    assert.deepEqual(restoreEvent?.options?.freshOpenClawImagePluginInstalls, []);
+    assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
   });
 
   it("recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup", {
@@ -465,7 +459,7 @@ runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -514,8 +508,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -604,7 +597,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("sandbox list")) {
     return _deleted ? "" : sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -669,8 +662,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -760,7 +752,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -809,8 +801,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   const session = onboardSession.loadSession();
   console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
@@ -913,7 +904,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
@@ -941,8 +932,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1055,7 +1045,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -1096,8 +1086,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1194,7 +1183,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) {
     return _deleted ? "" : sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -1246,8 +1235,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {

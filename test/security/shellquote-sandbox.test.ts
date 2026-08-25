@@ -82,6 +82,7 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+process.env.NEMOCLAW_SANDBOX_PREBUILD = "1";
 process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "openshell"))};
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
@@ -105,7 +106,7 @@ runner.runCapture = (command) => {
   const text = asText(command);
   if (text.includes("sandbox get") && text.includes("my-assistant")) return "";
   if (text.includes("sandbox list")) return "my-assistant Ready";
-  if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (text.includes("forward list")) return "my-assistant 127.0.0.1 28789 12345 running";
   if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   const mockedCapture = require(${JSON.stringify(
@@ -135,8 +136,7 @@ try {
   Object.defineProperty(process, "platform", { value: "darwin" });
   Object.defineProperty(process, "arch", { value: "x64" });
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, 28789,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {
@@ -161,6 +161,8 @@ try {
           env: {
             HOME: tmpDir,
             PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_SANDBOX_PREBUILD: "1",
+            NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
           },
           timeout: 30_000,
         },

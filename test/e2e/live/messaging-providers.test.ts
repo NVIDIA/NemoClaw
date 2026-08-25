@@ -168,7 +168,6 @@ test(
     }
     expectExitZero(install, "M0: install.sh completed");
     assertStockManagedImageReceipt({
-      commandOutput: outputText(install),
       environment: state.env,
       expectedAgent: "openclaw",
       sandboxName: SANDBOX_NAME,

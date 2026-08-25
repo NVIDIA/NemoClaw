@@ -4676,7 +4676,6 @@ jobs:
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Protected GPU runtime supports Ollama vLLM NIM rollback and cleanup"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local and hosted inference services"
-      E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
