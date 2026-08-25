@@ -295,7 +295,7 @@ repos:
         entry: npm run test:e2e-phases:check
         language: system
         pass_filenames: false
-        files: ^(\.github/workflows/e2e\.yaml|test/vllm-docker-storage\.test\.ts|test/e2e/live/.*\.ts|test/e2e/fixtures/.*\.ts|test/e2e/risk-signal-reporter\.ts|test/e2e/support/(e2e-semantic-phase-check|workflow-e2e-progress)\.test\.ts|tools/e2e/(check-semantic-phases|credential-free-tests|workflow-boundary|workflow-plan)\.mts|vitest\.config\.ts|package\.json)$
+        files: ^(\.github/workflows/e2e\.yaml|test/platform/images/vllm-docker-storage\.test\.ts|test/e2e/live/.*\.ts|test/e2e/fixtures/.*\.ts|test/e2e/risk-signal-reporter\.ts|test/e2e/support/(e2e-semantic-phase-check|workflow-e2e-progress)\.test\.ts|tools/e2e/(check-semantic-phases|credential-free-tests|workflow-boundary|workflow-plan)\.mts|vitest\.config\.ts|package\.json)$
         priority: 20
 
       - id: test-cli
