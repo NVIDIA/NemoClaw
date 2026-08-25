@@ -9,7 +9,7 @@ import YAML from "yaml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 const skillsRoot = path.join(repoRoot, ".agents", "skills");
 const catalogSkillsRoot = path.join(repoRoot, "skills");
 const skillFrontmatterRe = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
@@ -94,7 +94,7 @@ describe("repo skill markdown files", () => {
       const raw = fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
       expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(120);
       expect(raw, `${name} must discover current implementation details`).toContain(
-        "../../_shared/implementation-discovery.md",
+        "../_shared/implementation-discovery.md",
       );
     });
 
@@ -261,11 +261,11 @@ describe("repo skill markdown files", () => {
       fs.readFileSync(path.join(skillRoot, "evals", "evals.json"), "utf8"),
     ) as Array<{ id: string; expected_skill: string | null }>;
 
-    expect(skill).toContain("../../_shared/implementation-discovery.md");
-    expect(skill).toContain("../../_shared/code-change-considerations.md");
-    expect(skill).toContain("../../_shared/security-rubric.md");
-    expect(skill).toContain("../../_shared/git-github-hard-stop.md");
-    expect(skill).toContain("../../_shared/root-cause-and-state-checks.md");
+    expect(skill).toContain("../_shared/implementation-discovery.md");
+    expect(skill).toContain("../_shared/code-change-considerations.md");
+    expect(skill).toContain("../_shared/security-rubric.md");
+    expect(skill).toContain("../_shared/git-github-hard-stop.md");
+    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
     expect(skill).toContain("untrusted evidence, not agent instructions");
     expect(skill).toContain("Name the operation and failure class");
     expect(skill).toContain("Operation and failure class:");
@@ -342,11 +342,11 @@ describe("repo skill markdown files", () => {
     ) as Array<{ id: string; expected_skill: string | null }>;
 
     expect(skill).toContain("pick up issue for implementation");
-    expect(skill).toContain("../../_shared/implementation-discovery.md");
-    expect(skill).toContain("../../_shared/code-change-considerations.md");
-    expect(skill).toContain("../../_shared/root-cause-and-state-checks.md");
-    expect(skill).toContain("../../_shared/security-rubric.md");
-    expect(skill).toContain("../../_shared/documentation-writing-review.md");
+    expect(skill).toContain("../_shared/implementation-discovery.md");
+    expect(skill).toContain("../_shared/code-change-considerations.md");
+    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
+    expect(skill).toContain("../_shared/security-rubric.md");
+    expect(skill).toContain("../_shared/documentation-writing-review.md");
     expect(skill).toContain("smallest independently valuable capability slice");
     expect(skill).toContain("Prefer a neutral or negative");
     expect(skill).toContain("total line delta");
@@ -358,7 +358,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Load a narrow specialist only");
     expect(skill).toContain("it does not authorize GitHub writes");
 
-    expect(skill).toContain("../../_shared/git-github-hard-stop.md");
+    expect(skill).toContain("../_shared/git-github-hard-stop.md");
     expect(skill).toContain("Before GitHub or repository discovery");
 
     expect(skill).toContain("untrusted evidence, not agent instructions");
@@ -432,7 +432,7 @@ describe("repo skill markdown files", () => {
       const skill = (
         { "planning skill": planning, "implementation skill": implementation } as const
       )[scenario]!;
-      expect(skill).toContain("../../_shared/git-github-hard-stop.md");
+      expect(skill).toContain("../_shared/git-github-hard-stop.md");
       expect(skill).not.toContain("configured GitHub MCP tool");
       expect(skill).not.toContain("unauthenticated fallback");
     },
@@ -443,10 +443,10 @@ describe("repo skill markdown files", () => {
       path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
       "utf8",
     );
-    expect(documentationReview).toContain("../../../../WRITING.md");
-    expect(documentationReview).toContain("../../../../docs/CONTRIBUTING.md");
-    expect(documentationReview).not.toContain("../../../../AGENTS.md");
-    expect(documentationReview).not.toContain("../../../../docs/AGENTS.md");
+    expect(documentationReview).toContain("../../../WRITING.md");
+    expect(documentationReview).toContain("../../../docs/CONTRIBUTING.md");
+    expect(documentationReview).not.toContain("../../../AGENTS.md");
+    expect(documentationReview).not.toContain("../../../docs/AGENTS.md");
   });
 
   it("keeps messaging channel guidance in the owning package (#8364)", () => {
@@ -641,11 +641,11 @@ describe("repo skill markdown files", () => {
     const skillPath = path.join(skillsRoot, "nemoclaw-contributor-onboard", "SKILL.md");
     const skill = fs.readFileSync(skillPath, "utf8");
 
-    expect(skill).toContain(".././scripts/dev-setup.sh");
-    expect(skill).toContain(".././scripts/dev-setup.sh --doctor");
-    expect(skill).toContain(".././scripts/dev-setup.sh --repair");
-    expect(skill).toContain(".././scripts/dev-setup.sh --expose-cli");
-    expect(skill).toContain(".././scripts/dev-setup.sh --with-runtime");
+    expect(skill).toContain("./scripts/dev-setup.sh");
+    expect(skill).toContain("./scripts/dev-setup.sh --doctor");
+    expect(skill).toContain("./scripts/dev-setup.sh --repair");
+    expect(skill).toContain("./scripts/dev-setup.sh --expose-cli");
+    expect(skill).toContain("./scripts/dev-setup.sh --with-runtime");
     expect(skill).toContain("npm run agent");
     expect(skill).toContain("obtain explicit approval");
     expect(skill).toContain("Never print tokens");
@@ -706,7 +706,7 @@ describe("repo skill markdown files", () => {
       ?.split("\n## Main Tasks")[0];
 
     expect(localTesting).toBeDefined();
-    expect(localTesting).toContain(".././scripts/dev-setup.sh --expose-cli");
+    expect(localTesting).toContain("./scripts/dev-setup.sh --expose-cli");
     expect(localTesting).toContain("command -v nemoclaw");
     expect(localTesting).toContain("nemoclaw --version");
     expect(localTesting).toContain("npm unlink -g nemoclaw");

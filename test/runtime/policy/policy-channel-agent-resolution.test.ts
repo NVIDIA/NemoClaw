@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const ACTION_PATH = JSON.stringify(
   path.join(REPO_ROOT, "src", "lib", "actions", "sandbox", "policy-channel.ts"),
 );

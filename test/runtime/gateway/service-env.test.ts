@@ -22,12 +22,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
 const ENTRYPOINT_ENV_WRAPPER = join(
   import.meta.dirname,
-  "../scripts/lib/entrypoint-env-wrapper.sh",
+  "..",
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
 );
-const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");
+const RC_CLEAN_SCRIPT = join(import.meta.dirname, "..", "..", "../scripts/lib/clean_runtime_shell_env_shim.py");
 
 function rcShimWrapperHeader(): string {
   return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
@@ -141,7 +146,7 @@ describe("service environment", () => {
   });
 
   describe("start-services behavior", () => {
-    const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
+    const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/start-services.sh");
 
     it("starts without messaging-related warnings", { timeout: 30000 }, () => {
       const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
@@ -209,10 +214,10 @@ describe("service environment", () => {
   });
 
   describe("GIT_SSL_CAINFO for proxy CA trust (#2270)", () => {
-    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
 
     it("entrypoint exports GIT_SSL_CAINFO when SSL_CERT_FILE points to a real file", () => {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
       const src = readFileSync(scriptPath, "utf-8");
       const start = src.indexOf("# Git TLS CA bundle fix");
       const end = src.indexOf("# HTTP library + NODE_USE_ENV_PROXY", start);
@@ -375,7 +380,7 @@ describe("service environment", () => {
     it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
       const persistBlock = extractRuntimeShellEnvSnippet();
       const toolRedirects = extractToolRedirectsSnippet();
-      const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+      const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
       const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-connect-npm-online-"));
       const tmpFile = join(tmpdir(), `nemoclaw-connect-npm-online-${process.pid}.sh`);
       try {
@@ -422,7 +427,7 @@ describe("service environment", () => {
     ])(
       "entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions [$scenario]",
       ({ scenario }) => {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
         const src = readFileSync(scriptPath, "utf-8");
         const start = src.indexOf("# Pre-create redirected directories");
         const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
@@ -484,7 +489,7 @@ describe("service environment", () => {
   describe("proxy environment variables (#626)", () => {
     // The proxy persistence block calls emit_sandbox_sourced_file from the
     // shared library. Wrappers that execute the extracted block must source it.
-    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
 
     function extractProxyVars(env: Record<string, string> = {}) {
       const proxyBlock = extractProxyVarsSnippet();
@@ -960,7 +965,7 @@ describe("service environment", () => {
         PLUGIN_REFRESH_LOG: join(fakeDataDir, "nemoclaw-plugin-refresh.log"),
       };
       try {
-        const sandboxLibDir = join(import.meta.dirname, "../scripts/lib");
+        const sandboxLibDir = join(import.meta.dirname, "..", "..", "../scripts/lib");
         const sandboxInitFixture = readFileSync(join(sandboxLibDir, "sandbox-init.sh"), "utf-8")
           .replaceAll("/tmp/gateway.log", '"${NEMOCLAW_TEST_GATEWAY_LOG}"')
           .replaceAll("/tmp/auto-pair.log", '"${NEMOCLAW_TEST_AUTO_PAIR_LOG}"');
