@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// readSandboxConfig's stopped-sandbox contract (#10251, a regression of
-// #6997): when `sandbox exec` fails because the sandbox itself is not ready,
-// the actionable "Is the sandbox running?" guidance must survive — not just
-// for a completely empty `cat` read, but also when OpenShell's CLI reports a
-// non-empty "not ready (phase: ...)" detail on stderr.
+// The inference-set stopped-sandbox contract (#10251, a regression of #6997):
+// when `sandbox exec` fails because the sandbox itself is not ready, the
+// actionable recovery guidance must survive a non-empty, wrapped OpenShell
+// "not ready (phase: ...)" detail on stderr.
 
 import { afterEach, describe, expect, it } from "vitest";
 
 const clientModulePath = require.resolve("../adapters/openshell/client");
 const configModulePath = require.resolve("./config");
+const inferenceSetModulePath = require.resolve("../actions/inference-set");
 
 type CaptureResult = {
   status: number;
@@ -36,45 +36,50 @@ function stubFailedExec(stderr: string, status = 1): void {
   });
 }
 
-function loadReadSandboxConfig(): (
-  name: string,
-  target: { agentName: string; configPath: string; format: string },
-) => unknown {
+function loadConfigReaders(): Pick<typeof import("./config"), "readSandboxConfig"> &
+  Pick<typeof import("../actions/inference-set"), "readInSandboxConfigOrFail"> {
   delete require.cache[configModulePath];
-  const mod = require(configModulePath) as {
-    readSandboxConfig: (name: string, target: unknown) => unknown;
+  delete require.cache[inferenceSetModulePath];
+  const config = require(configModulePath) as typeof import("./config");
+  const inferenceSet = require(inferenceSetModulePath) as typeof import("../actions/inference-set");
+  return {
+    readSandboxConfig: config.readSandboxConfig,
+    readInSandboxConfigOrFail: inferenceSet.readInSandboxConfigOrFail,
   };
-  return mod.readSandboxConfig as never;
 }
 
-const OPENCLAW_TARGET = {
+const OPENCLAW_TARGET: import("./config").AgentConfigTarget = {
   agentName: "OpenClaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
+  configDir: "/sandbox/.openclaw",
+  configFile: "openclaw.json",
   format: "json",
+  stateLockPlanInImage: true,
 };
 
 describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
   afterEach(() => {
     client.captureOpenshellCommand = realCapture;
     delete require.cache[configModulePath];
+    delete require.cache[inferenceSetModulePath];
   });
 
-  it("surfaces the stopped-sandbox recovery hint for a wrapped OpenShell not-ready detail", () => {
+  it("surfaces the stopped-sandbox recovery guidance for a wrapped not-ready detail", () => {
     stubFailedExec(
       "Error:   x sandbox 'sandbox-a' is not ready (phase: Error); wait for it to\n  reach Ready state",
     );
-    const readSandboxConfig = loadReadSandboxConfig();
+    const { readInSandboxConfigOrFail, readSandboxConfig } = loadConfigReaders();
 
     let error: unknown;
     try {
-      readSandboxConfig("sandbox-a", OPENCLAW_TARGET);
+      readInSandboxConfigOrFail({ readSandboxConfig }, "sandbox-a", OPENCLAW_TARGET);
     } catch (thrown) {
       error = thrown;
     }
 
     expect(error).toBeInstanceOf(Error);
-    const lines = (error as { lines?: readonly string[] }).lines ?? [];
-    expect(lines.some((line) => /is the sandbox running/i.test(line))).toBe(true);
+    expect((error as Error).message).toContain("Is the sandbox running?");
+    expect((error as Error).message).toContain("Start the sandbox and retry.");
     // The raw OpenShell detail must not leak into the user-facing message —
     // the generic stopped-sandbox message replaces it, matching the
     // already-empty-read case.
@@ -83,7 +88,7 @@ describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
 
   it("still surfaces the raw detail for an unrelated exec failure", () => {
     stubFailedExec("Error: connection refused");
-    const readSandboxConfig = loadReadSandboxConfig();
+    const { readSandboxConfig } = loadConfigReaders();
 
     let error: unknown;
     try {
