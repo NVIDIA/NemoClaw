@@ -56,6 +56,68 @@ const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
   },
 });
 
+const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../../../agents/hermes/policy-permissive.yaml"),
+  "utf8",
+);
+
+type SlackEndpoint = {
+  access?: string;
+  credential_binding?: { provider?: string };
+  host?: string;
+  rules?: Array<{ allow?: { method?: string; path?: string } }>;
+};
+
+function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): void {
+  expect(
+    endpoints.map((endpoint) => ({
+      access: endpoint.access,
+      host: endpoint.host,
+      provider: endpoint.credential_binding?.provider,
+      routes:
+        endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
+        [],
+    })),
+  ).toEqual([
+    {
+      access: undefined,
+      host: "slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["POST /api/apps.connections.open"],
+    },
+    {
+      access: "full",
+      host: "slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: "full",
+      host: "api.slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: "full",
+      host: "hooks.slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: undefined,
+      host: "wss-primary.slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["GET /**", "WEBSOCKET_TEXT /**"],
+    },
+    {
+      access: undefined,
+      host: "wss-backup.slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["GET /**", "WEBSOCKET_TEXT /**"],
+    },
+  ]);
+}
+
 const tempFilesToClean: string[] = [];
 
 function trackTempForCleanup(out: string, basePath: string): void {
@@ -147,6 +209,133 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(out).toBe("/staged-hermes-permissive.yaml");
     expect(YAML.parse(stagedPolicy).network_policies.discord).toBeUndefined();
     expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("keeps the exact Hermes Slack provider pair in Shields down", () => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: [
+              {
+                host: "slack.com",
+                credential_binding: { provider: "hermes-box-slack-app" },
+              },
+              {
+                host: "api.slack.com",
+                credential_binding: { provider: "hermes-box-slack-bridge" },
+              },
+            ],
+          },
+        },
+      }),
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    const policy = YAML.parse(stagedPolicy);
+    expectExactHermesSlackCredentialRoutes(policy.network_policies.slack.endpoints);
+    expect(policy.network_policies.discord).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("keeps exact Hermes Slack and Discord providers together in Shields down", () => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          discord: {
+            endpoints: [
+              {
+                credential_binding: { provider: "hermes-box-discord-bridge" },
+              },
+            ],
+          },
+          slack: {
+            endpoints: [
+              {
+                credential_binding: { provider: "hermes-box-slack-app" },
+              },
+              {
+                credential_binding: { provider: "hermes-box-slack-bridge" },
+              },
+            ],
+          },
+        },
+      }),
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    const policies = YAML.parse(stagedPolicy).network_policies;
+    expect(policies.discord).toBeDefined();
+    expect(policies.slack).toBeDefined();
+    expectExactHermesSlackCredentialRoutes(policies.slack.endpoints);
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it.each([
+    ["absent", []],
+    ["bot only", ["hermes-box-slack-bridge"]],
+    ["app only", ["hermes-box-slack-app"]],
+    ["conflicting", ["hermes-box-slack-app", "hermes-box-slack-bridge", "other-slack-provider"]],
+  ])("omits Hermes Slack egress when the live provider pair is %s", (_name, providers) => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+          },
+        },
+      }),
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    expect(YAML.parse(stagedPolicy).network_policies.slack).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("rejects an unsafe Hermes sandbox name before staging Slack Shields down", () => {
+    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+    let message = "";
+
+    try {
+      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+        livePolicyYaml: YAML.stringify({
+          network_policies: {
+            slack: {
+              endpoints: [
+                { credential_binding: { provider: "bad:provider-slack-app" } },
+                { credential_binding: { provider: "bad:provider-slack-bridge" } },
+              ],
+            },
+          },
+        }),
+        readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+        sandboxName: "bad:provider",
+        writeTempPolicy,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("Cannot materialize the Shields-down credential provider binding");
+    expect(writeTempPolicy).not.toHaveBeenCalled();
   });
 
   it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {

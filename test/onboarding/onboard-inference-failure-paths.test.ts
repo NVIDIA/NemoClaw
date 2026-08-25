@@ -72,13 +72,10 @@ function stubMissingBedrockAuth(): void {
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
   expectedCommands: string[] = [],
-  expectOpenAiProfileImport = false,
+  expectOpenAiProfileValidation = false,
 ): void {
-  const expected = expectOpenAiProfileImport
-    ? [
-        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
-        ...expectedCommands,
-      ]
+  const expected = expectOpenAiProfileValidation
+    ? ["provider profile -g nemoclaw export openai --output json", ...expectedCommands]
     : expectedCommands;
   expect(harness.commands.map(({ command }) => command)).toEqual(expected);
   expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();

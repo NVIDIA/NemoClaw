@@ -24,7 +24,7 @@ const {
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
   require("../../core/non-interactive");
-const { waitForPort } = require("../../core/wait");
+const { sleepMs, waitForPort } = require("../../core/wait");
 const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
   require("./model-discovery");
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
@@ -970,16 +970,20 @@ function normalizeOllamaPullModel(model: string): string {
   return value;
 }
 
-function buildLocalOllamaPullUrl(): string {
-  const host = getResolvedOllamaHost();
+function buildLocalOllamaEndpoint(resolveHost = getResolvedOllamaHost): string {
+  const host = resolveHost();
   const allowedHosts = new Set(["127.0.0.1", "localhost", "::1", OLLAMA_HOST_DOCKER_INTERNAL]);
   if (!allowedHosts.has(host)) {
-    throw new Error(`Refusing to pull from unexpected Ollama host: ${host}`);
+    throw new Error(`Refusing to contact unexpected Ollama host: ${host}`);
   }
-  const url = new URL("http://127.0.0.1/api/pull");
+  const url = new URL("http://127.0.0.1");
   url.hostname = host;
   url.port = String(OLLAMA_PORT);
-  return url.toString();
+  return url.origin;
+}
+
+function buildLocalOllamaPullUrl(): string {
+  return `${buildLocalOllamaEndpoint()}/api/pull`;
 }
 
 function pullOllamaModelViaCli(model: string): boolean {
@@ -1287,73 +1291,304 @@ async function prepareOllamaModel(
   return { ...result, allowToolsIncompatible };
 }
 
-/**
- * Unload all running Ollama models from GPU memory.
- * Best-effort operation: silently ignores errors if Ollama is not running.
- *
- * Uses `spawnSync` with `curl --max-time 3` rather than Node's
- * `http.request`/`http.get` so the unload completes before
- * `process.exit()`. The previous async version was fire-and-forget and got
- * dropped by Node's event loop on fast CLI exit (e.g. `nemoclaw destroy`),
- * leaving GPU memory reserved. Reverting to async HTTP would reintroduce
- * that race; keep it synchronous.
- *
- * Pass `onlyModels` to unload just those models and leave every other loaded
- * model alone. Callers that own the whole host (`stopAll`, `destroySandbox`)
- * omit it and unload everything; a single-sandbox stop scopes the unload so it
- * cannot evict a model another sandbox is still using (#9110).
- *
- * Keep this logic in sync with `test/inference/ollama/ollama-gpu-cleanup.test.ts`.
- */
-function unloadOllamaModels(onlyModels?: readonly string[]) {
+const OLLAMA_RELEASE_MAX_ATTEMPTS = 3;
+const OLLAMA_RELEASE_RETRY_DELAY_MS = 250;
+const OLLAMA_RELEASE_VERIFY_DELAY_MS = 100;
+
+export type OllamaModelDiscoveryEvidence = {
+  readonly attempt: number;
+  readonly endpoint: string;
+  readonly status: number | null;
+  readonly residentModels: readonly string[];
+  readonly matchedModels: readonly string[];
+  readonly error?: string;
+};
+
+export type OllamaUnloadRequestEvidence = {
+  readonly attempt: number;
+  readonly endpoint: string;
+  readonly model: string;
+  readonly status: number | null;
+  readonly error?: string;
+};
+
+export type OllamaUnloadResult = {
+  readonly ok: boolean;
+  readonly outcome:
+    | "released"
+    | "not-resident"
+    | "discovery-failed"
+    | "unload-request-failed"
+    | "still-resident";
+  readonly endpoint: string;
+  readonly selectedModels: readonly string[];
+  readonly discoveries: readonly OllamaModelDiscoveryEvidence[];
+  readonly requests: readonly OllamaUnloadRequestEvidence[];
+  readonly message?: string;
+};
+
+type OllamaUnloadOptions = {
+  readonly getResolvedOllamaHost?: typeof getResolvedOllamaHost;
+  readonly maxAttempts?: number;
+  readonly sleep?: (milliseconds: number) => void;
+  readonly spawnSync?: typeof spawnSync;
+};
+
+function boundedCurlError(result): string | undefined {
+  const detail = String(result?.stderr || result?.error?.message || "").trim();
+  return detail ? detail.slice(0, 300) : undefined;
+}
+
+function transientCurlFailure(status: number | null): boolean {
+  return status === 6 || status === 7 || status === 18 || status === 28 || status === 52 || status === 56;
+}
+
+function defaultReleaseSleep(milliseconds: number): void {
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  sleepMs(milliseconds);
+}
+
+function discoverResidentOllamaModels(
+  attempt: number,
+  selectedModels: readonly string[] | null,
+  releaseEndpoint: string,
+  spawnSyncImpl: typeof spawnSync,
+): OllamaModelDiscoveryEvidence {
+  const endpoint = `${releaseEndpoint}/api/ps`;
+  let result;
   try {
-    const psResult = spawnSync(
+    result = spawnSyncImpl(
       "curl",
-      ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
-      // #2616: env-sanitize so http_proxy=127.0.0.1:8118 (Privoxy) doesn't
-      // hijack this localhost probe.
+      ["-sS", "--fail-with-body", "--max-time", "3", endpoint],
+      // #2616: env-sanitize so an ambient HTTP proxy cannot intercept the
+      // loopback-only Ollama ownership and release checks.
       { encoding: "utf8", env: buildSubprocessEnv() },
     );
-    if (psResult.status !== 0) return;
-
-    const parsed = JSON.parse(psResult.stdout || "{}");
-    const models = Array.isArray(parsed.models) ? parsed.models : [];
-    // Compare with Ollama's implicit `latest` tag semantics: a sandbox
-    // recorded as `llama3` must still match the `llama3:latest` that
-    // /api/ps reports, otherwise the scoped unload silently does nothing.
-    const selected = onlyModels?.length ? onlyModels : null;
-
-    for (const entry of models) {
-      if (!entry?.name) continue;
-      if (selected && !selected.some((model) => ollamaModelRefsMatch(model, entry.name))) continue;
-      // `-sS` deliberately swallows HTTP 4xx/5xx; this path is best-effort
-      // and `--fail` would only surface orphaned-GPU-memory failures into
-      // unrelated CLI exit codes during destroy. If we ever want explicit
-      // visibility, add `--fail-with-body` and route the result to a warn
-      // logger.
-      spawnSync(
-        "curl",
-        [
-          "-sS",
-          "-o",
-          "/dev/null",
-          "--max-time",
-          "3",
-          "-X",
-          "POST",
-          "-H",
-          "Content-Type: application/json",
-          "-d",
-          JSON.stringify({ model: entry.name, keep_alive: 0 }),
-          `http://localhost:${OLLAMA_PORT}/api/generate`,
-        ],
-        // #2616: env-sanitize so http_proxy doesn't hijack the unload call.
-        { encoding: "utf8", env: buildSubprocessEnv() },
-      );
-    }
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    return {
+      attempt,
+      endpoint,
+      status: null,
+      residentModels: [],
+      matchedModels: [],
+      error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+    };
   }
+  if (result.status !== 0) {
+    return {
+      attempt,
+      endpoint,
+      status: result.status,
+      residentModels: [],
+      matchedModels: [],
+      error: boundedCurlError(result) ?? `curl exited ${String(result.status)}`,
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout || "");
+  } catch {
+    return {
+      attempt,
+      endpoint,
+      status: result.status,
+      residentModels: [],
+      matchedModels: [],
+      error: "Ollama /api/ps returned malformed JSON",
+    };
+  }
+  if (!parsed || !Array.isArray(parsed.models)) {
+    return {
+      attempt,
+      endpoint,
+      status: result.status,
+      residentModels: [],
+      matchedModels: [],
+      error: "Ollama /api/ps response is missing the models array",
+    };
+  }
+  const malformedEntry = parsed.models.find(
+    (entry) => !entry || typeof entry.name !== "string" || !entry.name.trim(),
+  );
+  if (malformedEntry) {
+    return {
+      attempt,
+      endpoint,
+      status: result.status,
+      residentModels: [],
+      matchedModels: [],
+      error: "Ollama /api/ps returned a model without a valid name",
+    };
+  }
+  const residentModels = parsed.models.map((entry) => entry.name.trim());
+  const matchedModels = selectedModels
+    ? residentModels.filter((resident) =>
+        selectedModels.some((selected) => ollamaModelRefsMatch(selected, resident)),
+      )
+    : residentModels;
+  return { attempt, endpoint, status: result.status, residentModels, matchedModels };
+}
+
+/**
+ * Synchronously release selected Ollama models and prove that they disappeared.
+ *
+ * The CLI can exit immediately after this call, so the implementation remains
+ * synchronous. A scoped caller passes one or more model references; an empty or
+ * absent selection retains the host-wide cleanup behavior used by destroy and
+ * stop-all. Every discovery, request, retry, and verification result is returned
+ * so a sandbox stop can fail instead of reporting release that did not happen.
+ */
+function unloadOllamaModels(
+  onlyModels?: readonly string[],
+  options: OllamaUnloadOptions = {},
+): OllamaUnloadResult {
+  const releaseEndpoint = buildLocalOllamaEndpoint(
+    options.getResolvedOllamaHost ?? getResolvedOllamaHost,
+  );
+  const spawnSyncImpl = options.spawnSync ?? spawnSync;
+  const sleepImpl = options.sleep ?? defaultReleaseSleep;
+  const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
+  const requestedModels = onlyModels?.map((model) => model.trim()).filter(Boolean) ?? [];
+  let selectedModels: readonly string[] | null = onlyModels?.length ? requestedModels : null;
+  const discoveries: OllamaModelDiscoveryEvidence[] = [];
+  const requests: OllamaUnloadRequestEvidence[] = [];
+  let lastMatchedModels: readonly string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const discovery = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    discoveries.push(discovery);
+    if (discovery.error) {
+      if (attempt < maxAttempts && transientCurlFailure(discovery.status)) {
+        sleepImpl(OLLAMA_RELEASE_RETRY_DELAY_MS);
+        continue;
+      }
+      return {
+        ok: false,
+        outcome: "discovery-failed",
+        endpoint: releaseEndpoint,
+        selectedModels: selectedModels ?? [],
+        discoveries,
+        requests,
+        message: discovery.error,
+      };
+    }
+
+    if (selectedModels === null) selectedModels = discovery.residentModels;
+    lastMatchedModels = discovery.matchedModels;
+    if (lastMatchedModels.length === 0) {
+      return {
+        ok: true,
+        outcome: requests.length ? "released" : "not-resident",
+        endpoint: releaseEndpoint,
+        selectedModels,
+        discoveries,
+        requests,
+      };
+    }
+
+    let retryRequest = false;
+    for (const model of lastMatchedModels) {
+      const endpoint = `${releaseEndpoint}/api/generate`;
+      let result;
+      try {
+        result = spawnSyncImpl(
+          "curl",
+          [
+            "-sS",
+            "--fail-with-body",
+            "-o",
+            "/dev/null",
+            "--max-time",
+            "3",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            JSON.stringify({ model, keep_alive: 0 }),
+            endpoint,
+          ],
+          { encoding: "utf8", env: buildSubprocessEnv() },
+        );
+      } catch (error) {
+        result = {
+          status: null,
+          stderr: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const request = {
+        attempt,
+        endpoint,
+        model,
+        status: result.status,
+        ...(result.status === 0
+          ? {}
+          : { error: boundedCurlError(result) ?? `curl exited ${String(result.status)}` }),
+      };
+      requests.push(request);
+      if (request.error) {
+        if (attempt < maxAttempts && transientCurlFailure(request.status)) {
+          retryRequest = true;
+          break;
+        }
+        return {
+          ok: false,
+          outcome: "unload-request-failed",
+          endpoint: releaseEndpoint,
+          selectedModels,
+          discoveries,
+          requests,
+          message: request.error,
+        };
+      }
+    }
+    if (retryRequest) {
+      sleepImpl(OLLAMA_RELEASE_RETRY_DELAY_MS);
+      continue;
+    }
+
+    sleepImpl(OLLAMA_RELEASE_VERIFY_DELAY_MS);
+    const verification = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    discoveries.push(verification);
+    if (verification.error) {
+      if (attempt < maxAttempts && transientCurlFailure(verification.status)) {
+        sleepImpl(OLLAMA_RELEASE_RETRY_DELAY_MS);
+        continue;
+      }
+      return {
+        ok: false,
+        outcome: "discovery-failed",
+        endpoint: releaseEndpoint,
+        selectedModels,
+        discoveries,
+        requests,
+        message: verification.error,
+      };
+    }
+    lastMatchedModels = verification.matchedModels;
+    if (lastMatchedModels.length === 0) {
+      return {
+        ok: true,
+        outcome: "released",
+        endpoint: releaseEndpoint,
+        selectedModels,
+        discoveries,
+        requests,
+      };
+    }
+    if (attempt < maxAttempts) sleepImpl(OLLAMA_RELEASE_RETRY_DELAY_MS);
+  }
+
+  return {
+    ok: false,
+    outcome: "still-resident",
+    endpoint: releaseEndpoint,
+    selectedModels: selectedModels ?? [],
+    discoveries,
+    requests,
+    message: `Ollama still reports: ${lastMatchedModels.join(", ")}`,
+  };
 }
 
 export {

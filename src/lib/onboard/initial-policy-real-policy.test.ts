@@ -449,6 +449,39 @@ describe("initial sandbox policy real preset merge", () => {
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
+  it("materializes separate Hermes Slack bot and app credential bindings", () => {
+    const sandboxName = "hermes-slack-e2e";
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["slack"],
+        { agentName: "hermes", sandboxName },
+      ),
+    );
+    const endpoints = effective.network_policies?.slack?.endpoints ?? [];
+    const slackCom = endpoints.filter((endpoint) => endpoint.host === "slack.com");
+    const websocketEndpoints = endpoints.filter((endpoint) =>
+      ["wss-primary.slack.com", "wss-backup.slack.com"].includes(endpoint.host ?? ""),
+    );
+
+    expect(slackCom).toHaveLength(2);
+    expect(slackCom[0]).toMatchObject({
+      credential_binding: { provider: `${sandboxName}-slack-app` },
+      rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+    });
+    expect(slackCom[1]?.credential_binding?.provider).toBe(`${sandboxName}-slack-bridge`);
+    expect(websocketEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      `${sandboxName}-slack-app`,
+      `${sandboxName}-slack-app`,
+    ]);
+    expect(
+      endpoints
+        .filter((endpoint) => ["api.slack.com", "hooks.slack.com"].includes(endpoint.host ?? ""))
+        .map((endpoint) => endpoint.credential_binding?.provider),
+    ).toEqual([`${sandboxName}-slack-bridge`, `${sandboxName}-slack-bridge`]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
   it.each([
     ["missing", undefined],
     ["unsafe", "bad:provider"],

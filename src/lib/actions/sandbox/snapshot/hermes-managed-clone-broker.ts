@@ -3,6 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 
+import { checkOpenAiInferenceProviderProfile } from "../../../adapters/openshell/provider-profile";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import {
   getHermesToolGatewayCloneBroker,
@@ -15,6 +16,7 @@ import {
   cleanupManagedCloneProviderTransaction,
   type ManagedCloneProviderBinding,
   type ManagedCloneProviderCleanupResult,
+  MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
   type ManagedCloneProviderRunner,
   type ManagedCloneProviderTransactionReceipt,
   type PreparedManagedCloneProviderTransaction,
@@ -197,6 +199,18 @@ function isUnknownActivationOutcome(error: unknown): boolean {
   );
 }
 
+function ensureHermesCloneInferenceProviderProfile(runOpenshell: ManagedCloneProviderRunner): void {
+  const profile = checkOpenAiInferenceProviderProfile({
+    runOpenshell: (args, options) =>
+      runOpenshell(args, {
+        ...options,
+        timeout: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
+      }),
+  });
+  if (profile.ok) return;
+  throw new HermesManagedCloneBrokerTransactionError(profile.messages.join("\n"));
+}
+
 export function provisionHermesManagedCloneBrokerTransaction(
   prepared: PreparedHermesManagedCloneBrokerTransaction,
   input: {
@@ -219,6 +233,7 @@ export function provisionHermesManagedCloneBrokerTransaction(
   }
 
   revalidateManagedCloneMutationAuthority(prepared.providerTransaction, input);
+  ensureHermesCloneInferenceProviderProfile(input.runOpenshell);
   let staged: ReturnType<HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]>;
   try {
     staged = broker.stageHermesToolGatewayCloneBinding(
