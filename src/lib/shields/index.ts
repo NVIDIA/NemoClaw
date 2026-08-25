@@ -1334,7 +1334,7 @@ function runHermesProviderProtectionTransition(
   const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
   if (phase !== null && phase !== "Ready" && phase !== "Running") {
     throw new Error(
-      `Hermes runtime-provider state mutation is unavailable: sandbox '${sandboxName}' is '${phase}', not Ready`,
+      `Hermes runtime-provider state mutation is unavailable because sandbox '${sandboxName}' has OpenShell phase '${phase}', not Ready or Running. Run '${CLI_NAME} ${sandboxName} status'. Resolve the reported phase, then retry.`,
     );
   }
   runHermesRuntimeProviderStateMutation({

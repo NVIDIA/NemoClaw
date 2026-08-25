@@ -829,16 +829,14 @@ describe("legacy Hermes shields compatibility", () => {
       });
     });
 
-    it.each(
-      [
-          "provider:mutable/locked",
-          "verified-mutable",
-          "policy",
-          "provider:locked/locked",
-          "route",
-          "audit",
-        ],
-    )(
+    it.each([
+      "provider:mutable/locked",
+      "verified-mutable",
+      "policy",
+      "provider:locked/locked",
+      "route",
+      "audit",
+    ])(
       "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
       (event) => {
         const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
@@ -1254,6 +1252,9 @@ describe("legacy Hermes shields compatibility", () => {
       runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
       expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
       expect(transitionSpy).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error).mock.calls.flat().map(String).join("\n")).toContain(
+        `Run 'nemoclaw ${sandbox.name} status'. Resolve the reported phase, then retry.`,
+      );
 
       runCaptureSpy.mockReturnValue("");
       expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
