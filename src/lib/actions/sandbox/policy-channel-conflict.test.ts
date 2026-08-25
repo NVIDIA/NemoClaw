@@ -283,6 +283,7 @@ let getSandboxMock: MockInstance;
 let getDisabledChannelsMock: MockInstance;
 let listSandboxesMock: MockInstance;
 let rebuildSandboxMock: MockInstance;
+let stopSandboxMock: MockInstance;
 let ensureMessagingHostForwardAfterRebuildMock: MockInstance;
 let scopeDisclosureMock: MockInstance;
 
@@ -400,6 +401,9 @@ beforeEach(() => {
   rebuildSandboxMock = vi
     .spyOn(policyChannelDependencies, "rebuildSandbox")
     .mockResolvedValue(undefined);
+  stopSandboxMock = vi
+    .spyOn(policyChannelDependencies, "stopSandbox")
+    .mockReturnValue({ exitCode: 0 });
   ensureMessagingHostForwardAfterRebuildMock = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
@@ -1149,7 +1153,9 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toBe(refusal);
 
     expect(loggedText()).not.toContain("'telegram' bridge startup detected");
-    expect(policy.removePreset).toHaveBeenCalledWith("alpha", "telegram", { nonFatal: true });
+    expect(policy.removePreset).not.toHaveBeenCalled();
+    expect(stopSandboxMock).toHaveBeenCalledOnce();
+    expect(stopSandboxMock).toHaveBeenCalledWith("alpha");
   });
 
   it("runs Slack post-rebuild warning detection through the channel hook", async () => {
@@ -1220,6 +1226,36 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     });
   });
 
+  it("channels add stops the rebuilt sandbox when host-forward authority validation fails (#9833)", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const refusal = new PolicyAuthorityRefusalError(
+      "OpenShell policy authority changed before the host forward started",
+    );
+    let validatingHostForward = false;
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      return validatingHostForward
+        ? (() => {
+            throw refusal;
+          })()
+        : "nemoclaw-managed";
+    });
+    ensureMessagingHostForwardAfterRebuildMock.mockImplementation(
+      (_sandboxName, _plan, _note, revalidatePolicyAuthority) => {
+        validatingHostForward = true;
+        revalidatePolicyAuthority?.("start the Microsoft Teams webhook forward");
+        return true;
+      },
+    );
+
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toBe(refusal);
+
+    expect(rebuildSandboxMock).toHaveBeenCalledOnce();
+    expect(policy.removePreset).not.toHaveBeenCalled();
+    expect(stopSandboxMock).toHaveBeenCalledOnce();
+    expect(stopSandboxMock).toHaveBeenCalledWith("alpha");
+  });
+
   it("channels start teams re-establishes the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
     getDisabledChannelsMock.mockReturnValue(["teams"]);
@@ -1242,6 +1278,63 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
+  });
+
+  it("channels start restores the disabled plan when policy authority changes before rebuild (#9833)", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true, port: "3978" });
+    const priorMessaging = structuredClone(current.messaging);
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    const refusal = new PolicyAuthorityRefusalError(
+      "OpenShell policy authority changed after the channel plan was enabled",
+    );
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      return updateSandboxMock.mock.calls.length > 0
+        ? (() => {
+            throw refusal;
+          })()
+        : "nemoclaw-managed";
+    });
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toBe(refusal);
+
+    expect(current.messaging).toEqual(priorMessaging);
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
+    expect(stopSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("channels start stops the rebuilt sandbox when policy authority changes afterward (#9833)", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true, port: "3978" });
+    const priorMessaging = structuredClone(current.messaging);
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    const refusal = new PolicyAuthorityRefusalError(
+      "OpenShell policy authority changed after the sandbox rebuild",
+    );
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      return rebuildSandboxMock.mock.calls.length > 0
+        ? (() => {
+            throw refusal;
+          })()
+        : "nemoclaw-managed";
+    });
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toBe(refusal);
+
+    expect(current.messaging).toEqual(priorMessaging);
+    expect(rebuildSandboxMock).toHaveBeenCalledOnce();
+    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
+    expect(stopSandboxMock).toHaveBeenCalledOnce();
+    expect(stopSandboxMock).toHaveBeenCalledWith("alpha");
   });
 
   it("rebuilds before a credential-bound Hermes Discord policy reaches the replacement sandbox", async () => {

@@ -1108,6 +1108,23 @@ async function promptAndRebuild(
   return true;
 }
 
+function stopSandboxAfterChannelAuthorityRefusal(sandboxName: string, channelName: string): void {
+  try {
+    const result = policyChannelDependencies.stopSandbox(sandboxName);
+    if (result.exitCode !== 0) {
+      console.error(
+        `  ${YW}⚠${R} Could not stop sandbox '${sandboxName}' after policy authority changed; '${channelName}' may still be active.`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `  ${YW}⚠${R} Could not stop sandbox '${sandboxName}' after policy authority changed; '${channelName}' may still be active: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 // Run manifest-owned post-rebuild health hooks.
 // Failures remain best-effort warnings because the rebuild has already
 // succeeded; this phase surfaces likely channel startup issues without making
@@ -1534,19 +1551,33 @@ async function addSandboxChannelUnlocked(
   };
   let presetApplicationState: ChannelPresetApplicationState = "not-started";
   let rollbackPromise: ReturnType<typeof rollbackChannelAdd> | undefined;
-  const rollbackAdd = () =>
+  let rebuiltRuntime = false;
+  let runtimeContainmentAttempted = false;
+  const rollbackAdd = (preserveLivePolicy = false) =>
     (rollbackPromise ??= rollbackChannelAdd(
       sandboxName,
       channelDef,
       canonical,
       rollbackSnapshot,
       presetApplicationState,
+      preserveLivePolicy,
     ));
+  const containRebuiltRuntime = (): void => {
+    if (!rebuiltRuntime || runtimeContainmentAttempted) return;
+    runtimeContainmentAttempted = true;
+    stopSandboxAfterChannelAuthorityRefusal(sandboxName, canonical);
+  };
+  const rollbackAuthorityRefusal = async (error: unknown): Promise<void> => {
+    if (!policyChannelDependencies.isPolicyAuthorityRefusalError(error)) return;
+    containRebuiltRuntime();
+    await rollbackAdd(true);
+  };
   const revalidateAfterOwnedMutation = async (): Promise<void> => {
     try {
       revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     } catch (error) {
-      await rollbackAdd();
+      containRebuiltRuntime();
+      await rollbackAdd(true);
       if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) throw error;
       console.error(`  ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
@@ -1582,7 +1613,7 @@ async function addSandboxChannelUnlocked(
         propagatePolicyAuthorityRefusal: true,
       });
     } catch (error) {
-      await rollbackAdd();
+      await rollbackAdd(policyChannelDependencies.isPolicyAuthorityRefusalError(error));
       throw error;
     }
     if (!presetApplied) {
@@ -1597,7 +1628,7 @@ async function addSandboxChannelUnlocked(
         revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
       );
     } catch (error) {
-      if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+      await rollbackAuthorityRefusal(error);
       throw error;
     }
     await revalidateAfterOwnedMutation();
@@ -1627,21 +1658,27 @@ async function addSandboxChannelUnlocked(
         revalidateAfterOwnedMutation,
       );
     } catch (error) {
-      if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+      await rollbackAuthorityRefusal(error);
       throw error;
     }
+    rebuiltRuntime = rebuilt;
     if (rebuilt) {
       await revalidateAfterOwnedMutation();
-      ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
-        revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
-      );
+      try {
+        ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
+          revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+        );
+      } catch (error) {
+        await rollbackAuthorityRefusal(error);
+        throw error;
+      }
       await revalidateAfterOwnedMutation();
       try {
         await runMessagingHealthChecksAfterRebuild(sandboxName, plan, () =>
           revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
         );
       } catch (error) {
-        if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+        await rollbackAuthorityRefusal(error);
         throw error;
       }
       await revalidateAfterOwnedMutation();
@@ -1665,7 +1702,7 @@ async function addSandboxChannelUnlocked(
       wasAlreadyEnabled ? priorCreds : {},
     );
   } catch (error) {
-    if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+    await rollbackAuthorityRefusal(error);
     throw error;
   }
   if (registeredBridge) {
@@ -1685,7 +1722,7 @@ async function addSandboxChannelUnlocked(
       propagatePolicyAuthorityRefusal: true,
     });
   } catch (error) {
-    await rollbackAdd();
+    await rollbackAdd(policyChannelDependencies.isPolicyAuthorityRefusalError(error));
     throw error;
   }
   if (!presetApplied) {
@@ -1713,21 +1750,27 @@ async function addSandboxChannelUnlocked(
       revalidateAfterOwnedMutation,
     );
   } catch (error) {
-    if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+    await rollbackAuthorityRefusal(error);
     throw error;
   }
+  rebuiltRuntime = rebuilt;
   if (rebuilt) {
     await revalidateAfterOwnedMutation();
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
-      revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
-    );
+    try {
+      ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
+        revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+      );
+    } catch (error) {
+      await rollbackAuthorityRefusal(error);
+      throw error;
+    }
     await revalidateAfterOwnedMutation();
     try {
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan, () =>
         revalidateChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
       );
     } catch (error) {
-      if (policyChannelDependencies.isPolicyAuthorityRefusalError(error)) await rollbackAdd();
+      await rollbackAuthorityRefusal(error);
       throw error;
     }
     await revalidateAfterOwnedMutation();
@@ -1740,6 +1783,7 @@ async function rollbackChannelAdd(
   canonical: string,
   snapshot: ChannelAddRollbackSnapshot,
   presetApplicationState: ChannelPresetApplicationState,
+  preserveLivePolicy: boolean,
 ): Promise<{ ok: boolean; residual: string[] }> {
   let result: { ok: boolean; residual: string[] };
   if (snapshot.wasAlreadyEnabled) {
@@ -1794,7 +1838,17 @@ async function rollbackChannelAdd(
     );
   }
 
-  if (snapshot.presetState === "absent" && presetApplicationState === "applied") {
+  if (
+    snapshot.presetState === "absent" &&
+    presetApplicationState === "applied" &&
+    preserveLivePolicy
+  ) {
+    result.residual.push("policy-preset");
+    result.ok = false;
+    console.error(
+      `  ${YW}⚠${R} Policy authority changed; the live '${canonical}' policy was preserved.`,
+    );
+  } else if (snapshot.presetState === "absent" && presetApplicationState === "applied") {
     try {
       if (!policies.removePreset(sandboxName, canonical, { nonFatal: true })) {
         result.residual.push("policy-preset");
@@ -2321,6 +2375,8 @@ async function sandboxChannelsSetEnabled(
     preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight.content);
   }
 
+  const priorMessaging =
+    registryEntry.messaging === undefined ? undefined : structuredClone(registryEntry.messaging);
   const plan = await persistManifestChannelDisabledPlan(
     sandboxName,
     canonical,
@@ -2339,23 +2395,55 @@ async function sandboxChannelsSetEnabled(
   // the preset into rebuild, where sandbox creation attaches each provider
   // before OpenShell accepts its credential-bound policy.
   const state = disabled ? "disabled" : "enabled";
+  let rebuiltRuntime = false;
+  let startRollbackAttempted = false;
+  const restoreStartPlan = (): void => {
+    if (disabled || startRollbackAttempted) return;
+    startRollbackAttempted = true;
+    try {
+      if (!registry.updateSandbox(sandboxName, { messaging: priorMessaging })) {
+        console.error(
+          `  ${YW}⚠${R} Could not restore the disabled '${canonical}' plan after start failed.`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `  ${YW}⚠${R} Could not restore the disabled '${canonical}' plan after start failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
   const revalidateChannelTransition = (): void => {
     if (disabled) return;
-    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
+    try {
+      revalidateChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
+    } catch (error) {
+      restoreStartPlan();
+      if (rebuiltRuntime) stopSandboxAfterChannelAuthorityRefusal(sandboxName, canonical);
+      throw error;
+    }
   };
   revalidateChannelTransition();
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
-  const rebuilt = await promptAndRebuild(
-    sandboxName,
-    `${verb} '${canonical}'`,
-    revalidateChannelTransition,
-  );
-  if (rebuilt && !disabled) {
-    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
-      revalidateChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content),
+  let rebuilt: boolean;
+  try {
+    rebuilt = await promptAndRebuild(
+      sandboxName,
+      `${verb} '${canonical}'`,
+      revalidateChannelTransition,
     );
-    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
+  } catch (error) {
+    restoreStartPlan();
+    throw error;
+  }
+  rebuiltRuntime = rebuilt;
+  if (rebuilt && !disabled) {
+    revalidateChannelTransition();
+    ensureMessagingHostForwardAfterRebuild(sandboxName, plan, undefined, () =>
+      revalidateChannelTransition(),
+    );
+    revalidateChannelTransition();
   }
 }
 

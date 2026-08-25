@@ -360,10 +360,7 @@ network_policies:
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "invalid versioned baseline exclusion",
     );
-    expect(harness.registryUpdateSpy).toHaveBeenCalledOnce();
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      policyAuthority: "nemoclaw-managed",
-    });
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
