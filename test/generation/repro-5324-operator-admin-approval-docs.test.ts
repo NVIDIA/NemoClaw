@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.dirname(import.meta.dirname);
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const DOC = path.join(REPO_ROOT, "docs", "security", "gateway-authentication-controls.mdx");
 const text = fs.readFileSync(DOC, "utf-8");
 const sectionStart = text.indexOf("## Auto-Pair Client Allowlist");
