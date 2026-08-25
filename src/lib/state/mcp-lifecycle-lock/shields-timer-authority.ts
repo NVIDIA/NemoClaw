@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { isObjectRecord } from "../../core/json-types";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
+import { processIsAlive } from "../mcp-lifecycle-lock-identity";
 import { resolveNemoclawStateDir } from "../paths";
 
 export interface ShieldsTimerMarker {
@@ -131,4 +132,63 @@ export function isShieldsTimerDeadlineExpired(
   }
   const restoreAtMs = new Date(marker.restoreAt).getTime();
   return Number.isFinite(restoreAtMs) && restoreAtMs <= now;
+}
+
+/** Liveness evidence stays injectable so gate tests need no real timer process. */
+export interface ShieldsTimerLivenessProbes {
+  processIsAlive(pid: number): boolean;
+  /**
+   * Optional override for tests. Production uses `/proc/<pid>/stat` starttime
+   * (`proc:<ticks>`), the same prefix the Linux timer marker stores.
+   */
+  readProcessStartIdentity?(pid: number): string | null;
+}
+
+function readLinuxTimerProcessStartIdentity(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
+    const closingParen = raw.lastIndexOf(")");
+    if (closingParen < 0) return null;
+    const fields = raw
+      .slice(closingParen + 2)
+      .trim()
+      .split(/\s+/);
+    return fields[19] ? `proc:${fields[19]}` : null;
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_TIMER_LIVENESS_PROBES: ShieldsTimerLivenessProbes = {
+  processIsAlive,
+  readProcessStartIdentity: readLinuxTimerProcessStartIdentity,
+};
+
+/**
+ * Ordinary acquisition waits for an expired 32-hex marker because a live timer
+ * still has to publish the deadline fence. That wait is abandoned only when
+ * this process can no longer be the timer: `kill(pid, 0)` fails, or a recorded
+ * start identity no longer matches. A live PID with no readable start identity
+ * stays closed. This function does not invent a start identity; missing
+ * `timerProcessStartIdentity` falls back to the PID check only.
+ */
+export function isShieldsTimerDeadlineAbandoned(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+  now = Date.now(),
+  probes: ShieldsTimerLivenessProbes = LOCAL_TIMER_LIVENESS_PROBES,
+): boolean {
+  if (!isShieldsTimerDeadlineExpired(sandboxName, stateDir, now)) return false;
+  const marker = readShieldsTimerMarker(sandboxName, stateDir);
+  if (!marker) return false;
+  const recorded = marker.timerProcessStartIdentity;
+  if (typeof recorded === "string" && recorded.length > 0) {
+    const observed =
+      probes.readProcessStartIdentity?.(marker.pid) ??
+      readLinuxTimerProcessStartIdentity(marker.pid);
+    if (observed !== null && observed !== recorded) return true;
+    if (observed === null && probes.processIsAlive(marker.pid)) return false;
+  }
+  return !probes.processIsAlive(marker.pid);
 }

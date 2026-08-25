@@ -138,11 +138,20 @@ describe("lifecycle lock decisions", () => {
   });
 
   it.each([
-    ["open", null, false, "proceed"],
-    ["timer deadline", null, true, "wait"],
-    ["committed containment", observation(owner()), false, "refuse"],
-  ] as const)("maps the %s gate to %s", (_name, containment, timerExpired, kind) => {
-    expect(decideMcpLifecycleGate(containment, timerExpired).kind).toBe(kind);
+    ["open", null, false, false, "proceed"],
+    ["timer deadline", null, true, false, "wait"],
+    ["abandoned timer deadline", null, true, true, "proceed"],
+    ["committed containment", observation(owner()), false, false, "refuse"],
+    ["containment over an abandoned timer", observation(owner()), true, true, "refuse"],
+  ] as const)(
+    "maps the %s gate to %s",
+    (_name, containment, timerExpired, timerAbandoned, kind) => {
+      expect(decideMcpLifecycleGate(containment, timerExpired, timerAbandoned).kind).toBe(kind);
+    },
+  );
+
+  it("ignores abandonment for a timer that has not passed its deadline", () => {
+    expect(decideMcpLifecycleGate(null, false, true)).toEqual({ kind: "proceed" });
   });
 
   it("marks a stale timer-bound main generation for containment during reaping", () => {

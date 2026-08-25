@@ -153,10 +153,13 @@ describe("MCP lifecycle lock acquisition", () => {
         writeOwnerAt(generationPaths.get(generation)!, `active-${generation}-token`);
 
         await expect(
-          run(operation, { timeoutMs: 10, monotonicNow: (() => {
-            let now = 0;
-            return () => now++;
-          })() }),
+          run(operation, {
+            timeoutMs: 10,
+            monotonicNow: (() => {
+              let now = 0;
+              return () => now++;
+            })(),
+          }),
         ).rejects.toThrow(/Timed out waiting for (the )?sandbox mutation lock/);
 
         expect(operation).not.toHaveBeenCalled();
@@ -243,18 +246,34 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 
-  it("keeps synchronous ordinary acquisition closed after a dead timer misses its deadline", () => {
-    const operation = vi.fn(() => "must not enter");
+  it("admits synchronous ordinary acquisition after a dead timer misses its deadline", () => {
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker("2".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
 
-    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, operation, options())).toThrow(
-      "Timed out waiting for sandbox mutation lock",
+    expect(withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", options())).toBe("entered");
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("admits asynchronous ordinary acquisition after an abandoned timer deadline", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("4".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, () => "entered", options())).resolves.toBe(
+      "entered",
+    );
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("keeps waiting when an expired timer's process is still alive", async () => {
+    const operation = vi.fn(() => "must not enter");
+    writeTimerMarker("5".repeat(32), new Date(Date.now() - 1_000).toISOString());
+
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, operation, options())).rejects.toThrow(
+      "Timed out waiting for the sandbox mutation lock",
     );
 
     expect(operation).not.toHaveBeenCalled();
-    expect(fs.existsSync(lockPath)).toBe(false);
-    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 
   it("does not strand asynchronous recovery behind an expired legacy marker", async () => {
@@ -303,6 +322,25 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(linkSpy).toHaveBeenCalled();
     expect(operation).not.toHaveBeenCalled();
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("holds ordinary admission for abandoned-timer grace when restoreAt crosses after the gate", async () => {
+    const operation = vi.fn(() => "must not enter");
+    const beforeDeadline = Date.now();
+    writeTimerMarker("9".repeat(32), new Date(beforeDeadline + 500).toISOString(), 2_147_483_647);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(beforeDeadline)
+      .mockReturnValue(beforeDeadline + 1_000);
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        timeoutMs: 200,
+        corruptLockGraceMs: 10_000,
+      }),
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it("releases a synchronous lock after nested work completes", () => {

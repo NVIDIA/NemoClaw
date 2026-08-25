@@ -8,6 +8,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  isShieldsTimerDeadlineAbandoned,
   isShieldsTimerDeadlineExpired,
   readShieldsTimerTakeoverToken,
 } from "./mcp-lifecycle-lock/shields-timer-authority";
@@ -258,6 +259,27 @@ function committedContainmentActiveError(
   );
 }
 
+/**
+ * Hold an abandoned expired marker for the same grace as corrupt-generation
+ * paths, so a timer that has not yet become visible is not treated as gone.
+ */
+function createAbandonedTimerDeadlineTracker(
+  sandboxName: string,
+  stateDir: string,
+  graceMs: number,
+  monotonicNow: () => number,
+): (now: number) => boolean {
+  let firstSeenAt: number | null = null;
+  return (now: number) => {
+    if (!isShieldsTimerDeadlineAbandoned(sandboxName, stateDir, now)) {
+      firstSeenAt = null;
+      return false;
+    }
+    firstSeenAt ??= monotonicNow();
+    return monotonicNow() - firstSeenAt >= graceMs;
+  };
+}
+
 async function tryReapStaleMainLock(
   lockPath: string,
   sandboxName: string,
@@ -427,6 +449,12 @@ async function acquireMcpLifecycleLock(
   const corruptMainTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   const corruptDeadlineTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const trackAbandonedTimerDeadline = createAbandonedTimerDeadlineTracker(
+    sandboxName,
+    stateDir,
+    corruptLockGraceMs,
+    monotonicNow,
+  );
   let lastOwnerPid: number | null = null;
   const assertBeforeDeadline = () => {
     if (monotonicNow() < deadline) return;
@@ -505,18 +533,26 @@ async function acquireMcpLifecycleLock(
     // no new top-level mutation can enter in that publication window, or if
     // the timer exits before it publishes the fence. Timer/interactive
     // recovery uses the dedicated deadline-fence API and does not pass here.
-    if (
-      decideMcpLifecycleGate(null, isShieldsTimerDeadlineExpired(sandboxName, stateDir)).kind ===
-      "wait"
-    ) {
+    // A live expired timer still waits. An abandoned one may acquire after
+    // grace. Expiry uses one Date.now() at the gate; admit and post-link each
+    // take a later reading so a restoreAt crossing during publication still
+    // fails closed. Admit and post-link reuse this tracker so grace is not
+    // skipped when restoreAt crosses after the gate already proceeded.
+    const timerGateNow = Date.now();
+    const timerExpired = isShieldsTimerDeadlineExpired(sandboxName, stateDir, timerGateNow);
+    const timerAbandoned = trackAbandonedTimerDeadline(timerGateNow);
+    const timerGate = decideMcpLifecycleGate(null, timerExpired, timerAbandoned);
+    if (timerGate.kind === "wait") {
       await sleep(pollIntervalMs);
       continue;
     }
 
+    const admitNow = Date.now();
     if (
       !(await mcpLifecycleLockPathExists(deadlinePath)) &&
       !(await mcpLifecycleLockPathExists(reaperPath)) &&
-      !isShieldsTimerDeadlineExpired(sandboxName, stateDir)
+      (!isShieldsTimerDeadlineExpired(sandboxName, stateDir, admitNow) ||
+        trackAbandonedTimerDeadline(admitNow))
     ) {
       const token = crypto.randomUUID();
       const shieldsTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
@@ -526,11 +562,13 @@ async function acquireMcpLifecycleLock(
         // A stale-lock reaper may have appeared between our pre-check and the
         // atomic link. Do not enter the critical section until that generation
         // gate has gone away.
+        const confirmNow = Date.now();
         if (
           !(await mcpLifecycleLockPathExists(containmentPath)) &&
           !(await mcpLifecycleLockPathExists(deadlinePath)) &&
           !(await mcpLifecycleLockPathExists(reaperPath)) &&
-          !isShieldsTimerDeadlineExpired(sandboxName, stateDir) &&
+          (!isShieldsTimerDeadlineExpired(sandboxName, stateDir, confirmNow) ||
+            trackAbandonedTimerDeadline(confirmNow)) &&
           decideMcpLifecycleTakeover(
             shieldsTakeoverToken,
             readShieldsTimerTakeoverToken(sandboxName, stateDir),
@@ -614,6 +652,12 @@ function acquireMcpLifecycleLockSync(
   const corruptMainTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   const corruptDeadlineTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const trackAbandonedTimerDeadline = createAbandonedTimerDeadlineTracker(
+    sandboxName,
+    options.stateDir,
+    corruptLockGraceMs,
+    monotonicNow,
+  );
   let lastOwnerPid: number | null = null;
   const assertBeforeDeadline = () => {
     if (monotonicNow() < deadline) return;
@@ -688,29 +732,36 @@ function acquireMcpLifecycleLockSync(
     }
     resetCorruptGenerationTracker(corruptReaperTracker);
 
-    if (
-      decideMcpLifecycleGate(null, isShieldsTimerDeadlineExpired(sandboxName, options.stateDir))
-        .kind === "wait"
-    ) {
+    // Admit and post-link reuse the same abandoned-timer grace tracker as the
+    // gate. See acquireMcpLifecycleLock.
+    const timerGateNow = Date.now();
+    const timerExpired = isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, timerGateNow);
+    const timerAbandoned = trackAbandonedTimerDeadline(timerGateNow);
+    const timerGate = decideMcpLifecycleGate(null, timerExpired, timerAbandoned);
+    if (timerGate.kind === "wait") {
       sleepSync(pollIntervalMs);
       continue;
     }
 
+    const admitNow = Date.now();
     if (
       !mcpLifecycleLockPathExistsSync(deadlinePath) &&
       !mcpLifecycleLockPathExistsSync(reaperPath) &&
-      !isShieldsTimerDeadlineExpired(sandboxName, options.stateDir)
+      (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, admitNow) ||
+        trackAbandonedTimerDeadline(admitNow))
     ) {
       const token = crypto.randomUUID();
       const shieldsTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, options.stateDir);
       const owner = createMcpLifecycleLockOwner(sandboxName, token, shieldsTakeoverToken);
       assertBeforeDeadline();
       if (writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)) {
+        const confirmNow = Date.now();
         if (
           !mcpLifecycleLockPathExistsSync(containmentPath) &&
           !mcpLifecycleLockPathExistsSync(deadlinePath) &&
           !mcpLifecycleLockPathExistsSync(reaperPath) &&
-          !isShieldsTimerDeadlineExpired(sandboxName, options.stateDir) &&
+          (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, confirmNow) ||
+            trackAbandonedTimerDeadline(confirmNow)) &&
           decideMcpLifecycleTakeover(
             shieldsTakeoverToken,
             readShieldsTimerTakeoverToken(sandboxName, options.stateDir),

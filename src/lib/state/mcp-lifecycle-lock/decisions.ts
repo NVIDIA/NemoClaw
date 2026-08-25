@@ -116,6 +116,7 @@ export type McpLifecycleGateDecision =
 export function decideMcpLifecycleGate(
   committedContainment: LockObservation | null,
   timerDeadlineExpired: boolean,
+  timerDeadlineAbandoned = false,
 ): McpLifecycleGateDecision {
   if (committedContainment) {
     return {
@@ -124,7 +125,11 @@ export function decideMcpLifecycleGate(
       containment: committedContainment,
     };
   }
-  return timerDeadlineExpired ? { kind: "wait", reason: "timer-deadline" } : { kind: "proceed" };
+  if (!timerDeadlineExpired) return { kind: "proceed" };
+  // A departed timer (dead PID, or start-identity mismatch) can never publish
+  // the fence this wait is for. After the caller proves abandonment, ordinary
+  // mutation may enter instead of spinning until timeout (NVIDIA/NemoClaw#10066).
+  return timerDeadlineAbandoned ? { kind: "proceed" } : { kind: "wait", reason: "timer-deadline" };
 }
 
 export type McpLifecycleTakeoverDecision = { kind: "proceed" } | { kind: "refuse" };

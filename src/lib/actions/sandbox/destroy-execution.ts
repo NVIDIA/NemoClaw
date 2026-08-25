@@ -142,10 +142,10 @@ async function prepareMcpDestroy(
 
 function wipeAndHardenLiveSandbox(
   sandboxName: string,
-  sandboxConfirmedAbsent: boolean,
+  sandboxRuntimeConfirmedAbsent: boolean,
   deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
 ): HardenedDeleteState {
-  if (sandboxConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
+  if (sandboxRuntimeConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
 
   // Wipe before delete while the retained volume is still mounted. The caller
   // holds the timer-bound lock across this phase and all following teardown.
@@ -456,9 +456,16 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
+    // `expectedContainerIdentity === null` is a completed Docker identity
+    // probe with zero matching containers. `undefined` means this runtime
+    // does not use that probe (or Portable owns identity) and must not skip
+    // hardening. OpenShell list may still be `unknown`/`present`; do not call
+    // shieldsUp to restore a runtime that Docker already proved gone.
+    const sandboxRuntimeConfirmedAbsent =
+      sandboxConfirmedAbsent || expectedContainerIdentity === null;
     let hardened: HardenedDeleteState;
     try {
-      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxRuntimeConfirmedAbsent, deps);
     } catch (error) {
       const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       return {

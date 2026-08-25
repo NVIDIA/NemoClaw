@@ -89,7 +89,7 @@ function readLinuxProcessState(pid: number): string | null {
   }
 }
 
-function processIsAlive(pid: number): boolean {
+export function processIsAlive(pid: number): boolean {
   // kill(pid, 0) succeeds for an unreaped zombie even though it can no longer
   // own or release a lifecycle lock.
   if (readLinuxProcessState(pid) === "Z") return false;

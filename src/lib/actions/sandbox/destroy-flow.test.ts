@@ -145,9 +145,7 @@ describe("destroySandbox flow", () => {
       wipeStatus: null,
     });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "exec", "--name", "alpha"]),
@@ -1336,6 +1334,31 @@ describe("destroySandbox flow", () => {
 
     expectActiveTimerDestroyOrder(harness);
   });
+
+  it(
+    "skips unrestorable Shields hardening when Docker identity is empty even if OpenShell still lists the sandbox (#10066)",
+    { timeout: 30_000 },
+    async () => {
+      const harness = createDestroyHarness({
+        activeTimer: true,
+        sandboxPresent: true,
+        dockerRunResult: { status: 0, stdout: "", stderr: "" },
+        openshellDriver: "docker",
+        shieldsUpError: new Error("inline auto-restore would commit containment"),
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.events).not.toContain("wipe");
+      expect(harness.events).not.toContain("harden");
+      expect(harness.events.indexOf("delete")).toBeLessThan(
+        harness.events.indexOf("timer-cleanup"),
+      );
+      expect(harness.killTimerSpy).toHaveBeenCalledOnce();
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("warns and still deletes when active-window hardening fails after the wipe (#7727)", async () => {
     const harness = createDestroyHarness({
