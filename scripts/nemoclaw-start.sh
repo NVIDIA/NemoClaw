@@ -1769,7 +1769,7 @@ def rewrite(value):
             alias_suffix = value[alias_index + len(alias_marker) :]
             for env_key in keys:
                 if alias_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", alias_suffix
+                    rf"v[0-9]+_{re.escape(env_key)}", alias_suffix
                 ):
                     continue
                 runtime_value = os.environ.get(env_key, "")
@@ -1777,7 +1777,7 @@ def rewrite(value):
                     continue
                 runtime_suffix = runtime_value[len(prefix) :]
                 if runtime_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                    rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix
                 ):
                     continue
                 updated = value[: alias_index + len(alias_marker)] + runtime_suffix
@@ -2130,7 +2130,7 @@ for alias in plan.get("envAliases", []):
     placeholder_prefix = "openshell:resolve:env:"
     if marker in value and runtime_value.startswith(placeholder_prefix):
         runtime_suffix = runtime_value[len(placeholder_prefix) :]
-        if re.fullmatch(rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix):
+        if re.fullmatch(rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix):
             alias_prefix, alias_suffix = value.split(marker, 1)
             if alias_suffix == env_key:
                 value = alias_prefix + marker + runtime_suffix
