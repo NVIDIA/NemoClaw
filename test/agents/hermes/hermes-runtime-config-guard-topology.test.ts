@@ -11,10 +11,7 @@ import { isWsl } from "../../../src/lib/platform";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "runtime-config-guard.py",
+  "../../../agents/hermes/runtime-config-guard.py",
 );
 const SANDBOX_GID_EXPECTED = 12345;
 const EACCES = 13;
@@ -522,6 +519,7 @@ print(json.dumps({
     });
   });
 
+  // source-shape-contract: security -- Executes the shipped guard as root to prove real Linux repair and rollback metadata
   it.skipIf(!shouldAttemptRootContainerContract)(
     "restores exact locked posture after root-separated repair and later failure (#7033)",
     () => {
@@ -685,6 +683,7 @@ with tempfile.TemporaryDirectory() as tmp:
     },
   );
 
+  // source-shape-contract: security -- Executes the shipped guard as root so a real sandbox identity proves the locked-root capability split
   it.skipIf(!shouldAttemptRootContainerContract)(
     "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
     () => {
