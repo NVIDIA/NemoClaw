@@ -16,6 +16,7 @@ vi.mock("../../state/registry", () => ({
 }));
 
 vi.mock("../../adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
