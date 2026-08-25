@@ -390,7 +390,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
   `issue-2478-crash-loop-recovery` identity-checks and terminates one live gateway process before invoking the production `connect --probe-only` path, exercising PID 1's exit-driven respawn behavior.
   The production command reports recovery and the test verifies that the terminated gateway process identity is replaced.
   The test uses a hermetic compatible endpoint to verify guard-chain restoration, `inference.local` availability, and a recovered process identity that remains unchanged for 15 seconds.
-  `test/nemoclaw-start-guard-recovery.test.ts` runs the extracted production restoration helper five times against the same runtime state.
+  `test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts` runs the extracted production restoration helper five times against the same runtime state.
   The deterministic test verifies identical restoration steps, fixed proxy environment content, read-only file modes, and one restoration warning.
   `messaging-providers` imports the installed Telegram `runtime-api.js`, sends through `sendMessageTelegram`, and verifies token rewrite plus fake Bot API capture.
   This does not reproduce `nemotron-3-super:120b` on Local Ollama or originate a Telegram inbound update after the crash.
