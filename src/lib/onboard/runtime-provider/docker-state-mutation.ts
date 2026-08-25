@@ -59,6 +59,7 @@ const HELPER_FAST_TIMEOUT_MS = 30_000;
 // service verification. Keep the broker outside that bound and below the
 // existing 15-minute Shields state-mutation guard.
 const HELPER_ACTIVATION_TIMEOUT_MS = 8 * 60_000;
+const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
@@ -370,8 +371,9 @@ function helperTimeoutMs(action: HelperAction): number {
     case "rollback":
       return DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS;
     case "activate":
-    case "release":
       return HELPER_ACTIVATION_TIMEOUT_MS;
+    case "release":
+      return HELPER_RELEASE_TIMEOUT_MS;
     case "acquire":
     case "assert":
       return HELPER_FAST_TIMEOUT_MS;

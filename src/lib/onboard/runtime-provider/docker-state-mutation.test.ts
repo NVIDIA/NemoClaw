@@ -81,6 +81,7 @@ describe("Docker runtime-provider state mutation surface", () => {
     expect(activationWindowSeconds).toBeGreaterThan(0);
     expect(brokerTimeouts?.activate).toEqual(expect.any(Number));
     expect(brokerTimeouts?.activate as number).toBeGreaterThan(activationWindowSeconds * 3);
+    expect(brokerTimeouts?.release).toBe(300);
   });
 
   it("preserves safe broker diagnostics after request validation", () => {
