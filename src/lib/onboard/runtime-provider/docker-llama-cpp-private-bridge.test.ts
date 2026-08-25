@@ -600,6 +600,45 @@ describe("llama.cpp private bridge request authentication", () => {
     }
   });
 
+  it("bounds the wait for an upstream 100 Continue response", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const upstream = http.createServer();
+    let acceptRequest: (() => void) | undefined;
+    const requestAccepted = new Promise<void>((resolve) => {
+      acceptRequest = resolve;
+    });
+    const upstreamSocketClosed = new Promise<void>((resolve) => {
+      upstream.once("connection", (socket) => socket.once("close", resolve));
+    });
+    upstream.on("checkContinue", () => acceptRequest?.());
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    try {
+      const resultPromise = request(bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+        body: '{"model":"default"}',
+        expectContinue: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+      await requestAccepted;
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const result = await resultPromise;
+      expect(result).toMatchObject({ continued: false, status: 502 });
+      await upstreamSocketClosed;
+    } finally {
+      vi.useRealTimers();
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
   it("rejects unauthenticated Expect: 100-continue without requesting the body", async () => {
     const runtime = await requestBridgeFixture();
     try {

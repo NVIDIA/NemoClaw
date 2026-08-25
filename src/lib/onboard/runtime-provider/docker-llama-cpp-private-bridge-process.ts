@@ -9,6 +9,7 @@ import net from "node:net";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const API_KEY_FILE_DESCRIPTOR = 3;
 const AUTH_MODE = "api-key-fd3";
+const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
   error: {
     code: "unauthorized",
@@ -207,6 +208,12 @@ function createLlamaCppPrivateBridgeRequestHandler(
     const expectsContinue = request.headers.expect?.toLowerCase() === "100-continue";
     let upstreamResponded = false;
     let forwardingRequestBody = false;
+    let continueTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearContinueTimer = () => {
+      if (continueTimer === undefined) return;
+      clearTimeout(continueTimer);
+      continueTimer = undefined;
+    };
     const upstream = http.request(
       {
         headers,
@@ -216,6 +223,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
         port: targetPort,
       },
       (upstreamResponse) => {
+        clearContinueTimer();
         upstreamResponded = true;
         request.unpipe(upstream);
         request.resume();
@@ -233,23 +241,43 @@ function createLlamaCppPrivateBridgeRequestHandler(
       request.pipe(upstream);
     };
     upstream.once("continue", () => {
+      clearContinueTimer();
       if (!response.destroyed && !response.writableEnded) response.writeContinue();
       forwardRequestBody();
     });
     upstream.once("error", () => {
+      clearContinueTimer();
       if (!upstreamResponded) writeUpstreamUnavailable(response);
     });
     request.once("close", () => {
-      if (!request.complete && !upstreamResponded) upstream.destroy();
+      if (!request.complete && !upstreamResponded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
     });
     request.once("error", () => {
-      if (!upstreamResponded) upstream.destroy();
+      if (!upstreamResponded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
     });
     response.once("close", () => {
-      if (!response.writableEnded) upstream.destroy();
+      if (!response.writableEnded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
     });
-    if (expectsContinue) upstream.flushHeaders();
-    else forwardRequestBody();
+    if (expectsContinue) {
+      continueTimer = setTimeout(() => {
+        continueTimer = undefined;
+        upstream.destroy();
+        writeUpstreamUnavailable(response);
+      }, UPSTREAM_CONTINUE_TIMEOUT_MS);
+      continueTimer.unref();
+      upstream.flushHeaders();
+    } else {
+      forwardRequestBody();
+    }
   };
 }
 
