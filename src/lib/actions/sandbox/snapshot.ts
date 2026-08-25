@@ -393,6 +393,11 @@ async function prepareSnapshotClonePolicy(
     throw new Error(`Cannot resolve the '${agentName}' baseline policy for snapshot restore.`);
   }
   const baselineExclusions = srcEntry.baselineExclusions ?? [];
+  if (agentName === "nemocua") {
+    throw new Error(
+      "Cannot clone a NemoCUA sandbox because its service endpoints are bound to its prepared image. Run nemoclaw onboard --agent nemocua to create a new sandbox.",
+    );
+  }
   if (baselineExclusions.length === 0) return { policyPath: baseline.policyPath };
 
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(srcEntry));

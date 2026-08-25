@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
@@ -52,7 +52,15 @@ type PolicyDocument = {
 
 const cleanupFns: Array<() => boolean | undefined> = [];
 
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/browser");
+  vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/computer");
+  vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/terminal");
+  vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const cleanup of cleanupFns.splice(0)) {
     cleanup();
   }
@@ -265,6 +273,32 @@ describe("initial sandbox policy real preset merge", () => {
       ],
     });
     expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
+    expect(Object.keys(effective.network_policies ?? {})).toEqual([
+      "managed_inference",
+      "nemocua_browser",
+      "nemocua_computer",
+      "nemocua_terminal",
+      "nemocua_fixture",
+    ]);
+    expect(effective.network_policies?.nemocua_browser).toEqual({
+      name: "nemocua_browser",
+      endpoints: [
+        {
+          host: "host.openshell.internal",
+          port: 18001,
+          allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "GET", path: "/browser" } },
+            { allow: { method: "GET", path: "/browser/**" } },
+            { allow: { method: "POST", path: "/browser" } },
+            { allow: { method: "POST", path: "/browser/**" } },
+          ],
+        },
+      ],
+      binaries: [{ path: "/usr/bin/python3" }, { path: "/usr/local/bin/python3" }],
+    });
   });
 
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {

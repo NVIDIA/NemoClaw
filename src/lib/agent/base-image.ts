@@ -15,6 +15,7 @@ import {
   dockerTag,
 } from "../adapters/docker";
 import { CUA_SANDBOX_IMAGE_ENV, requireCuaSandboxImageRef } from "../cua/feature";
+import { renderCuaServiceConfig, requireCuaServiceEndpoints } from "../cua/service-endpoints";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
@@ -745,6 +746,12 @@ export function createAgentSandbox(
         recursive: true,
         filter: (src) => path.basename(src) !== ".claude" && shouldIncludeBuildContextPath(src),
       });
+    } else {
+      fs.writeFileSync(
+        path.join(buildCtx, "nemoclaw-services.toml"),
+        renderCuaServiceConfig(requireCuaServiceEndpoints()),
+        { mode: 0o600 },
+      );
     }
     fs.copyFileSync(agentDockerfile, stagedDockerfile);
     if (baseImageRef) {

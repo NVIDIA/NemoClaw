@@ -21,6 +21,30 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     expect(f.resolveAgentBaselinePolicyMock("openclaw")).toEqual(openClawBaseline);
   });
 
+  it("rejects a NemoCUA clone whose reused image could disagree with current service endpoints (#10289)", async () => {
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "nemocua",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : null,
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+
+    const { runSandboxSnapshot } = await import("./snapshot");
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      /service endpoints are bound to its prepared image/,
+    );
+
+    expect(f.prepareInitialSandboxCreatePolicyMock).not.toHaveBeenCalled();
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+  });
+
   it("creates a clone with the source exclusions applied to its live policy (#7178)", async () => {
     const exclusion = {
       version: 1 as const,

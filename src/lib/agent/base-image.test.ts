@@ -84,6 +84,10 @@ expect(
 describe("agent base image provisioning", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS", "");
+    vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/browser");
+    vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/computer");
+    vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/terminal");
+    vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
     vi.restoreAllMocks();
   });
 
@@ -133,11 +137,20 @@ describe("agent base image provisioning", () => {
       withMockedDocker(({ createAgentSandbox }) => {
         const result = createAgentSandbox(agent, { rootDir: root });
         buildContext = result.buildCtx;
-        expect(fs.readdirSync(result.buildCtx)).toEqual(["Dockerfile"]);
+        expect(fs.readdirSync(result.buildCtx).sort()).toEqual([
+          "Dockerfile",
+          "nemoclaw-services.toml",
+        ]);
         expect(fs.existsSync(path.join(result.buildCtx, "unrelated-sentinel.txt"))).toBe(false);
         expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
           "ARG BASE_IMAGE=nemocua-scenario:staged",
         );
+        const config = fs.readFileSync(
+          path.join(result.buildCtx, "nemoclaw-services.toml"),
+          "utf8",
+        );
+        expect(config).toContain("http://host.openshell.internal:18001/browser");
+        expect(config).not.toContain("127.0.0.1");
       });
     } finally {
       fs.rmSync(buildContext, { recursive: true, force: true });

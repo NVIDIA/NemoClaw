@@ -5176,6 +5176,12 @@ Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemoc
 |----------|--------|--------|
 | `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
 | `NEMOCLAW_CUA_SANDBOX_IMAGE_REF` | image reference | Selects the caller-prepared NemoCUA sandbox image when `NEMOCLAW_CUA_ENABLED=1`. NemoClaw uses this reference directly and does not resolve a private package source. The value is required whenever NemoClaw creates or rebuilds the NemoCUA sandbox; whitespace and shell syntax are rejected. |
+| `NEMOCLAW_CUA_BROWSER_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the browser service that NemoClaw projects through `host.openshell.internal`. Credentials, query strings, and fragments are rejected. |
+| `NEMOCLAW_CUA_COMPUTER_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the computer service that NemoClaw projects through `host.openshell.internal`. |
+| `NEMOCLAW_CUA_TERMINAL_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the terminal service that NemoClaw projects through `host.openshell.internal`. |
+| `NEMOCLAW_CUA_FIXTURE_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the synthetic fixture service that NemoClaw projects through `host.openshell.internal`. |
+
+NemoClaw requires four distinct service ports. It appends their sandbox-facing URLs to `/app/config/config.toml` and limits the NemoCUA Python clients to those ports. Keep each host service bound to loopback; NemoClaw owns the sandbox bridge mapping and OpenShell policy.
 
 ### Onboarding Behavior Flags
 

@@ -7,6 +7,7 @@ import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
+import { materializeCuaServicePolicy, requireCuaServiceEndpoints } from "../cua/service-endpoints";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
@@ -460,6 +461,12 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
+    if (options.agentName === "nemocua") {
+      adoptPolicy(
+        materializeCuaServicePolicy(basePolicy, requireCuaServiceEndpoints()),
+        "nemoclaw-cua-policy",
+      );
+    }
     // Fail closed: the OpenClaw OTEL preset is added at create time only when the
     // selected policy tier is known and is not Restricted. When the tier is null
     // (interactive flow that selects later) the preset is deferred to the
