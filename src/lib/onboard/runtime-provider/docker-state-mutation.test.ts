@@ -55,6 +55,34 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
+  it("keeps the detached activation broker alive through retained-fence recovery (#10155)", () => {
+    const controller = path.join(
+      import.meta.dirname,
+      "../../../../scripts/runtime-state-mutation-control.py",
+    );
+    const activationWindowSeconds = Number(
+      execFileSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          "import importlib.util,sys;spec=importlib.util.spec_from_file_location('control',sys.argv[1]);control=importlib.util.module_from_spec(spec);sys.modules[spec.name]=control;spec.loader.exec_module(control);print(control.ACTIVATION_SECONDS)",
+          controller,
+        ],
+        { encoding: "utf8", timeout: 5_000 },
+      ).trim(),
+    );
+    const brokerTimeouts = JSON.parse(
+      /^TIMEOUTS = (\{[^\n]+\})$/mu.exec(
+        DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
+      )?.[1] ?? "null",
+    ) as Record<string, unknown> | null;
+
+    expect(activationWindowSeconds).toBeGreaterThan(0);
+    expect(brokerTimeouts?.activate).toEqual(expect.any(Number));
+    expect(brokerTimeouts?.activate as number).toBeGreaterThan(activationWindowSeconds * 3);
+  });
+
   it("preserves safe broker diagnostics after request validation", () => {
     const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
       "\nhelper = sys.argv[1]\n",
