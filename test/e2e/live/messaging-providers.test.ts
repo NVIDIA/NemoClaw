@@ -1008,12 +1008,14 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     });
     await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
-    const gatewayProof = await runDiscordGatewayClient(
-      sandbox,
-      fakeGateway.port,
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    const gatewayProof = await runDiscordGatewayClient(sandbox, {
+      port: fakeGateway.port,
+      identifyToken: {
+        kind: "explicit",
+        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      },
       redactionValues,
-    );
+    });
     check(
       gatewayProof.includes("UPGRADE"),
       "M13d: native WebSocket upgrade reached fake Discord Gateway",

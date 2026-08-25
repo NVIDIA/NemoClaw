@@ -9,10 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DISCORD_GATEWAY_CLIENT_SOURCE } from "../live/messaging-providers-helpers.ts";
 import {
+  assertDiscordGatewayCapture,
   buildPairingApproveCommand,
   buildPairingPendingCommand,
-  DISCORD_GATEWAY_PROOF_SOURCE,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
@@ -125,12 +126,12 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
   });
 }
 
-function localDiscordGatewayProofSource(): string {
+function localDiscordGatewayClientSource(): string {
   const remoteHost = 'const host = "host.openshell.internal";';
   const localHost = 'const host = "127.0.0.1";';
-  const source = DISCORD_GATEWAY_PROOF_SOURCE.replace(remoteHost, localHost);
-  expect(source, "Discord Gateway proof host declaration changed").not.toBe(
-    DISCORD_GATEWAY_PROOF_SOURCE,
+  const source = DISCORD_GATEWAY_CLIENT_SOURCE.replace(remoteHost, localHost);
+  expect(source, "Discord Gateway client host declaration changed").not.toBe(
+    DISCORD_GATEWAY_CLIENT_SOURCE,
   );
   return source;
 }
@@ -271,15 +272,15 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.stderr).toEqual(expect.stringContaining("NETWORK_ATTEMPTED=false"));
   });
 
-  it("keeps Discord Gateway proof source valid for sandbox node heredoc", () => {
+  it("keeps the shared Discord Gateway client valid for sandbox node heredoc", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
-      input: DISCORD_GATEWAY_PROOF_SOURCE,
+      input: DISCORD_GATEWAY_CLIENT_SOURCE,
       encoding: "utf8",
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain('"\\r\\n"');
-    expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+    expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain('"\\r\\n"');
+    expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
   });
 
   it("sends the injected Discord proof placeholder to a revision-bound gateway (#10155)", async () => {
@@ -304,11 +305,12 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       const port = await waitForPort(portFile);
       const result = spawnSync(process.execPath, ["--input-type=module"], {
-        input: localDiscordGatewayProofSource(),
+        input: localDiscordGatewayClientSource(),
         encoding: "utf8",
         env: {
           ...process.env,
           DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
           FAKE_DISCORD_GATEWAY_PORT: String(port),
           HTTP_PROXY: "",
           http_proxy: "",
@@ -343,11 +345,12 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     { name: "raw token", value: "raw-discord-token" },
   ])("rejects a $name Discord proof credential before network access (#10155)", ({ value }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: localDiscordGatewayProofSource(),
+      input: localDiscordGatewayClientSource(),
       encoding: "utf8",
       env: {
         ...process.env,
         DISCORD_BOT_TOKEN: value,
+        FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
         FAKE_DISCORD_GATEWAY_PORT: "12345",
         HTTP_PROXY: "",
         http_proxy: "",
@@ -383,25 +386,26 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       env: { HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Discord Gateway proof",
     },
-  ])("fails closed on invalid Discord Gateway proxy input before network access: $name", ({
-    env,
-    error,
-  }) => {
-    const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
-        FAKE_DISCORD_GATEWAY_PORT: "12345",
-        ...env,
-      },
-    });
+  ])(
+    "fails closed on invalid Discord Gateway proxy input before network access: $name",
+    ({ env, error }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${DISCORD_GATEWAY_CLIENT_SOURCE}\n`,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+          FAKE_DISCORD_GATEWAY_PORT: "12345",
+          ...env,
+        },
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toEqual(expect.stringContaining(error));
-    expect(result.stderr).not.toContain("ECONNREFUSED");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toEqual(expect.stringContaining(error));
+      expect(result.stderr).not.toContain("ECONNREFUSED");
+    },
+  );
 
   it("rejects malformed sandboxNode env keys before sandbox execution", async () => {
     const execShell = vi.fn(async () => {
@@ -445,6 +449,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       await sendDiscordIdentify(port, sentinel);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
+      assertDiscordGatewayCapture(captureFile, sentinel);
       const serialized = fs.readFileSync(captureFile, "utf8");
       const identify = serialized
         .trim()

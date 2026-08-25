@@ -337,6 +337,18 @@ describe("initial sandbox policy real preset merge", () => {
       method: "DELETE",
       path: "/api/v*/guilds/*",
     });
+    const credentialEndpoints = (policy.network_policies?.discord?.endpoints ?? []).filter(
+      (endpoint) =>
+        endpoint.host === "discord.com" ||
+        endpoint.host === "gateway.discord.gg" ||
+        endpoint.host === "*.discord.gg",
+    );
+    expect(credentialEndpoints).toHaveLength(3);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      "openclaw-discord-discord-bridge",
+      "openclaw-discord-discord-bridge",
+      "openclaw-discord-discord-bridge",
+    ]);
   });
 
   it.each(shippingPolicyCases)(

@@ -354,15 +354,20 @@ export async function runSandboxNode(
     artifactName: string;
     env?: Record<string, string>;
     redactionValues: string[];
+    sandboxName?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  return sandbox.exec(SANDBOX_NAME, buildSandboxNodeInvocation(source, options), {
-    artifactName: options.artifactName,
-    env: sandboxAccessEnv(),
-    redactionValues: options.redactionValues,
-    timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
-  });
+  return sandbox.exec(
+    options.sandboxName ?? SANDBOX_NAME,
+    buildSandboxNodeInvocation(source, options),
+    {
+      artifactName: options.artifactName,
+      env: sandboxAccessEnv(),
+      redactionValues: options.redactionValues,
+      timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
+    },
+  );
 }
 
 export function buildSandboxNodeInvocation(
@@ -798,26 +803,34 @@ req.end();
   return result.stdout.trim();
 }
 
-export async function runDiscordGatewayClient(
-  sandbox: SandboxClient,
-  port: string,
-  identifyToken: string,
-  redactionValues: string[],
-): Promise<string> {
-  const result = await runSandboxNode(
-    sandbox,
-    `
+export type DiscordGatewayIdentifyToken =
+  | { readonly kind: "explicit"; readonly value: string }
+  | { readonly kind: "revisioned-discord-env" };
+
+export const DISCORD_GATEWAY_CLIENT_SOURCE = String.raw`
 import crypto from "node:crypto";
 import net from "node:net";
 
 const host = "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = process.env.FAKE_DISCORD_IDENTIFY_TOKEN ?? "";
+function resolveIdentifyToken() {
+  const mode = process.env.FAKE_DISCORD_IDENTIFY_MODE || "explicit";
+  if (mode === "explicit") return process.env.FAKE_DISCORD_IDENTIFY_TOKEN || "";
+  if (mode !== "revisioned-discord-env") {
+    throw new Error("Discord Gateway proof identify mode is invalid");
+  }
+  const value = process.env.DISCORD_BOT_TOKEN || "";
+  if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(value)) {
+    throw new Error("Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder");
+  }
+  return value;
+}
+const identifyToken = resolveIdentifyToken();
 const results = [];
 
 function finish(message) {
   if (message) results.push(message);
-  console.log(results.join("\\n"));
+  console.log(results.join("\n"));
   process.exit(0);
 }
 
@@ -890,28 +903,28 @@ let finished = false;
 socket.on("connect", () => {
   const key = crypto.randomBytes(16).toString("base64");
   const requestTarget = proxy
-    ? \`http://\${host}:\${port}/gateway?v=10&encoding=json\`
+    ? "http://" + host + ":" + port + "/gateway?v=10&encoding=json"
     : "/gateway?v=10&encoding=json";
   socket.write([
-    \`GET \${requestTarget} HTTP/1.1\`,
-    \`Host: \${host}:\${port}\`,
+    "GET " + requestTarget + " HTTP/1.1",
+    "Host: " + host + ":" + port,
     "Upgrade: websocket",
     "Connection: Upgrade",
-    \`Sec-WebSocket-Key: \${key}\`,
+    "Sec-WebSocket-Key: " + key,
     "Sec-WebSocket-Version: 13",
-    "\\r\\n",
-  ].join("\\r\\n"));
+    "\r\n",
+  ].join("\r\n"));
 });
 
 socket.on("data", (chunk) => {
   if (!upgraded) {
     handshake = Buffer.concat([handshake, chunk]);
-    const end = handshake.indexOf("\\r\\n\\r\\n");
+    const end = handshake.indexOf("\r\n\r\n");
     if (end === -1) return;
-    const statusLine = handshake.slice(0, end).toString("latin1").split("\\r\\n")[0] ?? "";
+    const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] ?? "";
     if (!statusLine.includes("101")) {
       clearTimeout(timer);
-      finish(\`HTTP_\${statusLine}\`);
+      finish("HTTP_" + statusLine);
     }
     upgraded = true;
     results.push("UPGRADE");
@@ -951,23 +964,40 @@ socket.on("data", (chunk) => {
 });
 socket.on("error", (error) => {
   clearTimeout(timer);
-  if (!finished) finish(\`ERROR \${error.message}\`);
+  if (!finished) finish("ERROR " + error.message);
 });
 socket.on("close", () => {
   clearTimeout(timer);
   if (!finished) finish("CLOSED");
 });
-`,
-    {
-      artifactName: "fake-discord-gateway-client",
-      env: {
-        FAKE_DISCORD_GATEWAY_PORT: port,
-        FAKE_DISCORD_IDENTIFY_TOKEN: identifyToken,
-      },
-      redactionValues,
-      timeoutMs: 60_000,
+`;
+
+export async function runDiscordGatewayClient(
+  sandbox: SandboxClient,
+  options: {
+    readonly sandboxName?: string;
+    readonly port: string;
+    readonly identifyToken: DiscordGatewayIdentifyToken;
+    readonly redactionValues: string[];
+  },
+): Promise<string> {
+  const identifyEnv: Record<string, string> =
+    options.identifyToken.kind === "explicit"
+      ? {
+          FAKE_DISCORD_IDENTIFY_MODE: "explicit",
+          FAKE_DISCORD_IDENTIFY_TOKEN: options.identifyToken.value,
+        }
+      : { FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env" };
+  const result = await runSandboxNode(sandbox, DISCORD_GATEWAY_CLIENT_SOURCE, {
+    artifactName: "fake-discord-gateway-client",
+    env: {
+      FAKE_DISCORD_GATEWAY_PORT: options.port,
+      ...identifyEnv,
     },
-  );
+    redactionValues: options.redactionValues,
+    sandboxName: options.sandboxName,
+    timeoutMs: 60_000,
+  });
   expectExitZero(result, "fake Discord Gateway client");
   return result.stdout.trim();
 }

@@ -149,13 +149,12 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
     port: fakeGateway.port,
     redactions,
   });
-  expectExitZero(gatewayProof, "Discord Gateway protocol proof");
-  expect(resultText(gatewayProof)).toContain("UPGRADE");
-  expect(resultText(gatewayProof)).toContain("HELLO");
-  expect(resultText(gatewayProof)).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  expect(gatewayProof).toContain("UPGRADE");
+  expect(gatewayProof).toContain("HELLO");
+  expect(gatewayProof).toContain("IDENTIFY_SENT_PLACEHOLDER");
   assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
-  expect(resultText(gatewayProof)).toContain("READY");
-  expect(resultText(gatewayProof)).toContain("HEARTBEAT_ACK");
+  expect(gatewayProof).toContain("READY");
+  expect(gatewayProof).toContain("HEARTBEAT_ACK");
 
   progress.phase("issue a Discord pairing request");
   const issue = await issuePairingRequest({
