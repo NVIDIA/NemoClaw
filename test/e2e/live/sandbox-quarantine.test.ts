@@ -244,6 +244,7 @@ test(
       "true",
       `${AGENT_NAME}-quarantine-openshell-access-denied`,
     );
+    expect(deniedExec.timedOut, resultText(deniedExec)).toBe(false);
     expect(deniedExec.exitCode, resultText(deniedExec)).not.toBe(0);
     await Promise.all(
       ownedForwardPorts.map(async (port) =>
@@ -290,6 +291,7 @@ test(
       "true",
       `${AGENT_NAME}-quarantine-observation-did-not-recover`,
     );
+    expect(stillDenied.timedOut, resultText(stillDenied)).toBe(false);
     expect(stillDenied.exitCode, resultText(stillDenied)).not.toBe(0);
     const retry = await host.nemoclaw(
       [
@@ -326,6 +328,7 @@ test(
       "true",
       `${AGENT_NAME}-quarantine-release-does-not-start`,
     );
+    expect(releaseDidNotStart.timedOut, resultText(releaseDidNotStart)).toBe(false);
     expect(releaseDidNotStart.exitCode, resultText(releaseDidNotStart)).not.toBe(0);
     const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
       artifactName: `${AGENT_NAME}-quarantine-explicit-start`,
