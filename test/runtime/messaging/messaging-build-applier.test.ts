@@ -15,7 +15,7 @@ import {
   readMessagingBuildPlanFromEnv,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts";
-import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 const { remediateReviewedArchive } = vi.hoisted(() => ({
   remediateReviewedArchive: vi.fn(({ archivePath }: { archivePath: string }) => ({
