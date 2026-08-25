@@ -72,6 +72,21 @@ describe("ordinary OpenClaw pairing target", () => {
     });
   });
 
+  it("resolves a published runtime that retains its route transaction receipt", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      reservationSessionId: "session-owner",
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: "1.0.0",
+    });
+  });
+
   it("resolves a custom Dockerfile without inventing a managed agent version", () => {
     vi.mocked(deps.getSandbox!).mockReturnValue({
       ...openClawEntry(),

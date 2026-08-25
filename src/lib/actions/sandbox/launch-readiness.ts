@@ -922,7 +922,6 @@ function resolveOpenClawPairingSettlementTarget(
     entry.name !== sandboxName ||
     (entry.agent !== null && entry.agent !== "openclaw") ||
     entry.pendingRouteReservation === true ||
-    entry.reservationSessionId ||
     !Number.isInteger(entry.gatewayPort) ||
     (entry.gatewayPort ?? 0) < 1 ||
     (entry.gatewayPort ?? 0) > 65535
