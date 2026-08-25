@@ -5,13 +5,15 @@ import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-c
 import { redactFull } from "../../security/redact";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { buildHermesMcpIntentPayload } from "./mcp-bridge-adapter-status";
+import {
+  buildHermesMcpIntentPayload,
+  HERMES_MCP_TRANSACTION_HELPER,
+} from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { sleepMcpBridgeRetry } from "./mcp-bridge/timing";
 
-const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 const HERMES_MCP_INSPECT_TIMEOUT_SECONDS = 45;
 const HERMES_MCP_INSPECT_TIMEOUT_MS = 60_000;
 const HERMES_MCP_RECONCILIATION_FAILURE =
