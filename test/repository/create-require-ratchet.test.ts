@@ -34,7 +34,7 @@ import {
   resolveBaseRevision,
   trustedCreateRequireExpansionFailure,
   verifyTrustedCreateRequireRatchet,
-} from "../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
+} from "../../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
 
 const BASE_SHA = "a".repeat(40);
 const HEAD_SHA = "b".repeat(40);
@@ -322,7 +322,7 @@ describe("base-trusted createRequire ratchet", () => {
       containsCreateRequireIdentifier(
         ts,
         [
-          'import * as fixture from "./fixture.js";',
+          'import * as fixture from ".././fixture.js";',
           'const { "createRequire": load } = fixture;',
           "load();",
         ].join("\n"),
@@ -332,7 +332,7 @@ describe("base-trusted createRequire ratchet", () => {
     expect(
       containsCreateRequireIdentifier(
         ts,
-        'import { "createRequire" as load } from "./fixture.js";\nload();',
+        'import { "createRequire" as load } from ".././fixture.js";\nload();',
         "example.ts",
       ),
     ).toBe(false);

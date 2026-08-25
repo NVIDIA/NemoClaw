@@ -10,7 +10,7 @@ import type { TestSpecification, Vitest } from "vitest/node";
 import {
   discoverVitestCandidates,
   expectedProjectForTestPath,
-} from "../scripts/checks/vitest-project-overlap.mts";
+} from "../../scripts/checks/vitest-project-overlap.mts";
 import {
   assignStableShards,
   CliCoverageSequencer,
@@ -19,7 +19,7 @@ import {
   shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
-} from "./helpers/cli-coverage-sequencer";
+} from ".././helpers/cli-coverage-sequencer";
 
 function assignmentKeys(entries: readonly WeightedShardEntry<string>[]) {
   return assignStableShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));
@@ -214,7 +214,7 @@ describe("stable CLI coverage sharding", () => {
     expect(() =>
       parseCliTestTimingHints({
         ...cliTestTimingHints,
-        files: { "../outside.test.ts": 6_000 },
+        files: { "../../outside.test.ts": 6_000 },
       }),
     ).toThrow(/Invalid CLI test timing hint/u);
   });

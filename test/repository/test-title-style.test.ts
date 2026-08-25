@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   findTestTitleStyleViolations,
   scanTestTitleStyle,
-} from "../scripts/checks/test-title-style.mts";
+} from "../../scripts/checks/test-title-style.mts";
 
 function rulesFor(source: string): string[] {
   return scanTestTitleStyle("test/virtual-title-style.test.ts", source).map(

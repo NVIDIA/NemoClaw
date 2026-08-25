@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { convertShellCheckJson1 } from "../scripts/shellcheck-json1-to-sarif.mts";
+import { convertShellCheckJson1 } from "../../scripts/shellcheck-json1-to-sarif.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HELPER_PATH = join(REPO_ROOT, "scripts", "shellcheck-json1-to-sarif.mts");

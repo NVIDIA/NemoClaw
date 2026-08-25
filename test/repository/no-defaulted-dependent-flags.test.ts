@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   findDefaultedDependentFlags,
   isScannedSourcePath,
-} from "../scripts/checks/no-defaulted-dependent-flags.mts";
+} from "../../scripts/checks/no-defaulted-dependent-flags.mts";
 
 describe("defaulted dependent flag guard", () => {
   it("reports a Flags.integer definition that combines default with dependsOn (#8883)", () => {

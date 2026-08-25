@@ -4,7 +4,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
-import { buildCheckSpawnInvocation, CHECKS, runChecks } from "../scripts/checks/run.mts";
+import { buildCheckSpawnInvocation, CHECKS, runChecks } from "../../scripts/checks/run.mts";
 
 const sampleCheck = {
   name: "sample",

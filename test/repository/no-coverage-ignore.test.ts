@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   findCoverageIgnoreDirectives,
   isScannedSourcePath,
-} from "../scripts/checks/no-coverage-ignore.mts";
+} from "../../scripts/checks/no-coverage-ignore.mts";
 
 const forbiddenDirective = ["v8", "ignore"].join(" ");
 

@@ -26,7 +26,7 @@ describe("shared CI dependency installer", () => {
     chmodSync(npm, 0o755);
 
     const result = spawnSync("bash", [".github/actions/ci-install-dependencies.sh"], {
-      cwd: join(import.meta.dirname, ".."),
+      cwd: join(import.meta.dirname, "../.."),
       encoding: "utf8",
       env: { ...process.env, NPM_TRACE: trace, PATH: `${bin}:${process.env.PATH || ""}` },
     });

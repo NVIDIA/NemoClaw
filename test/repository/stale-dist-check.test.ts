@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkStaleDist, warnIfStale } from "../src/lib/stale-dist-check";
+import { checkStaleDist, warnIfStale } from "../../src/lib/stale-dist-check";
 
 function mkRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "stale-dist-"));
@@ -116,7 +116,7 @@ describe("stale-dist-check", () => {
   });
 
   it("runs from an unrelated directory and fails open when its helper cannot load", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const repoRoot = path.join(import.meta.dirname, "../..");
     const fixtureEntry = path.join(root, "scripts", "check-stale-dist.mts");
     const fixtureHelper = path.join(root, "src", "lib", "stale-dist-check.ts");
     fs.mkdirSync(path.dirname(fixtureEntry), { recursive: true });

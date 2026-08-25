@@ -11,7 +11,7 @@ import {
   formatViolations,
   isScannedModule,
   scanTestRegistrations,
-} from "../scripts/checks/test-registration-boundary.mts";
+} from "../../scripts/checks/test-registration-boundary.mts";
 
 function scan(source: string, file = "test/helpers/example-helper.ts") {
   return scanTestRegistrations(file, source);
@@ -253,7 +253,7 @@ describe("test registration boundary repository state", () => {
   it("exempts an imported suite module and reports an orphan suite module", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-registration-boundary-"));
     try {
-      writeFileSync(path.join(root, "collected.test.ts"), 'import "./imported-suite";\n');
+      writeFileSync(path.join(root, "collected.test.ts"), 'import ".././imported-suite";\n');
       writeFileSync(
         path.join(root, "imported-suite.ts"),
         'import { it } from "vitest";\nit("imported", () => {});\n',

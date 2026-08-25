@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { verifyDependencyPins } from "../scripts/checks/dependency-pins.mts";
+import { verifyDependencyPins } from "../../scripts/checks/dependency-pins.mts";
 
 const OPENSHELL_MIN = "1.2.3";
 const OPENSHELL_MAX = "1.2.4";
@@ -107,7 +107,7 @@ jobs:
       openshellVersion: credentialVersion,
     }),
     "src/lib/actions/sandbox/mcp-bridge-validation.ts": `
-import boundary from "./openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
+import boundary from ".././openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
 `,
     "src/lib/onboard/openshell-version.ts": `
 export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "${overrides.fallbackVersion ?? openshellMax}";
@@ -300,12 +300,12 @@ describe("dependency pin drift check", () => {
   it.each([
     {
       name: "an unsafe OpenShell minimum",
-      overrides: { openshellMin: "../1.2.3" },
+      overrides: { openshellMin: "../../1.2.3" },
       failure: "nemoclaw-blueprint/blueprint.yaml min_openshell_version must match X.Y.Z",
     },
     {
       name: "an unsafe OpenShell maximum",
-      overrides: { openshellMax: "../1.2.4" },
+      overrides: { openshellMax: "../../1.2.4" },
       failure: "nemoclaw-blueprint/blueprint.yaml max_openshell_version must match X.Y.Z",
     },
     {

@@ -101,7 +101,7 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
-const WORKFLOW_NAME_TEST = "test/github-actions-workflow-names.test.ts";
+const WORKFLOW_NAME_TEST = "test/repository/github-actions-workflow-names.test.ts";
 
 function triggeredBy(relativePath: string): string[] {
   return resolveVitestWatchTests(path.resolve(relativePath)).filter(
@@ -299,7 +299,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
-      "test/code-scanning-workflow.test.ts",
+      "test/repository/code-scanning-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
       "test/post-merge-docs.test.ts",

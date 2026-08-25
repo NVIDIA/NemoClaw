@@ -11,7 +11,7 @@ import ts from "typescript";
 import {
   extractTrustedCreateRequireAllowlists,
   trustedCreateRequireExpansionFailure,
-} from "../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
+} from "../../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
 import {
   collectProductionCreateRequireSources,
   collectTestSupportCreateRequireSources,
@@ -19,7 +19,7 @@ import {
   createRequireAllowlistExpansionFailure,
   createRequireBudgetFailure,
   extractCreateRequireAllowlists,
-} from "../scripts/checks/test-create-require-budget.mts";
+} from "../../scripts/checks/test-create-require-budget.mts";
 
 const tempDirs = new Set<string>();
 

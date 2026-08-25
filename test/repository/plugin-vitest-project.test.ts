@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const rootRequire = createRequire(path.join(repositoryRoot, "package.json"));
 const pluginRequire = createRequire(path.join(repositoryRoot, "nemoclaw", "package.json"));
 const pluginTypeScript = pluginRequire.resolve("typescript/bin/tsc");
