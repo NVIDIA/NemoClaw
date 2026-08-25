@@ -104,9 +104,11 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
+  reservationSessionId?: string;
   registerSandbox?(
     entry: SandboxEntry,
     routeReservation?: QualifiedSandboxInferenceRouteReservation,
+    options?: { pending?: boolean; reservationSessionId?: string },
   ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -372,8 +374,12 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
-  const registered = input.inferenceRouteReservation
-    ? writeRegistry(entry, input.inferenceRouteReservation)
-    : writeRegistry(entry);
+  const pendingOptions = input.reservationSessionId
+    ? { pending: true as const, reservationSessionId: input.reservationSessionId }
+    : undefined;
+  const registered =
+    input.inferenceRouteReservation || pendingOptions
+      ? writeRegistry(entry, input.inferenceRouteReservation, pendingOptions)
+      : writeRegistry(entry);
   return registered ?? entry;
 }
