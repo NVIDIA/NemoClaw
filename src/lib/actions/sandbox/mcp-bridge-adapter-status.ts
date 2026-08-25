@@ -109,8 +109,11 @@ export function mcporterHeaderMatcherSource(): string {
   return `const mcporterHeadersMatchExpected = ${mcporterHeadersMatchExpected.toString()};`;
 }
 
-export function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
-  const headers = entryHeaders(entry);
+export function hermesManagedServerConfig(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): Record<string, unknown> {
+  const headers = entryHeaders(entry, credentialRevision);
   return {
     url: entry.url,
     enabled: true,
@@ -149,10 +152,13 @@ export function deepAgentsManagedServerConfig(entry: McpBridgeEntry): Record<str
   };
 }
 
-export function buildHermesMcpStatusCommand(entry: McpBridgeEntry): string {
+export function buildHermesMcpStatusCommand(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string {
   const payload = {
     server: entry.server,
-    expected: hermesManagedServerConfig(entry),
+    expected: hermesManagedServerConfig(entry, credentialRevision),
   };
   return [
     "/opt/hermes/.venv/bin/python - <<'PY'",
