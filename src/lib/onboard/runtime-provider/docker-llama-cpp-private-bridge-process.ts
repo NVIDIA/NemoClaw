@@ -204,6 +204,7 @@ export function createLlamaCppPrivateBridgeRequestHandler(
     delete headers["x-forwarded-host"];
     delete headers["x-forwarded-proto"];
 
+    let upstreamResponded = false;
     const upstream = http.request(
       {
         headers,
@@ -213,16 +214,26 @@ export function createLlamaCppPrivateBridgeRequestHandler(
         port: targetPort,
       },
       (upstreamResponse) => {
+        upstreamResponded = true;
+        request.unpipe(upstream);
+        request.resume();
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
         upstreamResponse.once("error", () => response.destroy());
         upstreamResponse.pipe(response);
       },
     );
-    upstream.once("error", () => writeUpstreamUnavailable(response));
-    request.once("close", () => {
-      if (!request.complete) upstream.destroy();
+    upstream.once("continue", () => {
+      if (!response.destroyed && !response.writableEnded) response.writeContinue();
     });
-    request.once("error", () => upstream.destroy());
+    upstream.once("error", () => {
+      if (!upstreamResponded) writeUpstreamUnavailable(response);
+    });
+    request.once("close", () => {
+      if (!request.complete && !upstreamResponded) upstream.destroy();
+    });
+    request.once("error", () => {
+      if (!upstreamResponded) upstream.destroy();
+    });
     response.once("close", () => {
       if (!response.writableEnded) upstream.destroy();
     });
@@ -230,12 +241,24 @@ export function createLlamaCppPrivateBridgeRequestHandler(
   };
 }
 
+export function createLlamaCppPrivateBridgeServer(
+  authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
+  apiKey: string,
+): http.Server {
+  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
+  const server = http.createServer();
+  server.on("checkContinue", handler);
+  server.on("request", handler);
+  return server;
+}
+
 export async function runLlamaCppPrivateBridge(
   authority: LlamaCppPrivateBridgeArguments,
   apiKey: string,
 ): Promise<void> {
-  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
-  const servers = authority.bindAddresses.map(() => http.createServer(handler));
+  const servers = authority.bindAddresses.map(() =>
+    createLlamaCppPrivateBridgeServer(authority, apiKey),
+  );
 
   const close = () => {
     for (const server of servers) {
