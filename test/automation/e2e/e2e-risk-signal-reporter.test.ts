@@ -15,7 +15,7 @@ import {
   parseLiveTestOutcome,
   readLiveTestOutcome,
   writeLiveTestOutcome,
-} from "../tools/e2e/live-test-outcome.mts";
+} from "../../../tools/e2e/live-test-outcome.mts";
 import {
   configuredEnvironment,
   default as E2eRiskSignalReporter,
@@ -23,7 +23,7 @@ import {
   RISK_SIGNAL_FILE,
   type RiskSignalEnvironment,
   writeRiskSignal,
-} from "./e2e/risk-signal-reporter.ts";
+} from "../../e2e/risk-signal-reporter.ts";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "a".repeat(40)),
