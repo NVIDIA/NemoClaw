@@ -48,7 +48,7 @@ function fixture(braceExpansionVersion: string) {
   fs.writeFileSync(arboristBin, "#!/usr/bin/env node\n");
   const npmBin = path.join(npmRoot, "node_modules", ".bin");
   fs.mkdirSync(npmBin);
-  fs.symlinkSync("../../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
+  fs.symlinkSync("../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
   writeJson(path.join(replacementRoot, "package.json"), {
     dependencies: { "balanced-match": "^4.0.2" },
     name: "brace-expansion",
