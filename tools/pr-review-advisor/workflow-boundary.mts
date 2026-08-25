@@ -202,11 +202,15 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("Prepare advisor sandbox inputs must receive the selected base ref");
   if (prepareEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
     errors.push("Prepare advisor sandbox inputs must receive the selected head ref");
+  const specialistUpload = namedStep(specialists, "Upload specialist review");
+  if (!String(specialistUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
+    errors.push("specialist review step must use actions/upload-artifact");
+  requireWith(errors, specialistUpload, "if-no-files-found", "error");
   requireWith(
     errors,
-    namedStep(specialists, "Upload specialist review"),
-    "if-no-files-found",
-    "error",
+    specialistUpload,
+    "path",
+    "artifacts/${{ matrix.advisor.artifact_dir }}/",
   );
   requireWith(
     errors,

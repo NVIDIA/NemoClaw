@@ -80,9 +80,8 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and selector tuples and ignores artifact-authored E2E prose. A newly added credential-free test can extend the job allowlist only through trusted-normalizer evidence bound to the same head SHA, changed-file path, and basename-derived selector ID.
-- Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
-  The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
+- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed

@@ -166,6 +166,31 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors).toEqual([expectedError]);
   });
 
+  it("rejects a non-artifact specialist upload action", () => {
+    const errors = validateMutation((workflow) => {
+      const upload = workflow.jobs["review-specialists"].steps.find(
+        (step: Record<string, any>) => step.name === "Upload specialist review",
+      );
+      upload.uses = "actions/cache@" + "a".repeat(40);
+    });
+    expect(errors.some((item) => item.includes("must use actions/upload-artifact"))).toBe(true);
+  });
+
+  it("rejects an incomplete specialist artifact path", () => {
+    const errors = validateMutation((workflow) => {
+      const upload = workflow.jobs["review-specialists"].steps.find(
+        (step: Record<string, any>) => step.name === "Upload specialist review",
+      );
+      upload.with.path =
+        "artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-session.jsonl";
+    });
+    expect(
+      errors.some((item) =>
+        item.includes("expected with.path=artifacts/${{ matrix.advisor.artifact_dir }}/"),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the publisher on trusted workflow code", () => {
     const errors = validateMutation((value) => {
       const checkout = value.jobs.publish.steps.find(

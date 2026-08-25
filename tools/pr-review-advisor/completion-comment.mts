@@ -3,10 +3,27 @@
 
 import { pathToFileURL } from "node:url";
 
-import { upsertStickyComment } from "../advisors/github.mts";
+import { githubRest, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
+
+type LivePull = { head?: { sha?: string } };
+
+export async function assertLatestPullCommit(
+  repo: string,
+  pr: string,
+  expectedHeadSha: string,
+  token: string,
+  readPull: (apiPath: string, token: string) => Promise<LivePull> = githubRest,
+): Promise<void> {
+  const pull = await readPull(`repos/${repo}/pulls/${pr}`, token);
+  if (pull.head?.sha !== expectedHeadSha) {
+    throw new Error(
+      `PR review advisor will not publish stale commit ${expectedHeadSha}; latest PR commit is ${pull.head?.sha ?? "unavailable"}`,
+    );
+  }
+}
 
 export function buildCompletionComment(
   runUrl: string,
@@ -65,6 +82,8 @@ async function main(): Promise<void> {
       "PR review advisor comment requires repo, PR number, token, commit SHA, and workflow URLs",
     );
   }
+
+  await assertLatestPullCommit(repo, pr, commitSha, token);
 
   await upsertStickyComment({
     repo,
