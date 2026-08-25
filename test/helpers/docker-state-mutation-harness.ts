@@ -346,6 +346,7 @@ function createContainerStateMutationHarness(
                     : action === "release"
                       ? 5 * 60_000
                       : 15 * 60_000;
+              const helperDeadline = Date.now() + helperTimeout;
               let helperResult = capture(
                 "docker",
                 [
@@ -356,23 +357,37 @@ function createContainerStateMutationHarness(
                   "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
                   action,
                 ],
-                helperTimeout,
+                Math.max(1, helperDeadline - Date.now()),
                 request,
               );
               if (helperResult.status !== null && helperResult.status < 0) {
-                helperResult = capture(
-                  "docker",
-                  [
-                    "container",
-                    "exec",
-                    "--nemoclaw-broker",
-                    DOCKER_STATE_MUTATION_RUNTIME_ID,
-                    "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-                    action,
-                  ],
-                  helperTimeout,
-                  request,
-                );
+                const remainingTimeout = helperDeadline - Date.now();
+                if (remainingTimeout <= 0) {
+                  helperResult = {
+                    status: 1,
+                    stdout: "",
+                    stderr: `${JSON.stringify({
+                      schemaVersion: 1,
+                      action,
+                      status: "failed",
+                      code: "helper-timeout",
+                    })}\n`,
+                  };
+                } else {
+                  helperResult = capture(
+                    "docker",
+                    [
+                      "container",
+                      "exec",
+                      "--nemoclaw-broker",
+                      DOCKER_STATE_MUTATION_RUNTIME_ID,
+                      "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                      action,
+                    ],
+                    remainingTimeout,
+                    request,
+                  );
+                }
               }
               transportFiles.set(
                 `${path.posix.dirname(containerPath)}/${identity}.response`,
