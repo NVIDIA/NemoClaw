@@ -95,9 +95,10 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // `error` key. A healthy default; #4365 scenarios override with a runner-
   // crash payload to drive the daemonFailure path.
   const generateBody = opts.ollamaGenerateBody ?? '{"response":"hello"}';
-  const tagsBody = opts.ollamaRunning
-    ? '{"models":[{"name":"qwen3.5:9b"}]}'
-    : '{"models":[]}';
+  const ollamaInventory = {
+    models: opts.ollamaRunning ? [{ name: "qwen3.5:9b" }] : [],
+  };
+  const tagsBody = JSON.stringify(ollamaInventory);
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
@@ -167,6 +168,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 };
 
 const ollamaRunning = ${JSON.stringify(opts.ollamaRunning)};
+const ollamaInventory = ${JSON.stringify(ollamaInventory)};
 const shellCommands = [];
 const waitForHttpCalls = [];
 const lines = [];
@@ -206,13 +208,13 @@ runner.runCapture = (command) => {
     return cmd.includes("ollama") ? "/usr/bin/ollama" : "";
   }
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
-    return ollamaRunning
-      ? JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] })
-      : JSON.stringify({ models: [] });
+    return JSON.stringify(ollamaInventory);
   }
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("ollama list")) {
-    return ollamaRunning ? "nemotron-3-nano:30b  abc  24 GB  now" : "";
+    return ollamaInventory.models.length > 0
+      ? ollamaInventory.models[0].name + "  abc  24 GB  now"
+      : "";
   }
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
