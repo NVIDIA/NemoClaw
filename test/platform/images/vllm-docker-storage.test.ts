@@ -14,6 +14,7 @@ import { expect } from "vitest";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm";
 import { imageStorageRequirementBytes } from "../../../src/lib/inference/vllm-storage";
+import { VLLM_DOCKER_STORAGE_NVIDIA_SMI_SOURCE } from "../../e2e/fixtures/vllm-docker-storage-telemetry.ts";
 import { test } from "../../e2e/fixtures/workflow-e2e-test.ts";
 
 const TARGET_ID = "vllm-docker-storage";
@@ -237,19 +238,9 @@ realDockerTest(
       fs.mkdirSync(blockedHome);
       fs.writeFileSync(path.join(blockedHome, ".cache"), "not a directory\n");
       fs.writeFileSync(statfsLogPath, "");
-      fs.writeFileSync(
-        path.join(fakeBinDir, "nvidia-smi"),
-        `#!/bin/sh
-case "$#:$1:$2" in
-  2:--query-gpu=compute_cap:--format=csv,noheader,nounits) printf '9.0\\n' ;;
-  2:--query-gpu=index,uuid,memory.total,memory.free:--format=csv,noheader,nounits)
-    printf '0, GPU-storage-proof, 131072, 131072\\n'
-    ;;
-  *) exit 64 ;;
-esac
-`,
-        { mode: 0o755 },
-      );
+      fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), VLLM_DOCKER_STORAGE_NVIDIA_SMI_SOURCE, {
+        mode: 0o755,
+      });
       fs.writeFileSync(path.join(fakeBinDir, "curl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(
         path.join(fakeBinDir, "docker"),
