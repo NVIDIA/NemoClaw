@@ -505,6 +505,9 @@ function finalRelaunchContainerFailureDetail(
   if (completion.replacementStoppedForCommit === false) {
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
+  if (completion.lifecycleReleaseObserved === false) {
+    return "OpenShell did not retire the previous lifecycle record before the final replacement start. NemoClaw did not start the primary dashboard/API host forward";
+  }
   if (completion.replacementRestarted === false) {
     return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
@@ -765,6 +768,8 @@ function recoverSandboxProcesses(
             captureOpenshell(args, {
               ignoreError: true,
               includeStderr: true,
+              killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
+              killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
               timeout:
                 typeof options?.timeout === "number" ? options.timeout : OPENSHELL_PROBE_TIMEOUT_MS,
             }).output,

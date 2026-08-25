@@ -15,6 +15,13 @@ export type ProcessTreeTimeoutOptions = {
   timeout?: number;
 };
 
+/**
+ * #10238 ownership decision: NemoClaw owns the wall-clock bound at its
+ * synchronous OpenShell adapter boundary. This remains opt-in for lifecycle
+ * probes; ordinary commands keep their existing execution behavior. Linux uses
+ * a process-group timeout so descendants cannot retain captured pipes after the
+ * direct CLI is killed. Real DGX Spark confirmation remains tracked by #10238.
+ */
 export function processTreeBoundedOpenshellInvocation(
   binary: string,
   args: readonly string[],

@@ -18,13 +18,14 @@
 //     for exact final handoff, terminal phase, rollback, and failure outcomes.
 //   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
 //     recreate-with-rollback scenarios.
-//   * src/lib/onboard/docker-gpu-sandbox-create.test.ts — composed create
+//   * src/lib/onboard/docker-gpu-sandbox-create-lifecycle.test.ts — composed create
 //     flow driving maybeApplyDuringCreate → waitForSupervisorReconnect →
 //     finalizeBackup.
 // Removal condition: when OpenShell supports native Docker-driver GPU
 // creation/reconnect, drop the NemoClaw post-create container recreation
-// and delete this module along with its callers in docker-gpu-patch.ts and
-// docker-gpu-sandbox-create.ts.
+// and delete this module along with its direct callers in
+// docker-gpu-patch-recreate.ts, docker-gpu-sandbox-create.ts, and
+// src/lib/actions/sandbox/supervisor-relaunch.ts.
 
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";

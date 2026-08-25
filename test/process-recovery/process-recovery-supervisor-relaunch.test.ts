@@ -523,7 +523,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         options?.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((args) => {
+    const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
+    captureOpenshell.mockImplementation((args) => {
       const responses = {
         "forward list": () => ({
           status: 0,
@@ -588,6 +589,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ["forward", "start", "--background", "18789", "legacy-handoff-box"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+      }),
+    );
   });
 
   it.each([
@@ -600,6 +608,21 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         stateRestored: true,
       }),
       expectedDetail: "Docker could not stop the replacement container",
+      expectedReadinessCalls: 1,
+      finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
+      finalReadinessReady: true,
+    },
+    {
+      condition: "OpenShell does not retire the previous lifecycle record",
+      finalizeOutcome: () => ({
+        backupRemoved: true,
+        lifecycleReleaseObserved: false,
+        replacementRestarted: false,
+        replacementStoppedForCommit: true,
+        rolledBack: false,
+        stateRestored: true,
+      }),
+      expectedDetail: "OpenShell did not retire the previous lifecycle record",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,
