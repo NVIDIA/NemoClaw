@@ -37,6 +37,12 @@ const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
+const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
+const GLIBC_PROBE_RUN =
+  "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
+const GLIBC_PROBE_ENABLE_ENV = "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E";
+const GLIBC_PROBE_IMAGE_ENV = "NEMOCLAW_TEST_IMAGE";
+const REMOVED_GLIBC_PROBE_TEST_PATH = "test/image-compatibility-docker-lifecycle.test.ts";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -1106,6 +1112,44 @@ export function readSandboxImagesWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): SandboxImagesWorkflow {
   return YAML.parse(readFileSync(workflowPath, "utf8")) as SandboxImagesWorkflow;
+}
+
+export function validateGlibcProbeLifecycleWorkflowPaths(
+  prWorkflow: SandboxImagesWorkflow,
+  imageWorkflow: SandboxImagesWorkflow,
+): string[] {
+  const errors: string[] = [];
+  for (const [label, workflow] of [
+    ["PR self-hosted workflow", prWorkflow],
+    ["sandbox image workflow", imageWorkflow],
+  ] as const) {
+    const job = workflow.jobs["test-e2e-gateway-isolation"] ?? {};
+    const jobSteps = steps(job);
+    const matchingSteps = jobSteps.filter((step) => step.name === GLIBC_PROBE_STEP_NAME);
+    const workflowSteps = Object.values(workflow.jobs).flatMap((candidate) => steps(candidate));
+    const matchingRuns = workflowSteps.filter((step) => step.run === GLIBC_PROBE_RUN);
+    const containsRemovedRun = workflowSteps.some((step) =>
+      step.run?.includes(REMOVED_GLIBC_PROBE_TEST_PATH),
+    );
+    if (
+      matchingSteps.length !== 1 ||
+      matchingSteps[0]?.run !== GLIBC_PROBE_RUN ||
+      matchingRuns.length !== 1 ||
+      containsRemovedRun
+    ) {
+      errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
+    }
+    if (
+      matchingSteps.length === 1 &&
+      (matchingSteps[0]?.env?.[GLIBC_PROBE_ENABLE_ENV] !== "1" ||
+        matchingSteps[0]?.env?.[GLIBC_PROBE_IMAGE_ENV] !== "nemoclaw-production")
+    ) {
+      errors.push(
+        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
+      );
+    }
+  }
+  return errors;
 }
 
 export function validateSandboxImagesWorkflow(
