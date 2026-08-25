@@ -135,6 +135,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
+        args: ["--assume-in-merge"]
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
