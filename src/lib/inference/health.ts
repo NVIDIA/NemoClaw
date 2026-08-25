@@ -106,6 +106,7 @@ function useStatusProbeTiming(argv: string[]): string[] {
   );
 }
 
+/** Set the visible-output budget on a generated chat-completions probe. */
 function capStatusProbeOutput(
   argv: string[],
   maxTokens: number = HEALTH_PROBE_MAX_TOKENS,
@@ -123,6 +124,7 @@ function capStatusProbeOutput(
   return next;
 }
 
+/** Build curl arguments for an authenticated chat-completions health probe. */
 function buildChatCompletionsStatusProbeCurlArgs(
   model: string,
   endpoint: string,

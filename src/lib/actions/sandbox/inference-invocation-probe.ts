@@ -51,6 +51,7 @@ export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
 export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
+/** Build the protocol-specific request used to verify sandbox inference. */
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
   headers: string[];
