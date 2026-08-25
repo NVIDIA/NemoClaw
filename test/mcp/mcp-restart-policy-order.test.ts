@@ -172,7 +172,7 @@ operationPromise.then(
     },
   );
 
-  it("compares bounded provider revision observations on the host during restart", () => {
+  const verifyDelayedProviderRevisionRecovery = (operation: "restart" | "restore") => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-revision-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -190,6 +190,11 @@ let registeredProviderGets = 0;
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
+const operation = ${JSON.stringify(operation)};
+const observationPlans = {
+  restart: ["v1", "absent", "v4"],
+  restore: ["absent", "v3"],
+};
 const entry = {
   server: "example",
   agent: "openclaw",
@@ -254,7 +259,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
   proofScripts.push(proof);
   if (proof.includes("printf '%s\\n' absent")) {
-    const observation = "v" + resourceVersion;
+    const observation = observationPlans[operation][observations.length] || "unexpected";
     observations.push(observation);
     return { status: 0, stdout: observation, stderr: "" };
   }
@@ -282,7 +287,12 @@ registry.addCustomPolicy("alpha", {
 });
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-bridge.restartMcpBridge("alpha", "example").then(
+const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
+const operations = {
+  restart: () => bridge.restartMcpBridge("alpha", "example"),
+  restore: () => restart.restoreExistingMcpBridgeRuntime("alpha", [entry]),
+};
+operations[operation]().then(
   () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
   (error) => { console.error(error); process.exit(1); },
 );
@@ -302,13 +312,29 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v3"]);
-    expect(payload.providerCalls).toEqual([
-      "provider update alpha-mcp-example --credential MCP_TOKEN",
-      "provider update alpha-mcp-example",
-    ]);
+    const expected = {
+      restart: {
+        observations: ["v1", "absent", "v4"],
+        providerCalls: [
+          "provider update alpha-mcp-example --credential MCP_TOKEN",
+          "provider update alpha-mcp-example",
+          "provider update alpha-mcp-example",
+        ],
+      },
+      restore: {
+        observations: ["absent", "v3"],
+        providerCalls: ["provider update alpha-mcp-example", "provider update alpha-mcp-example"],
+      },
+    }[operation];
+    expect(payload.observations).toEqual(expected.observations);
+    expect(payload.providerCalls).toEqual(expected.providerCalls);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(2);
+    expect(payload.proofScripts).toHaveLength(expected.observations.length);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
-  });
+  };
+
+  it.each(["restart", "restore"] as const)(
+    "recovers a delayed provider revision during %s (#10298)",
+    verifyDelayedProviderRevisionRecovery,
+  );
 });
