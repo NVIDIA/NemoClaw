@@ -13,8 +13,9 @@ vi.mock("../../messaging-channel-setup", () => ({
 }));
 
 describe("sandbox route publication", () => {
-  it("publishes the current inference reservation before completing Ready sandbox reuse", async () => {
+  it("publishes the current inference reservation after completing Ready sandbox reuse", async () => {
     const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps(
       {
         createSandbox: vi.fn(async () => "saved"),
@@ -35,6 +36,7 @@ describe("sandbox route publication", () => {
 
     await handleSandboxState({
       ...baseOptions(deps, session),
+      resume: true,
       sandboxName: "saved",
     });
 
@@ -42,16 +44,30 @@ describe("sandbox route publication", () => {
       "saved",
       session.sessionId,
     );
-    expect(calls.finalizeRouteReservation.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.finalizeRouteReservation.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.updateSandbox.mock.invocationCallOrder[0]!,
     );
-    expect(calls.finalizeRouteReservation.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.complete.mock.invocationCallOrder[0]!,
+    expect(calls.finalizeRouteReservation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      calls.recordSkip.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("keeps a created registration pending when post-create metadata fails", async () => {
+    const { deps, calls } = createDeps({
+      updateSandboxRegistry: vi.fn(() => {
+        throw new Error("metadata write failed");
+      }),
+    });
+
+    await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow("metadata write failed");
+
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
   });
 
   it("rejects Ready sandbox reuse after route reservation ownership changes", async () => {
     const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps(
       {
         createSandbox: vi.fn(async () => "saved"),
@@ -64,6 +80,7 @@ describe("sandbox route publication", () => {
     await expect(
       handleSandboxState({
         ...baseOptions(deps, session),
+        resume: true,
         sandboxName: "saved",
       }),
     ).rejects.toThrow("exit 1");
@@ -71,6 +88,6 @@ describe("sandbox route publication", () => {
     expect(calls.error).toHaveBeenCalledWith(
       "  Error: sandbox 'saved' inference route reservation changed while onboarding was in progress. Retry onboarding.",
     );
-    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
   });
 });

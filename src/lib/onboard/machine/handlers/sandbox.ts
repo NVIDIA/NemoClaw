@@ -1149,7 +1149,6 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
-      if (state.sandboxName) this.finalizeInferenceRouteReservation(state, state.sandboxName);
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,
@@ -1185,6 +1184,7 @@ class SandboxStateFlow<
         skippedSession,
         state.sandboxName,
       );
+      if (state.sandboxName) this.finalizeInferenceRouteReservation(state, state.sandboxName);
       return {
         ...state,
         session: recordedSession,
@@ -1982,7 +1982,6 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
-      this.finalizeInferenceRouteReservation(state, sandboxName);
       try {
         const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
         this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
@@ -2029,6 +2028,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>

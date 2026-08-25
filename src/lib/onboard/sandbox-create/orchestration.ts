@@ -1185,6 +1185,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesDashboardForwarding.ensureForState,
       managedWorkloadRuntime,
       preparedSandboxWorkload,
+      inferenceRouteReservationAuthority?.sessionId ?? null,
       note,
     );
     const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({

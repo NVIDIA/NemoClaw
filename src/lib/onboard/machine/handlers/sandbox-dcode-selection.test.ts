@@ -324,9 +324,10 @@ describe("handleSandboxState live DCode selection", () => {
 
     expect(getDcodeSelectionDrift).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
-      pendingRouteReservation: undefined,
-    });
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "saved",
+      expect.any(String),
+    );
   });
 
   it("fails closed for missing registry selection before live reuse (#6311)", async () => {
@@ -359,8 +360,9 @@ describe("handleSandboxState live DCode selection", () => {
       provider: "provider",
       model: "model",
     });
-    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
-      pendingRouteReservation: undefined,
-    });
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "saved",
+      expect.any(String),
+    );
   });
 });

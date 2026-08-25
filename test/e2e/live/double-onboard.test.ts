@@ -609,7 +609,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   const sandboxARegistryAfterSecond = registryEntry(SANDBOX_A);
   expect(sandboxARegistryAfterSecond, `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBeTruthy();
   expect(hasOwn(sandboxARegistryAfterSecond!, "pendingRouteReservation")).toBe(false);
-  expect(hasOwn(sandboxARegistryAfterSecond!, "reservationSessionId")).toBe(false);
+  expect(typeof sandboxARegistryAfterSecond!.reservationSessionId).toBe("string");
   const listAfterSecond = await command(host, ["list"], {
     artifactName: "phase-3-nemoclaw-list",
     env: commandEnv(),

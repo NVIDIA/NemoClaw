@@ -141,7 +141,7 @@ export function getDefault(): string | null {
 export function registerSandbox(
   entry: SandboxEntry,
   routeReservation?: QualifiedSandboxInferenceRouteReservation,
-  options: { pending?: boolean } = {},
+  options: { pending?: boolean; reservationSessionId?: string } = {},
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
@@ -154,6 +154,20 @@ export function registerSandbox(
         !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
     ) {
       throw new Error("Cannot register a sandbox after its inference route reservation changed");
+    }
+    if (options.reservationSessionId) {
+      const reserved = data.sandboxes[entry.name];
+      if (
+        reserved?.pendingRouteReservation !== true ||
+        reserved.reservationSessionId !== options.reservationSessionId ||
+        reserved.gatewayName !== entry.gatewayName ||
+        !isDeepStrictEqual(
+          normalizeInferenceSelection(reserved),
+          normalizeInferenceSelection(entry),
+        )
+      ) {
+        throw new Error("Cannot stage a sandbox after its inference route reservation changed");
+      }
     }
     const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
@@ -281,6 +295,10 @@ export function registerSandbox(
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
+      reservationSessionId:
+        options.pending === true
+          ? options.reservationSessionId
+          : routeReservation?.authority.sessionId,
     };
     data.sandboxes[entry.name] = registered;
     save(
@@ -365,7 +383,9 @@ export function reserveSandboxInferenceRoute(
     const next: SandboxEntry = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
-      reservationSessionId: route.reservationSessionId ?? existing?.reservationSessionId,
+      reservationSessionId:
+        route.reservationSessionId ??
+        (existing?.pendingRouteReservation === true ? existing.reservationSessionId : undefined),
       provider: normalized.provider,
       model: normalized.model,
       endpointUrl: normalized.endpointUrl,
@@ -432,27 +452,18 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
-export function finalizeSandboxRouteReservation(
-  name: string,
-  sessionId: string,
-): boolean {
+/** Publish only the owning route transaction and retain its receipt for exact retries. */
+export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
-    if (!current) return false;
-    if (
-      current.pendingRouteReservation !== true &&
-      current.reservationSessionId === undefined
-    ) {
-      return true;
-    }
-    if (!sessionId || current.reservationSessionId !== sessionId) return false;
+    if (!current || !sessionId || current.reservationSessionId !== sessionId) return false;
+    if (current.pendingRouteReservation !== true) return true;
     data.sandboxes[name] = {
       ...current,
       pendingRouteReservation: undefined,
-      reservationSessionId: undefined,
     };
-    save(data);
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });
 }

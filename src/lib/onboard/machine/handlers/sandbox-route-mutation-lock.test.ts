@@ -100,8 +100,8 @@ describe("sandbox registration route transaction", () => {
       "gateway-lock",
       "guard",
       "create",
-      "publish",
       "registry",
+      "publish",
     ]);
   });
 
