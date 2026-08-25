@@ -28,8 +28,7 @@ function authPlaceholder(
 ): string | null {
   const envName = entry.env[0];
   if (!envName) return null;
-  const revision =
-    credentialRevision && credentialRevision !== "canonical" ? `${credentialRevision}_` : "";
+  const revision = credentialRevision ? `${credentialRevision}_` : "";
   return `openshell:resolve:env:${revision}${envName}`;
 }
 
@@ -212,7 +211,7 @@ export function buildDeepAgentsMcpStatusCommand(
   const payload = {
     server: entry.server,
     expected: deepAgentsManagedServerConfig(entry, credentialRevision),
-    allowRevisioned: credentialRevision === undefined || credentialRevision === "canonical",
+    allowRevisioned: credentialRevision === undefined,
   };
   return [
     "/opt/venv/bin/python3 -I - <<'PY'",
