@@ -17,8 +17,11 @@ import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { installMalformedSourceMapCompatibility } from "./test/helpers/vitest-malformed-source-map-compat";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
 import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
+
+installMalformedSourceMapCompatibility();
 
 const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
