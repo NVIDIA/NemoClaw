@@ -93,6 +93,17 @@ describe("PR managed-image source selection", () => {
     ).resolves.toBe("local-dockerfile");
   });
 
+  it("selects a local Dockerfile when a reviewed image input is renamed", async () => {
+    await expect(
+      resolvePrManagedImageSource(
+        selectorInput(),
+        requestFor([
+          { filename: "docs/renamed-base-image.txt", previous_filename: "Dockerfile.base" },
+        ]),
+      ),
+    ).resolves.toBe("local-dockerfile");
+  });
+
   it("selects a trusted managed image when reviewed image inputs are unchanged", async () => {
     await expect(
       resolvePrManagedImageSource(selectorInput(), requestFor([{ filename: "docs/guide.mdx" }])),
