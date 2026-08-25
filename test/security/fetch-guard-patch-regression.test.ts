@@ -13,11 +13,12 @@ import {
   runFetchGuardPatchBlock,
 } from "../helpers/fetch-guard-patch-harness";
 
-const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
-const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "Dockerfile.base");
-const BLUEPRINT = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "blueprint.yaml");
+const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
+const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "..", "Dockerfile.base");
+const BLUEPRINT = path.join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
 const REVIEWED_NPM_AUDIT_HELPER = path.join(
   import.meta.dirname,
+  "..",
   "..",
   "scripts",
   "lib",
@@ -168,6 +169,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   fs.copyFileSync(
     path.join(
       import.meta.dirname,
+      "..",
       "..",
       "agents",
       "openclaw",

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { expect, test } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 
 function writeExecutable(file: string, content: string): void {
   fs.writeFileSync(file, content, { encoding: "utf8", mode: 0o755 });
