@@ -5,27 +5,17 @@
 
 # Agent selection
 
-Pick one CPU-only agent to run inside the OpenShell sandbox:
-[OpenClaw](https://openclaw.ai) (default), [Hermes](https://github.com/NousResearch/hermes-agent),
-or [Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview) — all
-three mirror [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents).
-Selection uses a single flag (`AGENT_NAME`) with the same generic scripts. All three
-route inference identically — through
-OpenShell's `https://inference.local/v1` proxy to the GPU inference pods this recipe
-deploys (see [`README.md`](README.md#inference-runtimes)) — so the GPU HPA and monitoring
-stack are unaffected by which agent you choose. That routing is uniform, but not every
-agent × `inference.runtime` pairing is equally documented or exercised upstream — see
-[Agent and runtime support](README.md#agent-and-runtime-support) before picking one,
-especially for Deep Agents Code.
+Choose one CPU-only agent for the OpenShell sandbox:
+[OpenClaw](https://openclaw.ai) (default and most exercised),
+[Hermes](https://github.com/NousResearch/hermes-agent), or
+[Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview).
+Set `AGENT_NAME` to select the agent. Each uses OpenShell's
+`https://inference.local/v1` proxy and the same GPU inference, HPA, and monitoring stack;
+see [Agent and runtime support](README.md#agent-and-runtime-support).
 
-Official platform references: [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart),
-[Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart),
-and [Deep Agents Code quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart).
-
-**Not yet independently validated end-to-end against a live cluster** (see
-[Validated hardware](README.md#validated-hardware)); OpenClaw is the most exercised of
-the three. Please file an issue with anything you find while trying Hermes or Deep Agents
-Code, especially on `dgx02`-class (8×H100) hardware.
+Official quickstarts: [OpenClaw](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart),
+[Hermes](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart), and
+[Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart).
 
 ## Comparison
 
