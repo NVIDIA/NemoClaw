@@ -21,7 +21,10 @@ import {
 } from "../../../src/lib/state/gateway.js";
 
 const OPENSHELL_STATUS_ERROR_CONTRACT = JSON.parse(
-  readFileSync(new URL("../../fixtures/openshell-status-errors-v0.0.99.json", import.meta.url), "utf8"),
+  readFileSync(
+    new URL("../../fixtures/openshell-status-errors-v0.0.99.json", import.meta.url),
+    "utf8",
+  ),
 ) as {
   producer: string;
   openshellVersion: string;
@@ -476,6 +479,23 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
 
     const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
     expect(merged).toContain("  version: 1");
+  });
+
+  it("preserves sandbox metadata that follows the policy section (#10258)", () => {
+    const output = [
+      "Sandbox:",
+      "  Name: alpha",
+      "Policy:",
+      "  stale: true",
+      "  Phase: Ready",
+      "  Resource version: 7",
+    ].join("\n");
+
+    const merged = mergeLivePolicyIntoSandboxOutput(output, "version: 1");
+    expect(merged).toContain("  version: 1");
+    expect(merged).not.toContain("stale: true");
+    expect(merged).toContain("Phase: Ready");
+    expect(merged).toContain("Resource version: 7");
   });
 
   it("returns the original output when livePolicy is an error string", () => {
