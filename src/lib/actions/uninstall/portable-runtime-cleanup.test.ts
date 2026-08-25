@@ -79,7 +79,10 @@ const RETIREMENT_COMPETITOR_SCRIPT = String.raw`
   if (!control) process.exit(attempt(sandboxName));
   fs.writeFileSync(control + ".ready", "ready");
   while (!fs.existsSync(control + ".trigger")) await new Promise(resolve => setTimeout(resolve, 1));
-  fs.writeFileSync(control + ".result", JSON.stringify([attempt(sandboxName), attempt("registry-only")]));
+  const resultPayload = JSON.stringify([attempt(sandboxName), attempt("registry-only")]);
+  const resultTmp = control + ".result.tmp";
+  fs.writeFileSync(resultTmp, resultPayload);
+  fs.renameSync(resultTmp, control + ".result");
   process.exit(0);
 `;
 
@@ -788,6 +791,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(hasPortableRetirementRecord(scope.test.homeDir)).toBe(true);
   });
 
+  const setRegistryAgentDrift = (value: any) => (value.sandboxes["later-sandbox"].agent = "hermes");
   it.each([
     ["an unknown profile", "session", (value: any) => (value.checkpoint.profile.value = "unknown")],
     ["a profile mismatch", "session", (value: any) => (value.checkpoint.profile.value = "default")],
@@ -814,6 +818,7 @@ describe("portable runtime uninstall cleanup", () => {
       "registry",
       (value: any) => delete value.sandboxes["later-sandbox"].openshellDriver,
     ],
+    ["a registry agent identity drift", "registry", setRegistryAgentDrift],
     [
       "a registry gateway drift",
       "registry",

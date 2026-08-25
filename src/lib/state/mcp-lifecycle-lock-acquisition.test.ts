@@ -26,6 +26,11 @@ import { getMcpLifecycleLockPath } from "./mcp-lifecycle-lock-storage";
 const SANDBOX_NAME = "alpha";
 let stateDir: string;
 
+type LockExecutor = {
+  label: string;
+  run: <T>(operation: () => T, overrides?: Record<string, unknown>) => Promise<T>;
+};
+
 function options() {
   return {
     stateDir,
@@ -72,6 +77,29 @@ function writeStaleMainOwner(shieldsTakeoverToken?: string): string {
   return lockPath;
 }
 
+function writeOwnerAt(lockPath: string, token: string): void {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify(createMcpLifecycleLockOwner(SANDBOX_NAME, token))}\n`,
+  );
+}
+
+const lockExecutors: LockExecutor[] = [
+  {
+    label: "asynchronous",
+    run: (operation, overrides = {}) =>
+      withMcpLifecycleLock(SANDBOX_NAME, operation, { ...options(), ...overrides }),
+  },
+  {
+    label: "synchronous",
+    run: (operation, overrides = {}) =>
+      Promise.resolve().then(() =>
+        withMcpLifecycleLockSync(SANDBOX_NAME, operation, { ...options(), ...overrides }),
+      ),
+  },
+];
+
 function publishTimerWhenStaleOwnerIsObserved(processToken: string): ReturnType<typeof vi.fn> {
   const realProcessKill = process.kill.bind(process);
   const processKill = vi
@@ -98,6 +126,109 @@ afterEach(() => {
 });
 
 describe("MCP lifecycle lock acquisition", () => {
+  describe.each(lockExecutors)("$label parity", ({ run }) => {
+    it("acquires one generation and releases it after ordinary work", async () => {
+      const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+      const operation = vi.fn(() => {
+        expect(fs.existsSync(lockPath)).toBe(true);
+        return "complete";
+      });
+
+      await expect(run(operation)).resolves.toBe("complete");
+
+      expect(operation).toHaveBeenCalledOnce();
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+
+    it.each(["main", "reaper", "deadline"])(
+      "denies entry while an active %s generation owns the gate",
+      async (generation) => {
+        const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+        const generationPaths = new Map([
+          ["main", lockPath],
+          ["reaper", `${lockPath}.reaper`],
+          ["deadline", `${lockPath}.deadline`],
+        ]);
+        const operation = vi.fn(() => "must not enter");
+        writeOwnerAt(generationPaths.get(generation)!, `active-${generation}-token`);
+
+        await expect(
+          run(operation, { timeoutMs: 10, monotonicNow: (() => {
+            let now = 0;
+            return () => now++;
+          })() }),
+        ).rejects.toThrow(/Timed out waiting for (the )?sandbox mutation lock/);
+
+        expect(operation).not.toHaveBeenCalled();
+        expect(fs.existsSync(generationPaths.get(generation)!)).toBe(true);
+      },
+    );
+
+    it("waits through corruption grace without reclaiming an unverifiable generation", async () => {
+      const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+      const operation = vi.fn(() => "must not enter");
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, "{truncated");
+      let now = 0;
+
+      await expect(
+        run(operation, {
+          corruptLockGraceMs: 100,
+          timeoutMs: 10,
+          monotonicNow: () => now++,
+        }),
+      ).rejects.toThrow(/Timed out waiting for (the )?sandbox mutation lock/);
+
+      expect(operation).not.toHaveBeenCalled();
+      expect(fs.readFileSync(lockPath, "utf8")).toBe("{truncated");
+    });
+
+    it("reclaims an exact stale ordinary generation before entering", async () => {
+      const lockPath = writeStaleMainOwner();
+      const operation = vi.fn(() => "entered");
+
+      await expect(run(operation, { timeoutMs: 2_000 })).resolves.toBe("entered");
+
+      expect(operation).toHaveBeenCalledOnce();
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(`${lockPath}.reaper`)).toBe(false);
+    });
+
+    it("keeps committed containment authoritative", async () => {
+      const processToken = "c".repeat(32);
+      const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+      const operation = vi.fn(() => "must not enter");
+      writeTimerMarker(processToken);
+      beginCommittedMcpLifecycleContainmentSync(
+        SANDBOX_NAME,
+        processToken,
+        "test containment",
+        stateDir,
+      );
+
+      await expect(run(operation)).rejects.toThrow("Sandbox mutation containment is active");
+
+      expect(operation).not.toHaveBeenCalled();
+      expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+    });
+
+    it("does not release a replacement generation after work completes", async () => {
+      const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+      const replacementToken = "replacement-generation";
+
+      await expect(
+        run(() => {
+          writeOwnerAt(lockPath, replacementToken);
+          return "complete";
+        }),
+      ).resolves.toBe("complete");
+
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+        token: replacementToken,
+      });
+    });
+  });
+
   it("keeps asynchronous ordinary acquisition closed after an unpublished timer deadline", async () => {
     const operation = vi.fn(() => "must not enter");
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);

@@ -77,16 +77,16 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     ],
   },
   "gateway-drift-preflight": {
-    tests: [{ files: ["test/gateway-drift-preflight.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-drift-preflight.test.ts"], project: "integration" }],
   },
   "gateway-health-honest": {
     legacyFile: "test/e2e/live/gateway-health-honest.test.ts",
-    tests: [{ files: ["test/gateway-health-honest.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-health-honest.test.ts"], project: "integration" }],
   },
   "onboard-negative-paths": {
     legacyFile: "test/e2e/live/onboard-negative-paths.test.ts",
     tests: [
-      { files: ["test/credentials.test.ts"], project: "integration" },
+      { files: ["test/credentials/credentials.test.ts"], project: "integration" },
       {
         files: ["test/package-contract/onboard/invalid-nvidia-key.test.ts"],
         project: "package-contract",
@@ -97,7 +97,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/openshell-version-pin.test.ts",
     tests: [
       {
-        files: ["test/install-openshell-version-pin.test.ts"],
+        files: ["test/installer-integration/install-openshell-version-pin.test.ts"],
         project: "installer-integration",
       },
     ],

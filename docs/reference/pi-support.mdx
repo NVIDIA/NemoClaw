@@ -1,0 +1,100 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Pi Support and Security"
+sidebar-title: "Pi Support and Security"
+description: "Compatibility, supply-chain, inference, state, policy, and qualification contracts for NemoClaw's Pi runtime."
+description-agent: "Reference for the Pi runtime support matrix, package and image identity, managed inference, state, and security boundaries."
+keywords: ["pi support matrix", "pi security", "pi managed image", "pi qualification"]
+topics: ["reference", "security", "pi"]
+tags: ["pi", "compatibility", "supply-chain", "qualification"]
+difficulty: "advanced"
+audience: "operators"
+status: published
+content:
+  type: "reference"
+agent-variants: ["pi"]
+---
+Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, snapshot, recovery, or cleanup behaviour.
+
+<Warning>
+The Pi runtime remains a release candidate until final activation adds it to the supported inventory and complete managed-image cohort. Published candidate images and qualification evidence do not make Pi selectable in an ordinary installation.
+</Warning>
+
+## Initial Support Matrix
+
+| Dimension | Accepted value |
+|---|---|
+| Agent ID | `pi` |
+| Pi package | `@earendil-works/pi-coding-agent` 0.84.1 |
+| Node.js | 22.19 or later |
+| Host platform | Linux AMD64 or Linux ARM64 |
+| Compute runtime | Docker |
+| Managed API | OpenAI Chat Completions |
+| Sandbox route | `https://inference.local/v1` |
+| Qualification model | `nvidia/nemotron-3-super-120b-a12b` |
+| Interactive command | `pi` |
+| Headless command | `pi --no-approve --print` |
+
+Podman, macOS, Windows, WSL, messaging, dashboards, device pairing, managed MCP, host mounts, and automatic third-party package installation are outside the initial matrix.
+
+## Package and Image Identity
+
+NemoClaw pins one exact Pi package version and npm integrity value. Installation disables package lifecycle scripts. Runtime self-update, package auto-update, mutable image tags, and host-side stock Dockerfile builds are unsupported. The reviewed Dockerfile is used only by trusted CI to create the managed image.
+
+Candidate image receipts bind each accepted platform to:
+
+- the canonical `ghcr.io/nvidia/nemoclaw/pi-sandbox` repository;
+- one immutable image digest;
+- the `NVIDIA/NemoClaw` source repository and exact source revision;
+- one release and publication cohort;
+- managed-image, startup-profile, and capability contract version 1.
+
+Final activation must publish both platform digests in the same complete cohort. A partial platform set cannot advertise Pi support.
+
+## Managed Inference and Credentials
+
+Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
+
+The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Pi reaches the provider through `inference.local`; direct provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+
+The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-super-120b-a12b`.
+
+## Network and Filesystem Policy
+
+The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
+
+Direct access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
+
+Pi runs as the unprivileged `sandbox` user. Landlock strict mode and the OpenShell filesystem policy protect the image and host boundary. Writable paths are limited to the sandbox workspace and required temporary device paths.
+
+## Tool and Project Trust
+
+The supported baseline includes Pi's built-in `read`, `bash`, `edit`, and `write` tools and reviewed image resources.
+
+Interactive users may trust project-local skills, extensions, prompts, and packages explicitly. Those resources are user-owned and outside release qualification. Pi loads `AGENTS.md` and `CLAUDE.md` context files before the project-trust decision; `--no-context-files` disables them. Headless `--no-approve` ignores project-local executable resources but does not disable context files. OpenShell policy continues to govern filesystem, process, network, and credential access in both modes.
+
+A project-trust decision is not portable backup state. Restoring a snapshot cannot turn an untrusted project into a trusted project.
+
+## Persistent and Reconstructed State
+
+Sessions, prompts, and themes are declared persistent user state. `settings.json` uses an accepted-key restore contract. Tools, executable resources, model configuration, authentication, managed route credentials, caches, and project trust are reconstructed or excluded.
+
+Pi starts with `umask 077`, so generated configuration and session files are private to the sandbox user. Runtime setup sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
+
+## Qualification Evidence
+
+The release gate runs one repository-owned target on native Linux AMD64 and Linux ARM64 runners. Each target records:
+
+- exact CLI, workflow, receipt, package, image, platform, and OpenShell identities;
+- Docker as the compute runtime;
+- provider, model, API, route, and policy digest;
+- buildless onboarding through `nemoclaw onboard --agent pi`;
+- one interactive session and versioned headless structured-tool tasks;
+- session preservation across rebuild;
+- recovery after an OpenShell gateway restart;
+- denial of undeclared network and container-runtime access;
+- absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
+- exact cleanup after destroy.
+
+The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) receipts. Each trusted run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to passing results for both platforms and must not require manual sandbox repair.

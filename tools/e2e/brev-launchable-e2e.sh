@@ -9,6 +9,7 @@ IMAGE_REPOSITORY=brevdev/nemoclaw-image
 IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
 diagnostic_capture=""
+ownership_receipt=""
 raw_log=""
 raw_log_directory=""
 SSH_PROBE_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1
@@ -26,6 +27,31 @@ die() {
 require() {
   local name="$1"
   [ -n "${!name:-}" ] || die "$name is required"
+}
+
+write_workspace_ownership() {
+  local create_state="$1" delete_attempts="${2:-}" temporary
+  case "$create_state" in
+    pending | accepted | reconciled) ;;
+    *) die "workspace ownership state is invalid" ;;
+  esac
+  ownership_receipt="${WORK_DIR}.workspace-owner"
+  if [ -z "$delete_attempts" ]; then
+    delete_attempts="$(jq -r '.deleteAttempts // 0' "$ownership_receipt" 2>/dev/null || printf '0')"
+  fi
+  [[ "$delete_attempts" =~ ^[01]$ ]] || die "workspace delete attempt count is invalid"
+  temporary="${ownership_receipt}.tmp"
+  if ! jq -n --arg workspaceName "$INSTANCE_NAME" --arg createState "$create_state" \
+    --argjson deleteAttempts "$delete_attempts" \
+    '{workspaceName:$workspaceName,createState:$createState,deleteAttempts:$deleteAttempts}' \
+    >"$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if ! chmod 600 "$temporary" || ! mv "$temporary" "$ownership_receipt"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
 }
 
 workspace_rows() {
@@ -256,7 +282,7 @@ capture_full_e2e_failure_diagnostics() {
   # shellcheck disable=SC2016
   run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
-    'set -eu; events=$(sudo -n journalctl --boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json); classified=$(printf "%s\n" "$events" | jq -r "(.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$event] | @tsv"); printf "%s\n" "$classified" | tail -n 16'
+    'set -eu; events=$(sudo -n journalctl --boot --unit=openshell-gateway.service --no-pager --lines=120 --output=json 2>/dev/null) || exit 41; classified=$(printf "%s\n" "$events" | jq -rs "def lifecycle: (.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$event] | @tsv; def bind_result(\$scope; \$message): if (\$message | test(\"\\\\(os error 98\\\\)\"; \"i\")) then (if \$scope == \"primary\" then \"primary address in use\" else \"callback address in use\" end) elif (\$message | test(\"\\\\(os error 99\\\\)\"; \"i\")) and \$scope == \"callback\" then \"callback address unavailable\" elif (\$message | test(\"\\\\(os error [0-9]+\\\\)\"; \"i\")) then \"bind failure unclassified\" else null end; def bind_continuation_result(\$scope; \$message): if (\$message | test(\"^[[:space:]]*(?:Address already )?in use \\\\(os error 98\\\\)[[:space:]]*$\"; \"i\")) then (if \$scope == \"primary\" then \"primary address in use\" else \"callback address in use\" end) elif \$scope == \"callback\" and (\$message | test(\"^[[:space:]]*(?:Cannot assign requested )?address \\\\(os error 99\\\\)[[:space:]]*$\"; \"i\")) then \"callback address unavailable\" else null end; def child_bind: reduce (.[] | select(._SYSTEMD_UNIT == \"openshell-gateway.service\" and ._EXE == \"/usr/local/bin/openshell-gateway\") | (.MESSAGE // \"\" | tostring)) as \$message ({attempt_seen:false,primary_bound:false,pending_scope:null,last_result:null}; if (\$message | test(\"^Starting OpenShell server(?:[[:space:]]|$)\")) then .last_result = (if .pending_scope == null then .last_result else \"bind failure unclassified\" end) | .attempt_seen=true | .primary_bound=false | .pending_scope=null elif .pending_scope != null then (bind_continuation_result(.pending_scope; \$message)) as \$result | .last_result=(\$result // \"bind failure unclassified\") | .pending_scope=null elif .attempt_seen and (\$message | test(\"^Gateway listener bound(?:[[:space:]]|$)\")) and (\$message | test(\"listener_purpose=[^[:alnum:]]*primary[^[:alnum:]]*(?:[[:space:]]|$)\")) then .primary_bound=true elif (\$message | test(\"transport error: failed to bind to \"; \"i\")) then if .attempt_seen then .pending_scope=(if .primary_bound then \"callback\" else \"primary\" end) | (bind_result(.pending_scope; \$message)) as \$result | if \$result == null then . else .last_result=\$result | .pending_scope=null end else .last_result=\"bind failure unclassified\" end else . end) | .last_result // (if .pending_scope == null then \"no bind failure\" else \"bind failure unclassified\" end); . as \$events | ((\$events | map(select(((._PID // \"\") | tostring) == \"1\") | lifecycle) | .[-16:][]), (\"gateway-child-bind\\t\" + (\$events | child_bind)))" 2>/dev/null) || exit 42; last_line=$(printf "%s\n" "$classified" | tail -n 1); label=$(printf "%s\n" "$last_line" | cut -f1); category=$(printf "%s\n" "$last_line" | cut -f2); [ "$label" = gateway-child-bind ] || exit 43; case "$category" in "primary address in use"|"callback address in use"|"callback address unavailable"|"bind failure unclassified"|"no bind failure") ;; *) exit 43 ;; esac; printf "%s\n" "$classified"'
   report_full_e2e_failure_diagnostic "gateway lifecycle" "$diagnostic_status" "$diagnostic_output"
 
   # The remote shell expands the single-quoted command.
@@ -420,36 +446,117 @@ wait_for_workspace_ssh() {
 }
 
 cleanup() {
-  local record deadline absent=0 workspace_id=""
-  record="$(workspace || true)"
-  workspace_id="$(jq -r '.id // ""' <<<"${record:-null}")"
-  [ -z "$record" ] || timeout 60s brev delete "$INSTANCE_NAME" || true
+  local record="" deadline absent=0 workspace_id="" last_inventory="unknown" cleanup_status
+  local create_state="reconciled" delete_attempts=0 ownership_recorded=0
+  local reconcile_deadline=0 workspace_observed=0
+  ownership_receipt="${ownership_receipt:-${WORK_DIR}.workspace-owner}"
+  if [ -f "$ownership_receipt" ]; then
+    ownership_recorded=1
+    create_state="$(jq -er --arg name "$INSTANCE_NAME" '
+      select(.workspaceName == $name) | .createState |
+      select(. == "pending" or . == "accepted" or . == "reconciled")' \
+      "$ownership_receipt" 2>/dev/null || true)"
+    if [ -z "$create_state" ]; then
+      jq -n --arg workspaceName "$INSTANCE_NAME" \
+        --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{workspaceName:$workspaceName,workspaceId:"",status:"UNKNOWN",checkedAt:$checkedAt}' \
+        >"$WORK_DIR/cleanup.json"
+      log "FAILED: cleanup refused because the workspace ownership receipt is invalid" >&2
+      return 1
+    fi
+    delete_attempts="$(jq -er --arg name "$INSTANCE_NAME" '
+      select(.workspaceName == $name) | .deleteAttempts |
+      select(type == "number" and floor == . and . >= 0 and . <= 1)' \
+      "$ownership_receipt" 2>/dev/null || true)"
+    if [ -z "$delete_attempts" ]; then
+      jq -n --arg workspaceName "$INSTANCE_NAME" \
+        --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{workspaceName:$workspaceName,workspaceId:"",status:"UNKNOWN",checkedAt:$checkedAt}' \
+        >"$WORK_DIR/cleanup.json"
+      log "FAILED: cleanup refused because the workspace ownership receipt is invalid" >&2
+      return 1
+    fi
+  fi
+  if [ "$create_state" != reconciled ]; then
+    reconcile_deadline=$((SECONDS + ${BREV_CREATE_RECONCILE_SECONDS:-120}))
+  fi
+  if [ -f "$WORK_DIR/cleanup.json" ]; then
+    workspace_id="$(jq -r '.workspaceId // ""' "$WORK_DIR/cleanup.json" 2>/dev/null || true)"
+  fi
   deadline=$((SECONDS + ${BREV_DELETE_TIMEOUT_SECONDS:-600}))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if record="$(workspace)" && [ -z "$record" ]; then
-      absent=$((absent + 1))
-      if [ "$absent" -ge 2 ]; then
-        jq -n --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-          --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-          '{workspaceName:$workspaceName,workspaceId:$workspaceId,status:"ABSENT",verifiedAt:$verifiedAt}' \
-          >"$WORK_DIR/cleanup.json"
-        log "Workspace $INSTANCE_NAME is absent"
-        return 0
+    if record="$(workspace)"; then
+      last_inventory="known"
+      if [ -z "$record" ]; then
+        if [ "$create_state" != reconciled ] \
+          && [ "$workspace_observed" -eq 0 ] \
+          && [ "$SECONDS" -lt "$reconcile_deadline" ]; then
+          absent=0
+        else
+          absent=$((absent + 1))
+        fi
+        if [ "$absent" -ge 2 ]; then
+          jq -n --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+            --argjson deleteAttempts "$delete_attempts" \
+            --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{workspaceName:$workspaceName,workspaceId:$workspaceId,status:"ABSENT",
+              deleteAttempts:$deleteAttempts,verifiedAt:$verifiedAt}' \
+            >"$WORK_DIR/cleanup.json"
+          if [ -f "$ownership_receipt" ]; then
+            write_workspace_ownership reconciled
+          fi
+          log "Workspace $INSTANCE_NAME is absent"
+          return 0
+        fi
+      else
+        absent=0
+        workspace_observed=1
+        [ -n "$workspace_id" ] || workspace_id="$(jq -r '.id // ""' <<<"$record")"
+        if [ "$delete_attempts" -eq 0 ]; then
+          create_state="reconciled"
+          delete_attempts=$((delete_attempts + 1))
+          if [ "$ownership_recorded" -eq 1 ]; then
+            if ! write_workspace_ownership "$create_state" "$delete_attempts"; then
+              log "FAILED: cleanup could not record the workspace delete attempt" >&2
+              return 1
+            fi
+          fi
+          log "Workspace cleanup delete attempt $delete_attempts of 1"
+          timeout 60s brev delete "$INSTANCE_NAME" || true
+        fi
       fi
     else
+      last_inventory="unknown"
       absent=0
     fi
     timeout 30s brev refresh >/dev/null 2>&1 || true
     sleep "${POLL_SECONDS:-15}"
   done
-  log "FAILED: workspace $INSTANCE_NAME still exists after deletion" >&2
+  if [ "$last_inventory" = "known" ] && [ -n "$record" ]; then
+    cleanup_status="PRESENT"
+  else
+    cleanup_status="UNKNOWN"
+  fi
+  jq -n --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+    --arg status "$cleanup_status" --argjson deleteAttempts "$delete_attempts" \
+    --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{workspaceName:$workspaceName,workspaceId:$workspaceId,status:$status,
+      deleteAttempts:$deleteAttempts,checkedAt:$checkedAt}' \
+    >"$WORK_DIR/cleanup.json"
+  log "FAILED: workspace $INSTANCE_NAME cleanup ended with $cleanup_status" >&2
   return 1
 }
 
 finish() {
   local status=$?
   trap - EXIT INT TERM
-  if [ "$cleanup_required" -eq 1 ] && ! cleanup; then status=1; fi
+  if [ "$cleanup_required" -eq 1 ]; then
+    if [ "${NEMOCLAW_BREV_DEFER_CLEANUP:-0}" = 1 ]; then
+      log "Workspace cleanup is reserved for the workflow cleanup step"
+    elif ! cleanup; then
+      status=1
+    fi
+  fi
   rm -f "${diagnostic_capture:-}" "${raw_log:-}"
   if [ -n "${raw_log_directory:-}" ]; then
     rm -f "$raw_log_directory/full-e2e.raw"
@@ -462,9 +569,72 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [ "${1:-}" = "cleanup-owned-workspace" ]; then
+  [ "$#" -eq 1 ] || die "cleanup-owned-workspace accepts no additional arguments"
+  for name in WORK_DIR INSTANCE_NAME; do
+    require "$name"
+  done
+  for tool in brev jq timeout; do
+    command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
+  done
+  [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] \
+    || die "workspace name must start with a lowercase letter and use at most 63 lowercase letters, digits, or hyphens"
+  if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "POLL_SECONDS must be a positive integer"
+  fi
+  if [ "${BREV_DELETE_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_DELETE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_DELETE_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${BREV_CREATE_RECONCILE_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_CREATE_RECONCILE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_CREATE_RECONCILE_SECONDS must be a positive integer"
+  fi
+  : >>"$WORK_DIR/lane.log"
+  ownership_receipt="${WORK_DIR}.workspace-owner"
+  if [ ! -f "$ownership_receipt" ]; then
+    if [ ! -f "$WORK_DIR/cleanup.json" ]; then
+      jq -n --arg workspaceName "$INSTANCE_NAME" \
+        --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{workspaceName:$workspaceName,workspaceId:"",status:"NOT_OWNED",checkedAt:$checkedAt}' \
+        >"$WORK_DIR/cleanup.json"
+    fi
+    log "No workflow-owned workspace requires cleanup"
+    exit 0
+  fi
+  if ! jq -e --arg name "$INSTANCE_NAME" '
+    .workspaceName == $name and
+    (.createState == "pending" or .createState == "accepted" or .createState == "reconciled") and
+    (.deleteAttempts | type == "number" and floor == . and . >= 0 and . <= 1)' \
+    "$ownership_receipt" >/dev/null 2>&1; then
+    jq -n --arg workspaceName "$INSTANCE_NAME" \
+      --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{workspaceName:$workspaceName,workspaceId:"",status:"UNKNOWN",checkedAt:$checkedAt}' \
+      >"$WORK_DIR/cleanup.json"
+    die "cleanup refused because the ownership receipt does not match the run-attempt workspace"
+  fi
+  cleanup
+  rm -f -- "$ownership_receipt"
+  exit 0
+elif [ "$#" -ne 0 ]; then
+  die "only cleanup-owned-workspace is accepted as an argument"
+fi
+
 CORRELATION_ID="${CORRELATION_ID:-$(tr '[:upper:]' '[:lower:]' </proc/sys/kernel/random/uuid)}"
 IMAGE_ONLY="${NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY:-0}"
+IDENTITY_ONLY="${NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY:-0}"
+DEFER_CLEANUP="${NEMOCLAW_BREV_DEFER_CLEANUP:-0}"
 [[ "$IMAGE_ONLY" =~ ^[01]$ ]] || die "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1"
+[[ "$IDENTITY_ONLY" =~ ^[01]$ ]] || die "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY must be 0 or 1"
+[[ "$DEFER_CLEANUP" =~ ^[01]$ ]] || die "NEMOCLAW_BREV_DEFER_CLEANUP must be 0 or 1"
+case "$IMAGE_ONLY:$IDENTITY_ONLY" in
+  1:0) VALIDATION_MODE="image-only" ;;
+  0:1) VALIDATION_MODE="identity-smoke" ;;
+  0:0) VALIDATION_MODE="full-e2e" ;;
+  *) die "image-only and identity-smoke modes are mutually exclusive" ;;
+esac
+[ "$DEFER_CLEANUP" = 0 ] || [ "$VALIDATION_MODE" = identity-smoke ] \
+  || die "deferred cleanup is accepted only in identity-smoke mode"
 for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
   GITHUB_RUN_ATTEMPT; do
   require "$name"
@@ -475,15 +645,17 @@ done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
 [[ "$CORRELATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || die "correlation ID is not a UUIDv4"
-if [ "$IMAGE_ONLY" -eq 0 ]; then
-  for name in BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
+if [ "$VALIDATION_MODE" != image-only ]; then
+  for name in BREV_LAUNCHABLE_ID INSTANCE_NAME; do
     require "$name"
   done
   for tool in awk brev mktemp python3 sed ssh timeout; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
   done
-  [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
-  [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
+  [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] \
+    || die "workspace name must start with a lowercase letter and use at most 63 lowercase letters, digits, or hyphens"
+  [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] \
+    || die "BREV_LAUNCHABLE_ID must start with env- and contain only letters or digits after the prefix"
   if [ "${BREV_SSH_TIMEOUT_SECONDS+x}" = x ] \
     && ! [[ "$BREV_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "BREV_SSH_TIMEOUT_SECONDS must be a positive integer"
@@ -492,16 +664,32 @@ if [ "$IMAGE_ONLY" -eq 0 ]; then
     && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
   fi
-  if [ "${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
+  if [ "$VALIDATION_MODE" = full-e2e ]; then
+    require NVIDIA_INFERENCE_API_KEY
+  elif [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+    die "identity-smoke mode must not receive NVIDIA_INFERENCE_API_KEY"
+  fi
+  if [ "$VALIDATION_MODE" = full-e2e ] \
+    && [ "${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
     && ! [[ "$FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
   fi
   if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "POLL_SECONDS must be a positive integer"
   fi
+  if [ "${BREV_CREATE_RECONCILE_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_CREATE_RECONCILE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_CREATE_RECONCILE_SECONDS must be a positive integer"
+  fi
 fi
 : >"$WORK_DIR/lane.log"
 log "Candidate $CANDIDATE_SHA"
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  jq -n --arg workspaceName "$INSTANCE_NAME" \
+    --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{workspaceName:$workspaceName,workspaceId:"",status:"NOT_REQUIRED",checkedAt:$checkedAt}' \
+    >"$WORK_DIR/cleanup.json"
+fi
 
 # Dispatch #80 once, then bind the uniquely correlated producer run.
 requested_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -562,7 +750,7 @@ expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq 
 image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
 rm -rf "$WORK_DIR/handoff"
 
-if [ "$IMAGE_ONLY" -eq 1 ]; then
+if [ "$VALIDATION_MODE" = image-only ]; then
   jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
     --arg imageUri "$expected_boot_image" --arg imageRepositorySha "$image_repository_sha" '
     {
@@ -598,9 +786,24 @@ sleep 300
 
 # The guest must boot the exact image and contain the exact clean candidate.
 existing="$(workspace)" || die "Brev workspace inventory failed"
-[ -z "$existing" ] || die "workspace name already exists"
+[ -z "$existing" ] || {
+  if [ "$VALIDATION_MODE" = identity-smoke ]; then
+    jq -n --arg workspaceName "$INSTANCE_NAME" \
+      --arg workspaceId "$(jq -r '.id // ""' <<<"$existing")" \
+      --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{workspaceName:$workspaceName,workspaceId:$workspaceId,status:"NOT_OWNED",checkedAt:$checkedAt}' \
+      >"$WORK_DIR/cleanup.json"
+  fi
+  die "workspace name already exists"
+}
 cleanup_required=1
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  write_workspace_ownership pending
+fi
 timeout 900s brev create "$INSTANCE_NAME" --launchable "$BREV_LAUNCHABLE_ID" --detached --timeout 900
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  write_workspace_ownership accepted
+fi
 deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))
 ready=""
 while [ "$SECONDS" -lt "$deadline" ]; do
@@ -636,12 +839,48 @@ else
   image_selection_status=failed
   reported_boot_image="<redacted>"
 fi
-jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
-  --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
-  --arg imageSelectionStatus "$image_selection_status" \
-  --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending",validation:{imageSelection:{status:$imageSelectionStatus,expected:$expectedBootImage,observed:$bootImage},runtimeProvenance:{status:"not-run",checks:[]},fullE2E:"not-run"}}' \
-  >"$WORK_DIR/launchable-e2e.json"
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  launchable_evidence="$WORK_DIR/launchable-identity.json"
+  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+    --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
+    --arg imageRepositorySha "$image_repository_sha" \
+    --arg imageSelectionStatus "$image_selection_status" \
+    --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" '
+    {
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-identity-v1",
+      candidateSha: $candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: $producerRun,
+        status: "success"
+      },
+      image: {uri:$expectedBootImage,imageRepositorySha:$imageRepositorySha},
+      workspace: {name:$workspaceName,id:$workspaceId},
+      validation: {
+        workspaceReadiness: "passed",
+        ssh: "passed",
+        imageSelection: {
+          status:$imageSelectionStatus,
+          expected:$expectedBootImage,
+          observed:$bootImage
+        },
+        runtimeIdentity: {status:"not-run",checks:[]},
+        onboarding: "not-run",
+        inference: "not-run",
+        fullE2E: "not-run"
+      }
+    }' >"$launchable_evidence"
+else
+  launchable_evidence="$WORK_DIR/launchable-e2e.json"
+  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+    --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
+    --arg imageSelectionStatus "$image_selection_status" \
+    --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+    '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending",validation:{imageSelection:{status:$imageSelectionStatus,expected:$expectedBootImage,observed:$bootImage},runtimeProvenance:{status:"not-run",checks:[]},fullE2E:"not-run"}}' \
+    >"$launchable_evidence"
+fi
 
 [ "$image_selection_status" = passed ] || die "booted image does not match the producer handoff"
 
@@ -705,18 +944,38 @@ runtime_status="$(jq -r 'if all(.status == "passed") then "passed" else "failed"
 reported_identity="$(jq -c 'map({key:.field,value:.observed}) | from_entries' \
   <<<"$runtime_checks")"
 
-jq --argjson identity "$reported_identity" --arg status "$runtime_status" --argjson checks "$runtime_checks" '
-  .boot += $identity | .validation.runtimeProvenance = {status:$status,checks:$checks}' \
-  "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
-mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  jq --arg status "$runtime_status" --argjson checks "$runtime_checks" '
+    .validation.runtimeIdentity = {status:$status,checks:$checks}' \
+    "$launchable_evidence" >"$WORK_DIR/launchable-identity.tmp"
+  mv "$WORK_DIR/launchable-identity.tmp" "$launchable_evidence"
+else
+  jq --argjson identity "$reported_identity" --arg status "$runtime_status" \
+    --argjson checks "$runtime_checks" '
+    .boot += $identity | .validation.runtimeProvenance = {status:$status,checks:$checks}' \
+    "$launchable_evidence" >"$WORK_DIR/launchable-e2e.tmp"
+  mv "$WORK_DIR/launchable-e2e.tmp" "$launchable_evidence"
+fi
 
 if [ "$runtime_status" = failed ]; then
   while IFS= read -r mismatch; do
-    log "Runtime provenance check failed: $mismatch"
+    if [ "$VALIDATION_MODE" = identity-smoke ]; then
+      log "Runtime identity check failed: $mismatch"
+    else
+      log "Runtime provenance check failed: $mismatch"
+    fi
   done < <(jq -r '.[] | select(.status == "failed") |
     "\(.field) expected \(.expected | tojson), observed \(.observed | tojson)"' \
     <<<"$runtime_checks")
+  if [ "$VALIDATION_MODE" = identity-smoke ]; then
+    die "booted image runtime identity failed"
+  fi
   die "booted image runtime provenance failed"
+fi
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  log "Exact staging image boot and runtime identity passed"
+  log "Onboarding, inference, and full E2E did not run"
+  exit 0
 fi
 source_path="$(jq -er .sourcePath <<<"$identity")"
 

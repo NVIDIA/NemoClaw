@@ -3,6 +3,10 @@
 
 import { VLLM_PORT } from "../../core/vllm-port";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import {
+  checkOpenAiInferenceProviderProfile,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "./provider-profile";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -98,6 +102,17 @@ export function reuseRegisteredProviderWithGatewayEndpoint(args: {
       message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
     };
   }
-  if (gatewayEndpointUrl === endpointUrl) return { ok: true };
+  if (gatewayEndpointUrl === endpointUrl) {
+    if (providerType !== OPENAI_GATEWAY_PROVIDER_TYPE) return { ok: true };
+    // #9895: an unchanged gateway route performs no upsert, so the shared
+    // provider-profile boundary in setup-inference never runs here. A provider
+    // that an earlier NemoClaw registered without the `openai` profile stays
+    // unclassifiable, and the sandbox supervisor keeps rejecting the provider
+    // environment until the profile import lands. Declare it here as well.
+    const profile = checkOpenAiInferenceProviderProfile({ runOpenshell });
+    return profile.ok
+      ? { ok: true }
+      : { ok: false, status: 1, message: profile.messages.join("\n").trim() };
+  }
   return upsertProvider(provider, providerType, credentialEnv, gatewayEndpointUrl, {});
 }

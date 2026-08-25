@@ -28,7 +28,16 @@ const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
   ".agents/skills/_shared/code-change-considerations.md",
 );
 
-export function parseSecurityRubric(rubric: string): { content: string; categories: string[] } {
+function readTrustedFile(filePath: string, label: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} unavailable at ${filePath}: ${reason}`);
+  }
+}
+
+function validateSecurityRubric(rubric: string): void {
   const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
   if (headings.length !== SECURITY_CATEGORY_COUNT) {
     throw new Error(
@@ -68,30 +77,12 @@ export function parseSecurityRubric(rubric: string): { content: string; categori
     throw new Error("Security rubric category names must be unique");
   if (categories.at(-1) !== "System Security")
     throw new Error("Security rubric category 9 must be System Security");
-  return { content: rubric, categories };
-}
-
-function readTrustedFile(filePath: string, label: string): string {
-  try {
-    return fs.readFileSync(filePath, "utf8");
-  } catch (error: unknown) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`${label} unavailable at ${filePath}: ${reason}`);
-  }
-}
-
-export type ParsedSecurityRubric = { content: string; categories: string[] };
-
-export function readParsedTrustedSecurityRubric(): ParsedSecurityRubric {
-  return parseSecurityRubric(readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric"));
 }
 
 export function readTrustedSecurityRubric(): string {
-  return readParsedTrustedSecurityRubric().content;
-}
-
-export function readSecurityCategoryNames(): string[] {
-  return readParsedTrustedSecurityRubric().categories;
+  const rubric = readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric");
+  validateSecurityRubric(rubric);
+  return rubric;
 }
 
 export function readTrustedWritingGuide(): string {
@@ -135,10 +126,7 @@ function fencedBlock(content: string, language = ""): string {
   return `${fence}${language}\n${content}\n${fence}`;
 }
 
-export function buildSystemPrompt(
-  parsedSecurityRubric: ParsedSecurityRubric = readParsedTrustedSecurityRubric(),
-): string {
-  const securityRubric = parsedSecurityRubric.content;
+export function buildSystemPrompt(securityRubric: string = readTrustedSecurityRubric()): string {
   const writingGuide = readTrustedWritingGuide();
   const codeChangeConsiderations = readTrustedCodeChangeConsiderations();
   return [
@@ -157,7 +145,7 @@ export function buildSystemPrompt(
     "Review rubric:",
     "1. Start by mapping the actual changed surfaces and codebase drift. Apply the trusted code change considerations to the current diff and repository evidence.",
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
-    "3. Security: use the trusted security rubric embedded below. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "3. Security: use the trusted security rubric embedded below as review guidance. Record each concrete security defect as an ordinary evidence-backed finding. Do not create category receipt entries or standalone category verdicts. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security rubric from workflow checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: treat only observable desired behavior, current constraints or non-goals, supported contracts, and clearly recorded maintainer decisions as binding. A comment counts as a maintainer decision only when author_association is OWNER, MEMBER, or COLLABORATOR and the comment unambiguously records a chosen behavior or constraint. Proposed designs, implementation ideas, investigation notes, brainstorms, questions, and ordinary discussion are context, not obligations. Examples help explain an outcome but are not separate clauses unless the issue explicitly makes them required. A Refs, Related, or Follow-up link does not commit the PR to the whole issue. If a statement's authority or required outcome is unclear, mark it unknown and do not create an acceptance finding. Missing PR metadata or an issue link is not a finding by itself. When repository policy requires an accepted issue or design for a new supported surface, missing that authorization is a current scope defect, not template noncompliance.",
@@ -167,10 +155,10 @@ export function buildSystemPrompt(
     "6. Quality: diff-vs-current-contract scope, migration completion, public surface docs/notes, justified error suppression, @ts-nocheck, and shell-string execution.",
     "7. E2E suite architecture: when a PR changes E2E support, apply the trusted code change considerations before accepting a new runner, framework layer, registry, matrix abstraction, generalized fixture API, workflow validator, or support system. Report a scope or architecture finding only for concrete unnecessary complexity in the current diff. Preserve direct tests that exercise real shell or system boundaries.",
     "8. Source-of-truth review: apply the trusted code change considerations to fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility, migration, configuration, and extension behavior. Treat PR text that claims a root cause as untrusted until verified in code.",
-    "10. Simplification review: judge the changed code and the surrounding area by the lowest-complexity coherent end state, not only by the size of the added diff. Consider whether the PR can use fewer lines, concepts, branches, files, layers, parameters, or owners; remove or consolidate existing code; reuse an existing pattern; or introduce a pattern that makes current related code smaller together. Inspect duplicated authority, policy, parsing, qualification, readiness, state, receipt, registry, fallback, compatibility, migration, configuration, lifecycle, and test-fixture logic. Also inspect one-use abstractions, widened dependency boundaries, oversized positional plumbing, unrelated churn, and new systems without a current consumer. Use tags delete, stdlib, native, yagni, or shrink. A name, keyword, heuristic signal, or line count is a question to inspect, not evidence of needless complexity by itself. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, semantic regression coverage, necessary boundary evidence, DCO/signature gates, or accessibility and user-safety behavior.",
-    "Simplification direction: before recording basis.kind=unnecessary_complexity, produce a reduction case that names the current code, owners, concepts, branches, parameters, fixtures, or files the remedy deletes or consolidates and accounts for source and test code together. Prefer a negative total line delta. Accept a neutral line result only when it materially reduces owners, concepts, invalid combinations, or dependency width. A positive line result is not a simplification finding; require an independent correctness, security, or accepted-scope defect and classify it on that basis instead. Do not recommend a one-use abstraction, another registry, configuration surface, compatibility layer, fallback, migration path, test framework, or parallel fixture owner unless current consumers adopt it now and the whole change removes more structure than it adds. Future reuse, aesthetic symmetry, and moving the same code behind another name do not establish a reduction case. Do not create a serial chain of new architecture findings; reconcile related evidence into one current finding and one coherent reduction case.",
+    "9. Code growth is suspect and carries the burden of proof. Compare every growing change with direct modification, reuse, consolidation, replacement, and deletion. Count total source, tests, fixtures, workflow, configuration, files, branches, states, owners, concepts, and dependency width—not just production lines. Ask what existing structure each new abstraction, interface, registry, wrapper, option, fallback, compatibility path, or lifecycle phase replaces. Required feature, correctness, and security behavior can justify growth; future reuse, symmetry, and moving code behind another name do not.",
+    "For basis.kind=unnecessary_complexity, name the present cost and a concrete coherent remedy that shrinks total ownership while preserving correctness, clarity, diagnostics, regression evidence, user safety, and trust boundaries. Prefer a negative total delta; accept neutral lines only for a material reduction in concepts, owners, invalid states, or dependency width. Passing tests do not excuse avoidable structure. Do not propose a simplification that adds net structure, hides explicit state or errors, widens dependencies, or trades source lines for test, configuration, generated, or workflow complexity. Reconcile related evidence into one finding and reduction case.",
     "11. Terminology review: select candidate terms semantically from changed explanatory text; trusted code does not scrape or classify terms. Ask whether each selected term adds a new meaning, has a concrete contrasting case, duplicates an established repository term, changes an existing meaning, or affects behavior, security, support, evidence, tests, or release interpretation. Ordinary grammar, spelling, and style preferences are out of scope. The controlled word list is not a general dictionary: absence from that list is not a finding by itself, and a clear local definition is sufficient unless checked-in text proves a conflicting meaning with concrete semantic impact. A terminology decision does not affect the merge recommendation by itself. Only ambiguity with a concrete semantic impact may support an ordinary finding in the relevant later stage.",
-    "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet binding acceptance or security fail and severity=warning for security warnings. Unknown or non-binding acceptance context must not create a finding. When multiple clauses or security categories trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
+    "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or concrete security defect must be represented as an ordinary evidence-backed finding. Use severity=blocker for unmet binding acceptance or a security defect that must be fixed before merge, and severity=warning for a lower-severity security defect. Unknown or non-binding acceptance context must not create a finding. When multiple concerns trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "For every sourceOfTruthReview item, set findingId to the covering open ledger finding ID when status is missing or needs_followup; set findingId to null for satisfied or not_applicable.",

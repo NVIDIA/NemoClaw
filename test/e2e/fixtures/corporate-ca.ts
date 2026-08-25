@@ -5,9 +5,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
+import { GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
+import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
+import { readConfigFile } from "../../../src/lib/state/config-io.ts";
+import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
+import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
+import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import { trustedSandboxShellScript, type TrustedSandboxShellScript } from "./clients/sandbox.ts";
 
 export type CorporateCaFixtureMode = "explicit" | "requests" | "host-anchor";
+export type CorporateCaWorkloadKind = "legacy-dockerfile" | "managed-image";
 
 export interface CorporateCaFixture {
   dir: string;
@@ -61,7 +69,10 @@ const CORPORATE_CA_ENV_BY_MODE: Record<
   "host-anchor": (_file, dir) => ({ NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS: dir }),
 };
 
-const CORPORATE_CA_MERGE_PROBE = trustedSandboxShellScript(`
+function buildCorporateCaMergeProbe(
+  workloadKind: CorporateCaWorkloadKind,
+): TrustedSandboxShellScript {
+  return trustedSandboxShellScript(`
 set -eu
 probe_fail() {
   printf 'CORPORATE_CA_PROBE_FAIL:%s\\n' "$1" >&2
@@ -79,16 +90,18 @@ expect_export() {
 }
 
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
-managed_completion='/run/nemoclaw/managed-startup-complete.json'
-if [ -e "$managed_completion" ] || [ -L "$managed_completion" ]; then
-  [ -f "$managed_completion" ] && [ ! -L "$managed_completion" ] || probe_fail invalid-managed-completion
+workload_kind='${workloadKind}'
+if [ "$workload_kind" = 'managed-image' ]; then
   bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
   runtime_env='/run/nemoclaw/managed-startup-runtime.env'
+  system_bundle='/etc/ssl/certs/ca-certificates.crt'
   expected_bundle_metadata='0:0:444'
+  expected_runtime_env_metadata='0:0:444'
 else
   bundle='/tmp/nemoclaw-ca-bundle.pem'
   runtime_env='/tmp/nemoclaw-proxy-env.sh'
   expected_bundle_metadata="$(id -u):$(id -g):444"
+  expected_runtime_env_metadata="$(id -u):$(id -g):444"
 fi
 
 [ -s "$corp" ] || probe_fail missing-corporate-ca
@@ -96,20 +109,35 @@ fi
 [ -s "$runtime_env" ] || probe_fail missing-runtime-env
 [ ! -L "$bundle" ] || probe_fail symlinked-merged-bundle
 [ "$(stat -c '%u:%g:%a' "$bundle")" = "$expected_bundle_metadata" ] || probe_fail merged-bundle-owner-mode
+[ ! -L "$runtime_env" ] || probe_fail symlinked-runtime-env
+[ "$(stat -c '%u:%g:%a' "$runtime_env")" = "$expected_runtime_env_metadata" ] || probe_fail runtime-env-owner-mode
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$corp" >/dev/null || probe_fail corporate-canary-missing
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$bundle" >/dev/null || probe_fail bundle-canary-missing
+if [ "$workload_kind" = 'managed-image' ]; then
+  grep -F '${CORPORATE_CA_CANARY_LINE}' "$system_bundle" >/dev/null || probe_fail system-bundle-canary-missing
+fi
 set -- $(wc -c < "$corp")
 corp_bytes="$1"
 set -- $(wc -c < "$bundle")
 bundle_bytes="$1"
 [ "$bundle_bytes" -gt "$corp_bytes" ] || probe_fail bundle-did-not-preserve-base
 
-for env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
-  expect_export "$env_name"
-done
+if [ "$workload_kind" = 'managed-image' ]; then
+  grep -F "export _NEMOCLAW_CORPORATE_CA_MERGED='1'" "$runtime_env" >/dev/null || probe_fail managed-runtime-env-marker
+  for env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
+    if grep -E "^(export|unset) $env_name(=|$)" "$runtime_env" >/dev/null; then
+      probe_fail "managed-runtime-env-$env_name"
+    fi
+  done
+else
+  for env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
+    expect_export "$env_name"
+  done
+fi
 
 printf 'corporate CA baked and merged into %s (%s > %s bytes)\\n' "$bundle" "$bundle_bytes" "$corp_bytes"
 `);
+}
 
 export function createCorporateCaFixture(
   mode: CorporateCaFixtureMode,
@@ -132,6 +160,28 @@ export function cleanupCorporateCaFixture(fixture: CorporateCaFixture): void {
   fs.rmSync(fixture.dir, { recursive: true, force: true });
 }
 
-export function corporateCaMergeProbeScript(): TrustedSandboxShellScript {
-  return CORPORATE_CA_MERGE_PROBE;
+export function registeredCorporateCaWorkloadKind(
+  sandboxName: string,
+  home: string = os.homedir(),
+  gatewayPort: number = GATEWAY_PORT,
+): CorporateCaWorkloadKind {
+  const registryPath = path.join(nemoclawStateRoot(home, gatewayPort), "sandboxes.json");
+  const registry = readConfigFile<unknown>(registryPath, { sandboxes: {} });
+  const sandboxes = isObjectRecord(registry) ? registry.sandboxes : undefined;
+  const entry = parseSandboxRegistryEntries(sandboxes).find(([name]) => name === sandboxName)?.[1];
+  if (!entry) {
+    throw new Error(`corporate CA probe sandbox '${sandboxName}' is missing from the registry`);
+  }
+  if (readManagedWorkloadAuthority(entry)) return "managed-image";
+  const workload = cloneSandboxWorkloadReceipt(entry.workload);
+  if (workload?.kind === "legacy-dockerfile") return workload.kind;
+  throw new Error(
+    `corporate CA probe sandbox '${sandboxName}' has no supported registered workload authority`,
+  );
+}
+
+export function corporateCaMergeProbeScript(
+  workloadKind: CorporateCaWorkloadKind,
+): TrustedSandboxShellScript {
+  return buildCorporateCaMergeProbe(workloadKind);
 }

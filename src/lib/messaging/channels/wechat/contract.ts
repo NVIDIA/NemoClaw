@@ -34,11 +34,20 @@ export interface WechatManagedStartupPlaceholderAuthorization {
 export function authorizeWechatAccountFilePlaceholders(
   value: unknown,
 ): readonly WechatManagedStartupPlaceholderAuthorization[] {
+  const content = isPlainDataObject(value) ? ownDataPropertyValue(value, "content") : undefined;
   if (
     !isPlainDataObject(value) ||
+    !hasExactlyOwnDataProperties(value, ["content", "mode", "path"]) ||
     !isWechatAccountFilePath(ownDataPropertyValue(value, "path")) ||
     ownDataPropertyValue(value, "mode") !== WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.mode ||
-    !isPlainDataObject(ownDataPropertyValue(value, "content"))
+    !isPlainDataObject(content) ||
+    !hasOnlyOwnDataProperties(content, ["baseUrl", "savedAt", "token", "userId"]) ||
+    !hasOwnDataProperty(content, "savedAt") ||
+    !hasOwnDataProperty(content, "token") ||
+    ownDataPropertyValue(content, "token") !== WECHAT_TOKEN_PLACEHOLDER ||
+    !isNonEmptyString(ownDataPropertyValue(content, "savedAt")) ||
+    !isOptionalNonEmptyString(content, "baseUrl") ||
+    !isOptionalNonEmptyString(content, "userId")
   ) {
     return [];
   }
@@ -75,12 +84,40 @@ function isSafeWechatAccountId(accountId: string): boolean {
 }
 
 function isPlainDataObject(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
-  );
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function hasOwnDataProperty(value: Record<string, unknown>, key: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined && "value" in descriptor;
+}
+
+function hasExactlyOwnDataProperties(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.getOwnPropertyNames(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function hasOnlyOwnDataProperties(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): boolean {
+  return Object.getOwnPropertyNames(value).every((key) => allowed.includes(key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isOptionalNonEmptyString(value: Record<string, unknown>, key: string): boolean {
+  return !hasOwnDataProperty(value, key) || isNonEmptyString(ownDataPropertyValue(value, key));
 }

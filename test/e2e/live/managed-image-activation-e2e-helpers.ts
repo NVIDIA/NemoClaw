@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +14,6 @@ import {
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero,
@@ -26,7 +24,13 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  type DockerBuildGuard,
+  assertNoDockerfileBuild,
+  createDockerBuildGuard,
+} from "../fixtures/docker-build-guard.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
@@ -65,6 +69,20 @@ export function summarizeOnboardFailureStartupSignals(
   ) as Record<OnboardFailureStartupSignal, boolean>;
 }
 
+export async function captureManagedImageOnboardPairingDiagnostics(
+  sandbox: Pick<SandboxClient, "exec">,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  if (agent !== "openclaw") return;
+  await captureIssue4462FailureDiagnostics(sandbox, {
+    env,
+    redactionValues: [API_KEY],
+    sandboxName,
+  });
+}
+
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
   openclaw: "mi-act-openclaw",
   hermes: "mi-act-hermes",
@@ -79,11 +97,26 @@ type RuntimeFixtures = {
   readonly sandbox: SandboxClient;
 };
 
-type DockerGuard = {
-  readonly env: NodeJS.ProcessEnv;
-  readonly tracePath: string;
-  readonly dispose: () => void;
-};
+export function managedActivationOnboardArgs(
+  catalogPath: string,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+): string[] {
+  return [
+    "onboard",
+    "--temp-managed-runtime-catalog",
+    catalogPath,
+    "--fresh",
+    "--recreate-sandbox",
+    "--non-interactive",
+    "--yes",
+    "--no-gpu",
+    "--agent",
+    agent,
+    "--name",
+    sandboxName,
+  ];
+}
 
 function requiredCatalogPath(): string {
   const value = process.env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG;
@@ -126,49 +159,8 @@ function exactCatalog(
   return contracts;
 }
 
-function createDockerBuildGuard(): DockerGuard {
-  const realDocker = execFileSync("bash", ["-lc", "command -v docker"], {
-    encoding: "utf8",
-    env: buildAvailabilityProbeEnv(),
-    killSignal: "SIGKILL",
-    timeout: 10_000,
-  }).trim();
-  if (!path.isAbsolute(realDocker) || !fs.statSync(realDocker).isFile()) {
-    throw new Error("managed activation E2E requires one absolute Docker CLI");
-  }
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-activation-docker-"));
-  const tracePath = path.join(root, "docker-argv.log");
-  const shimPath = path.join(root, "docker");
-  fs.writeFileSync(
-    shimPath,
-    [
-      "#!/bin/bash",
-      "set -euo pipefail",
-      `trace=${shellQuote(tracePath)}`,
-      'printf \'%q \' "$@" >>"$trace"',
-      "printf '\\n' >>\"$trace\"",
-      'if [[ "${1:-}" == build || ("${1:-}" == buildx && "${2:-}" == build) ]]; then',
-      "  echo 'managed activation attempted a forbidden Dockerfile build' >&2",
-      "  exit 97",
-      "fi",
-      `exec ${shellQuote(realDocker)} \"$@\"`,
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  const baseEnv = buildAvailabilityProbeEnv();
-  return {
-    env: {
-      ...baseEnv,
-      PATH: `${root}:${baseEnv.PATH ?? ""}`,
-    },
-    tracePath,
-    dispose: () => fs.rmSync(root, { force: true, recursive: true }),
-  };
-}
-
 function commandEnv(
-  guard: DockerGuard,
+  guard: DockerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
 ): NodeJS.ProcessEnv {
@@ -433,7 +425,7 @@ async function collectOnboardFailureDockerDiagnostics(
 
 async function qualifyAgent(
   fixtures: RuntimeFixtures,
-  guard: DockerGuard,
+  guard: DockerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
@@ -450,21 +442,7 @@ async function qualifyAgent(
 
   enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(
-    [
-      "onboard",
-      "--temp-managed-runtime",
-      "--temp-managed-runtime-catalog",
-      catalogPath,
-      "--fresh",
-      "--recreate-sandbox",
-      "--non-interactive",
-      "--yes",
-      "--no-gpu",
-      "--agent",
-      agent,
-      "--name",
-      sandboxName,
-    ],
+    managedActivationOnboardArgs(catalogPath, agent, sandboxName),
     {
       artifactName: `managed-activation-onboard-${agent}`,
       env,
@@ -473,6 +451,7 @@ async function qualifyAgent(
     },
   );
   if (onboard.exitCode !== 0) {
+    await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
@@ -526,11 +505,6 @@ async function qualifyAgent(
   await verifyExactCleanup(host, sandbox, sandboxName, env);
 }
 
-function expectNoDockerfileBuild(trace: string): void {
-  expect(trace).not.toMatch(/(?:^|\n)build(?:\s|$)/u);
-  expect(trace).not.toMatch(/(?:^|\n)buildx\s+build(?:\s|$)/u);
-}
-
 export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): Promise<void> {
   const { artifacts, cleanup, host, progress } = fixtures;
   progress.phase("validate exact candidate catalog and host runtime");
@@ -573,7 +547,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
 
   progress.phase("prove buildless all-agent activation");
   const trace = fs.existsSync(guard.tracePath) ? fs.readFileSync(guard.tracePath, "utf8") : "";
-  expectNoDockerfileBuild(trace);
+  assertNoDockerfileBuild(trace);
   const chatRequests = inference
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");

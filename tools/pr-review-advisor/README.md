@@ -40,13 +40,12 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on `pull_request_target` for internal and fork PRs, plus trusted manual dispatch.
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
-4. Opens one Pi session per model lane and performs exactly two normal turns.
-5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass.
-6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
-7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. The `challenge-and-record` turn permits one bounded repair: it accepts one failed call followed by one successful call in the same SDK response, or, if the failed call settles the response, one tool-only continuation. Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
-8. Trusted code writes the session transcript, result, and summary artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
-9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
-    The evaluation lane does not publish another review.
+4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
+5. Runs one synthesis advisor after every discovered specialist session completes. The synthesis advisor reads the traces as untrusted evidence, verifies retained concerns against the repository, and performs the two-turn review protocol.
+6. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. If the advisor calls every required context tool but omits the analysis receipt, the runner permits one prose-only continuation.
+7. The `challenge-and-record` turn adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The recording tools replace complete in-memory draft sections without updating canonical state. `submit_review` validates and assembles pending state. The session runner commits that state only after it accepts the complete terminal flow. Provider failures, invalid submissions, and rejected terminal flows leave canonical state unchanged.
+8. Trusted code writes the synthesis session transcript, result, and summary artifacts.
+9. One publisher validates the synthesis artifacts for the same pull request commit and posts the sticky comment.
 
 `investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
@@ -88,13 +87,23 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model support. The workflow treats that as trusted-main rollout skew and writes low-confidence skip artifacts in the lane-specific artifact directory. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 13 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 19 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+
+The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
+and checked-in evidence:
+
+> An explicit sandbox-visible host address must be outside the sandbox network subnet, and every
+> gateway-address projection must derive from the same authority.
+
+The family does not add an E2E job. Existing topology tests and workflows remain the behavior
+authority. Documentation-only and test-only changes do not select the family.
+
+The same risk plan maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.
@@ -136,9 +145,7 @@ Configure this repository secret for review analysis:
 The trusted host uses this secret only to register the OpenAI-compatible
 `https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed analyzer reaches that
 provider through `https://inference.local/v1` and does not receive the secret.
-The primary lane uses `azure/openai/gpt-5.6-terra`; the parallel Nemotron lane sets
-`PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` and reuses the same analyzer,
-prompts, schema, safety boundary, and credential secret.
+The discovered specialists and the synthesis advisor use the workflow-configured model and share the same credential boundary.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
@@ -148,11 +155,15 @@ instead of failing closed without artifacts.
 - `pr-review-advisor-result.json` — validated advisor result, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — canonical result used for comments.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary.
-- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and bounded repair when used.
+- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and the single repair continuation when used.
 
-The parallel Nemotron Ultra lane writes the same filenames under
-`artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the
-`pr-review-advisor-nemotron-ultra` artifact.
+## Specialist synthesis
+
+Each valid Markdown prompt in `tools/pr-review-advisor/specialists` creates a focused, read-only Pi session. Every discovered specialist session is required. Each specialist uploads Pi's unchanged native JSONL session. Specialists have repository read tools but cannot record or submit the canonical review.
+
+The synthesis advisor places every discovered specialist trace beside the read-only repository inside OpenShell. It treats model-authored trace content as untrusted evidence and verifies retained concerns against repository evidence. It uses the atomic submission tools to create the canonical result. An absent, invalid, or oversized specialist trace fails synthesis.
+
+The publisher has the only pull-request write permission. It receives neither the model credential nor the specialist traces. It validates and publishes only the synthesis artifact.
 
 ## Manual run
 
@@ -165,9 +176,7 @@ node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
 ```
 
 For this direct local invocation outside the workflow's OpenShell wrapper, set
-`PR_REVIEW_ADVISOR_API_KEY` locally. Add
-`PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` to exercise the Nemotron Ultra lane
-locally. Run `npm install` first so the Pi SDK dependency is available.
+`PR_REVIEW_ADVISOR_API_KEY` locally. Run `npm install` first so the Pi SDK dependency is available.
 
 ## Output contract
 
@@ -189,12 +198,6 @@ reports how many more IDs exist. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
 and supported selector tuples, and replaces model-authored reasons with trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
-The publisher compares the completed lanes after this normalization. It lists trusted
-second-opinion-only selectors with a publisher-authored coverage-gap reason as optional
-disagreements without adding them to the primary lane's recommended E2E guidance. It also compares
-normalized terminology receipts and can show second-opinion-only or conflicting dispositions when
-both lanes completed with decisions for the same head commit. These differences remain advisory and do not
-change the primary assessment, merge posture, or recommended E2E guidance.
 For a changed credential-free test, the normalizer also records structured head evidence only
 after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
 trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the

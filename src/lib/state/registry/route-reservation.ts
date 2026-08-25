@@ -69,9 +69,19 @@ export function isRouteOnlySandboxReservation(entry: {
   return entry.pendingRouteReservation === true && entry.createdAt === undefined;
 }
 
+/** True only for a completed registry entry available to normal sandbox consumers. */
+export function isPublishedSandboxRegistration(entry: {
+  pendingRouteReservation?: true;
+}): boolean {
+  return entry.pendingRouteReservation !== true;
+}
+
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */
 export function isPendingReservationForSession(
-  entry: SandboxEntry | null,
+  entry: {
+    pendingRouteReservation?: true;
+    reservationSessionId?: string;
+  } | null,
   sessionId: string | null | undefined,
 ): boolean {
   return (

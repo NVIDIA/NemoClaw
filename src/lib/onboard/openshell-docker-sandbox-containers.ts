@@ -61,12 +61,21 @@ export type OpenShellDockerSandboxContainerQuery =
 export function queryOpenShellDockerSandboxContainers(
   sandboxName: string,
   deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
+  const requestedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const boundedTimeoutMs = Math.max(
+    1,
+    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
+  );
   const result = run([...sandboxContainerFilterArgs(sandboxName), "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,
-    timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+    timeout: boundedTimeoutMs,
   });
   if (Number(result.status ?? 1) !== 0) {
     return {

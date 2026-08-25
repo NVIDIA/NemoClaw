@@ -9,7 +9,10 @@ import { defineConfig, defineProject } from "vitest/config";
 import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
-import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
+import {
+  resolveCliCoverageShardScheduling,
+  resolveIntegrationProjectScheduling,
+} from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
@@ -95,6 +98,15 @@ const controlledNonLiveEnv = {
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const isolatedTestStateSetup = "test/helpers/isolate-test-state.ts";
 const pluginVitestProject = defineProject(pluginVitestProjectOptions);
+// Pull-request jobs execute the base branch's trusted composite action, so an
+// action change in a PR cannot constrain that PR's own Vitest workers. Apply a
+// bounded cap from the validated shard environment instead; this is shared by the
+// trusted PR action and the main-branch action.
+const cliCoverageShardScheduling = resolveCliCoverageShardScheduling({
+  isCi,
+  cliShard: process.env.CLI_SHARD,
+  cliShardCount: process.env.CLI_SHARD_COUNT,
+});
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -104,6 +116,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    ...cliCoverageShardScheduling,
     globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [
       {
@@ -172,28 +185,7 @@ export default defineConfig({
             "test/e2e/live/**",
             "test/e2e/support/**",
             "test/package-contract/**",
-            "test/install-express-prompt.test.ts",
-            "test/install-express-wsl-ollama.test.ts",
-            "test/install-station-vllm-continuation.test.ts",
-            "test/install-build-dependency-preflight.test.ts",
-            "test/install-clone-ref.test.ts",
-            "test/install-forward-restore-diagnostics.test.ts",
-            "test/install-hermes-portable-active.test.ts",
-            "test/install-hermes-forward-restore.test.ts",
-            "test/install-managed-cli-reuse.test.ts",
-            "test/install-preflight.test.ts",
-            "test/install-preflight-docker-bootstrap.test.ts",
-            "test/install-station-controller-binding.test.ts",
-            "test/install-station-pair-preparation.test.ts",
-            "test/install-station-resume-cleanup.test.ts",
-            "test/install-station-dgx-os.test.ts",
-            "test/install-station-docker-repository.test.ts",
-            "test/install-station-host-preparation.test.ts",
-            "test/install-station-package-state.test.ts",
-            "test/install-station-package-transaction.test.ts",
-            "test/install-openshell-e2e-artifact.test.ts",
-            "test/install-openshell-version-pin.test.ts",
-            "test/install-openshell-version-check.test.ts",
+            "test/installer-integration/**",
           ],
         },
       },
@@ -203,32 +195,14 @@ export default defineConfig({
           ...vitestStateIsolation,
           name: "installer-integration",
           alias: canonicalSourceAliases,
+          // Installer fixtures spawn nested shell, Node, Python, and SSH
+          // processes. Use the same bounded scheduling as the other process
+          // fixtures so CI cannot turn a transient spawn failure into a
+          // fail-closed single-host result.
+          ...integrationProjectScheduling,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
-          include: [
-            "test/install-express-prompt.test.ts",
-            "test/install-express-wsl-ollama.test.ts",
-            "test/install-station-vllm-continuation.test.ts",
-            "test/install-build-dependency-preflight.test.ts",
-            "test/install-clone-ref.test.ts",
-            "test/install-forward-restore-diagnostics.test.ts",
-            "test/install-hermes-portable-active.test.ts",
-            "test/install-hermes-forward-restore.test.ts",
-            "test/install-managed-cli-reuse.test.ts",
-            "test/install-preflight.test.ts",
-            "test/install-preflight-docker-bootstrap.test.ts",
-            "test/install-station-controller-binding.test.ts",
-            "test/install-station-pair-preparation.test.ts",
-            "test/install-station-resume-cleanup.test.ts",
-            "test/install-station-dgx-os.test.ts",
-            "test/install-station-docker-repository.test.ts",
-            "test/install-station-host-preparation.test.ts",
-            "test/install-station-package-state.test.ts",
-            "test/install-station-package-transaction.test.ts",
-            "test/install-openshell-e2e-artifact.test.ts",
-            "test/install-openshell-version-pin.test.ts",
-            "test/install-openshell-version-check.test.ts",
-          ],
+          include: ["test/installer-integration/**/*.test.ts"],
           // Slow tests that spawn real bash install.sh processes. Explicit
           // project selection keeps them out of the fast source-test command.
         },

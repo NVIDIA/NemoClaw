@@ -225,9 +225,7 @@ export interface SetupNimFlowDeps {
   resolveRequestedServingProfileModel?(
     env?: NodeJS.ProcessEnv,
   ): RequestedServingProfileModel | null;
-  selectVllmModelFromEnv?(
-    env?: NodeJS.ProcessEnv,
-  ): { id: string; servedModelId?: string } | null;
+  selectVllmModelFromEnv?(env?: NodeJS.ProcessEnv): { id: string; servedModelId?: string } | null;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
@@ -243,6 +241,15 @@ export interface SetupNimFlowDeps {
   maybePromptForInferenceInputCapability(model: string | null): Promise<void>;
 }
 
+function maybePromptForSupportedInferenceInputCapability(
+  deps: Pick<SetupNimFlowDeps, "maybePromptForInferenceInputCapability">,
+  agent: AgentDefinition | null,
+  model: string | null,
+): Promise<void> {
+  if ((agent?.name ?? "openclaw") !== "openclaw") return Promise.resolve();
+  return deps.maybePromptForInferenceInputCapability(model);
+}
+
 function requireSelectedProvider(
   selected: ProviderMenuChoice | undefined,
   deps: Pick<SetupNimFlowDeps, "error" | "exitProcess">,
@@ -252,6 +259,46 @@ function requireSelectedProvider(
     deps.exitProcess(1);
   }
   return selected;
+}
+
+function routeUnreachableInteractiveWindowsOllama(
+  selected: ProviderMenuChoice,
+  options: readonly ProviderMenuChoice[],
+  input: {
+    selectedFromInteractiveMenu: boolean;
+    isWindowsHostOllama: boolean;
+    windowsOllamaReachable: boolean;
+  },
+): ProviderMenuChoice {
+  if (
+    !input.selectedFromInteractiveMenu ||
+    selected.key !== "ollama" ||
+    !input.isWindowsHostOllama ||
+    input.windowsOllamaReachable
+  ) {
+    return selected;
+  }
+  return options.find((option) => option.key === "start-windows-ollama") ?? selected;
+}
+
+function assertVllmGpuProviderSelection(
+  selected: ProviderMenuChoice,
+  recoveredFromSandbox: boolean,
+  deps: Pick<
+    SetupNimFlowDeps,
+    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
+  >,
+): void {
+  const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
+  const resumedManagedVllm = recoveredFromSandbox && selected.key === "vllm";
+  if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
+
+  const message =
+    `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
+    `the selected provider is '${selected.key}'.`;
+  deps.error(`  ${message}`);
+  if (deps.isNonInteractive()) deps.abortNonInteractive(message);
+  deps.exitProcess(1);
 }
 
 function handleSelectedOllama(
@@ -630,7 +677,7 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   state.preferredInferenceApi = "openai-completions";
   state.assertRouteCompatible?.();
   const selectedModel = isBackToSelection(state.model) ? null : state.model;
-  await input.deps.maybePromptForInferenceInputCapability(selectedModel);
+  await maybePromptForSupportedInferenceInputCapability(input.deps, input.agent, selectedModel);
   return {
     model: selectedModel,
     provider: state.provider,
@@ -892,6 +939,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+            windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
@@ -927,6 +975,12 @@ export function createSetupNim(
         }
 
         selected = requireSelectedProvider(selected, deps);
+        selected = routeUnreachableInteractiveWindowsOllama(selected, options, {
+          selectedFromInteractiveMenu,
+          isWindowsHostOllama,
+          windowsOllamaReachable,
+        });
+        assertVllmGpuProviderSelection(selected, recoveredFromSandbox, deps);
         if (selected.key !== "hermesProvider") {
           hermesAuthMethod = null;
           hermesToolGateways = [];
@@ -1215,7 +1269,7 @@ export function createSetupNim(
       : endpointPinnedAddresses || endpointTrustedPrivateCapability
         ? "onboard"
         : null;
-    await deps.maybePromptForInferenceInputCapability(selectedModel);
+    await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
     return {
       model: selectedModel,
       provider,

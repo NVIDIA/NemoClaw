@@ -154,7 +154,15 @@ The lease has a fixed 24-hour lifetime that repeated launches do not extend.
 Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
 
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
+<AgentOnly variant="openclaw,hermes">
 Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Configured inference must return HTTP 2xx from the semantic `inference.local` probe for every provider except `openrouter-api`.
+The OpenRouter adapter returns HTTP 404 for `GET /v1/models`.
+NemoClaw accepts that result only after a bounded inference request for the recorded model succeeds.
+A failed request rejects launch readiness and identifies the inference request as the failed check.
+</AgentOnly>
 <AgentOnly variant="openclaw">
 
 For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease.
@@ -306,6 +314,10 @@ The session then follows the current default selected through `inference set`, w
 
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
+It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
+A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, or channel startup effect.
+A policy-required provider attachment is the narrow exception: when stopped Hermes Discord retains a credential-bound policy, rebuild attaches its exact validated static provider without starting Discord.
+If that required provider is missing or incompatible, restore or re-add the channel credentials, then rerun the rebuild.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
 

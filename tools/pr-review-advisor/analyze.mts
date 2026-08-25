@@ -41,22 +41,10 @@ import {
   collectDeterministicContext,
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
-import { buildInvestigateTurn } from "./investigate-turn.mts";
+import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
+import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
-import {
-  buildCorrectnessTurnContext,
-  buildOperationsTurnContext,
-  buildReconciliationTurnContext,
-  buildScopeRiskTurnContext,
-  buildSecurityTurnContext,
-  buildTestsTurnContext,
-} from "./turn-context.mts";
-import {
-  buildSystemPrompt,
-  readParsedTrustedSecurityRubric,
-  readSecurityCategoryNames,
-  readTrustedControlledWords,
-} from "./trusted-guidance.mts";
+import { buildSystemPrompt } from "./trusted-guidance.mts";
 import {
   collectGitHubReviewContext,
   hasOpenPrReplacement,
@@ -87,14 +75,10 @@ const ADVISOR_MODEL = process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MOD
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
-const METADATA_CHANGED_FILE_LIMIT = 20;
-const METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
 const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
   "merge_after_fixes",
-  "needs_rework",
-  "blocked",
   "superseded",
   "info_only",
 ] as const;
@@ -105,7 +89,6 @@ const TEST_DEPTH_VERDICTS = [
   "runtime_validation_recommended",
 ] as const;
 const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
-const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
 const SOURCE_OF_TRUTH_STATUSES = [
   "not_applicable",
   "satisfied",
@@ -121,7 +104,6 @@ type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
 type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 type TestDepthVerdict = (typeof TEST_DEPTH_VERDICTS)[number];
 type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
-type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 type SimplificationTag = (typeof SIMPLIFICATION_TAGS)[number];
 
@@ -162,12 +144,6 @@ type AcceptanceCoverage = {
   evidence: string;
 };
 
-type SecurityCategory = {
-  category: string;
-  verdict: SecurityVerdict;
-  justification: string;
-};
-
 type SourceOfTruthReview = {
   surface: string;
   status: SourceOfTruthStatus;
@@ -205,7 +181,6 @@ export type ReviewAdvisorResult = {
   findings: Finding[];
   terminologyReview: TerminologyReview;
   acceptanceCoverage: AcceptanceCoverage[];
-  securityCategories: SecurityCategory[];
   sourceOfTruthReview: SourceOfTruthReview[];
   e2e: CombinedE2eResult;
   testDepth: {
@@ -329,12 +304,6 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
-    artifacts,
-    metadata,
-    diff,
-  });
-
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
   const writeUnavailable = (reason: string): void =>
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -345,6 +314,12 @@ async function main(): Promise<void> {
     );
     process.exit(0);
   }
+
+  const { systemPrompt, promptTurns } = preparePromptArtifacts({
+    artifacts,
+    metadata,
+    diff,
+  });
 
   logProgress(
     `Launching PR review advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`,
@@ -365,7 +340,6 @@ async function main(): Promise<void> {
       headRef,
       metadata,
       schema,
-      securityCategoryNames,
     });
     sdkResult = conversation.run;
     submission = conversation.submission;
@@ -378,11 +352,7 @@ async function main(): Promise<void> {
 
   let result: ReviewAdvisorResult;
   try {
-    result = persistSuccessfulReview(
-      advisorExecutionErrors(sdkResult),
-      submission!,
-      artifacts,
-    );
+    result = persistSuccessfulReview(advisorExecutionErrors(sdkResult), submission!, artifacts);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailure(reason);
@@ -420,12 +390,22 @@ export function preparePromptArtifacts({
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
   diff: string;
-}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[]; securityCategoryNames: string[] } {
+}): {
+  systemPrompt: string;
+  promptTurns: AdvisorPromptTurn[];
+} {
   try {
-    const securityRubric = readParsedTrustedSecurityRubric();
-    const systemPrompt = buildSystemPrompt(securityRubric);
-    const promptTurns = buildPromptTurns({ metadata, diff });
-    return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
+    const systemPrompt = buildSystemPrompt();
+    const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
+    if (!specialistSessionDirectory) {
+      throw new Error("PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR is required");
+    }
+    const specialistInventory = validateSpecialistSessionDirectory(specialistSessionDirectory);
+    const promptTurns = [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()];
+    return {
+      systemPrompt,
+      promptTurns,
+    };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailureArtifacts(artifacts, metadata, reason);
@@ -473,7 +453,6 @@ type AdvisorConversationOptions = {
   headRef: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
-  securityCategoryNames: readonly string[];
 };
 
 type AdvisorConversationResult = {
@@ -503,7 +482,6 @@ async function runAdvisorConversation(
     },
     schema: options.schema,
     repositoryRoot: root,
-    securityCategoryNames: options.securityCategoryNames,
     terminologyTraces: () => terminologyTools.traces(),
     normalizeE2e: (value) => normalizeCombinedE2eResult(value, options.metadata),
   });
@@ -551,51 +529,6 @@ export async function collectGitHubContext(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<GitHubReviewContext | null> {
   return collectGitHubReviewContext(env);
-}
-
-export function buildPromptTurns({
-  metadata,
-  diff,
-}: {
-  metadata: ReviewMetadata;
-  diff: string;
-}): AdvisorPromptTurn[] {
-  const context = metadata.deterministic;
-  return [
-    buildInvestigateTurn({
-      metadata: metadataFields(metadata),
-      scopeRisk: buildScopeRiskTurnContext(context),
-      diff,
-      controlledWords: readTrustedControlledWords(),
-      terminology: {
-        issueReferenceLines: context.github?.issueReferenceLines ?? [],
-        linkedIssues: context.github?.linkedIssues ?? [],
-        githubFetchError: context.github?.fetchError,
-      },
-      correctness: buildCorrectnessTurnContext(context),
-      security: buildSecurityTurnContext(context),
-      tests: buildTestsTurnContext(context),
-      operations: buildOperationsTurnContext(context),
-      reconciliation: buildReconciliationTurnContext(context),
-    }),
-    buildChallengeAndRecordTurn(),
-  ];
-}
-
-function metadataFields(metadata: ReviewMetadata): string {
-  const changedFiles = JSON.stringify(metadata.changedFiles);
-  const bounded =
-    metadata.changedFiles.length <= METADATA_CHANGED_FILE_LIMIT &&
-    Buffer.byteLength(changedFiles, "utf8") <= METADATA_CHANGED_FILE_BYTE_LIMIT;
-  return [
-    "- version: 1",
-    `- baseRef: ${JSON.stringify(metadata.baseRef)}`,
-    `- headRef: ${JSON.stringify(metadata.headRef)}`,
-    `- headSha: ${JSON.stringify(metadata.headSha)}`,
-    bounded
-      ? `- changedFiles: ${changedFiles}`
-      : `- changedFiles: [] (return an empty array; the runner restores all ${metadata.changedFiles.length} deterministic changed-file path(s) after parsing)`,
-  ].join("\n");
 }
 
 export function normalizeCombinedE2eResult(
@@ -750,7 +683,6 @@ function unavailableResult(
         : `Advisor execution skipped: ${reason}`,
     },
     acceptanceCoverage: [],
-    securityCategories: [],
     sourceOfTruthReview: [],
     e2e: normalizeCombinedE2eResult({}, metadata),
     testDepth: metadata.deterministic.testDepth,

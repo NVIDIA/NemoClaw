@@ -549,11 +549,11 @@ childProcess.spawn = (command, args = [], options = {}) => {
 };
 
 const { loadAgent } = require(${source("src/lib/agent/defs.ts")});
-const { createSandboxWithTemporaryManagedRuntime } = require(${source("src/lib/onboard.ts")});
+const { createSandbox } = require(${source("src/lib/onboard.ts")});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  await createSandboxWithTemporaryManagedRuntime(
+  await createSandbox(
     null,
     model,
     provider,

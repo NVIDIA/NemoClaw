@@ -45,6 +45,9 @@ export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
 export const E2E_ARTIFACT_LAYOUTS = ["target-shard", "flat-shard"] as const;
 export type E2eArtifactLayout = (typeof E2E_ARTIFACT_LAYOUTS)[number];
 
+export const E2E_OPTIONAL_CREDENTIALS = ["BRAVE_API_KEY"] as const;
+export type E2eOptionalCredential = (typeof E2E_OPTIONAL_CREDENTIALS)[number];
+
 export interface E2eCatalogueTarget {
   id: string;
   targetId: string;
@@ -69,6 +72,7 @@ export interface E2eCatalogueTarget {
   runnerComparison: boolean;
   runnerPressure: boolean;
   compatibleApiKey: boolean;
+  requiredOptionalCredentials: readonly E2eOptionalCredential[];
   prAdvisorSelectable: boolean;
   shard: string;
   artifactLayout: E2eArtifactLayout;
@@ -121,6 +125,7 @@ type TargetOptions = Omit<
   | "runnerComparison"
   | "runnerPressure"
   | "compatibleApiKey"
+  | "requiredOptionalCredentials"
   | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
@@ -140,6 +145,7 @@ type TargetOptions = Omit<
   runnerComparison?: boolean;
   runnerPressure?: boolean;
   compatibleApiKey?: boolean;
+  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   prAdvisorSelectable?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
@@ -164,6 +170,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison = false,
     runnerPressure = false,
     compatibleApiKey = false,
+    requiredOptionalCredentials = [],
     prAdvisorSelectable = false,
     shard = "default",
     artifactLayout = "target-shard",
@@ -189,6 +196,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison,
     runnerPressure,
     compatibleApiKey,
+    requiredOptionalCredentials,
     prAdvisorSelectable,
     shard,
     artifactLayout,
@@ -213,6 +221,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -223,6 +232,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "brave-nvidia-inference",
+    requiredOptionalCredentials: options.requiredOptionalCredentials,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -475,6 +485,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Brave Search",
     profile: "brave-nvidia-inference",
+    requiredOptionalCredentials: ["BRAVE_API_KEY"],
     timeoutMinutes: 45,
     installMode: "authenticated",
     installNonInteractive: true,
@@ -584,6 +595,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
+    requiredOptionalCredentials: ["BRAVE_API_KEY"],
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -1138,6 +1150,74 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e",
     },
   }),
+  target("pi-agent-qualification-amd64", {
+    targetId: "pi-agent-qualification",
+    displayName: "Pi: qualifies managed runtime on Linux AMD64",
+    agentRuntime: "pi",
+    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted inference",
+    profile: "nvidia-inference",
+    testFile: "test/e2e/live/pi-agent-qualification.test.ts",
+    timeoutMinutes: 100,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runner: "ubuntu-24.04",
+    shard: "linux-amd64",
+    owningPaths: [
+      "agents/pi/",
+      "ci/pi-agent-qualification-v1-linux-amd64.json",
+      "src/lib/agent/candidate-authority.ts",
+      "src/lib/agent/candidate.ts",
+      "src/lib/onboard/managed-workload/",
+      "src/lib/onboard/workload/",
+      "test/e2e/live/pi-agent-qualification-events.ts",
+    ],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_CANDIDATE_AGENTS: "1",
+      NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT: "ci/pi-agent-qualification-v1-linux-amd64.json",
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_PI_QUALIFICATION_PLATFORM: "linux/amd64",
+      NEMOCLAW_SANDBOX_NAME: "e2e-pi-qual-amd64",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("pi-agent-qualification-arm64", {
+    targetId: "pi-agent-qualification",
+    displayName: "Pi: qualifies managed runtime on Linux ARM64",
+    agentRuntime: "pi",
+    environmentOrInferenceEndpoint: "Linux ARM64 Docker; NVIDIA hosted inference",
+    profile: "nvidia-inference",
+    testFile: "test/e2e/live/pi-agent-qualification.test.ts",
+    timeoutMinutes: 100,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runner: "ubuntu-24.04-arm",
+    shard: "linux-arm64",
+    owningPaths: [
+      "agents/pi/",
+      "ci/pi-agent-qualification-v1-linux-arm64.json",
+      "src/lib/agent/candidate-authority.ts",
+      "src/lib/agent/candidate.ts",
+      "src/lib/onboard/managed-workload/",
+      "src/lib/onboard/workload/",
+      "test/e2e/live/pi-agent-qualification-events.ts",
+    ],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_CANDIDATE_AGENTS: "1",
+      NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT: "ci/pi-agent-qualification-v1-linux-arm64.json",
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_PI_QUALIFICATION_PLATFORM: "linux/arm64",
+      NEMOCLAW_SANDBOX_NAME: "e2e-pi-qual-arm64",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   ...GATEWAY_UPGRADE_TARGETS,
   target("rebuild-openclaw", {
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
@@ -1567,6 +1647,15 @@ export function validateE2eTargetCatalogue(
       entry.hostPackages.some((packageName) => !E2E_HOST_PACKAGES.includes(packageName))
     ) {
       throw new Error(`E2E target ${entry.id} has invalid or duplicate host packages`);
+    }
+    if (
+      new Set(entry.requiredOptionalCredentials).size !==
+        entry.requiredOptionalCredentials.length ||
+      entry.requiredOptionalCredentials.some(
+        (credential) => !E2E_OPTIONAL_CREDENTIALS.includes(credential),
+      )
+    ) {
+      throw new Error(`E2E target ${entry.id} has invalid optional credential requirements`);
     }
     if (entry.selector !== undefined && !SELECTOR_PATTERN.test(entry.selector)) {
       throw new Error(`E2E target ${entry.id} has an invalid test selector`);

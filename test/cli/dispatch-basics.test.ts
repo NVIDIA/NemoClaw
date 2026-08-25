@@ -163,6 +163,23 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Sandbox 'agents' does not exist");
   });
 
+  it("inference parent shows command help instead of an oclif lookup error", () => {
+    const bare = run("inference 2>&1");
+    expect(bare.code).toBe(0);
+    expect(bare.out).toContain("nemoclaw inference <get|set>");
+    expect(bare.out).not.toContain("command inference not found");
+
+    const helpFlag = run("inference --help 2>&1");
+    expect(helpFlag.code).toBe(0);
+    expect(helpFlag.out).toContain("nemoclaw inference <get|set>");
+    expect(helpFlag.out).not.toContain("command inference not found");
+
+    const helpCommand = run("inference help 2>&1");
+    expect(helpCommand.code).toBe(0);
+    expect(helpCommand.out).toContain("nemoclaw inference <get|set>");
+    expect(helpCommand.out).not.toContain("command inference not found");
+  });
+
   it("agents list exits 0 and lists global agent runtimes", () => {
     const r = run("agents list");
     expect(r.code).toBe(0);
@@ -696,7 +713,7 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("suggests a created sandbox when its reservation flag remains pending (#8801)", async () => {
+  it("omits a created pending registration while retaining published sandboxes (#9733)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, sandboxes, stderr }) => {
         sandboxes.set("created", {
@@ -708,11 +725,15 @@ describe("CLI dispatch", () => {
         await expect(dispatchCli(["create", "stop"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
-        expect(output).toContain("Did you mean: nemoclaw created stop?");
-        expect(output).toContain("Registered sandboxes: created");
+        expect(output).not.toContain("Did you mean: nemoclaw created stop?");
+        expect(output).not.toContain("Registered sandboxes: created");
+        expect(output).toContain("Registered sandboxes: published");
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
-      { sandboxNames: ["created"], pendingSandboxNames: ["created"] },
+      {
+        sandboxNames: ["created", "published"],
+        pendingSandboxNames: ["created"],
+      },
     );
   });
 

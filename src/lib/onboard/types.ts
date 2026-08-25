@@ -80,6 +80,8 @@ export interface SandboxCreateIntent {
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
+  /** Internal outer-rebuild authority for carrying managed MCP state through replacement. */
+  readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
@@ -150,6 +152,8 @@ export type OnboardOptions = {
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   sandboxGpu?: "enable" | "disable" | null;
   sandboxGpuDevice?: string | null;
+  /** GPU exposed to the host-side vLLM container managed by NemoClaw. */
+  vllmGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;

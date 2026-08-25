@@ -73,20 +73,25 @@ function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
 
 // ── Commands ─────────────────────────────────────────────────────
 
-function oclifRunOptions() {
+function oclifRunOptions(publicSandboxName?: string) {
   return {
     rootDir: ROOT,
     error: console.error,
     exit: (code: number) => process.exit(code),
+    publicSandboxName,
   };
 }
 
-async function runDirectOclifCommand(commandId: string, args: string[] = []): Promise<void> {
-  await runOclifCommandById(commandId, args, oclifRunOptions());
+async function runDirectOclifCommand(
+  commandId: string,
+  args: string[] = [],
+  publicSandboxName?: string,
+): Promise<void> {
+  await runOclifCommandById(commandId, args, oclifRunOptions(publicSandboxName));
 }
 
-async function runNativeOclifArgv(args: string[]): Promise<void> {
-  await runOclifArgv(args, oclifRunOptions());
+async function runNativeOclifArgv(args: string[], publicSandboxName?: string): Promise<void> {
+  await runOclifArgv(args, oclifRunOptions(publicSandboxName));
 }
 
 // ── Dispatch helpers ─────────────────────────────────────────────
@@ -131,12 +136,8 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
 
 function registeredSandboxNames(): string[] {
   const registryApi = registry();
-  // Suggestions must use the same registered sandbox inventory as `list` and global `status`.
-  // Onboarding retains route-only reservations so an interrupted onboarding session can resume,
-  // but these reservations are not registered sandboxes.
-  return registryApi
-    .listSandboxes()
-    .sandboxes.filter((sandbox) => !registryApi.isRouteOnlySandboxReservation(sandbox))
+  // Suggestions must use the same published sandbox inventory as `list` and global `status`.
+  return registryApi.listSandboxes().sandboxes.filter(registryApi.isPublishedSandboxRegistration)
     .map((sandbox) => sandbox.name);
 }
 
@@ -334,9 +335,9 @@ async function runPublicTranslationResult(
   switch (result.kind) {
     case "nativeArgv":
       if (shouldExecuteViaNativeArgv(result)) {
-        await runNativeOclifArgv(result.argv);
+        await runNativeOclifArgv(result.argv, opts.sandboxName);
       } else {
-        await runDirectOclifCommand(result.commandId, result.args);
+        await runDirectOclifCommand(result.commandId, result.args, opts.sandboxName);
       }
       return;
     case "publicUsageError":

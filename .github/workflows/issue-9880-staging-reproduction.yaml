@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Issue 9880 Staging Reproduction
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-9880-staging-launchable
+  cancel-in-progress: false
+
+jobs:
+  reproduce:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    env:
+      INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out trusted reproduction lane
+        timeout-minutes: 10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            test/e2e/
+            test/helpers/
+            tools/e2e/
+            package.json
+            package-lock.json
+            vitest.config.ts
+            nemoclaw/vitest.project.ts
+            tsconfig.json
+            oxlint.config.ts
+            oxfmt.config.ts
+          sparse-checkout-cone-mode: false
+
+      - name: Authorize maintainer dispatch
+        timeout-minutes: 5
+        env:
+          ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          for actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            [[ "$actor" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "::error::invalid workflow actor"; exit 1; }
+            role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${actor}/permission" --jq .role_name)"
+            case "$role" in maintain|admin) ;; *) echo "::error::maintain or admin permission is required"; exit 1 ;; esac
+          done
+
+      - name: Set up Node
+        timeout-minutes: 10
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: prepare
+        name: Prepare Brev CLI and evidence directory
+        timeout-minutes: 20
+        env:
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          HOME: ${{ runner.temp }}/issue-9880-home
+          BREV_CLI_VERSION: 0.6.334
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME"
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/issue-9880.XXXXXX")"
+          chmod 700 "$work_dir"
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev
+          sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
+
+      - name: Reproduce issue 9880 on the staging Launchable
+        timeout-minutes: 120
+        env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
+          E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
+          E2E_TARGET_ID: issue-9880-staging-launchable
+          HOME: ${{ runner.temp }}/issue-9880-home
+          NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
+
+      - name: Verify workflow-owned workspace cleanup
+        if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
+        timeout-minutes: 15
+        env:
+          BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
+          E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
+          HOME: ${{ runner.temp }}/issue-9880-home
+        run: node --experimental-strip-types tools/e2e/cleanup-brev-workspace.mts
+
+      - name: Remove Brev credentials
+        if: always()
+        timeout-minutes: 5
+        env:
+          HOME: ${{ runner.temp }}/issue-9880-home
+        run: |
+          set -euo pipefail
+          rm -rf -- "$HOME"
+          test ! -e "$HOME"
+
+      - name: Upload issue 9880 evidence
+        timeout-minutes: 10
+        if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: issue-9880-staging-reproduction-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prepare.outputs.work_dir }}/

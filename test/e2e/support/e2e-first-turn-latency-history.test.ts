@@ -51,7 +51,7 @@ function summary(
 function artifact(anomaly: boolean): Record<string, unknown> {
   const current = sample(anomaly);
   return {
-    schemaVersion: "nemoclaw.full_e2e_cold_performance.v3",
+    schemaVersion: "nemoclaw.full_e2e_cold_performance.v4",
     installExitCode: 0,
     firstTurnExitCode: 0,
     firstTurnSentinelMatched: true,
@@ -96,6 +96,21 @@ describe("hosted first-turn latency history", () => {
       fs.writeFileSync(artifactFile, JSON.stringify(artifact(true)));
 
       expect(readCurrentFirstTurnLatencySample(directory)).toEqual(sample(true));
+
+      const sandboxTail = artifact(false);
+      sandboxTail.performance = {
+        ...(sandboxTail.performance as Record<string, unknown>),
+        anomalies: [
+          {
+            budgetMs: 208_000,
+            kind: "sandbox-phase-tail",
+            measurementMs: 208_136,
+            overageMs: 136,
+          },
+        ],
+      };
+      fs.writeFileSync(artifactFile, JSON.stringify(sandboxTail));
+      expect(readCurrentFirstTurnLatencySample(directory)).toEqual(sample(false));
 
       fs.writeFileSync(
         artifactFile,

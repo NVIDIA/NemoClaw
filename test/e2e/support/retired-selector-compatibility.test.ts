@@ -27,11 +27,11 @@ const REPLACEMENT_FILES = [
   "test/credential-migration-reconciliation.test.ts",
   "test/package-contract/cli/debug-cli-command.test.ts",
   "test/package-contract/cli/public-cli-contracts.test.ts",
-  "test/gateway-drift-preflight.test.ts",
-  "test/gateway-health-honest.test.ts",
-  "test/credentials.test.ts",
+  "test/runtime/gateway/gateway-drift-preflight.test.ts",
+  "test/runtime/gateway/gateway-health-honest.test.ts",
+  "test/credentials/credentials.test.ts",
   "test/package-contract/onboard/invalid-nvidia-key.test.ts",
-  "test/install-openshell-version-pin.test.ts",
+  "test/installer-integration/install-openshell-version-pin.test.ts",
   "test/rebuild-stale-recovery.test.ts",
 ] as const;
 
@@ -112,8 +112,8 @@ describe("retired E2E selector compatibility", () => {
       expect(selected).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS].sort());
       expect(commands).toEqual([
         "npx vitest run --project cli src/lib/actions/sandbox/rebuild-flow-helpers.test.ts src/lib/actions/sandbox/rebuild-post-restore-phase.test.ts src/lib/actions/sandbox/rebuild-recreate-observability.test.ts src/lib/actions/sandbox/rebuild-route-preflight.test.ts src/lib/actions/upgrade-sandboxes-recovery.test.ts src/lib/sandbox/version.test.ts src/lib/security/credential-filter.test.ts",
-        "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts test/rebuild-stale-recovery.test.ts",
-        "npx vitest run --project installer-integration test/install-openshell-version-pin.test.ts",
+        "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/credential-migration-reconciliation.test.ts test/credentials/credentials.test.ts test/runtime/gateway/gateway-drift-preflight.test.ts test/runtime/gateway/gateway-health-honest.test.ts test/rebuild-stale-recovery.test.ts",
+        "npx vitest run --project installer-integration test/installer-integration/install-openshell-version-pin.test.ts",
         "npx vitest run --project package-contract test/package-contract/cli/debug-cli-command.test.ts test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
       ]);
       expect(fs.readFileSync(target.output, "utf8")).toBe("selected=true\n");

@@ -94,7 +94,7 @@ describe("parseExtraPlaceholderKeys", () => {
       // GITHUB_TOKEN, AWS_*, NPM_TOKEN, and the control env itself match the
       // upper-snake regex but do not extend any canonical channel envKey. The
       // parser rejects them so an operator cannot accidentally hand a host
-      // secret to the OpenShell generic provider gateway.
+      // secret to the OpenShell gateway as a messaging credential.
       const result = parseExtraPlaceholderKeys(
         [
           "GITHUB_TOKEN",
@@ -194,7 +194,7 @@ describe("registerExtraPlaceholderProviders", () => {
     }
   }
 
-  it("appends one generic-provider tokenDef per validated extra key with the operator-supplied token", () => {
+  it("appends one profile-backed tokenDef per validated extra key with the operator-supplied token (#9875)", () => {
     withEnv(
       {
         [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
@@ -219,13 +219,13 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-extra-telegram-bot-token-agent-a",
             envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
             token: "telegram-token-A",
-            providerType: "generic",
+            providerType: "nemoclaw-mcp-v1",
           },
           {
             name: "my-sandbox-extra-slack-bot-token-agent-b",
             envKey: "SLACK_BOT_TOKEN_AGENT_B",
             token: "slack-token-B",
-            providerType: "generic",
+            providerType: "nemoclaw-mcp-v1",
           },
         ]);
       },
@@ -233,7 +233,7 @@ describe("registerExtraPlaceholderProviders", () => {
   });
 
   it("registers a tokenDef with token=null when the operator forgot to export the credential", () => {
-    // The generic provider upsert in onboard/providers.ts already skips
+    // The messaging provider upsert in onboard/providers.ts already skips
     // null-token entries so the row is not registered with the OpenShell
     // gateway. The unit assertion here pins the contract that
     // registerExtraPlaceholderProviders never substitutes a placeholder value
@@ -257,7 +257,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-extra-telegram-bot-token-agent-missing",
             envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
             token: null,
-            providerType: "generic",
+            providerType: "nemoclaw-mcp-v1",
           },
         ]);
       },

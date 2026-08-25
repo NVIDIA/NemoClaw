@@ -19,6 +19,11 @@ $$nemoclaw uninstall
 
 Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
 It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
+When `lsof` is available, full uninstall also scans the configured adapter port and stops only a matching process owned by the current user.
+If `lsof` is unavailable and no recorded process was stopped, uninstall warns that it skipped the orphan scan.
+A selected-gateway uninstall uses only that gateway's process record and does not scan or signal a sibling adapter.
+Uninstall preserves an unrelated process that uses the same port.
 
 | Flag | Effect |
 |---|---|
@@ -28,6 +33,14 @@ It preserves resources from a separate OpenClaw installation while continuing to
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
+
+<AgentOnly variant="hermes">
+<Warning>
+For a non-portable Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
+Back up required Hermes state first.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
 
 On macOS, Homebrew owns its OpenShell formula and executable links.
 Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
@@ -327,7 +340,7 @@ That flag does not override gateway-scoped preservation of the managed runtime r
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
 
-`--yes` stays non-destructive by design and never purges preserved user data on its own.
+`--yes` never purges the preserved host-side entries listed above on its own.
 After a successful or already-absent sandbox deletion, preserving other `sandboxes.json` entries does not preserve the selected sandbox entry or its gateway registration.
 Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 

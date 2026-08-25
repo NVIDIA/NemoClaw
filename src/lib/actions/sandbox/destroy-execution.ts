@@ -3,7 +3,11 @@
 
 import { R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
+import {
+  type PreparedPortableDemoSandboxDestroyAuthority,
+  preparePortableDemoSandboxDestroyAuthority,
+  removePortableDemoSandboxLifecycleReceipt,
+} from "../../onboard/experimental/portable-demo-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
@@ -31,7 +35,7 @@ import {
   removeExactDestroyContainerIdentity,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
-import type { DestroyRunOpenshell } from "./destroy-gateway";
+import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -50,6 +54,8 @@ export function retirePortableLifecycleAuthority(sandboxName: string): void {
   removePortableDemoSandboxLifecycleReceipt(sandboxName);
 }
 
+export { preparePortableDemoSandboxDestroyAuthority };
+
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
   force: boolean;
@@ -63,6 +69,7 @@ type SandboxDestroyExecutionInput = {
   // `null` records confirmed absence; an object records the one managed
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
+  portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -91,6 +98,7 @@ export type SandboxDestroyExecutionResult =
       hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
+      portableLifecycleOwnershipRequiresGateway?: boolean;
       shieldsRelockRequiresGateway: boolean;
       hostLocalInferenceCleanupFailure?: string;
       deleteConfirmed?: boolean;
@@ -196,9 +204,11 @@ function wipeAndHardenLiveSandbox(
       `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
     );
     console.warn(
-      `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the auto-restore timer keeps retrying the lock until it succeeds " +
-        "or the sandbox is deleted or rebuilt.",
+      `  Continuing with delete: '${sandboxName}' and its unguarded config are removed together. ` +
+        "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
+        "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
+        "If the budget is exhausted, durable containment blocks sandbox mutations. " +
+        `Run \`nemoclaw ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
@@ -281,6 +291,7 @@ export async function executeSandboxDestroy({
   sandboxConfirmedAbsent,
   sandboxName,
   expectedContainerIdentity,
+  portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
@@ -292,6 +303,14 @@ export async function executeSandboxDestroy({
       | { status: "ambiguous"; detail: string }
       | { status: "probe-failed"; detail: string };
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      if (portableContainerAuthority) {
+        try {
+          portableContainerAuthority.revalidate();
+          return { status: "match" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
       if (expectedContainerIdentity === undefined) return { status: "match" };
       const verdict = classifyDestroyContainerIdentity(
         sandboxName,
@@ -437,7 +456,24 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
-    const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    let hardened: HardenedDeleteState;
+    try {
+      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    } catch (error) {
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
+      return {
+        ok: false,
+        deleteOutput:
+          `${redactDestroyError(error)} No provider cleanup or sandbox deletion was attempted. ` +
+          "Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
+        exitCode: 1,
+        gatewayUnreachable: false,
+        hostLocalInferenceOwnershipRequiresGateway: false,
+        mcpOwnershipRequiresGateway: false,
+        mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: false,
+      };
+    }
     const detachProviders = (): DetachSandboxProvidersResult =>
       runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const preProviderContinuity = inspectIdentityContinuity();
@@ -474,13 +510,19 @@ export async function executeSandboxDestroy({
     }
     const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
       ignoreError: true,
+      killSignal: "SIGKILL",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
     });
     const {
-      output: deleteOutput,
+      output: capturedDeleteOutput,
       alreadyGone,
       gatewayUnreachable,
+      timedOut,
     } = getSandboxDeleteOutcome(deleteResult);
+    const deleteOutput = timedOut
+      ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
+      : capturedDeleteOutput;
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
@@ -492,9 +534,11 @@ export async function executeSandboxDestroy({
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
+      !timedOut &&
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      portableContainerAuthority === undefined &&
       !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
@@ -510,13 +554,19 @@ export async function executeSandboxDestroy({
           gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
+        portableLifecycleOwnershipRequiresGateway:
+          gatewayUnreachable && portableContainerAuthority !== undefined,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
       };
     }
 
-    if (!forcedLocalCleanup && expectedContainerIdentity) {
+    if (!forcedLocalCleanup && (portableContainerAuthority || expectedContainerIdentity)) {
       try {
-        removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        if (portableContainerAuthority) {
+          portableContainerAuthority.verifyAbsent();
+        } else if (expectedContainerIdentity) {
+          removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        }
       } catch (error) {
         const detail = redactDestroyError(error);
         return {
@@ -573,7 +623,6 @@ export async function executeSandboxDestroy({
           current,
           hostLocalInferenceAuthority,
           listSandboxes!().sandboxes,
-          deps.hostLocalInferenceLifecycleOptions,
         );
         commonLlamaCppAuthorityRetired =
           hostLocalInferenceAuthority.receipt.service === "llama-cpp";

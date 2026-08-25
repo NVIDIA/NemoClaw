@@ -56,6 +56,27 @@ describe("sandbox destroy helpers", () => {
       alreadyGone: false,
       gatewayUnreachable: true,
     });
+    const timeoutError = Object.assign(new Error("OpenShell delete exceeded its deadline"), {
+      code: "ETIMEDOUT",
+    });
+    expect(getSandboxDeleteOutcome({ error: timeoutError, status: null })).toEqual({
+      output: "",
+      alreadyGone: false,
+      gatewayUnreachable: true,
+      timedOut: true,
+    });
+    expect(
+      getSandboxDeleteOutcome({
+        error: timeoutError,
+        status: null,
+        stderr: "Error: sandbox alpha not found",
+      }),
+    ).toEqual({
+      output: "Error: sandbox alpha not found",
+      alreadyGone: false,
+      gatewayUnreachable: true,
+      timedOut: true,
+    });
   });
 
   it("decides when host services should stop before final registry removal", () => {

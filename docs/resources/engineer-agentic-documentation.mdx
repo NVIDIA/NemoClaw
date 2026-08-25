@@ -50,7 +50,8 @@ A push to `main` that changes a path outside the allowed documentation paths sta
 The first nonempty patch creates the managed PR.
 Its title names the next patch tag after the range-start tag.
 Its body names both tags and explains how the PR changes during development and closes at release cutoff.
-Later pushes to `main` refresh that same PR with a cumulative patch based on the triggering commit.
+Later pushes to `main` refresh that same PR only when they change a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
+Each refresh uses a cumulative patch based on the triggering commit.
 Each refresh creates a merge commit whose tree exactly matches the reviewed patch applied to `main`, then fast-forwards the branch. The publisher never force-pushes or replaces a branch head that a person changed.
 Merge the cumulative PR at the release cutoff.
 A push that changes only the allowed documentation paths does not start another catch-up run.
@@ -308,17 +309,18 @@ Each guide variant contains its own navigation tree, and a shared page appears i
 _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 ```
 
-The `<variant>` value is `openclaw`, `hermes`, or `deepagents`.
+The `<variant>` value is `openclaw`, `hermes`, `deepagents`, or `pi`.
 The directory and base name before the guide variant suffix must match the canonical source path under `docs/`.
 
-When a source intentionally applies to fewer than all three guide variants, its frontmatter declares the exact subset:
+When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the exact subset:
 
 ```yaml
 agent-variants: ["openclaw", "hermes"]
 ```
 
 The generator compares this declaration with the source's actual navigation membership and fails when the declaration is missing or differs.
-An all-variant source omits the declaration, so removing one of its navigation targets also fails until the author restores the route or explicitly declares the narrower scope.
+A source published in the established shared set or every configured guide, including Pi, may omit the declaration.
+Removing one of those navigation targets fails until the author restores the route or declares the narrower scope.
 
 This guide uses the following Fern navigation mapping:
 
@@ -365,7 +367,7 @@ The script reads `docs/index.yml` before it reads shared source pages.
 It derives each source page's published guide variant membership and validates every intentional subset declaration before rendering.
 For each recognized generated path, it then performs the following work:
 
-1. It reads the active guide variant from the `openclaw`, `hermes`, or `deepagents` navigation tree.
+1. It reads the active guide variant from the `openclaw`, `hermes`, `deepagents`, or `pi` navigation tree.
 2. It removes the `_build/agent-variants/` prefix and the `.<variant>.generated.mdx` suffix.
 3. It resolves the remaining path to one canonical `.mdx` source under `docs/`.
 4. It renders that source for the active guide variant.

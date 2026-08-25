@@ -19,7 +19,7 @@ import {
   successfulRequiredChecksWithoutE2e,
 } from "./check-gates-test-fixtures.ts";
 
-const ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
+const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const NEMOTRON_ADVISOR_JOB = "PR review advisor (Nemotron 3 Ultra)";
 
@@ -293,7 +293,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     { evidence: "the workflow event differs", run: { event: "workflow_dispatch" } },
     { evidence: "the PR association is missing", run: { pullRequests: [] } },
     { evidence: "the workflow name is missing", check: { workflowName: undefined } },
-    { evidence: "the workflow name differs", check: { workflowName: "PR Review / Advisor 2" } },
+    { evidence: "the workflow name differs", check: { workflowName: "Automation / PR Review Advisor 2" } },
     {
       evidence: "the run URL has no job",
       check: { detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/9010" },

@@ -26,6 +26,7 @@ import {
 const EXPECTED_SECRET = "expected-secret";
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
+const LEGACY_SESSION_ID = "opaque-legacy-session";
 const PROTOCOL_VERSION = "2025-03-26";
 const STATUS_SECRET = "unregistered-sensitive-status-value";
 
@@ -51,6 +52,45 @@ function successfulInitialize(): FakeMcpRequest {
     negotiatedSessionId: SESSION_ID,
     negotiatedProtocolVersion: PROTOCOL_VERSION,
   });
+}
+
+function successfulLegacyDiscovery(): FakeMcpRequest[] {
+  return [
+    {
+      method: "GET",
+      path: "/mcp",
+      auth: `Bearer ${EXPECTED_SECRET}`,
+      body: "",
+      sessionId: "",
+      protocolVersion: "",
+      responseStatus: 200,
+      negotiatedLegacySessionId: LEGACY_SESSION_ID,
+      legacyPhase: "opened",
+    },
+    request("initialize", {
+      sessionId: "",
+      protocolVersion: "",
+      responseStatus: 202,
+      rpcId: 1,
+      legacySessionId: LEGACY_SESSION_ID,
+      negotiatedProtocolVersion: PROTOCOL_VERSION,
+      legacyPhase: "awaiting-initialized",
+      legacyResponseSequence: 1,
+    }),
+    request("notifications/initialized", {
+      sessionId: "",
+      legacySessionId: LEGACY_SESSION_ID,
+      legacyPhase: "ready",
+    }),
+    request("tools/list", {
+      sessionId: "",
+      responseStatus: 202,
+      rpcId: 2,
+      legacySessionId: LEGACY_SESSION_ID,
+      legacyPhase: "ready",
+      legacyResponseSequence: 2,
+    }),
+  ];
 }
 
 interface CompatibleToolCall {
@@ -149,6 +189,25 @@ describe("authenticated MCP rediscovery evidence", () => {
         EXPECTED_SECRET,
       ),
     ).toBe(true);
+  });
+
+  it("accepts legacy SSE discovery correlated to an authenticated event stream", () => {
+    expect(
+      hasSuccessfulAuthenticatedMcpDiscovery(successfulLegacyDiscovery(), EXPECTED_SECRET),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["an unauthenticated event stream", 0, { auth: "" }],
+    ["a missing event-stream correlation", 0, { negotiatedLegacySessionId: "" }],
+    ["a different POST endpoint", 3, { legacySessionId: "other-session" }],
+    ["a missing negotiated protocol header", 3, { protocolVersion: "" }],
+    ["a tools/list response without its JSON-RPC ID", 3, { rpcId: undefined }],
+  ])("rejects legacy SSE discovery with %s", (_failure, failedRequestIndex, override) => {
+    const requests = successfulLegacyDiscovery();
+    Object.assign(requests[failedRequestIndex], override);
+
+    expect(hasSuccessfulAuthenticatedMcpDiscovery(requests, EXPECTED_SECRET)).toBe(false);
   });
 
   it("rejects tool discovery before session initialization completes", () => {
@@ -271,13 +330,19 @@ describe("authenticated MCP tool discovery transport retry", () => {
         {
           httpMethod: "POST",
           rpcMethod: "initialize",
+          transport: "streamable-http",
           responseStatus: 200,
           responseHasResult: true,
+          rpcIdPresent: false,
+          legacyPhase: null,
+          legacyResponseSequence: null,
           sessionMetadataPresent: {
             sessionId: false,
             protocolVersion: false,
             negotiatedSessionId: true,
             negotiatedProtocolVersion: true,
+            legacySessionId: false,
+            negotiatedLegacySessionId: false,
           },
           credentialRewriteMatched: true,
         },
@@ -326,6 +391,14 @@ describe("authenticated MCP tool discovery transport retry", () => {
 describe("authenticated MCP discovery restart retry", () => {
   it("retries when no request reached the fixture", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
+  });
+
+  it("retries when only a non-MCP credential readiness probe reached the fixture", () => {
+    expect(
+      shouldRetryMcpDiscoveryAfterRestart([
+        { ...request("initialize"), rpcMethod: undefined },
+      ]),
+    ).toBe(true);
   });
 
   it("does not retry after the fixture received a request", () => {

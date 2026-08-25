@@ -9,6 +9,8 @@ import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import { redactFull } from "../security/redact";
 import {
   getSandboxEntryDisplayInference,
+  isPendingReservationForSession,
+  isPublishedSandboxRegistration,
   isRouteOnlySandboxReservation,
   type SandboxMessagingState,
 } from "../state/registry";
@@ -29,11 +31,10 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
-  // Passthrough of the durable registry reservation markers so the list can
-  // recognize (and hide) a route-only reservation left by a failed onboard
-  // (#7609). A real sandbox carries createdAt; a never-created reservation does
-  // not. Not rendered — read only by isRouteOnlySandboxReservation.
+  // Passthrough of the durable registry reservation marker so list and status
+  // hide registrations that have not committed their lifecycle yet.
   pendingRouteReservation?: true;
+  reservationSessionId?: string;
   createdAt?: string;
   // #5714: display-only markers for a sandbox recovered directly from the live
   // gateway. `recoveredFromGateway` flags that agent/GPU are genuinely unknown
@@ -57,6 +58,25 @@ export interface RecoveryResult {
   recoveredFromGateway?: number;
 }
 
+interface OnboardingSessionSummary {
+  sessionId?: string | null;
+  resumable?: boolean;
+  status?: string | null;
+  sandboxName?: string | null;
+  lastStepStarted?: string | null;
+  lastCompletedStep?: string | null;
+  failure?: { step?: string | null; interrupted?: boolean } | null;
+  steps?: { sandbox?: { status?: string } | null } | null;
+}
+
+export interface IncompleteOnboarding {
+  name: string;
+  status: "failed" | "in_progress";
+  step: string | null;
+  interrupted: boolean;
+  resumable: true;
+}
+
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
@@ -65,10 +85,7 @@ export interface ListSandboxesCommandDeps {
    * step state is needed to filter out phantom names from interrupted
    * onboards — see #2753.
    */
-  loadLastSession: () => {
-    sandboxName?: string | null;
-    steps?: { sandbox?: { status?: string } | null } | null;
-  } | null;
+  loadLastSession: () => OnboardingSessionSummary | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
@@ -106,6 +123,7 @@ export interface SandboxInventoryResult {
     recoveredFromGateway: number;
   };
   lastOnboardedSandbox: string | null;
+  incompleteOnboarding: IncompleteOnboarding | null;
   sandboxes: SandboxInventoryRow[];
 }
 
@@ -147,6 +165,7 @@ export interface ShowStatusCommandDeps {
   getGatewayStartGuidance?: () => string;
   /** Last authority durably selected by onboarding, with secret-free identity fields. */
   getGatewayAuthority?: () => GatewayOwnerDescription | null;
+  loadLastSession?: () => OnboardingSessionSummary | null;
   checkMessagingBridgeHealth?: (
     sandboxName: string,
     channels: string[],
@@ -196,6 +215,7 @@ export interface StatusReport {
   } | null;
   gatewayHealth: GatewayHealth | null;
   gatewayAuthority: GatewayOwnerDescription | null;
+  incompleteOnboarding: IncompleteOnboarding | null;
   sandboxes: StatusSandboxRow[];
   services: StatusServiceRow[];
 }
@@ -203,6 +223,54 @@ export interface StatusReport {
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   return redactFull(value);
+}
+
+function projectIncompleteOnboarding(
+  sandboxes: readonly SandboxEntry[],
+  session: OnboardingSessionSummary | null | undefined,
+): IncompleteOnboarding | null {
+  if (
+    !session?.sandboxName ||
+    !session.sessionId ||
+    session.resumable !== true ||
+    (session.status !== "failed" && session.status !== "in_progress")
+  ) {
+    return null;
+  }
+  const reservation = sandboxes.find((sandbox) => sandbox.name === session.sandboxName) ?? null;
+  if (
+    !reservation ||
+    !isRouteOnlySandboxReservation(reservation) ||
+    !isPendingReservationForSession(reservation, session.sessionId)
+  ) {
+    return null;
+  }
+  return {
+    name: reservation.name,
+    status: session.status,
+    step: safeStatusString(
+      session.failure?.step ?? session.lastStepStarted ?? session.lastCompletedStep,
+    ),
+    interrupted: session.failure?.interrupted === true,
+    resumable: true,
+  };
+}
+
+function renderIncompleteOnboardingText(
+  incomplete: IncompleteOnboarding,
+  log: (message?: string) => void,
+): void {
+  const state = incomplete.interrupted
+    ? "interrupted"
+    : incomplete.status === "failed"
+      ? "failed"
+      : "in progress";
+  const step = incomplete.step ? ` at ${incomplete.step}` : "";
+  log("  Incomplete onboarding:");
+  log(`    ${incomplete.name}  ${state}${step}`);
+  log("      NemoClaw reserved the inference route but did not register the sandbox.");
+  log(`      Resume with \`${CLI_NAME} onboard --resume\`.`);
+  log("");
 }
 
 /**
@@ -272,6 +340,7 @@ export async function getSandboxInventory(
     lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
       ? lastSession.sandboxName
       : null;
+  const incompleteOnboarding = projectIncompleteOnboarding(recovery.sandboxes, lastSession);
 
   return {
     schemaVersion: 1,
@@ -281,15 +350,11 @@ export async function getSandboxInventory(
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
     lastOnboardedSandbox,
-    // A route-only reservation (pendingRouteReservation with no createdAt) is an
-    // internal artifact of an onboard that reserved the gateway route but never
-    // finished creating the sandbox — e.g. an untrusted base image was rejected
-    // (#7609), or the image build failed. The reservation is intentionally kept
-    // for `--resume` (#6572/#6626), but it must not render as a real sandbox in
-    // `nemoclaw list`. Filter it here so the display matches every other
-    // consumer that already excludes it (maintenance, upgrade-sandboxes).
+    incompleteOnboarding,
+    // Pending rows are internal lifecycle state. They remain readable by their
+    // recovery authority, but must not appear as completed sandboxes.
     sandboxes: recovery.sandboxes
-      .filter((sandbox) => !isRouteOnlySandboxReservation(sandbox))
+      .filter(isPublishedSandboxRegistration)
       .map((sandbox) =>
         buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
       ),
@@ -314,7 +379,10 @@ export function renderSandboxInventoryText(
 ): void {
   if (inventory.sandboxes.length === 0) {
     log("");
-    if (inventory.lastOnboardedSandbox) {
+    if (inventory.incompleteOnboarding) {
+      renderIncompleteOnboardingText(inventory.incompleteOnboarding, log);
+      return;
+    } else if (inventory.lastOnboardedSandbox) {
       log(
         `  No sandboxes registered locally, but the last onboarded sandbox was '${inventory.lastOnboardedSandbox}'.`,
       );
@@ -339,6 +407,9 @@ export function renderSandboxInventoryText(
       `  Recovered ${count} sandbox entr${count === 1 ? "y" : "ies"} from the live OpenShell gateway.`,
     );
     log("");
+  }
+  if (inventory.incompleteOnboarding) {
+    renderIncompleteOnboardingText(inventory.incompleteOnboarding, log);
   }
   log("  Sandboxes:");
   for (const sandbox of inventory.sandboxes) {
@@ -487,12 +558,8 @@ function normalizeGatewayAuthority(
 
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
   const sandboxList = deps.listSandboxes();
-  // Hide route-only reservations from a failed onboard (#7609) — same as
-  // `nemoclaw list`. Pending reservations cannot become the registry default;
-  // explicit environment overrides still control host-service selection.
-  const sandboxes = sandboxList.sandboxes.filter(
-    (sandbox) => !isRouteOnlySandboxReservation(sandbox),
-  );
+  // Pending registrations are recovery state, not normal sandbox inventory.
+  const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   const portablePhases = new Map(
     sandboxes.flatMap((sandbox) => {
@@ -507,6 +574,10 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     );
   }
   const hasHermesPortable = portableAuthorityCount > 0;
+  const incompleteOnboarding = projectIncompleteOnboarding(
+    sandboxList.sandboxes,
+    deps.loadLastSession?.(),
+  );
   const liveInference =
     sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
   const gatewayHealth =
@@ -533,6 +604,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     gatewayAuthority: hasHermesPortable
       ? null
       : normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
+    incompleteOnboarding,
     sandboxes: sandboxes.map((sandbox) =>
       buildStatusSandboxRow(
         sandbox,
@@ -556,11 +628,8 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
 export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const log = deps.log ?? console.log;
   const sandboxList = deps.listSandboxes();
-  // Hide route-only reservations from a failed onboard (#7609) — same as
-  // `nemoclaw list`.
-  const sandboxes = sandboxList.sandboxes.filter(
-    (sandbox) => !isRouteOnlySandboxReservation(sandbox),
-  );
+  // Pending registrations are recovery state, not normal sandbox inventory.
+  const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   const portablePhases = new Map(
     sandboxes.flatMap((sandbox) => {
@@ -575,6 +644,10 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     );
   }
   const hasHermesPortable = portableAuthorityCount > 0;
+  const incompleteOnboarding = projectIncompleteOnboarding(
+    sandboxList.sandboxes,
+    deps.loadLastSession?.(),
+  );
   log("");
   log("  Global status (registered sandboxes and host services):");
   if (sandboxes.length > 0) {
@@ -613,6 +686,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       }
     }
     log("");
+  }
+  if (incompleteOnboarding) {
+    renderIncompleteOnboardingText(incompleteOnboarding, log);
   }
 
   const gatewayAuthority = hasHermesPortable

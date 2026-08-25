@@ -147,27 +147,28 @@ describe("sandbox workload preparation", () => {
     }
   });
 
-  it.each(
-    SHIPPED_MANAGED_IMAGE_AGENTS,
-  )("resolves the complete release catalog and exact %s image (#7744)", async (agent) => {
-    const resolveCatalog = vi.fn(async () => CATALOG);
+  it.each(SHIPPED_MANAGED_IMAGE_AGENTS)(
+    "resolves the complete release catalog and exact %s image (#7744)",
+    async (agent) => {
+      const resolveCatalog = vi.fn(async () => CATALOG);
 
-    const prepared = await prepareSandboxWorkloadSource(input(agent), { resolveCatalog });
+      const prepared = await prepareSandboxWorkloadSource(input(agent), { resolveCatalog });
 
-    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
-      release: RELEASE,
-      platform: MANAGED_IMAGE_PLATFORM,
-    });
-    expect(prepared).toEqual({
-      source: {
-        kind: "managed-image",
-        reference: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)).reference,
-        contract: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)),
-      },
-      release: RELEASE,
-      fallbackDiagnostic: null,
-    });
-  });
+      expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+        release: RELEASE,
+        platform: MANAGED_IMAGE_PLATFORM,
+      });
+      expect(prepared).toEqual({
+        source: {
+          kind: "managed-image",
+          reference: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)).reference,
+          contract: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)),
+        },
+        release: RELEASE,
+        fallbackDiagnostic: null,
+      });
+    },
+  );
 
   it("passes an immutable qualification revision to catalog resolution (#9385)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
@@ -184,6 +185,26 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("uses a resolver-fetched exact-revision catalog when local release labels differ", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), version: "0.1.0", catalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: "v0.1.0",
+      platform: MANAGED_IMAGE_PLATFORM,
+      revision: REVISION,
+    });
+    expect(prepared.release).toBe(RELEASE);
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      contract: { source: { release: RELEASE, revision: REVISION } },
+    });
+  });
+
   it("rejects an exact catalog from another PR commit (#9464)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
@@ -196,6 +217,28 @@ describe("sandbox workload preparation", () => {
           expectedCatalogRevision: "b".repeat(40),
         }),
       ).rejects.toThrow("does not match the live E2E candidate revision");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("uses an exact-revision E2E catalog when local git describe labels differ", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    try {
+      const prepared = await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        version: "0.1.0",
+        catalogPath,
+        expectedCatalogRevision: REVISION,
+      });
+
+      expect(prepared.release).toBe(RELEASE);
+      expect(prepared.source).toMatchObject({
+        kind: "managed-image",
+        contract: { source: { release: RELEASE, revision: REVISION } },
+      });
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -597,6 +640,8 @@ describe("sandbox workload preparation", () => {
         { ...input("pi"), runtime: runtime("docker") },
         { resolveCatalog: async () => CATALOG },
       ),
-    ).rejects.toThrow("the selected agent is a release candidate and candidate selection is disabled");
+    ).rejects.toThrow(
+      "the selected agent is a release candidate and candidate selection is disabled",
+    );
   });
 });

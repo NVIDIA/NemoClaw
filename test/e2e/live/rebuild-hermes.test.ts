@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { loadAgent } from "../../../src/lib/agent/defs";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -14,17 +15,13 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   readJsonFileOr,
   restoreFile,
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import {
-  HERMES_REBUILD_SWAP_BYTES,
-  needsHermesRebuildSwap,
-  parseActiveSwapBytes,
-} from "../fixtures/hermes-rebuild-swap.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -48,7 +45,11 @@ import {
   createRebuildHermesCronRestoreFixture,
   hermesRuntimeExecArgs,
 } from "./rebuild-hermes-cron-restore.ts";
-import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
+import {
+  buildRebuildHermesChildEnv,
+  buildRebuildHermesRecreateEnv,
+  planRebuildHermesBaseReuse,
+} from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   cleanupTrackedRebuildHermesImage,
@@ -64,6 +65,7 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
+import { prepareHermesRebuildSwap } from "./rebuild-hermes-swap.ts";
 import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
@@ -79,7 +81,6 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 // local NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
 // Literal interactive issue #3025 reproduction paths (`hermes rebuild`, modal
 // prompt, and `Y` confirmation) remain outside this Vitest migration.
-const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
@@ -140,71 +141,6 @@ const LIVE_TIMEOUT_MS = 70 * 60_000;
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
-const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
-
-async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
-  const githubActions = process.env.GITHUB_ACTIONS === "true";
-  if (!githubActions) return;
-
-  const probeOptions = {
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  };
-  const current = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-before",
-    },
-  );
-  expectExitZero(current, "inspect active swap before Hermes rebuild");
-  if (
-    !needsHermesRebuildSwap({
-      activeSwapBytes: parseActiveSwapBytes(current.stdout),
-      githubActions,
-    })
-  ) {
-    return;
-  }
-
-  const provision = await host.command(
-    "sudo",
-    [
-      "bash",
-      "-c",
-      `set -euo pipefail
-swap_file="$1"
-swap_size_bytes="$2"
-swapoff "$swap_file" 2>/dev/null || true
-rm -f "$swap_file"
-fallocate -l "$swap_size_bytes" "$swap_file"
-chmod 0600 "$swap_file"
-mkswap "$swap_file"
-swapon "$swap_file"`,
-      "hermes-rebuild-swap",
-      HERMES_REBUILD_SWAP_FILE,
-      String(HERMES_REBUILD_SWAP_BYTES),
-    ],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-provision",
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  expectExitZero(provision, "provision swap for Hermes rebuild");
-
-  const verified = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-after",
-    },
-  );
-  expectExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
-  expect(parseActiveSwapBytes(verified.stdout)).toBeGreaterThanOrEqual(HERMES_REBUILD_SWAP_BYTES);
-}
 
 function inspectKanbanTaskArgs(sandboxName: string): string[] {
   const script = [
@@ -278,21 +214,10 @@ function fail(message: string): never {
 }
 
 function expectedHermesVersion(): string {
-  const manifest = fs.readFileSync(HERMES_MANIFEST, "utf8");
-  const match = manifest.match(/^expected_version:\s*"?([^"\n]+)"?/m);
-  expect(match?.[1], `Could not parse expected Hermes version from ${HERMES_MANIFEST}`).toEqual(
-    expect.any(String),
+  return (
+    loadAgent("hermes").expectedVersion ??
+    fail("Hermes manifest must declare expected_version for live rebuild coverage")
   );
-  return match![1].trim();
-}
-
-function expectEqual(actual: string | undefined, expected: string, message: string): void {
-  switch (actual === expected) {
-    case true:
-      return;
-    default:
-      throw new Error(message);
-  }
 }
 
 async function bestEffortPrecleanHermesResources(
@@ -684,7 +609,7 @@ test(STALE_BASE_REBUILD
     "rebuild-Hermes must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
   ).toBe(CLI_ENTRYPOINT);
   await ensureRebuildHermesHostTools(host);
-  await ensureHermesRebuildSwap(host);
+  await prepareHermesRebuildSwap(host, cleanup);
 
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info",
@@ -1186,10 +1111,11 @@ test(STALE_BASE_REBUILD
   );
   await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
   progress.phase("rebuild the Hermes sandbox");
-  const rebuildEnv = testEnv(undefined, {
-    NEMOCLAW_REBUILD_VERBOSE: "1",
-    ...baseReusePlan?.childEnv,
-  });
+  const rebuildEnv = testEnv(
+    undefined,
+    buildRebuildHermesRecreateEnv(DISCORD_FAKE_TOKEN, baseReusePlan?.childEnv),
+  );
+  expect(rebuildEnv.DISCORD_BOT_TOKEN).toBe(DISCORD_FAKE_TOKEN);
   expect(rebuildEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   expect(rebuildEnv).not.toHaveProperty("COMPATIBLE_API_KEY");
   expect(rebuildEnv).not.toHaveProperty("NVIDIA_API_KEY");
@@ -1225,6 +1151,16 @@ test(STALE_BASE_REBUILD
     /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
   );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
+  await expectSandboxProviderAttachment(
+    sandbox,
+    SANDBOX_NAME,
+    `${SANDBOX_NAME}-discord-bridge`,
+    "present",
+    {
+      artifactName: "phase-6-post-rebuild-provider-attachments",
+      env: testEnv(apiKey),
+    },
+  );
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
   const rebuildBackupPath = backupPathText
@@ -1301,11 +1237,10 @@ test(STALE_BASE_REBUILD
   expectExitZero(hermesVersion, "Hermes version after rebuild");
   const hermesVersionText = resultText(hermesVersion);
   const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
-  expectEqual(
+  expect(
     actualHermesVersion,
-    expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
-  );
+  ).toBe(expectedVersion);
   await cronRestore.verify(rebuildOutput, rebuildBackupPath);
   await cronRestore.verifyStrandedGateRecovery();
   const restoredKanbanDatabase = await host.command(

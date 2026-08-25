@@ -293,7 +293,7 @@ contains diagnostics `2026.7.1`, SDK Node `0.219.0`, Jaeger `2.8.0`, and no
 preexisting nested Core. The resulting package tree is pinned to
 `sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==`.
 The trusted main-only
-`test/openclaw-diagnostics-jaeger-runtime.test.ts` harness runs with
+`test/agents/openclaw/openclaw-diagnostics-jaeger-runtime.test.ts` harness runs with
 `NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1`.
 It materializes the exact reviewed diagnostics archive, applies the production
 remediation, and installs that local archive with lifecycle scripts disabled.
@@ -364,7 +364,7 @@ materialization cannot fall back to the public registry.
 
 ## OpenClaw Compiled-Dist Patch Runtime Boundary
 
-`test/openclaw-real-patched-dist-harness.test.ts` materializes the exact public
+`test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` materializes the exact public
 archive under `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1`, applies every current
 NemoClaw patch, verifies syntax, and exercises the live device self-approval
 proof. This is not a substitute for focused nightly E2E proof.
@@ -457,19 +457,38 @@ It removes shared gateway credentials and the configuration path, and it
 disables pathname-backed device-auth reads and writes.
 The live pairing list must match the descriptor-backed preflight before one
 canonical approval can run.
-OpenClaw reloads the state under its pairing lock, rotates the token, persists
-the paired state, broadcasts the change, and responds.
-NemoClaw then verifies the exact pending-to-paired transition and atomically
-writes the rotated token to the clone's `identity/device-auth.json` with mode
-`0600`.
+OpenClaw reloads the state under its pairing lock and the version-scoped patch
+requires the authenticated device token to match the operator token in both
+the paired-device and stored-auth before-images.
+It then rotates the token and records the pending, paired, and
+`identity/device-auth.json` before- and after-images in the version 2
+self-approval journal.
+The canonical writer waits for all three state writes, commits the journal,
+and replaces it with the idle form before the handler broadcasts the change
+and responds.
+If publication is interrupted, the next locked pairing-state read restores a
+prepared journal or completes a committed journal across all three files.
+On upgrade, that read also replaces an existing version 1 idle journal or
+recovers its prepared or committed pairing snapshots before publishing the
+version 2 idle form. Recovery accepts stored authentication only when it
+matches the operator token and scopes in either version 1 snapshot, and it
+derives the selected target credential from that validated paired-device
+record.
+Prepared and committed journal snapshots contain device tokens only in a
+mode-`0600` file under a mode-`0700` directory. Approval returns success only
+after the credential-free idle journal replaces those snapshots. If that final
+rewrite fails, approval reports failure and the committed journal remains until
+the next locked pairing-state read completes and clears it.
+The wrapper then verifies the exact pending-to-paired transition and rewrites
+the same rotated token to the clone's `identity/device-auth.json` with mode
+`0600`; this remains a post-state verification boundary rather than the owner
+of stored-auth synchronization.
 The wrapper and approval child keep the old token in memory only for the
 bounded pass.
 Any pre-approval identity, state, transport, or live-preflight mismatch
 prevents the approval call.
 A post-state mismatch reports failure and does not treat the client credential
 as synchronized.
-It does not roll back a canonical server transition that OpenClaw already
-persisted.
 
 ## Transient Remote MCP Startup Recovery
 
@@ -507,7 +526,7 @@ Reviewed behavior:
 A first version of this patch was rejected during review on two counts, both now covered by tests.
 It retried an OpenShell L4 policy denial because undici reports it as `TypeError: fetch failed`, and it reported a retry that ended in HTTP 401 as a temporary transport failure that had not rejected credentials.
 
-Coverage: `test/openclaw-mcp-reliability-patch.test.ts` pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, the classification table, and the retry and diagnostic behavior of the injected runtime.
+Coverage: `test/agents/openclaw/openclaw-mcp-reliability-patch.test.ts` pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, the classification table, and the retry and diagnostic behavior of the injected runtime.
 `test/helpers/openclaw-real-mcp-start-retry-proof.ts` runs inside the `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1` harness and drives the real patched runtime against a controlled Streamable HTTP MCP server for three scenarios: first exchange resets then succeeds, every exchange resets, and a persistent 401.
 The proof asserts that the rejected-credential scenario is contacted once per run, with no retry inside a run.
 
@@ -590,7 +609,7 @@ The reliability patch owns startup catalog and retry behavior.
 The two patches compose independently.
 
 The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
-`test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
+`test/agents/openclaw/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
 It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
 It also covers default failure-only emission, opt-in successful timing events, bounded shadow recommendations, explicit 503 exclusion, no-retry and unchanged-response contracts, validated operation reporting, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
 A reusable source schema is deferred until a production consumer requires one.
@@ -625,7 +644,7 @@ Reviewed behavior:
 - The build patch runs only for OpenClaw `2026.7.1`.
   It skips the reviewed `2026.3.11` and `2026.4.24` stale-upgrade E2E fixture versions before bundle discovery and rejects every other version.
 
-`test/openclaw-mcp-tools-list-timeout-patch.test.ts` executes the injected parser and pins the compiled preimage.
+`test/agents/openclaw/openclaw-mcp-tools-list-timeout-patch.test.ts` executes the injected parser and pins the compiled preimage.
 It covers patch idempotence, fail-closed drift rejection, host and sandbox gates, bounds, invalid values, and composition with managed transport diagnostics.
 `src/lib/onboard/sandbox-create-launch.test.ts` covers canonical forwarding, range rejection, and exclusion from Hermes and Deep Agents Code sandboxes.
 
@@ -676,8 +695,8 @@ entry from redirecting those mutations to another path or inode.
 
 These repairs run during image build or sandbox startup.
 They do not change the documented update and rebuild workflow.
-Regression coverage lives in `test/openclaw-2026-7-startup-compat.test.ts` and
-`test/openclaw-shared-state-permissions-patch.test.ts`.
+Regression coverage lives in `test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts` and
+`test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts`.
 Remove the legacy cache repair after every supported upgrade source stops
 seeding the file or OpenClaw can migrate it across split users and a protected
 parent without a warning.
@@ -688,7 +707,7 @@ NemoClaw's generated OpenClaw audit configuration keeps intentional loopback
 `allowInsecureAuth` findings and provenance-known loopback device-auth opt-out
 findings visible as accepted findings.
 `test/generate-openclaw-config-security-audit.test.ts` locks the generated
-suppression scope, and `test/openclaw-security-audit-suppressions-real.test.ts`
+suppression scope, and `test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts`
 locks the pinned OpenClaw check IDs and details.
 `test/e2e/live/dashboard-remote-bind.test.ts` proves that a clean-host remote
 bind leaves the device-auth, insecure-auth, and Host-header fallback findings

@@ -11,6 +11,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type RawRunOptions,
@@ -310,6 +311,20 @@ function expectOnboardSuccess(result: RawRunResult, label: string): void {
   const redacted = redactedResultText(result);
   expect(result.timedOut, `${label} timed out\n${redacted}`).toBe(false);
   expect(result.exitCode, `${label} failed\n${redacted}`).toBe(0);
+}
+
+export async function captureOpenClawPairingDiagnosticsAfterFailedOnboard(
+  result: RawRunResult,
+  sandbox: Pick<SandboxClient, "exec">,
+  sandboxName: string,
+  redactionValues: readonly string[],
+): Promise<void> {
+  if (result.exitCode === 0 && !result.timedOut) return;
+  await captureIssue4462FailureDiagnostics(sandbox, {
+    env: buildAvailabilityProbeEnv(),
+    redactionValues,
+    sandboxName,
+  });
 }
 
 function expectOnboardFailure(result: RawRunResult, label: string): void {

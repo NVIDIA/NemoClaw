@@ -15,6 +15,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  dockerDesktopCredentialHelperResponds,
+  readDockerCredentialStore,
+} from "../adapters/docker/credential-store";
 import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -467,61 +471,6 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-/**
- * Read the `credsStore` credential-helper name from the Docker client config
- * (`$DOCKER_CONFIG/config.json`, default `~/.docker/config.json`). A missing,
- * unreadable, or malformed config declares no credential store (#9457).
- */
-function readDockerCredsStore(
-  env: NodeJS.ProcessEnv,
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): { credsStore?: string; configPath?: string } {
-  try {
-    // os.homedir() can throw on HOME-less containers; degrade like a missing
-    // config instead of failing the host assessment.
-    const configDir = env.DOCKER_CONFIG || path.join(os.homedir(), ".docker");
-    const configPath = env.DOCKER_CONFIG
-      ? "$DOCKER_CONFIG/config.json"
-      : "~/.docker/config.json";
-    const parsed: { credsStore?: unknown } = JSON.parse(
-      readFileImpl(path.join(configDir, "config.json"), "utf-8"),
-    );
-    return typeof parsed.credsStore === "string" && parsed.credsStore !== ""
-      ? { credsStore: parsed.credsStore, configPath }
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-// Windows interop can stall; bound the probe so a hung helper cannot hang
-// preflight or a readiness collection.
-const DOCKER_CREDENTIAL_HELPER_PROBE_TIMEOUT_MS = 10_000;
-
-/**
- * True when the configured Docker Desktop credential helper answers a
- * read-only `list` call with parseable JSON from this session. In WSL the
- * helper runs on the Windows side through interop, so session markers
- * (DISPLAY, SSH variables) cannot see whether a usable Windows logon session
- * exists — probe the helper instead (#9457). Probed only for the exact Docker
- * Desktop helper names, so no configurable string selects the executable.
- */
-function dockerCredentialHelperResponds(
-  credsStore: string,
-  runCaptureImpl: RunCaptureFn,
-): boolean {
-  try {
-    const output = runCaptureImpl([`docker-credential-${credsStore}`, "list"], {
-      ignoreError: true,
-      timeout: DOCKER_CREDENTIAL_HELPER_PROBE_TIMEOUT_MS,
-    });
-    JSON.parse(String(output || ""));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // lspci line shape: "<slot> <class label>: <vendor> <device> ...".
 // The slot token contains colons (e.g. "01:00.0"), so anchor on the class
 // label that follows it and ends at the first ": ".
@@ -664,7 +613,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     runtime = "docker";
   }
   const isWslHost = detectWsl({ platform, env, release, procVersion });
-  const dockerCredentialStore = readDockerCredsStore(env, readFileImpl);
+  const dockerCredentialStore = readDockerCredentialStore(env, readFileImpl);
   const dockerCredsStore = dockerCredentialStore.credsStore;
   // Session markers cannot see the Windows side of WSL interop, so probe the
   // helper there; the advisory check consumes this instead of DISPLAY/SSH
@@ -673,7 +622,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isWslHost &&
     dockerCredsStore !== undefined &&
     DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(dockerCredsStore)
-      ? !dockerCredentialHelperResponds(dockerCredsStore, runCaptureImpl)
+      ? !dockerDesktopCredentialHelperResponds(dockerCredsStore, runCaptureImpl)
       : undefined;
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)

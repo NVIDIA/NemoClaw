@@ -9,12 +9,26 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
 
+const preparationState = vi.hoisted(() => ({
+  prepared: undefined as unknown,
+  useUnavailableCatalog: false,
+}));
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 
-vi.mock("../workload/preparation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../workload/preparation")>()),
-  prepareSandboxWorkloadSource,
-}));
+vi.mock("../workload/preparation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../workload/preparation")>();
+  const { ManagedImageCatalogUnavailableError } = await import("../managed-image/catalog");
+  prepareSandboxWorkloadSource.mockImplementation((input) =>
+    preparationState.useUnavailableCatalog
+      ? original.prepareSandboxWorkloadSource(input, {
+          resolveCatalog: async () => {
+            throw new ManagedImageCatalogUnavailableError("registry offline");
+          },
+        })
+      : Promise.resolve(preparationState.prepared),
+  );
+  return { ...original, prepareSandboxWorkloadSource };
+});
 
 vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 
@@ -23,26 +37,36 @@ import {
   createManagedWorkloadOnboardRuntime,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
+  shouldActivateStockManagedRuntime,
 } from "./onboard-orchestration";
 
-function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
+function createFreshOnboardingRuntime(
+  environment: Readonly<Record<string, string>>,
+  options: {
+    readonly stockManagedRuntime?: boolean;
+    readonly tempManagedRuntime?: boolean;
+    readonly unavailableCatalog?: boolean;
+  } = {},
+) {
   const prepared = {
     source: {
       kind: "legacy-dockerfile",
       dockerfilePath: "agents/openclaw/Dockerfile",
-      reason: "managed-image-unavailable",
+      reason: "contract-unavailable",
     },
     release: "v0.0.0",
     fallbackDiagnostic: null,
   };
+  preparationState.prepared = prepared;
+  preparationState.useUnavailableCatalog = options.unavailableCatalog ?? false;
   prepareSandboxWorkloadSource.mockClear();
-  prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
 
   const runtime = createManagedWorkloadOnboardRuntime(
     {
       computePlan: { driverName: "docker" },
       managedWorkloadRebuild: null,
-      tempManagedRuntime: false,
+      tempManagedRuntime: options.tempManagedRuntime ?? false,
+      stockManagedRuntime: options.stockManagedRuntime ?? false,
       tempManagedRuntimeCatalog: null,
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
@@ -94,6 +118,79 @@ async function expectUnsupportedHermesPortableSources(
 }
 
 describe("managed workload onboard orchestration", () => {
+  it("activates stock managed images only for shipped agents outside Portable", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "hermes",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "langchain-deepagents-code",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: true,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "nemocua",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "pi",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not activate stock managed images for Hermes Portable (#9634)", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: true,
+        agentName: "hermes",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, unavailableCatalog: true },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+  });
+
+  it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, tempManagedRuntime: true, unavailableCatalog: true },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+  });
+
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
     const expectedDockerfilePath = "/workspace/agents/hermes/Dockerfile";
     const ensurePreparedProfile = vi.fn(() => null);

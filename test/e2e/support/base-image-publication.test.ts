@@ -85,7 +85,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
     id: RUN_ID,
     run_attempt: 1,
     workflow_id: WORKFLOW_ID,
-    name: "Images / Base Images",
+    name: "Images / Publish Base and Managed Images",
     event: "push",
     status: "completed",
     conclusion: "success",
@@ -102,7 +102,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
 function workflowMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: WORKFLOW_ID,
-    name: "Images / Base Images",
+    name: "Images / Publish Base and Managed Images",
     path: ".github/workflows/base-image.yaml",
     state: "active",
     html_url: "https://github.com/NVIDIA/NemoClaw/blob/main/.github/workflows/base-image.yaml",
@@ -505,7 +505,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be Images \/ Base Images/u);
+    ).toThrow(/name must be Images \/ Publish Base and Managed Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -611,7 +611,7 @@ describe("base-image publication evidence", () => {
   );
 
   it("reconfirms the selected run identity after reading job history (#9549)", () => {
-    expect(() => validateBoundRun(workflowRun(), selectedRun())).not.toThrow();
+    expect(validateBoundRun(workflowRun(), selectedRun())).toEqual(selectedRun());
     expect(() =>
       validateBoundRun(
         workflowRun({ conclusion: "cancelled" }),
@@ -736,6 +736,76 @@ describe("base-image publication evidence", () => {
       }),
     ).resolves.toMatchObject({ id: RUN_ID, status: "in_progress" });
     expect(sleeps).toBe(0);
+  });
+
+  it("waits for managed-image publication when downstream E2E requires it", async () => {
+    const inProgressRun = workflowRun({ status: "in_progress", conclusion: null });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([inProgressRun]),
+      { total_count: 3, jobs: successfulJobs() },
+      inProgressRun,
+      runsPayload([workflowRun()]),
+      { total_count: 3, jobs: successfulJobs() },
+      workflowRun(),
+    ];
+    let currentTime = 0;
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+        now: () => currentTime,
+        sleep: async (milliseconds) => {
+          currentTime += milliseconds;
+        },
+      }),
+    ).resolves.toMatchObject({ id: RUN_ID, conclusion: "success" });
+    expect(currentTime).toBe(10);
+  });
+
+  it("returns the completed detailed run when the workflow list is stale", async () => {
+    const listedRun = workflowRun({ status: "in_progress", conclusion: null });
+    const completedRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([listedRun]),
+      { total_count: 3, jobs: successfulJobs() },
+      completedRun,
+    ];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+  });
+
+  it("rejects failed managed-image publication before E2E consumers start", async () => {
+    const failedRun = workflowRun({ conclusion: "failure" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([failedRun]),
+      { total_count: 3, jobs: successfulJobs() },
+      failedRun,
+    ];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).rejects.toThrow(/managed-image publication workflow did not complete successfully/u);
   });
 
   it.each(["failure", "cancelled"] as const)(

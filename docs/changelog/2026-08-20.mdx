@@ -12,15 +12,25 @@ It also changes the Google Gemini default, strengthens managed image publication
 - Interactive `connect` now releases the lifecycle lock before it waits for the shell, so other commands can use the same sandbox during the session.
   An explicit sandbox start tolerates a bounded initial OpenShell `Error` phase while the sandbox returns to `Ready`.
   Hermes onboarding probes the API port recorded for the sandbox, and onboarding bounds each sandbox readiness observation.
+  Non-interactive inference validation failures exit nonzero and preserve the onboarding session when abort cleanup completes.
   Portable onboarding uses `10.87.0.0/24` for its sandbox network and preserves credential-redacted image-pull diagnostics.
   Experimental NemoCUA now uses the standard lifecycle for terminal agents with an operator-prepared sandbox image.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
-  Related changes: [PR #9657](https://github.com/NVIDIA/NemoClaw/pull/9657), [PR #9755](https://github.com/NVIDIA/NemoClaw/pull/9755), [PR #9747](https://github.com/NVIDIA/NemoClaw/pull/9747), [PR #9758](https://github.com/NVIDIA/NemoClaw/pull/9758), [PR #9715](https://github.com/NVIDIA/NemoClaw/pull/9715), [PR #9714](https://github.com/NVIDIA/NemoClaw/pull/9714), and [PR #9723](https://github.com/NVIDIA/NemoClaw/pull/9723).
+  Related changes: [PR #9657](https://github.com/NVIDIA/NemoClaw/pull/9657), [PR #9755](https://github.com/NVIDIA/NemoClaw/pull/9755), [PR #9747](https://github.com/NVIDIA/NemoClaw/pull/9747), [PR #9758](https://github.com/NVIDIA/NemoClaw/pull/9758), [PR #9745](https://github.com/NVIDIA/NemoClaw/pull/9745), [PR #9715](https://github.com/NVIDIA/NemoClaw/pull/9715), [PR #9714](https://github.com/NVIDIA/NemoClaw/pull/9714), and [PR #9723](https://github.com/NVIDIA/NemoClaw/pull/9723).
 - Policy changes now preserve the authoritative OpenShell exit status and leave rejected or unconfirmed mutations out of NemoClaw state.
+  Invalid interactive preset input now exits nonzero without applying a preset.
   The Hermes tool gateway broker refuses a healthy listener unless the recorded live process is the NemoClaw broker.
   Shields commands can recover expired timer state, and full uninstall stops verified NemoClaw-owned Bedrock Runtime adapters before it removes their lifecycle evidence.
-  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
-  Related changes: [PR #9238](https://github.com/NVIDIA/NemoClaw/pull/9238), [PR #9593](https://github.com/NVIDIA/NemoClaw/pull/9593), [PR #9749](https://github.com/NVIDIA/NemoClaw/pull/9749), and [PR #9576](https://github.com/NVIDIA/NemoClaw/pull/9576).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+  Related changes: [PR #9238](https://github.com/NVIDIA/NemoClaw/pull/9238), [PR #9751](https://github.com/NVIDIA/NemoClaw/pull/9751), [PR #9593](https://github.com/NVIDIA/NemoClaw/pull/9593), [PR #9749](https://github.com/NVIDIA/NemoClaw/pull/9749), and [PR #9576](https://github.com/NVIDIA/NemoClaw/pull/9576).
+- No-authentication OpenAI-compatible endpoint examples now bind the backend to loopback behind NemoClaw's token-protected proxy.
+  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
+  Related change: [PR #9759](https://github.com/NVIDIA/NemoClaw/pull/9759).
+- Linux Ollama service repair proves the systemd user, executable, and ELF interpreter before restart and limits automatic mode repair to the installer-owned executable.
+  LangChain Deep Agents Code launch readiness accepts OpenRouter's HTTP 404 response for `/v1/models` only after an inference request for the recorded model succeeds.
+  Fixed-profile vLLM installation accepts a model selector only when the serving catalog resolves it to the matching recipe.
+  For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Recover and Rebuild Sandboxes](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+  Related changes: [PR #9735](https://github.com/NVIDIA/NemoClaw/pull/9735), [PR #9838](https://github.com/NVIDIA/NemoClaw/pull/9838), and [PR #9839](https://github.com/NVIDIA/NemoClaw/pull/9839).
 - Google Gemini onboarding now offers and defaults to `gemini-3.6-flash` while retaining manual model entry.
   Failed Bedrock Runtime adapter startup now removes its process and stale state.
   Managed MCP add operations republish the credential-free provider revision after delayed credential absence and require a fresh projected revision before commit.
