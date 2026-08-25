@@ -18,7 +18,7 @@
 //     for exact final handoff, terminal phase, rollback, and failure outcomes.
 //   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
 //     recreate-with-rollback scenarios.
-//   * src/lib/onboard/docker-gpu-sandbox-create.test.ts — composed create
+//   * src/lib/onboard/docker-gpu-sandbox-create-lifecycle.test.ts — composed create
 //     flow driving maybeApplyDuringCreate → waitForSupervisorReconnect →
 //     finalizeBackup.
 // Removal condition: when OpenShell supports native Docker-driver GPU
@@ -30,6 +30,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { shouldStripCredentialEnv } from "../security/credential-env";
+import { rejectSymlinksOnPath } from "../state/config-io";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
@@ -54,7 +56,12 @@ import {
   waitForOpenShellFinalHandoff,
   waitForOpenShellSandboxLifecycleRelease,
 } from "./docker-gpu-supervisor-reconnect";
-import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
+import {
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_SANDBOX_ID_LABEL,
+  OPENSHELL_SANDBOX_NAME_LABEL,
+  queryOpenShellDockerSandboxContainers,
+} from "./openshell-docker-sandbox-containers";
 
 export type DockerGpuPatchFinalizeOptions =
   | {
@@ -95,7 +102,22 @@ type PostCommitRollbackPlan = {
 
 const DOCKER_IMAGE_ID = /^sha256:[0-9a-f]{64}$/iu;
 const ROLLBACK_RECORD_VERSION = 1;
-const REDACTED_RUN_VALUE_FLAGS = new Set(["--env", "--label"]);
+const RECOVERY_ENV_KEYS = new Set([
+  "OPENSHELL_ENDPOINT",
+  "OPENSHELL_SANDBOX_COMMAND",
+  "OPENSHELL_OCI_IMAGE_USER",
+  "OPENSHELL_SANDBOX_UID",
+  "OPENSHELL_SANDBOX_GID",
+]);
+const RECOVERY_LABEL_KEYS = new Set([
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_SANDBOX_NAME_LABEL,
+  OPENSHELL_SANDBOX_ID_LABEL,
+]);
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+const OCI_IDENTITY = /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$/u;
+const NUMERIC_IDENTITY = /^(?:0|[1-9][0-9]*)$/u;
+const NEMOCLAW_STARTUP_EXECUTABLES = new Set(["nemoclaw-start", "/usr/local/bin/nemoclaw-start"]);
 
 function removeRollbackImage(
   imageId: string,
@@ -105,6 +127,86 @@ function removeRollbackImage(
   return hasZeroDockerExitStatus(deps.dockerRun(["image", "rm", "--force", imageId], options));
 }
 
+function envAssignment(value: string): { key: string; value: string } | null {
+  const separator = value.indexOf("=");
+  if (separator <= 0) return null;
+  const key = value.slice(0, separator);
+  return ENV_KEY.test(key) ? { key, value: value.slice(separator + 1) } : null;
+}
+
+function isCredentialFreeHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      ["http:", "https:"].includes(parsed.protocol) &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.search === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+function recoverySandboxCommand(value: string): string | null {
+  const tokens = value.trim().split(/\s+/u).filter(Boolean);
+  if (tokens.length === 2 && tokens[0] === "sleep" && tokens[1] === "infinity") return value;
+  if (tokens.length === 1 && NEMOCLAW_STARTUP_EXECUTABLES.has(tokens[0])) return value;
+  if (tokens[0] !== "env") return null;
+
+  const assignments: Array<{ key: string; value: string }> = [];
+  let executableIndex = 1;
+  while (executableIndex < tokens.length) {
+    const assignment = envAssignment(tokens[executableIndex]);
+    if (!assignment) break;
+    assignments.push(assignment);
+    executableIndex += 1;
+  }
+  if (
+    executableIndex !== tokens.length - 1 ||
+    !NEMOCLAW_STARTUP_EXECUTABLES.has(tokens[executableIndex])
+  ) {
+    return null;
+  }
+  const extraPlaceholderKeys = new Set(
+    (assignments.find(({ key }) => key === "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS")?.value ?? "")
+      .split(/[\s,]+/u)
+      .filter((key) => ENV_KEY.test(key)),
+  );
+  const retained = assignments
+    .filter(
+      ({ key, value: assignmentValue }) =>
+        !shouldStripCredentialEnv(key) &&
+        !extraPlaceholderKeys.has(key) &&
+        (!assignmentValue.includes("://") || isCredentialFreeHttpUrl(assignmentValue)),
+    )
+    .map(({ key, value: assignmentValue }) => `${key}=${assignmentValue}`);
+  return ["env", ...retained, tokens[executableIndex]].join(" ");
+}
+
+function recoveryRunValue(flag: string, value: string): string | null {
+  if (flag === "--label") {
+    const separator = value.indexOf("=");
+    const key = separator > 0 ? value.slice(0, separator) : "";
+    return RECOVERY_LABEL_KEYS.has(key) ? value : null;
+  }
+  const assignment = envAssignment(value);
+  if (!assignment) return null;
+  if (flag !== "--env" || !RECOVERY_ENV_KEYS.has(assignment.key)) return null;
+  if (assignment.key === "OPENSHELL_SANDBOX_COMMAND") {
+    const command = recoverySandboxCommand(assignment.value);
+    return command === null ? null : `${assignment.key}=${command}`;
+  }
+  if (assignment.key === "OPENSHELL_ENDPOINT")
+    return isCredentialFreeHttpUrl(assignment.value) ? value : null;
+  if (assignment.key === "OPENSHELL_OCI_IMAGE_USER")
+    return OCI_IDENTITY.test(assignment.value) ? value : null;
+  if (assignment.key === "OPENSHELL_SANDBOX_UID" || assignment.key === "OPENSHELL_SANDBOX_GID")
+    return assignment.value === "" || NUMERIC_IDENTITY.test(assignment.value) ? value : null;
+  return value;
+}
+
 function recoveryRunArgs(runArgs: readonly string[], imageId: string): string[] {
   const imageIndex = runArgs.indexOf(imageId);
   if (imageIndex < 0)
@@ -112,11 +214,13 @@ function recoveryRunArgs(runArgs: readonly string[], imageId: string): string[] 
   const persisted: string[] = [];
   for (let index = 0; index < imageIndex; index += 1) {
     const value = runArgs[index];
-    if (REDACTED_RUN_VALUE_FLAGS.has(value)) {
+    if (value === "--env" || value === "--label") {
       if (index + 1 >= imageIndex) {
         throw new Error(`Docker rollback argument '${value}' has no value.`);
       }
+      const persistedValue = recoveryRunValue(value, runArgs[index + 1]);
       index += 1;
+      if (persistedValue !== null) persisted.push(value, persistedValue);
       continue;
     }
     persisted.push(value);
@@ -142,7 +246,9 @@ function writeRollbackRecord(
     `${encodeURIComponent(sandboxName)}-${oldContainerId.slice(0, 12)}.json`,
   );
   try {
+    rejectSymlinksOnPath(directory);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    rejectSymlinksOnPath(directory);
     fs.chmodSync(directory, 0o700);
     fs.writeFileSync(
       recordPath,
