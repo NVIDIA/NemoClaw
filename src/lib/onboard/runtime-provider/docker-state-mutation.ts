@@ -1439,10 +1439,15 @@ function readHelperTransportFile(
         }
         return value;
       }
-      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
-        fail("root helper transport response copy timed out");
+      const copyTimedOut =
+        (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+      if (Date.now() >= deadline) {
+        fail(
+          copyTimedOut
+            ? "root helper transport response copy timed out"
+            : "root helper transport response did not arrive",
+        );
       }
-      if (Date.now() >= deadline) fail("root helper transport response did not arrive");
       Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
     }
   });

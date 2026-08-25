@@ -242,6 +242,21 @@ print(json.dumps(timeouts))
     expect(brokerStderr).toBe("");
   });
 
+  it("uses the remaining response allowance after one Docker copy timeout (#10155)", () => {
+    const runtime = harness({ timeoutResponseCopyOnce: true });
+    const surface = createDockerStateMutationSurface({
+      capture: runtime.capture,
+      resolveStateDir: () => runtime.root,
+    });
+
+    expect(() => surface.acquire({ ...runtime.context, plan: plan() })).not.toThrow();
+    const responseCopies = runtime.capture.mock.calls.filter(([, args]) =>
+      args.some((value) => value.endsWith(".response")),
+    );
+    expect(responseCopies).toHaveLength(2);
+    expect(responseCopies.map(([, , timeout]) => timeout)).toEqual([15_000, 15_000]);
+  });
+
   it("uses one harness-owned absolute Docker executable", () => {
     const runtime = harness();
     runtime.authority.engine.capture(["version"]);

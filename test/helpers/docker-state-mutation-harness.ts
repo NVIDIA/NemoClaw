@@ -150,6 +150,7 @@ export interface DockerStateMutationHarnessOptions {
   readonly loseReleaseResponseOnce?: boolean;
   readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
+  readonly timeoutResponseCopyOnce?: boolean;
 }
 
 export interface DockerStateMutationHarnessState {
@@ -197,6 +198,7 @@ function createContainerStateMutationHarness(
   let resumeFailuresRemaining = options.failResumeOnce ? 1 : 0;
   let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
   let signalledHelpersRemaining = options.signalHelperOnce ? 1 : 0;
+  let responseCopyTimeoutsRemaining = options.timeoutResponseCopyOnce ? 1 : 0;
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
@@ -434,6 +436,17 @@ function createContainerStateMutationHarness(
       }
       if (source.startsWith(containerPrefix)) {
         const containerPath = source.slice(containerPrefix.length);
+        if (containerPath.endsWith(".response") && responseCopyTimeoutsRemaining > 0) {
+          responseCopyTimeoutsRemaining -= 1;
+          return {
+            error: Object.assign(new Error("transport response copy timed out"), {
+              code: "ETIMEDOUT",
+            }),
+            status: 1,
+            stdout: "",
+            stderr: "",
+          };
+        }
         const payload = transportFiles.get(containerPath);
         if (!payload) return { status: 1, stdout: "", stderr: "transport file unavailable" };
         fs.writeFileSync(destination, payload, { mode: 0o600 });
