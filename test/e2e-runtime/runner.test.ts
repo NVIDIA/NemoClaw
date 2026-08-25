@@ -4,12 +4,14 @@
 import type { StdioOptions } from "node:child_process";
 import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { redact, runCapture } from "../../src/lib/runner";
 
+const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
