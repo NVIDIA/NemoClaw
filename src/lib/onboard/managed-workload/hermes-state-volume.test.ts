@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { PodmanContainerEngine } from "../../adapters/podman";
+import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { createHermesStateVolumeDockerHarness as dockerHarness } from "../__test-helpers__/hermes-state-volume";
 import {
   createDockerRuntimeProviderBundle,
@@ -78,7 +78,7 @@ describe("managed Hermes state volume", () => {
 
   it("dispatches native volume lifecycle through the selected provider operation", () => {
     const runtime = dockerHarness();
-    const sandboxLifecycleCapture = vi.fn((args: readonly string[]) => {
+    const workloadCleanupCapture = vi.fn((args: readonly string[]) => {
       expect(args[0]).toBe("volume");
       const result = runtime.runDocker(args.slice(1)) as {
         status: number | null;
@@ -100,7 +100,7 @@ describe("managed Hermes state volume", () => {
         stdout: "",
         stderr: "",
       })),
-    ): PodmanContainerEngine => ({
+    ): PodmanBoundContainerEngine => ({
       operation,
       engineId: "podman",
       displayName: "Podman",
@@ -108,11 +108,13 @@ describe("managed Hermes state volume", () => {
       endpointAuthorityId: "podman:test-endpoint",
       capture,
       captureHost: capture,
+      assertAuthority: vi.fn(),
     });
     const provider = createPodmanRuntimeProviderBundle({
       engines: {
         hostDoctor: engine("host-doctor"),
-        sandboxLifecycle: engine("sandbox-lifecycle", sandboxLifecycleCapture),
+        sandboxLifecycle: engine("sandbox-lifecycle"),
+        workloadCleanup: engine("workload-cleanup", workloadCleanupCapture),
       },
     });
 
@@ -125,8 +127,8 @@ describe("managed Hermes state volume", () => {
     );
 
     expect(scope?.mount.source).toBe("nemoclaw-hermes-state-v1-alpha");
-    expect(sandboxLifecycleCapture).toHaveBeenCalled();
-    expect(sandboxLifecycleCapture.mock.calls.every(([args]) => args[0] === "volume")).toBe(true);
+    expect(workloadCleanupCapture).toHaveBeenCalled();
+    expect(workloadCleanupCapture.mock.calls.every(([args]) => args[0] === "volume")).toBe(true);
   });
 
   it("commits a newly created volume after registration so exit cleanup preserves it", () => {

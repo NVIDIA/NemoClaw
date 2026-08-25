@@ -82,6 +82,7 @@ function compatibilityLifecycleInput(
   temporaryStateRoots.push(stateRoot);
   return {
     providerId: "docker",
+    environment: {},
     stateRoot,
     bootstrapIdentity: IDENTITY,
     request: seed.request,
@@ -431,6 +432,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
@@ -535,6 +537,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,

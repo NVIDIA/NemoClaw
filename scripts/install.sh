@@ -3678,8 +3678,24 @@ run_installer_host_preflight() {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
         process.exit(admission.admitted ? 0 : 10);
-      } catch {
-        process.exit(0);
+      } catch (error) {
+        const optionalModules = [
+          preflightPath,
+          hostReadinessPath,
+          onboardAdmissionPath,
+          gatewayManagementPath,
+          runtimeProviderSelectionPath,
+        ];
+        const missingOptionalModule =
+          error?.code === "MODULE_NOT_FOUND" &&
+          optionalModules.some((modulePath) =>
+            String(error?.message || "").includes(modulePath)
+          );
+        if (missingOptionalModule) process.exit(0);
+        process.stderr.write(
+          `NemoClaw installer host preflight failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(11);
       }
     ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module" "$runtime_provider_selection_module"
   )"; then
@@ -3713,7 +3729,7 @@ run_installer_host_preflight() {
     fi
   fi
 
-  [[ "$status" -ne 10 ]]
+  [[ "$status" -eq 0 ]]
 }
 
 recover_preexisting_sandboxes_before_onboard() {

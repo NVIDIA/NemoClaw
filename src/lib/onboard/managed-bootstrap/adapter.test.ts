@@ -1062,6 +1062,7 @@ describe("managed bootstrap adapter contract", () => {
           : { sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" },
       bootstrapIdentity,
       code: "provider-owned-retry",
+      blockingScope: "sandbox" as const,
       retryable: true,
       detail: "opaque MXC recovery evidence",
     });
@@ -1104,6 +1105,7 @@ describe("managed bootstrap adapter contract", () => {
           sandbox: receipt.sandbox,
           bootstrapIdentity: IDENTITY,
           code: "retry",
+          blockingScope: "sandbox",
           retryable: true,
           detail: "retained",
         },
@@ -1124,6 +1126,7 @@ describe("managed bootstrap adapter contract", () => {
       sandbox: null,
       bootstrapIdentity: IDENTITY,
       code: "provider-owned-retry",
+      blockingScope: "sandbox",
       retryable: true,
       detail: "opaque MXC recovery evidence",
     } as const;
@@ -1137,8 +1140,12 @@ describe("managed bootstrap adapter contract", () => {
     );
   });
 
-  it.each([{ scenario: "same-name failure" }, { scenario: "unknown-identity failure" }])(
-    "blocks same-name and identity-unknown failures while warning for unrelated sandboxes [$scenario]",
+  it.each([
+    { scenario: "same-name failure" },
+    { scenario: "unknown-identity failure" },
+    { scenario: "provider-wide failure" },
+  ])(
+    "blocks same-name, identity-unknown, and provider-wide failures while warning for unrelated sandboxes [$scenario]",
     ({ scenario }) => {
       const failure = (bootstrapIdentity: string, sandboxName: string | null) =>
         Object.freeze({
@@ -1151,6 +1158,7 @@ describe("managed bootstrap adapter contract", () => {
               : Object.freeze({ sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" }),
           bootstrapIdentity,
           code: "provider-owned-retry",
+          blockingScope: "sandbox",
           retryable: true,
           detail: "opaque provider detail",
         });
@@ -1158,6 +1166,10 @@ describe("managed bootstrap adapter contract", () => {
       const unrelated = failure("a".repeat(64), "bravo");
       const sameName = failure("b".repeat(64), "alpha");
       const identityUnknown = failure("c".repeat(64), null);
+      const providerWide = Object.freeze({
+        ...failure("d".repeat(64), "bravo"),
+        blockingScope: "provider" as const,
+      });
 
       expect(
         enforceManagedBootstrapRecoveryForSandbox(
@@ -1169,7 +1181,11 @@ describe("managed bootstrap adapter contract", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrelated sandbox 'bravo'"));
 
       const blocking = (
-        { "same-name failure": sameName, "unknown-identity failure": identityUnknown } as const
+        {
+          "same-name failure": sameName,
+          "unknown-identity failure": identityUnknown,
+          "provider-wide failure": providerWide,
+        } as const
       )[scenario]!;
       expect(() =>
         enforceManagedBootstrapRecoveryForSandbox(

@@ -131,6 +131,7 @@ function lifecycleInput(adapterOverride: ManagedBootstrapAdapter) {
   });
   return {
     providerId: "podman",
+    environment: {},
     stateRoot: "/unused/provider-state",
     bootstrapIdentity: IDENTITY,
     request,

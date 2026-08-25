@@ -169,6 +169,7 @@ function dockerManagedBootstrapRecoveryFailure(
     sandbox: journal?.sandbox ?? legacyJournalContext?.sandbox ?? null,
     bootstrapIdentity,
     code: classified.code,
+    blockingScope: "sandbox",
     retryable: classified.retryable,
     detail: boundedRecoveryFailureDetail(error),
   });

@@ -25,7 +25,6 @@ import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
-  resolveCurrentRuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
@@ -522,7 +521,7 @@ async function destroySandboxUnlocked(
       cliName: CLI_NAME,
       providerId: registeredSandbox
         ? normalizeRuntimeProviderIdentity(registeredSandbox.openshellDriver)
-        : resolveCurrentRuntimeProviderBundle().identity.id,
+        : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
     });

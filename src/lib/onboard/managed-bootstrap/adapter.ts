@@ -272,6 +272,8 @@ export interface ManagedBootstrapRecoveryFailure {
   readonly bootstrapIdentity: string;
   /** Provider-owned diagnostic code. Central orchestration must not branch on this value. */
   readonly code: string;
+  /** Provider-wide when recovery may still own shared provider authority. */
+  readonly blockingScope: "provider" | "sandbox";
   readonly retryable: boolean;
   readonly detail: string;
 }
@@ -513,6 +515,7 @@ function normalizeRecoveryFailure(
     candidate === null ||
     Array.isArray(candidate) ||
     candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    (candidate.blockingScope !== "provider" && candidate.blockingScope !== "sandbox") ||
     typeof candidate.retryable !== "boolean"
   ) {
     protocolFail("recovery failure has an invalid schema");
@@ -539,6 +542,7 @@ function normalizeRecoveryFailure(
     sandbox: candidate.sandbox === null ? null : Object.freeze({ ...candidate.sandbox }),
     bootstrapIdentity: candidate.bootstrapIdentity,
     code: candidate.code,
+    blockingScope: candidate.blockingScope,
     retryable: candidate.retryable,
     detail: candidate.detail,
   });
@@ -580,7 +584,7 @@ export async function recoverManagedBootstrapTransactions(
   });
 }
 
-/** Block only failures that can own the requested name; warn for exact unrelated sandboxes. */
+/** Block failures that own the requested name or retain provider-wide shared authority. */
 export function enforceManagedBootstrapRecoveryForSandbox(
   report: ManagedBootstrapRecoveryReport,
   sandboxName: string,
@@ -588,10 +592,18 @@ export function enforceManagedBootstrapRecoveryForSandbox(
 ): ManagedBootstrapRecoveryReport {
   assertOpaqueString(sandboxName, "recovery target sandbox name");
   const blocking = report.failures.filter(
-    (failure) => failure.sandbox === null || failure.sandbox.sandboxName === sandboxName,
+    (failure) =>
+      failure.blockingScope === "provider" ||
+      failure.sandbox === null ||
+      failure.sandbox.sandboxName === sandboxName,
   );
   for (const failure of report.failures) {
-    if (failure.sandbox === null || failure.sandbox.sandboxName === sandboxName) continue;
+    if (
+      failure.blockingScope === "provider" ||
+      failure.sandbox === null ||
+      failure.sandbox.sandboxName === sandboxName
+    )
+      continue;
     warn(
       `Managed bootstrap recovery retained unrelated sandbox '${failure.sandbox.sandboxName}' ` +
         `(${failure.bootstrapIdentity}, ${failure.code}).`,

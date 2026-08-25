@@ -68,7 +68,7 @@ function defaultRuntimeVolumeRun(provider: RuntimeProviderBundle): ContainerEngi
     throw new Error("The selected runtime provider does not expose container-engine authority.");
   }
   return (args, options) =>
-    containerEngine.capture("sandbox-lifecycle", ["volume", ...args], options?.timeout);
+    containerEngine.capture("workload-cleanup", ["volume", ...args], options?.timeout);
 }
 
 function defaultRegisterExitCleanup(cleanup: () => void): () => void {

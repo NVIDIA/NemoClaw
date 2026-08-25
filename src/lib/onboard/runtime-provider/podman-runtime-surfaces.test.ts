@@ -218,6 +218,40 @@ describe("current Podman runtime provider", () => {
     });
   });
 
+  it("establishes the native gateway address before projecting host runtime authority", () => {
+    const order: string[] = [];
+    const ip = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("inspect-absent");
+        return { status: 0, stdout: "", stderr: "" };
+      })
+      .mockImplementationOnce(() => {
+        order.push("inspect-configured");
+        return { status: 0, stdout: "1: lo    inet 169.254.2.2/32 scope global lo\n", stderr: "" };
+      });
+    const sudo = vi.fn(() => {
+      order.push("assign");
+      return { status: 0, stdout: "", stderr: "" };
+    });
+
+    const runtime = prepareNativePodmanGatewayHostRuntime(
+      {
+        environment: { OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock" },
+        platform: "linux",
+      },
+      runtimeEngine(exactLabels),
+      { ip, sudo },
+    );
+
+    expect(runtime.grpcHost).toBe(NATIVE_PODMAN_SANDBOX_HOST_ADDRESS);
+    expect(order).toEqual(["inspect-absent", "assign", "inspect-configured"]);
+    expect(sudo).toHaveBeenCalledWith(
+      ["--", "ip", "address", "replace", "169.254.2.2/32", "dev", "lo"],
+      expect.any(Object),
+    );
+  });
+
   it("executes native gateway networking through the injected inspection authority", () => {
     const capture = vi.fn((args: readonly string[]) => ({
       status: 0,

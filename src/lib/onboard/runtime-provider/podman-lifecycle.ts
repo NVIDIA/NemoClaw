@@ -291,16 +291,55 @@ function resultForFailure(error: unknown): RuntimeProviderLifecycleResult {
 
 function mutateContainer(
   engine: ContainerEngine,
-  operation: "start" | "stop" | "unpause",
+  operation: "restart" | "start" | "stop" | "unpause",
   container: PodmanManagedContainer,
 ): void {
   const args = [
     operation,
-    ...(operation === "stop" ? ["--time", String(STOP_GRACE_SECONDS)] : []),
+    ...(operation === "stop" || operation === "restart"
+      ? ["--time", String(STOP_GRACE_SECONDS)]
+      : []),
     container.containerId,
   ];
   const result = engine.capture(args, PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS);
   if (result.status !== 0 || result.error) throw commandFailure(operation, result);
+}
+
+/** Repair a failed gateway probe without changing the pinned Podman container identity. */
+export function recoverPodmanSandbox(
+  input: RuntimeProviderLifecycleInput,
+  engine: ContainerEngine,
+): RuntimeProviderLifecycleResult {
+  try {
+    let container = resolveManagedContainer(engine, input.sandboxName);
+    if (container.paused) {
+      mutateContainer(engine, "unpause", container);
+      container = inspectExactContainer(engine, {
+        sandboxName: input.sandboxName,
+        containerId: container.containerId,
+        previous: container,
+      });
+    }
+    const operation = container.running ? "restart" : "start";
+    if (!container.running && !AT_REST_STATES.has(container.status)) {
+      throw new Error(
+        `Refusing Podman recovery for sandbox '${input.sandboxName}': container state '${container.status}' is not safely recoverable.`,
+      );
+    }
+    mutateContainer(engine, operation, container);
+    const verified = inspectExactContainer(engine, {
+      sandboxName: input.sandboxName,
+      containerId: container.containerId,
+      previous: container,
+    });
+    if (!verified.running || verified.paused) {
+      throw new Error(`Podman ${operation} did not recover the exact managed container.`);
+    }
+    input.log(`  Container '${container.name}' ${operation === "restart" ? "restarted" : "started"}.`);
+    return { exitCode: 0 };
+  } catch (error) {
+    return resultForFailure(error);
+  }
 }
 
 export function startPodmanSandbox(

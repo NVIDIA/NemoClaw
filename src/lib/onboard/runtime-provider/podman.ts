@@ -35,6 +35,7 @@ import type {
 } from "./podman-preflight";
 import {
   PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+  recoverPodmanSandbox,
   startPodmanSandbox,
   stopPodmanSandbox,
 } from "./podman-lifecycle";
@@ -52,6 +53,7 @@ import {
   capturePodmanDestroyIdentityByName,
   createFilePodmanRouteAuthorityStore,
   createPodmanRuntimeProviderSnapshotSurface,
+  type NativePodmanGatewayHostPreparationDeps,
   planOwnedPodmanWorkloadCleanup,
   prepareNativePodmanGatewayHostRuntime,
   removeOwnedPodmanWorkload,
@@ -81,7 +83,9 @@ export interface PodmanHostLocalInferenceOptions {
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly gatewaySocketPath?: string;
+  readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
   readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
   readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
@@ -238,6 +242,7 @@ export function createPodmanRuntimeProviderBundle(
     }
   }
   const preflight = options.preflight ?? {};
+  const environment = Object.freeze({ ...(options.environment ?? process.env) });
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
 
   return {
@@ -287,6 +292,7 @@ export function createPodmanRuntimeProviderBundle(
             socketPath: options.gatewaySocketPath ?? input.socketPath,
           },
           gatewayInspection,
+          options.gatewayHostPreparation,
         );
       },
     },
@@ -362,9 +368,9 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       recover: (sandbox) =>
-        startPodmanSandbox(
+        recoverPodmanSandbox(
           {
-            environment: process.env,
+            environment,
             log: () => undefined,
             sandbox,
             sandboxName: sandbox.name,
@@ -488,7 +494,9 @@ export function createCurrentPodmanRuntimeProviderBundle(
   } as const;
   const bundle = createPodmanRuntimeProviderBundle({
     engines,
+    environment,
     gatewaySocketPath: resolveNativePodmanSocketPath(environment),
+    gatewayHostPreparation: {},
     hostLocalInference: {
       authorityStore: createLazyPersistedEngineAuthorityStore(stateRoot),
       routeAuthorityStore: createFilePodmanRouteAuthorityStore(stateRoot),

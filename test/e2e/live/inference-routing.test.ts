@@ -332,8 +332,6 @@ const RUNTIME_IDENTITY_E2E_OPTIONS = {
 } as const;
 
 async function runRuntimeIdentityE2EScenario(
-  _testNumber: string,
-  _providerLabel: string,
   scenario: RuntimeIdentityE2EScenario,
   context: RuntimeIdentityE2EContext,
 ): Promise<void> {
@@ -991,10 +989,10 @@ test
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
   RUNTIME_IDENTITY_E2E_OPTIONS,
   async (
-    [testNumber, providerLabel, scenario],
+    [, , scenario],
     { artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip },
   ) => {
-    await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, {
+    await runRuntimeIdentityE2EScenario(scenario, {
       artifacts,
       cleanup,
       host,

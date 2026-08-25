@@ -213,11 +213,10 @@ describe("Podman container engine command adapter", () => {
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-workspace-")),
     );
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
-    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => ({
-      status: 0,
-      stdout: args.includes("--format=%u:%g:%a:%F") ? "0:999:1775:directory\n" : "",
-      stderr: "",
-    }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+      const payload = JSON.parse(args.at(-1) ?? "{}") as Record<string, unknown>;
+      return { status: 0, stdout: JSON.stringify(payload), stderr: "" };
+    });
     const engine = createPodmanContainerEngine({
       operation: "managed-bootstrap",
       socketAuthority: AUTHORITY,
@@ -241,19 +240,23 @@ describe("Podman container engine command adapter", () => {
       gid: 999,
       mode: 0o1775,
     });
-    expect(capture.mock.calls.map((call) => call[1])).toEqual([
-      ["unshare", "chown", "--no-dereference", "0:999", "--", directory],
-      ["unshare", "chmod", "1775", "--", directory],
-      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[1].slice(0, 2)).toEqual([
+      "unshare",
+      `/proc/${String(process.pid)}/exe`,
     ]);
-    expect(capture.mock.calls.map((call) => call[4])).toEqual(
-      Array.from({ length: 3 }, () => ({
-        HOME: "/home/podman",
-        XDG_RUNTIME_DIR: "/run/user/1000",
-        CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
-        CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
-      })),
-    );
+    expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
+      path: directory,
+      uid: 0,
+      gid: 999,
+      mode: 0o1775,
+    });
+    expect(capture.mock.calls[0]?.[4]).toEqual({
+      HOME: "/home/podman",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
+    });
     expect(() => engine.captureHost(["unshare", "id"])).toThrow(
       "forbids ambient host command capture",
     );
@@ -266,11 +269,10 @@ describe("Podman container engine command adapter", () => {
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-volume-")),
     );
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
-    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => ({
-      status: 0,
-      stdout: args.includes("--format=%u:%g:%a:%F") ? "1000:1000:3770:directory\n" : "",
-      stderr: "",
-    }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+      const payload = JSON.parse(args.at(-1) ?? "{}") as Record<string, unknown>;
+      return { status: 0, stdout: JSON.stringify(payload), stderr: "" };
+    });
     const engine = createPodmanContainerEngine({
       operation: "managed-bootstrap",
       socketAuthority: AUTHORITY,
@@ -288,11 +290,13 @@ describe("Podman container engine command adapter", () => {
         mode: 0o3770,
       }),
     ).toMatchObject({ path: directory, uid: 1000, gid: 1000, mode: 0o3770 });
-    expect(capture.mock.calls.map((call) => call[1])).toEqual([
-      ["unshare", "chown", "--no-dereference", "1000:1000", "--", directory],
-      ["unshare", "chmod", "3770", "--", directory],
-      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
-    ]);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
+      path: directory,
+      uid: 1000,
+      gid: 1000,
+      mode: 0o3770,
+    });
   });
 
   it("shares only socket authority across real operation-scoped engines", () => {

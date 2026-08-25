@@ -1720,6 +1720,7 @@ export function createPodmanManagedBootstrapAdapter(
                 journal.phase === "commit-authorized" || journal.phase === "committed"
                   ? "podman-commit-incomplete"
                   : "podman-rollback-incomplete",
+              blockingScope: "provider",
               retryable: true,
               detail: error instanceof Error ? error.message : String(error),
             }),
@@ -2211,7 +2212,7 @@ function createLifecycle(
     createPodmanManagedBootstrapAdapter({
       engine,
       stateRoot: input.stateRoot,
-      environment: process.env,
+      environment: input.environment,
       gatewayPort: input.network.gatewayPort,
       workspaceRoot: input.workspaceRoot,
       ...(input.dependencies.runCaptureOpenshell

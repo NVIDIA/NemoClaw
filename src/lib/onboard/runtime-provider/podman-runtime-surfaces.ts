@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +46,97 @@ type SupportedSnapshotSurface = Extract<
 export const NATIVE_PODMAN_SANDBOX_HOST_ADDRESS = "169.254.2.2";
 export const NATIVE_PODMAN_RESOURCE_LABEL = "openshell.managed";
 export const NATIVE_PODMAN_RESOURCE_LABEL_VALUE = "true";
+
+type NativePodmanHostCommandResult = {
+  readonly status: number | null;
+  readonly stdout?: string | Buffer | null;
+  readonly stderr?: string | Buffer | null;
+  readonly error?: Error;
+};
+
+export interface NativePodmanGatewayHostPreparationDeps {
+  readonly ip?: (
+    args: readonly string[],
+    environment: NodeJS.ProcessEnv,
+  ) => NativePodmanHostCommandResult;
+  readonly sudo?: (
+    args: readonly string[],
+    environment: NodeJS.ProcessEnv,
+  ) => NativePodmanHostCommandResult;
+}
+
+function requireNativePodmanHostCommand(
+  result: NativePodmanHostCommandResult,
+  action: string,
+): void {
+  if (result.status === 0 && !result.error) return;
+  const detail = String(
+    result.stderr ?? result.stdout ?? result.error?.message ?? "unknown failure",
+  )
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(-500);
+  throw new Error(`${action} failed${detail ? `: ${detail}` : "."}`);
+}
+
+function nativePodmanHostAddressState(output: string): "absent" | "configured" | "conflicting" {
+  const assignments = output
+    .split(/\r?\n/u)
+    .map((line) => line.match(/^\d+:\s+(\S+)\s+inet\s+169\.254\.2\.2\/(\d+)\b/u))
+    .filter((match): match is RegExpMatchArray => match !== null);
+  if (assignments.length === 0) return "absent";
+  return assignments.length === 1 && assignments[0]?.[1] === "lo" && assignments[0]?.[2] === "32"
+    ? "configured"
+    : "conflicting";
+}
+
+export function ensureNativePodmanGatewayHostAddress(
+  environment: NodeJS.ProcessEnv,
+  deps: NativePodmanGatewayHostPreparationDeps = {},
+): void {
+  const ip =
+    deps.ip ??
+    ((args, env) =>
+      spawnSync("ip", [...args], {
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      }));
+  const sudo =
+    deps.sudo ??
+    ((args, env) =>
+      spawnSync("sudo", [...args], {
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      }));
+  const inspect = () => {
+    const result = ip(["-o", "-4", "address", "show"], environment);
+    requireNativePodmanHostCommand(result, "Inspecting the native Podman gateway address");
+    return nativePodmanHostAddressState(String(result.stdout ?? ""));
+  };
+  const initial = inspect();
+  if (initial === "configured") return;
+  if (initial === "conflicting") {
+    throw new Error(
+      `Native Podman gateway address ${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS} has a conflicting host assignment.`,
+    );
+  }
+  requireNativePodmanHostCommand(
+    sudo(
+      ["--", "ip", "address", "replace", `${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS}/32`, "dev", "lo"],
+      environment,
+    ),
+    "Configuring the native Podman gateway address",
+  );
+  if (inspect() !== "configured") {
+    throw new Error(
+      `Native Podman gateway address ${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS}/32 was not established on loopback.`,
+    );
+  }
+}
 
 type PodmanMount = Readonly<Record<string, unknown>>;
 const PODMAN_CONTAINER_ID = /^[a-f0-9]{64}$/u;
@@ -186,6 +278,7 @@ export function resolveNativePodmanSocketPath(
 export function prepareNativePodmanGatewayHostRuntime(
   input: RuntimeProviderGatewayHostRuntimeInput,
   boundEngine?: PodmanBoundContainerEngine,
+  hostPreparation?: NativePodmanGatewayHostPreparationDeps,
 ): RuntimeProviderGatewayHostRuntime {
   if (input.platform !== "linux") {
     throw new Error("Native Podman gateway runtime is supported only on Linux.");
@@ -195,6 +288,7 @@ export function prepareNativePodmanGatewayHostRuntime(
   if (engine.operation !== "gateway-inspection") {
     throw new Error("Native Podman gateway runtime requires its gateway-inspection engine.");
   }
+  if (hostPreparation) ensureNativePodmanGatewayHostAddress(input.environment, hostPreparation);
   const run = (args: readonly string[], timeoutMs: number) => {
     const result = engine.capture(args, timeoutMs);
     const error = result.error as NodeJS.ErrnoException | undefined;

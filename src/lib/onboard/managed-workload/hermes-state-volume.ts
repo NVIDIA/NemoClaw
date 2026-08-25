@@ -103,7 +103,7 @@ function genericDeps(
       ? requireRuntimeProviderBundle(runtimeProviderId, deps.runtimeProviders)
       : undefined);
   return {
-    ...(deps.runDocker ? { runContainerEngine: deps.runDocker } : {}),
+    ...(deps.runDocker && !runtimeProvider ? { runContainerEngine: deps.runDocker } : {}),
     ...(runtimeProvider ? { runtimeProvider } : {}),
     ...(deps.registerExitCleanup ? { registerExitCleanup: deps.registerExitCleanup } : {}),
   };

@@ -26,6 +26,27 @@ import {
 // Immutable metadata is checked before and after every dispatch. Rehash the
 // full executable before every 64th command within this operation.
 const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
+const MANAGED_ROOT_DESCRIPTOR_SCRIPT = `
+const fs = require("node:fs");
+const payload = JSON.parse(process.argv[1]);
+const flags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+const descriptor = fs.openSync(payload.path, flags);
+try {
+  const before = fs.fstatSync(descriptor, { bigint: true });
+  if (!before.isDirectory() || before.nlink < 1n || before.dev.toString() !== payload.device || before.ino.toString() !== payload.inode) {
+    throw new Error("managed root identity changed before descriptor-bound mutation");
+  }
+  fs.fchownSync(descriptor, payload.uid, payload.gid);
+  fs.fchmodSync(descriptor, payload.mode);
+  const after = fs.fstatSync(descriptor, { bigint: true });
+  if (!after.isDirectory() || after.nlink < 1n || after.dev !== before.dev || after.ino !== before.ino) {
+    throw new Error("managed root identity changed during descriptor-bound mutation");
+  }
+  process.stdout.write(JSON.stringify({ device: after.dev.toString(), inode: after.ino.toString(), uid: Number(after.uid), gid: Number(after.gid), mode: Number(after.mode & 0o7777n) }));
+} finally {
+  fs.closeSync(descriptor);
+}
+`;
 
 export interface PodmanContainerEngineOptions {
   readonly operation:
@@ -291,59 +312,49 @@ export function createPodmanContainerEngine(
     if (!before.isDirectory() || before.isSymbolicLink() || before.nlink < 1n) {
       throw new Error("Podman managed volume mountpoint is not one stable directory.");
     }
-    const runLocal = (args: readonly string[], action: string) => {
-      const result = boundEngine.captureHost(args, 15_000);
-      if (result.status !== 0 || result.error) {
-        const detail = (
-          result.stderr ||
-          result.stdout ||
-          result.error?.message ||
-          "unknown failure"
-        )
-          .replace(/\s+/gu, " ")
-          .trim()
-          .slice(-600);
-        throw new Error(
-          `Podman managed volume ${action} failed (exit ${String(result.status)}): ${detail}`,
-        );
-      }
-      return result;
-    };
-    runLocal(
-      [
-        "unshare",
-        "chown",
-        "--no-dereference",
-        `${String(input.uid)}:${String(input.gid)}`,
-        "--",
-        input.path,
-      ],
-      "ownership preparation",
+    const payload = JSON.stringify({
+      path: input.path,
+      device: before.dev.toString(),
+      inode: before.ino.toString(),
+      uid: input.uid,
+      gid: input.gid,
+      mode: input.mode,
+    });
+    const result = boundEngine.captureHost(
+      ["unshare", `/proc/${String(process.pid)}/exe`, "-e", MANAGED_ROOT_DESCRIPTOR_SCRIPT, payload],
+      15_000,
     );
-    const mode = input.mode.toString(8);
-    runLocal(["unshare", "chmod", mode, "--", input.path], "mode preparation");
-    const observed = runLocal(
-      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", input.path],
-      "authority observation",
-    ).stdout.trim();
-    if (observed !== `${String(input.uid)}:${String(input.gid)}:${mode}:directory`) {
+    if (result.status !== 0 || result.error) {
+      const detail = (result.stderr || result.stdout || result.error?.message || "unknown failure")
+        .replace(/\s+/gu, " ")
+        .trim()
+        .slice(-600);
       throw new Error(
-        `Podman managed volume authority is invalid after preparation (${observed || "empty observation"}).`,
+        `Podman managed volume descriptor preparation failed (exit ${String(result.status)}): ${detail}`,
       );
     }
-    const after = fs.lstatSync(input.path, { bigint: true });
+    let observed: unknown;
+    try {
+      observed = JSON.parse(result.stdout);
+    } catch {
+      throw new Error("Podman managed volume descriptor preparation returned invalid JSON.");
+    }
     if (
-      !after.isDirectory() ||
-      after.isSymbolicLink() ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino
+      !observed ||
+      typeof observed !== "object" ||
+      Array.isArray(observed) ||
+      (observed as Record<string, unknown>).device !== before.dev.toString() ||
+      (observed as Record<string, unknown>).inode !== before.ino.toString() ||
+      (observed as Record<string, unknown>).uid !== input.uid ||
+      (observed as Record<string, unknown>).gid !== input.gid ||
+      (observed as Record<string, unknown>).mode !== input.mode
     ) {
-      throw new Error("Podman managed volume mountpoint changed during preparation.");
+      throw new Error("Podman managed volume authority is invalid after descriptor preparation.");
     }
     return Object.freeze({
       path: input.path,
-      device: after.dev.toString(),
-      inode: after.ino.toString(),
+      device: before.dev.toString(),
+      inode: before.ino.toString(),
       uid: input.uid,
       gid: input.gid,
       mode: input.mode,

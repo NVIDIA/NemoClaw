@@ -258,6 +258,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
                   }),
             bootstrapIdentity: "e".repeat(64),
             code: "mxc-recovery-retry",
+            blockingScope: "sandbox",
             retryable: true,
             detail,
           }),
