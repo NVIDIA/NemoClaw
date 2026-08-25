@@ -3,8 +3,10 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import {
+  captureMcpAdapterRollbackState,
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type ScrubbedMcpAdapter,
 } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -133,15 +135,14 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: ScrubbedMcpAdapter[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     for (const entry of entries) {
       // The same-name replacement journal fingerprints this source row before
@@ -197,7 +198,7 @@ export async function prepareMcpBridgesForRebuild(
   return {
     entries,
     detachedProviderEntries: detached,
-    scrubbedAdapterEntries: scrubbedAdapters,
+    scrubbedAdapterEntries: scrubbedAdapters.map(({ entry }) => entry),
   };
 }
 
@@ -227,7 +228,14 @@ export async function reattachMcpProvidersAfterRebuildAbort(
     }
   }
   if (!runtimeRestored) {
-    failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
+    try {
+      const rollbackState = scrubbedAdapterEntries.map((entry) =>
+        captureMcpAdapterRollbackState(sandboxName, sandbox, entry),
+      );
+      failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, rollbackState));
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
   }
   if (failures.length > 0) {
     throw new McpBridgeError(failures.join("; "));

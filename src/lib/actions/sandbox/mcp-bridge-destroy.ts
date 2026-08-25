@@ -6,6 +6,7 @@ import * as registry from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type ScrubbedMcpAdapter,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
@@ -120,12 +121,11 @@ export async function prepareMcpBridgesForDestroy(
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: ScrubbedMcpAdapter[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     for (const entry of entries) {
       removeGeneratedPolicy(sandboxName, entry);
@@ -211,7 +211,7 @@ export async function prepareMcpBridgesForDestroy(
   return {
     entries,
     detachedProviderEntries: detached,
-    scrubbedAdapterEntries: scrubbedAdapters,
+    scrubbedAdapterEntries: scrubbedAdapters.map(({ entry }) => entry),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
   };

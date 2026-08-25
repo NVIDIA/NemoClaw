@@ -5,7 +5,28 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import {
+  type McpAttachedCredentialRevision,
+  observeMcpCredentialRevision,
+} from "./mcp-bridge-provider-readiness";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
+
+export interface ScrubbedMcpAdapter {
+  entry: McpBridgeEntry;
+  credentialRevision?: McpAttachedCredentialRevision;
+}
+
+/** Capture the attached revision required for a fail-closed adapter rollback. */
+export function captureMcpAdapterRollbackState(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  entry: McpBridgeEntry,
+): ScrubbedMcpAdapter {
+  const adapter = resolveManagedMcpAdapter(sandbox, entry);
+  if (adapter === "deepagents-config") return { entry };
+  const credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+  return credentialRevision === "absent" ? { entry } : { entry, credentialRevision };
+}
 
 /** Resolve the exact persisted adapter, falling back only for legacy entries. */
 export function resolveManagedMcpAdapter(
@@ -22,8 +43,9 @@ export function scrubManagedMcpAdapterOrThrow(
   sandboxName: string,
   sandbox: SandboxEntry,
   entry: McpBridgeEntry,
-): void {
+): ScrubbedMcpAdapter {
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
+  const rollbackState = captureMcpAdapterRollbackState(sandboxName, sandbox, entry);
   const removal = unregisterAgentAdapter(sandboxName, adapter, entry, {
     envValues: {},
     teardown: true,
@@ -33,25 +55,33 @@ export function scrubManagedMcpAdapterOrThrow(
       `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'.`,
     );
   }
+  return rollbackState;
 }
 
 /** Restore scrubbed adapter entries without hiding failures from provider rollback. */
 export function rollbackScrubbedMcpAdapters(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
+  scrubbedAdapters: readonly ScrubbedMcpAdapter[],
 ): string[] {
   const failures: string[] = [];
-  for (const entry of entries) {
+  for (const { entry, credentialRevision } of scrubbedAdapters) {
     try {
+      const adapter = resolveManagedMcpAdapter(sandbox, entry);
+      if (adapter !== "deepagents-config" && credentialRevision === undefined) {
+        throw new McpBridgeError(
+          `Could not prove an attached credential revision while rolling back MCP adapter '${entry.server}'.`,
+        );
+      }
       registerAgentAdapter(
         sandboxName,
-        resolveManagedMcpAdapter(sandbox, entry),
+        adapter,
         entry,
         {},
         {
           replaceExisting: true,
           teardownRollback: true,
+          ...(credentialRevision === undefined ? {} : { credentialRevision }),
         },
       );
     } catch (error) {

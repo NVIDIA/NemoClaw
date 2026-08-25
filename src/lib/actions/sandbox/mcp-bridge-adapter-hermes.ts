@@ -22,6 +22,7 @@ import {
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import { formatGatewayRecoveryCommand } from "./gateway-failure-classifier";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
@@ -148,7 +149,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
     if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
     if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
       throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
+        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`${formatGatewayRecoveryCommand(sandboxName)}\` and retry.`,
       );
     }
     throw new McpBridgeError(
