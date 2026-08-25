@@ -82,6 +82,20 @@ describe("OpenShell endpointless provider profiles", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
+  it("imports after OpenShell wraps the missing-profile message (#10155)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"provider profile\n  │ not found\"",
+      })
+      .mockReturnValueOnce({ status: 0 });
+
+    expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
   it("does not import after an unrelated structured not-found response (#10155)", () => {
     const runOpenshell = vi.fn().mockReturnValueOnce({
       status: 1,
@@ -124,6 +138,15 @@ describe("OpenShell endpointless provider profiles", () => {
       status: 1,
       stderr: "gateway unavailable",
     });
+
+    expect(ensureProfile(runOpenshell)).toEqual({ ok: false, reason: "export-failed" });
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
+  it("does not import when profile inspection has no exit status (#10155)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: null, stderr: "provider profile not found" });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: false, reason: "export-failed" });
     expect(runOpenshell).toHaveBeenCalledOnce();

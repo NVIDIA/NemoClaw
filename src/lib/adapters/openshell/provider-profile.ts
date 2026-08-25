@@ -46,11 +46,12 @@ function commandStdout(result: { readonly output?: unknown; readonly stdout?: un
 function isMissingProviderProfile(output: string, profileId: string): boolean {
   const normalized = output
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
-    .replace(/\r/g, "")
+    .replace(/\r/gu, "")
+    .replace(/\n\s*│\s*/gu, " ")
     .trim();
   const escapedProfileId = profileId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const missingMessage = new RegExp(
-    `^(?:provider )?profile(?: ['\"]${escapedProfileId}['\"])? not found$`,
+    `^(?:(?:custom )?provider )?profile(?: ['\"]${escapedProfileId}['\"])? not found[.!]?$`,
     "iu",
   );
   if (missingMessage.test(normalized)) return true;
@@ -118,6 +119,9 @@ export function ensureEndpointlessProviderProfile(input: {
       : { ok: false, reason: "incompatible" };
   }
 
+  if (!Number.isInteger(exported.status)) {
+    return { ok: false, reason: "export-failed" };
+  }
   const exportOutput = commandOutput(exported);
   if (!isMissingProviderProfile(exportOutput, input.profileId)) {
     return { ok: false, reason: "export-failed" };
