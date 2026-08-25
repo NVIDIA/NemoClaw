@@ -10,6 +10,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  closeServer,
+  createRejectedSlackConnectProxy,
+  createSlackSocketClient,
+  createSuccessfulSlackConnectProxy,
+  listenOnLoopback,
+} from "./fixtures/slack-connect-proxy.ts";
+import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   DISCORD_GATEWAY_PROOF_SOURCE,
@@ -124,7 +131,43 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
   });
 }
 
-describe("OpenClaw Discord pairing helper contracts", () => {
+describe("OpenClaw pairing helper contracts", () => {
+  it("establishes an HTTP CONNECT tunnel before the fake Slack WebSocket upgrade", async () => {
+    const targetPort = 4443;
+    const envelope = { payload: { event: { type: "message" } } };
+    const proxy = createSuccessfulSlackConnectProxy(envelope);
+    const proxyPort = await listenOnLoopback(proxy.server);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, targetPort)()).resolves.toEqual(envelope);
+      await vi.waitFor(() => expect(proxy.websocketBytes()).toBeGreaterThan(0), {
+        interval: 10,
+        timeout: 1_000,
+      });
+      expect(proxy.requests).toHaveLength(2);
+      expect(proxy.requests[0]).toMatch(
+        new RegExp(`^CONNECT host\\.openshell\\.internal:${targetPort} HTTP/1\\.1`, "u"),
+      );
+      expect(proxy.requests[1]).toMatch(/^GET \/socket-mode HTTP\/1\.1/u);
+      expect(proxy.requests[1]).not.toContain("http://");
+    } finally {
+      await closeServer(proxy.server);
+    }
+  });
+
+  it("rejects a non-200 OpenShell proxy CONNECT response", async () => {
+    const proxy = createRejectedSlackConnectProxy();
+    const proxyPort = await listenOnLoopback(proxy);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, 4443)()).rejects.toThrow(
+        "OpenShell proxy CONNECT failed: HTTP/1.1 502 Bad Gateway",
+      );
+    } finally {
+      await closeServer(proxy);
+    }
+  });
+
   it("shell-quotes pairing code and user without command substitution", () => {
     const code = "abc$(touch /tmp/e2e-should-not-run)";
     const user = "user`touch /tmp/e2e-should-not-run`";
@@ -292,20 +335,20 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       env: { HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Discord Gateway proof",
     },
-  ])("fails closed on invalid Discord Gateway proxy input before network access: $name", ({
-    env,
-    error,
-  }) => {
-    const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
-      encoding: "utf8",
-      env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
-    });
+  ])(
+    "fails closed on invalid Discord Gateway proxy input before network access: $name",
+    ({ env, error }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
+        encoding: "utf8",
+        env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toEqual(expect.stringContaining(error));
-    expect(result.stderr).not.toContain("ECONNREFUSED");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toEqual(expect.stringContaining(error));
+      expect(result.stderr).not.toContain("ECONNREFUSED");
+    },
+  );
 
   it("rejects malformed sandboxNode env keys before sandbox execution", async () => {
     const execShell = vi.fn(async () => {
