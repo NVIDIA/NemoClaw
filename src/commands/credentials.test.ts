@@ -28,6 +28,7 @@ vi.mock("../lib/actions/global", () => ({
   listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
 vi.mock("../lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
@@ -248,6 +249,37 @@ describe("credentials oclif adapter source coverage", () => {
     );
     expect(result.failureLines.join("\n")).not.toContain("host-only-secret");
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+    );
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
+
+  it("stops before provider creation when OpenAI profile inspection times out", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: null,
+      stdout: "",
+      stderr: "operation timed out",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "openai-prod",
+      type: "openai",
+      credentials: ["OPENAI_API_KEY"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain("could not be read for validation");
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
       ["provider", "profile", "export", "openai", "--output", "json"],
       {

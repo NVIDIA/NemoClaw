@@ -52,9 +52,9 @@ const testState = vi.hoisted(() => {
 });
 
 vi.mock("../../src/lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: testState.runOpenshellProviderCommand,
 }));
-
 vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./provider-command";
 
 export type EndpointlessProviderProfileRunner = (
   args: string[],
@@ -9,6 +10,7 @@ export type EndpointlessProviderProfileRunner = (
     readonly ignoreError?: boolean;
     readonly suppressOutput?: boolean;
     readonly stdio?: ["ignore", "pipe", "pipe"];
+    readonly timeout?: number;
   },
 ) => {
   readonly status?: number | null;
@@ -103,6 +105,7 @@ export function ensureEndpointlessProviderProfile(input: {
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
 
   const exported = exportProfile();
@@ -122,7 +125,12 @@ export function ensureEndpointlessProviderProfile(input: {
 
   const imported = input.runOpenshell(
     ["provider", "profile", "import", "--file", input.profilePath],
-    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
   );
   if (imported.status === 0) return { ok: true };
 

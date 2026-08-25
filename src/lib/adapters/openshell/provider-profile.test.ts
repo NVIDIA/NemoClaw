@@ -46,12 +46,22 @@ describe("OpenShell endpointless provider profiles", () => {
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
     );
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["provider", "profile", "import", "--file", PROFILE_PATH],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
     );
   });
 
