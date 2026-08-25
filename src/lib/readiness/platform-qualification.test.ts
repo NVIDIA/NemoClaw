@@ -511,16 +511,27 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    "7.6.0",
-    "7.6.1",
-  ])("accepts no-OTA DGX OS %s without binding its build date", (version) => {
-    expect(
-      collectStationIdentity(noOtaStationRelease({ version, buildDate: "2099-01-02-03-04-05" })),
-    ).toMatchObject({
-      stationProfile: "supported-dgx-os",
-      stationGb300PciGpu: true,
-    });
-  });
+    ["7.6.0", "NVIDIA DGX GB300WS"],
+    ["7.6.0", "NVIDIA DGX Server"],
+    ["7.6.1", "NVIDIA DGX GB300WS"],
+    ["7.6.1", "NVIDIA DGX Server"],
+  ])(
+    "accepts no-OTA DGX OS %s with the %s display name without binding its build date (#9898)",
+    (version, prettyName) => {
+      expect(
+        collectStationIdentity(
+          noOtaStationRelease({
+            version,
+            prettyName,
+            buildDate: "2099-01-02-03-04-05",
+          }),
+        ),
+      ).toMatchObject({
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+      });
+    },
+  );
 
   it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as supported-ai-developer-tools (#7979)", () => {
     expect(
@@ -534,7 +545,7 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["different lineage", { prettyName: "NVIDIA DGX Server" }],
+    ["different lineage", { prettyName: "Unrecognized DGX Station" }],
     ["older no-OTA version", { version: "7.5.0" }],
     ["future release family", { version: "7.7.0" }],
     ["non-numeric patch", { version: "7.6.rc1" }],

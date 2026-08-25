@@ -16,6 +16,8 @@ const RUNTIME_CONFIG_GUARD = path.join(
   "hermes",
   "runtime-config-guard.py",
 );
+const PY_YAML_AVAILABLE =
+  spawnSync("python3", ["-c", "import yaml"], { stdio: "ignore" }).status === 0;
 
 type ProjectEntry = { test?: { name?: string; setupFiles?: string[] } };
 const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
@@ -74,15 +76,17 @@ it("propagates the safe umask to spawned fixture processes (#6448)", () => {
   expect(mode & 0o022).toBe(0);
 });
 
-it("does not weaken the guard: an explicitly group/world-writable config is still rejected (#6448)", () => {
-  // The normalization only affects how test fixtures are created; the production
-  // guard must still fail closed on an explicitly unsafe (0o666) runtime config
-  // path. This proves the harness change did not relax the security boundary.
-  const result = spawnSync(
-    "python3",
-    [
-      "-c",
-      String.raw`
+it.skipIf(!PY_YAML_AVAILABLE)(
+  "does not weaken the guard: an explicitly group/world-writable config is still rejected (#6448)",
+  () => {
+    // The normalization only affects how test fixtures are created; the production
+    // guard must still fail closed on an explicitly unsafe (0o666) runtime config
+    // path. This proves the harness change did not relax the security boundary.
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
 import importlib.util, os, sys, tempfile
 
 spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
@@ -102,14 +106,15 @@ except guard.UnsafePathError as exc:
 else:
     sys.stdout.write("ACCEPTED")
 `,
-      RUNTIME_CONFIG_GUARD,
-    ],
-    { encoding: "utf-8", timeout: 5000 },
-  );
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("REJECTED:");
-  expect(result.stdout).toContain("group/world-writable");
-});
+        RUNTIME_CONFIG_GUARD,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("REJECTED:");
+    expect(result.stdout).toContain("group/world-writable");
+  },
+);
 
 // Named vitest projects (config objects), used by the config-contract guards
 // below. A future edit that drops or misorders the setup would otherwise only

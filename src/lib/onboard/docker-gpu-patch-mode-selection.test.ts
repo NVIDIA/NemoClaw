@@ -162,6 +162,28 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     ]);
   });
 
+  it("can prohibit image pulls during GPU mode probes", () => {
+    const dockerRun = vi.fn<NonNullable<DockerGpuPatchDeps["dockerRun"]>>(() => ({
+      status: 0,
+      stdout: "probe-id",
+    }));
+
+    selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc", pullPolicy: "never" },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      },
+    );
+
+    expect(dockerRun.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["create", "--pull", "never", "openshell/sandbox:abc", "true"]),
+    );
+  });
+
   it("falls back to NVIDIA runtime when Docker rejects --gpus", () => {
     const dockerRun = vi
       .fn()
