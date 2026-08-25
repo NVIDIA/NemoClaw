@@ -970,8 +970,8 @@ function normalizeOllamaPullModel(model: string): string {
   return value;
 }
 
-function buildLocalOllamaEndpoint(): string {
-  const host = getResolvedOllamaHost();
+function buildLocalOllamaEndpoint(resolveHost = getResolvedOllamaHost): string {
+  const host = resolveHost();
   const allowedHosts = new Set(["127.0.0.1", "localhost", "::1", OLLAMA_HOST_DOCKER_INTERNAL]);
   if (!allowedHosts.has(host)) {
     throw new Error(`Refusing to contact unexpected Ollama host: ${host}`);
@@ -1328,6 +1328,7 @@ export type OllamaUnloadResult = {
 };
 
 type OllamaUnloadOptions = {
+  readonly getResolvedOllamaHost?: typeof getResolvedOllamaHost;
   readonly maxAttempts?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly spawnSync?: typeof spawnSync;
@@ -1442,7 +1443,9 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
-  const releaseEndpoint = buildLocalOllamaEndpoint();
+  const releaseEndpoint = buildLocalOllamaEndpoint(
+    options.getResolvedOllamaHost ?? getResolvedOllamaHost,
+  );
   const spawnSyncImpl = options.spawnSync ?? spawnSync;
   const sleepImpl = options.sleep ?? defaultReleaseSleep;
   const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
