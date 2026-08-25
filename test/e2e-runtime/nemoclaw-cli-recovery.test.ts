@@ -15,7 +15,7 @@ describe("nemoclaw CLI runtime recovery", () => {
     "recovers sandbox status when openshell is only available via the resolved fallback path",
     testTimeoutOptions(15_000),
     () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
+      const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recovery-"));
       const homeLocalBin = path.join(tmpDir, ".local", "bin");
       const stateDir = path.join(tmpDir, "state");
