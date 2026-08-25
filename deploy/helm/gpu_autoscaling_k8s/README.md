@@ -729,16 +729,6 @@ sum by (pod) (
 
 After scale-up you should see multiple pod series. metrics-proxy `/metrics` scraping is on by default (`metrics.serviceMonitor.enabled: true`) after `install-hpa.sh`. If latency graphs stay empty while GPU util still moves, check `kubectl get servicemonitor -n nemoclaw-gpu` and re-run `install-hpa.sh` if the ServiceMonitor was disabled.
 
-## Scripts
-
-See [`scripts/README.md`](scripts/README.md) for the single script-purpose reference.
-
-### Upgrade from pre-metrics-proxy releases
-
-Older chart revisions misnamed the GPU front door Deployment/Service/HPA/Gateway with a `…-agent` suffix (labels `component=agent` or `gpu-agent`). That object was **never** the OpenClaw/NemoClaw AI agent. Current revisions use `…-metrics-proxy` / `component=gpu-metrics-proxy` only.
-
-`install-hpa.sh`, `hpa-reset.sh`, and `hpa-load-test.sh` call `hpa_common_migrate_pre_metrics_proxy_resources` **before** Helm upgrade: they detect those historical leftovers (by old basename and label) and delete them—including orphaned keep-policy Secrets—so an upgrade cannot leave both workloads competing for GPUs. A fresh install of this head only creates `…-metrics-proxy` names.
-
 ## Uninstall
 
 Stop the running agent (`scripts/run-agent-sandbox.sh` for OpenClaw/Hermes; Deep Agents Code exits after each `run-agent-prompt.sh` call — nothing to stop). With OpenShell port-forward still up (substitute your agent's sandbox/provider name — `nemoclaw-onprem`/`onprem-ollama` for OpenClaw, `hermes-onprem`/`onprem-hermes` for Hermes, `deepagents-onprem`/`onprem-deepagents` for Deep Agents Code):
