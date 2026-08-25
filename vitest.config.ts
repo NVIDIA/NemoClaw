@@ -17,8 +17,11 @@ import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { installMalformedSourceMapCompatibility } from "./test/helpers/vitest-malformed-source-map-compat";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
 import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
+
+installMalformedSourceMapCompatibility();
 
 const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -26,6 +29,9 @@ const runLiveE2E = shouldRunLiveE2E();
 const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundary.cts");
 const canonicalCredentialFilterBoundary = path.resolve(
   "nemoclaw/src/shared/credential-filter-boundary.cts",
+);
+const canonicalOpenShellExternalTargetBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
@@ -48,6 +54,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*credential-filter-boundary\.cjs$/,
     replacement: canonicalCredentialFilterBoundary,
+  },
+  {
+    find: /^.*openshell-external-target-boundary\.cjs$/,
+    replacement: canonicalOpenShellExternalTargetBoundary,
   },
   {
     find: /^.*openshell-policy-boundary\.cjs$/,

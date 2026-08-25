@@ -35,7 +35,7 @@ import {
   removeExactDestroyContainerIdentity,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
-import type { DestroyRunOpenshell } from "./destroy-gateway";
+import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -44,7 +44,7 @@ import {
   prepareMcpBridgesForDestroy,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
-import { wipeSandboxState } from "./wipe-state";
+import { SandboxWorkspaceCleanupTimeoutError, wipeSandboxState } from "./wipe-state";
 
 export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
@@ -95,6 +95,8 @@ export type SandboxDestroyExecutionResult =
       deleteOutput: string;
       exitCode: number;
       gatewayUnreachable: boolean;
+      timedOut?: true;
+      workspaceTimeoutRequiresShieldsRecovery?: true;
       hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
@@ -204,9 +206,11 @@ function wipeAndHardenLiveSandbox(
       `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
     );
     console.warn(
-      `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the auto-restore timer keeps retrying the lock until it succeeds " +
-        "or the sandbox is deleted or rebuilt.",
+      `  Continuing with delete: '${sandboxName}' and its unguarded config are removed together. ` +
+        "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
+        "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
+        "If the budget is exhausted, durable containment blocks sandbox mutations. " +
+        `Run \`nemoclaw ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
@@ -454,7 +458,31 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
-    const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    let hardened: HardenedDeleteState;
+    try {
+      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    } catch (error) {
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
+      const workspaceTimedOut = error instanceof SandboxWorkspaceCleanupTimeoutError;
+      const workspaceTimeoutRequiresShieldsRecovery =
+        workspaceTimedOut && (deps.readTimerMarker ?? readTimerMarker)(sandboxName) !== null;
+      return {
+        ok: false,
+        deleteOutput:
+          `${redactDestroyError(error)} No provider cleanup or sandbox deletion was attempted. ` +
+          "Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
+        exitCode: 1,
+        gatewayUnreachable: false,
+        ...(workspaceTimedOut ? { timedOut: true as const } : {}),
+        ...(workspaceTimeoutRequiresShieldsRecovery
+          ? { workspaceTimeoutRequiresShieldsRecovery: true as const }
+          : {}),
+        hostLocalInferenceOwnershipRequiresGateway: false,
+        mcpOwnershipRequiresGateway: false,
+        mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: false,
+      };
+    }
     const detachProviders = (): DetachSandboxProvidersResult =>
       runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const preProviderContinuity = inspectIdentityContinuity();
@@ -491,13 +519,19 @@ export async function executeSandboxDestroy({
     }
     const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
       ignoreError: true,
+      killSignal: "SIGKILL",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
     });
     const {
-      output: deleteOutput,
+      output: capturedDeleteOutput,
       alreadyGone,
       gatewayUnreachable,
+      timedOut,
     } = getSandboxDeleteOutcome(deleteResult);
+    const deleteOutput = timedOut
+      ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
+      : capturedDeleteOutput;
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
@@ -509,6 +543,7 @@ export async function executeSandboxDestroy({
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
+      !timedOut &&
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
@@ -524,6 +559,7 @@ export async function executeSandboxDestroy({
         deleteOutput,
         exitCode: deleteResult.status || 1,
         gatewayUnreachable,
+        ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
           gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,

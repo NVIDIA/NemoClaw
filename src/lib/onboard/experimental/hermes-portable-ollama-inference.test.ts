@@ -798,6 +798,80 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
   });
 
+  it("validates the exact OpenAI profile before Portable provider creation (#10155)", async () => {
+    const fixture = createRuntimeFixture();
+    const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
+
+    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
+
+    const profileExport = fixture.events.indexOf(
+      "openshell:provider profile export openai --output json",
+    );
+    const providerCreate = fixture.events.findIndex((event) =>
+      event.includes("provider create --name ollama-local"),
+    );
+    expect(profileExport).toBeGreaterThanOrEqual(0);
+    expect(providerCreate).toBeGreaterThan(profileExport);
+    expect(fixture.events.some((event) => event.includes("provider profile import"))).toBe(false);
+  });
+
+  it("imports a missing OpenAI profile before Portable provider creation (#10155)", async () => {
+    const fixture = createRuntimeFixture();
+    fixture.gatewayProvider.setProfileState("missing");
+    const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
+
+    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
+
+    const profileExport = fixture.events.indexOf(
+      "openshell:provider profile export openai --output json",
+    );
+    const profileImport = fixture.events.findIndex((event) =>
+      event.includes("provider profile import --file"),
+    );
+    const providerCreate = fixture.events.findIndex((event) =>
+      event.includes("provider create --name ollama-local"),
+    );
+    expect(profileExport).toBeGreaterThanOrEqual(0);
+    expect(profileImport).toBeGreaterThan(profileExport);
+    expect(providerCreate).toBeGreaterThan(profileImport);
+  });
+
+  it("rejects an incompatible OpenAI profile before Portable provider mutation (#10155)", async () => {
+    const fixture = createRuntimeFixture();
+    fixture.gatewayProvider.setProfileState("incompatible");
+    const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
+
+    expect(() => createExactGatewayProvider(mutation)).toThrow(
+      "does not match NemoClaw's endpointless inference contract",
+    );
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(
+      fixture.events.some((event) => event.includes("provider create --name ollama-local")),
+    ).toBe(false);
+    expect(gatewayJournal(fixture)).toMatchObject({ phase: "prepared" });
+  });
+
+  it("revalidates the OpenAI profile before reusing a Portable provider (#10155)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    fixture.gatewayProvider.setProfileState("incompatible");
+    const resumed = fixture.resolve({
+      ...freshPortableInput,
+      allowPublishedResume: true,
+      recover: true,
+    })!;
+    const mutation = await resumed.prepareGatewayMutation(gatewayMutationInput);
+
+    expect(() => createExactGatewayProvider(mutation)).toThrow(
+      "does not match NemoClaw's endpointless inference contract",
+    );
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
+    expect(fixture.events.some((event) => event.includes("provider delete"))).toBe(false);
+  });
+
   it("resumes the journaled provider-create crash window and publishes exact ownership (#9596)", async () => {
     // Crash-window state transitions:
     // S0 has no runtime, provider, journal, or receipt. Runtime preparation creates the container.

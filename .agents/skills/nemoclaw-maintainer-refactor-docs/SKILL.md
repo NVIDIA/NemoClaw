@@ -169,7 +169,7 @@ Run the existing deterministic checks rather than inventing another route model:
 ```bash
 npm run docs:sync-agent-variants
 npm run docs
-npx vitest run test/check-docs-published-routes.test.ts test/check-docs-links.test.ts
+npx vitest run test/generation/check-docs-published-routes.test.ts test/generation/check-docs-links.test.ts
 git diff --check
 ```
 

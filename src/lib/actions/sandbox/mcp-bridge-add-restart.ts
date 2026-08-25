@@ -482,8 +482,9 @@ async function addMcpBridgeUnlocked(
     registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
       // An exact adapter entry is evidence of a post-commit process death.
       // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // Mcporter must project the same live revision OpenShell will recognize
-      // at egress; its canonical, unversioned placeholder is not sufficient.
+      // Credential-bearing adapters must project the same live revision
+      // OpenShell will recognize at egress. The canonical placeholder omits
+      // the provider identity required by revision-bound credentials.
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
       credentialRevision,
     });

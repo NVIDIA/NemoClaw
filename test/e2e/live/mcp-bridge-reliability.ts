@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
@@ -9,6 +13,7 @@ import {
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
 const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
+export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -95,4 +100,18 @@ export async function retryHermesGatewayDraining<T extends HermesMcpCommandResul
     result = await options.retry(attempt);
   }
   return result;
+}
+
+export async function restartBridgeWithoutHostSecret(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactPrefix: string,
+): Promise<void> {
+  const restart = await host.nemoclaw([sandboxName, "mcp", "restart", "fake"], {
+    artifactName: `${artifactPrefix}-mcp-restart-provider-reuse`,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: MCP_BRIDGE_TEST_REDACTION_VALUES,
+    timeoutMs: 12 * 60_000,
+  });
+  assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
 }
