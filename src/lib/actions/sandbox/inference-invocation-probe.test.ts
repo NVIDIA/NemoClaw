@@ -317,6 +317,36 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain('"max_completion_tokens"');
   });
 
+  it("gives Gemini room to return content after reasoning (#10260)", () => {
+    const command = buildSandboxInferenceInvocationCommand({
+      ...input,
+      provider: "gemini-api",
+      model: "gemini-2.5-flash",
+    });
+
+    expect(command).toContain('"max_tokens":256');
+    expect(command).not.toContain('"max_completion_tokens"');
+  });
+
+  it("still rejects a structurally empty Gemini response (#10260)", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":null}}]}',
+      stderr: "",
+    }));
+
+    expect(
+      probeSandboxInferenceInvocation(
+        { ...input, provider: "gemini-api", model: "gemini-2.5-flash" },
+        { execute },
+      ),
+    ).toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned an invalid response body",
+      httpStatus: 200,
+    });
+  });
+
   it("sends max_output_tokens on the responses route", () => {
     const command = buildSandboxInferenceInvocationCommand({
       ...input,
