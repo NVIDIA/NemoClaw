@@ -3,6 +3,10 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+export function policyValuesEqual(left: unknown, right: unknown): boolean {
+  return isDeepStrictEqual(left, right);
+}
+
 import YAML from "yaml";
 
 export type PresetContentSource = { name: string; content: string | null };

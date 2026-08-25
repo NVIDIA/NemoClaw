@@ -40,6 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
     existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -1283,16 +1284,22 @@ describe("runner", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
       actionStatus("nc-run-1");
-      expect(stdoutText()).toContain('"status":"unknown"');
+      expect(capturedJsonOutput()).toMatchObject({ run_id: "nc-run-1", status: "unknown" });
     });
 
-    it("prints unknown status when plan.json is corrupt", () => {
+    it("reports recovery details when plan.json is corrupt", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
       addFile(`${RUNS_DIR}/nc-run-1/plan.json`, "{not valid json");
 
       actionStatus("nc-run-1");
 
-      expect(capturedJsonOutput()).toEqual({ run_id: "nc-run-1", status: "unknown" });
+      expect(capturedJsonOutput()).toEqual({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error: expect.stringContaining("JSON"),
+        run_directory: `${RUNS_DIR}/nc-run-1`,
+        recovery: expect.stringContaining("Restore a complete plan.json receipt"),
+      });
     });
 
     // ── Path traversal rejection ──────────────────────────────────
