@@ -280,8 +280,9 @@ $$nemoclaw <sandbox-name> rebuild
 
 On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable.
 NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration.
-An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry.
-If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
+An explicit `DOCKER_HOST` remains the sole Docker daemon authority, so NemoClaw ignores conflicting `DOCKER_CONTEXT` and `DOCKER_CONFIG` values for the build.
+Otherwise, an explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry.
+If that custom rebuild cannot reach the credential helper or private registry, restore access for the selected Docker daemon before retrying.
 
 <AgentOnly variant="openclaw">
 
