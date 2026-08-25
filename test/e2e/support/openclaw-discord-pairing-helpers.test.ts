@@ -283,7 +283,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
   });
 
-  it("sends the revision-scoped Discord placeholder to a credential endpoint (#10155)", async () => {
+  it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
     const captureFile = path.join(tmp, "capture.jsonl");
     const portFile = path.join(tmp, "port");
