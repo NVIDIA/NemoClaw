@@ -51,7 +51,7 @@ import {
   removePreset,
   restoreBaselineEntry,
 } from "./index";
-import { PolicyAuthorityRefusalError } from "./policy-registry";
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 
 const SANDBOX = "authority-9833";
 const BASE_POLICY = `version: 1
