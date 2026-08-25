@@ -255,7 +255,7 @@ describe("handleSandboxState live DCode selection", () => {
 
     expect(getDcodeSelectionDrift).toHaveBeenCalledOnce();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
   });
 
   it("reuses a ready OpenRouter-compatible sandbox after endpoint-aware verification (#9555)", async () => {
@@ -286,7 +286,7 @@ describe("handleSandboxState live DCode selection", () => {
       endpointUrl,
     );
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
   });
 
   it("refuses managed DCode reuse when the registry record is missing (#6311)", async () => {

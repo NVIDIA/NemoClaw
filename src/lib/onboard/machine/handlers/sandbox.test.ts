@@ -621,7 +621,7 @@ describe("handleSandboxState", () => {
       "saved",
       session.sessionId,
     );
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
     expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
       sandboxName: "saved",
