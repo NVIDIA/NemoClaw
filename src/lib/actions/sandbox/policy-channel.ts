@@ -1020,7 +1020,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   if (gatewayReachable) {
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
-      if (!bestEffort && detachFailedSet.has(name)) continue;
+      if (detachFailedSet.has(name)) continue;
       const result = runOpenshell(["provider", "delete", name], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],

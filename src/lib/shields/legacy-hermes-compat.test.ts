@@ -728,6 +728,7 @@ describe("legacy Hermes shields compatibility", () => {
     let verifyLockSpy: MockInstance;
     let routeSpy: MockInstance;
     let auditSpy: MockInstance;
+    let runCaptureSpy: MockInstance;
     let commands: string[][];
     let capabilityProbe: { error: Error | null; presence: string };
     let shields: typeof import("./index");
@@ -742,6 +743,7 @@ describe("legacy Hermes shields compatibility", () => {
         lifecycleGateSpy,
         registrySpy,
         routeSpy,
+        runCaptureSpy,
         runSpy,
         shields,
         spies,
@@ -827,16 +829,14 @@ describe("legacy Hermes shields compatibility", () => {
       });
     });
 
-    it.each(
-      [
-          "provider:mutable/locked",
-          "verified-mutable",
-          "policy",
-          "provider:locked/locked",
-          "route",
-          "audit",
-        ],
-    )(
+    it.each([
+      "provider:mutable/locked",
+      "verified-mutable",
+      "policy",
+      "provider:locked/locked",
+      "route",
+      "audit",
+    ])(
       "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
       (event) => {
         const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
@@ -1237,6 +1237,27 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("recursive mutable state drift under skills/pairing");
       expect(errors).toContain("NOT CONFIGURED (DRIFTED");
       expect(logs).not.toContain("NOT CONFIGURED (default mutable state)");
+      expect(transitionSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ target: "mutable", rollback: "mutable" }),
+      );
+    });
+
+    it("gates the live provider round trip on sandbox Phase, failing open when inconclusive (#10104)", () => {
+      lifecycleGateSpy.mockReturnValue(false);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`process exit ${String(code)}`);
+      }) as never);
+      spies.push(exitSpy);
+
+      runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
+      expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error).mock.calls.flat().map(String).join("\n")).toContain(
+        `Run 'nemoclaw ${sandbox.name} status'. Resolve the reported phase, then retry.`,
+      );
+
+      runCaptureSpy.mockReturnValue("");
+      expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
       expect(transitionSpy).toHaveBeenCalledWith(
         expect.objectContaining({ target: "mutable", rollback: "mutable" }),
       );
