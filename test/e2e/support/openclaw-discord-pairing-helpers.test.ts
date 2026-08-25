@@ -19,6 +19,7 @@ import {
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
 
 let child: ChildProcess | undefined;
 
@@ -281,11 +282,10 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
   });
 
-  it("reports the canonical Discord proof placeholder rejected after credential injection (#10155)", async () => {
+  it("sends the injected Discord proof placeholder to a revision-bound gateway (#10155)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
     const captureFile = path.join(tmp, "capture.jsonl");
     const portFile = path.join(tmp, "port");
-    const revisionPlaceholder = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
     try {
       child = spawn(
         process.execPath,
@@ -297,7 +297,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
             FAKE_DISCORD_GATEWAY_PORT: "0",
             FAKE_DISCORD_GATEWAY_PORT_FILE: portFile,
             FAKE_DISCORD_GATEWAY_CAPTURE_FILE: captureFile,
-            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: revisionPlaceholder,
+            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
           },
           stdio: "ignore",
         },
@@ -308,7 +308,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          DISCORD_BOT_TOKEN: revisionPlaceholder,
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
           FAKE_DISCORD_GATEWAY_PORT: String(port),
           HTTP_PROXY: "",
           http_proxy: "",
@@ -317,8 +317,8 @@ describe("OpenClaw Discord pairing helper contracts", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("IDENTIFY_SENT_PLACEHOLDER");
-      expect(result.stdout).toContain("CLOSE_4004");
-      expect(result.stdout).not.toContain("READY");
+      expect(result.stdout).toContain("READY");
+      expect(result.stdout).toContain("HEARTBEAT_ACK");
 
       const identify = fs
         .readFileSync(captureFile, "utf8")
@@ -327,13 +327,39 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         .map((line) => JSON.parse(line) as Record<string, unknown>)
         .find((row) => row.event === "identify");
       expect(identify).not.toHaveProperty("token");
-      expect(identify?.tokenMatchesExpected).toBe(false);
+      expect(identify?.tokenMatchesExpected).toBe(true);
       expect(identify?.tokenLooksPlaceholder).toBe(true);
     } finally {
       child?.kill("SIGTERM");
       child = undefined;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "canonical", value: "openshell:resolve:env:DISCORD_BOT_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "raw-discord-token" },
+  ])("rejects a $name Discord proof credential before network access (#10155)", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: localDiscordGatewayProofSource(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DISCORD_BOT_TOKEN: value,
+        FAKE_DISCORD_GATEWAY_PORT: "12345",
+        HTTP_PROXY: "",
+        http_proxy: "",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder",
+    );
+    expect(result.stderr).not.toContain("ECONNREFUSED");
+    expect(result.stderr).not.toContain("raw-discord-token");
   });
 
   it.each([
@@ -364,7 +390,12 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
       input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
       encoding: "utf8",
-      env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
+      env: {
+        ...process.env,
+        DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+        FAKE_DISCORD_GATEWAY_PORT: "12345",
+        ...env,
+      },
     });
 
     expect(result.status).not.toBe(0);

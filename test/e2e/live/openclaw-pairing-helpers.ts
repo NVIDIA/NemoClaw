@@ -720,7 +720,13 @@ import net from "node:net";
 
 const host = "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = "openshell:resolve:env:DISCORD_BOT_TOKEN";
+function rejectDiscordIdentifyToken() {
+  throw new Error("Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder");
+}
+const injectedDiscordToken = process.env.DISCORD_BOT_TOKEN || "";
+const identifyToken = /^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(injectedDiscordToken)
+  ? injectedDiscordToken
+  : rejectDiscordIdentifyToken();
 const results = [];
 
 function finish(message) {
