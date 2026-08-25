@@ -59,6 +59,49 @@ describe("runInferenceGet", () => {
     });
   });
 
+  it("reports an attached llama.cpp endpoint for an aligned sandbox route", async () => {
+    const deps = {
+      ...createDeps("Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n"),
+      getSandbox: () =>
+        ({
+          name: "llamacpp-env",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+    };
+
+    await expect(runInferenceGet({ sandboxName: "llamacpp-env" }, deps)).resolves.toEqual({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: llama-cpp-local",
+      "Model:    muse-glimmer",
+      "Llama.cpp: attached",
+      "Endpoint:  http://127.0.0.1:8081/v1",
+    ]);
+  });
+
+  it("does not attribute a sandbox route when the gateway route drifted", async () => {
+    const deps = {
+      ...createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n"),
+      getSandbox: () =>
+        ({
+          name: "llamacpp-env",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+    };
+
+    await expect(runInferenceGet({ sandboxName: "llamacpp-env", quiet: true }, deps)).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+    });
+  });
+
   it("sanitizes route values only for human-readable output", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: openai\u001b[2J\n  Model: gpt\u0007-5.4\r\n",

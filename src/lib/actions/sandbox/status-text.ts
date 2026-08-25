@@ -6,7 +6,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
-import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
+import { formatInferenceRouteDriftForDisplay, getLlamaCppRouteDetails } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import { getEffectiveReasoningEffort } from "../../inference/selection";
@@ -361,6 +361,11 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     console.log(`    Serving profile: ${provenance.preset.displayName} (${provenance.preset.id})`);
     console.log(`    Serving recipe:  ${provenance.recipe.id}`);
     console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
+  }
+  const llamaCpp = getLlamaCppRouteDetails(sb);
+  if (llamaCpp) {
+    console.log(`    Llama.cpp: ${llamaCpp.kind}`);
+    if (llamaCpp.kind === "attached") console.log(`    Endpoint: ${llamaCpp.endpointUrl}`);
   }
   const reasoningEffort = getEffectiveReasoningEffort(sb);
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);

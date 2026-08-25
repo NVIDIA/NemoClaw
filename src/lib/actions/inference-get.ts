@@ -3,21 +3,29 @@
 
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import { sanitizeRouteValueForDisplay } from "../inference/config";
+import {
+  getLlamaCppRouteDetails,
+  sanitizeRouteValueForDisplay,
+  type LlamaCppRouteDetails,
+} from "../inference/config";
 import { getLiveGatewayInference } from "../inference/live";
+import * as registry from "../state/registry";
 
 export interface InferenceGetOptions {
   json?: boolean;
   quiet?: boolean;
+  sandboxName?: string;
 }
 
 export interface InferenceGetResult {
   provider: string | null;
   model: string | null;
+  llamaCpp?: LlamaCppRouteDetails;
 }
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
+  getSandbox?: typeof registry.getSandbox;
   log: (message?: string) => void;
 }
 
@@ -52,9 +60,17 @@ export async function runInferenceGet(
     throw new InferenceGetError("OpenShell inference route is not configured.");
   }
 
-  const payload = {
+  const sandbox = options.sandboxName
+    ? (deps.getSandbox ?? registry.getSandbox)(options.sandboxName)
+    : null;
+  const llamaCpp =
+    sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
+      ? getLlamaCppRouteDetails(sandbox)
+      : null;
+  const payload: InferenceGetResult = {
     provider: result.inference.provider,
     model: result.inference.model,
+    ...(llamaCpp ? { llamaCpp } : {}),
   };
   if (!options.quiet) {
     if (options.json) {
@@ -62,6 +78,12 @@ export async function runInferenceGet(
     } else {
       deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
       deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+      if (payload.llamaCpp) {
+        deps.log(`Llama.cpp: ${payload.llamaCpp.kind}`);
+        if (payload.llamaCpp.kind === "attached") {
+          deps.log(`Endpoint:  ${payload.llamaCpp.endpointUrl}`);
+        }
+      }
     }
   }
 

@@ -1993,6 +1993,8 @@ The line is omitted for another provider or API family.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+For a recognized llama.cpp route, `llamaCpp.kind` is `attached` or `managed`.
+An attached route also includes its fixed loopback `llamaCpp.endpointUrl`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
 `baselineExclusionStates` reports each recorded key with its current verification state.
 The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
@@ -4265,7 +4267,10 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+The sandbox-first grammar `$$nemoclaw <name> inference get` reads the same gateway-wide route and adds durable llama.cpp ownership details when the recorded sandbox route matches it.
+For an attached llama.cpp server, text output identifies `Llama.cpp: attached` and prints the fixed loopback endpoint.
+JSON output includes `llamaCpp.kind: "attached"` and `llamaCpp.endpointUrl`.
+For a NemoClaw-managed llama.cpp server, the command reports `Llama.cpp: managed` and JSON output includes `llamaCpp.kind: "managed"`.
 
 ```bash
 $$nemoclaw my-assistant inference get

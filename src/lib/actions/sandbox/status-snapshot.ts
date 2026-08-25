@@ -13,7 +13,9 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  getLlamaCppRouteDetails,
   type GatewayInference,
+  type LlamaCppRouteDetails,
   parseGatewayInference,
   planInferenceRouteReconcile,
   type RecordedInferenceRoute,
@@ -158,6 +160,7 @@ export interface SandboxStatusReport {
   model: string;
   provider: string;
   servingProfileProvenance: ServingProfileProvenance | null;
+  llamaCpp?: LlamaCppRouteDetails | null;
   recordedRoute: RecordedInferenceRoute | null;
   liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
@@ -759,6 +762,7 @@ async function buildSandboxStatusReport(
     model: liveRoute?.model ?? currentModel,
     provider: liveRoute?.provider ?? currentProvider,
     servingProfileProvenance: sb?.servingProfileProvenance ?? null,
+    llamaCpp: getLlamaCppRouteDetails(sb),
     recordedRoute,
     liveRoute,
     routeDrift,

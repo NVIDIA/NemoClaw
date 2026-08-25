@@ -25,9 +25,12 @@ export default class SandboxInferenceGetCommand extends NemoClawCommand {
   static flags = {};
 
   public async run(): Promise<unknown> {
-    await this.parse(SandboxInferenceGetCommand);
+    const { args } = await this.parse(SandboxInferenceGetCommand);
     try {
-      const result = await runInferenceGet({ quiet: this.jsonEnabled() });
+      const result = await runInferenceGet({
+        quiet: this.jsonEnabled(),
+        sandboxName: args.sandboxName,
+      });
       if (this.jsonEnabled()) return result;
     } catch (error) {
       if (error instanceof InferenceGetError) {
