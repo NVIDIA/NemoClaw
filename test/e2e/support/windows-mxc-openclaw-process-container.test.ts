@@ -450,6 +450,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_TOKEN")');
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_MOCK_PORT")');
+    expect(agent).toContain('body?.model !== "mock-chat"');
+    expect(agent).toContain('message.role === "user"');
     expect(agent).toContain("if (gateway.pid !== undefined)");
     expect(agent).toContain('gateway.once("error"');
     expect(agent).toContain("writeFileSync(outcomePath");

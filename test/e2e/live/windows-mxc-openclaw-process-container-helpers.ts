@@ -848,6 +848,19 @@ const mock = createServer(async (request, response) => {
     response.end(JSON.stringify({ error: { message: "invalid JSON" } }));
     return;
   }
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const hasUserMessage = messages.some(
+    (message) =>
+      message !== null &&
+      typeof message === "object" &&
+      message.role === "user" &&
+      Object.hasOwn(message, "content"),
+  );
+  if (body?.model !== "mock-chat" || !hasUserMessage) {
+    response.writeHead(400, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "unexpected chat request" } }));
+    return;
+  }
   const id = "chatcmpl-mxc-deterministic";
   const created = Math.floor(Date.now() / 1000);
   if (body.stream === true) {
