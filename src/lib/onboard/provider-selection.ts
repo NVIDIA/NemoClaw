@@ -63,7 +63,10 @@ export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption
   remoteProviderConfig: Record<string, RemoteProviderConfigEntryLike>;
   isWsl: boolean;
   isWindowsHostOllama: boolean;
+  /** True when the selected container runtime can route to the Windows host. */
   windowsHostOllamaSupported: boolean;
+  /** True only when a Docker Desktop container reached the Windows daemon. */
+  windowsHostOllamaReachable?: boolean;
   hermesProviderAvailable: boolean;
   /**
    * True when the onboard probe already reached a live Ollama daemon, on
@@ -113,15 +116,10 @@ function isWindowsHostOllamaRequest(providerKey: string): boolean {
 
 /**
  * A daemon that already answers on the Ollama port makes a Windows-host install
- * request unnecessary. Express emits `install-windows-ollama` from a Docker-only
- * check that never probes Ollama (`scripts/install.sh`), so the key arrives even
- * while the daemon is running. Under WSL mirrored networking the Windows daemon
- * answers on loopback, `isWindowsHostOllama` reads false, the menu keeps the
- * install entry, and onboarding reinstalls through PowerShell interop — the same
- * interop whose failure produced the false "no Windows Ollama" reading (#7472).
- *
- * Keyed on the observed daemon rather than on the networking mode, so a future
- * WSL networking mode needs no new condition here.
+ * request unnecessary only when Docker can reach that daemon. Express emits
+ * `install-windows-ollama` from a Docker-topology check that does not probe
+ * Ollama, so the key can arrive while a Windows daemon still binds to loopback.
+ * Route that state through the existing restart action before model selection.
  *
  * Scoped to the Windows-host key on purpose. This helper does not touch
  * `install-ollama`: `resolveOllamaInstallMenuEntry` keeps that entry for a
@@ -137,6 +135,9 @@ function collapseWindowsInstallToRunningDaemon<T extends ProviderOption>(
   // integration for the sandbox to reach it. Leave that request to the
   // unsupported-runtime rejection below instead of silently reusing it.
   if (input.isWindowsHostOllama && !input.windowsHostOllamaSupported) return undefined;
+  if (input.isWindowsHostOllama && input.windowsHostOllamaReachable !== true) {
+    return findOption(input.options, "start-windows-ollama");
+  }
   return findOption(input.options, "ollama");
 }
 
@@ -187,6 +188,31 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     }
   }
 
+  const canUseWindowsHostOllama =
+    input.isWindowsHostOllama &&
+    input.windowsHostOllamaSupported &&
+    input.windowsHostOllamaReachable === true;
+
+  if (providerKey === "ollama" && input.isWindowsHostOllama && !canUseWindowsHostOllama) {
+    if (!input.windowsHostOllamaSupported) {
+      return {
+        kind: "failure",
+        reason: {
+          kind: "unsupported-windows-host-ollama",
+          providerKey,
+        },
+      };
+    }
+    const restart = findOption(input.options, "start-windows-ollama");
+    if (restart) {
+      return { kind: "selected", selected: restart, recoveredFromSandbox, recoveredModel };
+    }
+    return {
+      kind: "failure",
+      reason: { kind: "requested-provider-unavailable", providerKey },
+    };
+  }
+
   const runningDaemon = collapseWindowsInstallToRunningDaemon(input, providerKey);
   if (runningDaemon) {
     return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
@@ -212,7 +238,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   }
 
   const fallback = resolveProviderKeyFallback(input.options, providerKey, {
-    canUseWindowsHostOllama: input.isWindowsHostOllama && input.windowsHostOllamaSupported,
+    canUseWindowsHostOllama,
   });
   if (fallback) {
     return {

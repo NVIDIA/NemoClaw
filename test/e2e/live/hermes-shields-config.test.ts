@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import {
+  HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
+  HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -28,6 +31,7 @@ const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
 const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const COMMAND_TIMEOUT_MS = 120_000;
+const SHIELDS_COMMAND_TIMEOUT_MS = HERMES_SHIELDS_COMMAND_TIMEOUT_MS;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -89,7 +93,7 @@ async function runShields(
     artifactName,
     env: commandEnv(),
     redactionValues: [COMPATIBLE_API_KEY],
-    timeoutMs: COMMAND_TIMEOUT_MS,
+    timeoutMs: SHIELDS_COMMAND_TIMEOUT_MS,
   });
 }
 

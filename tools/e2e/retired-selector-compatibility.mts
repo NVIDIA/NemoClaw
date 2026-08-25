@@ -77,11 +77,11 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     ],
   },
   "gateway-drift-preflight": {
-    tests: [{ files: ["test/gateway-drift-preflight.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-drift-preflight.test.ts"], project: "integration" }],
   },
   "gateway-health-honest": {
     legacyFile: "test/e2e/live/gateway-health-honest.test.ts",
-    tests: [{ files: ["test/gateway-health-honest.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-health-honest.test.ts"], project: "integration" }],
   },
   "onboard-negative-paths": {
     legacyFile: "test/e2e/live/onboard-negative-paths.test.ts",

@@ -755,7 +755,7 @@ describe("Vitest project membership boundary", () => {
         ["src/example.spec.ts", "cli"],
         ["nemoclaw/src/example.test.js", "plugin"],
         ["test/coverage-ratchet.test.ts", "integration"],
-        ["test/vitest-coverage-thresholds.test.ts", "integration"],
+        ["test/repository/vitest-coverage-thresholds.test.ts", "integration"],
         ["test/example.test.js", "integration"],
         ["test/installer-integration/install-preflight.test.ts", "installer-integration"],
         ["test/installer-integration/nested/example.test.ts", "installer-integration"],
