@@ -152,6 +152,7 @@ export function registerAgentAdapter(
         envValues,
         options.replaceExisting === true,
         options.teardownRollback === true,
+        options.credentialRevision,
       );
       return;
   }

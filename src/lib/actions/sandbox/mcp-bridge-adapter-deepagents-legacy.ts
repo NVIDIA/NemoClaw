@@ -8,6 +8,7 @@ import {
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-projection";
 import {
+  DEEPAGENTS_MANAGED_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
@@ -76,7 +77,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
 ): string {
   const payload = {
     server: entry.server,
-    expected: deepAgentsManagedServerConfig(entry),
+    expected: expectedServers[entry.server] ?? deepAgentsManagedServerConfig(entry),
     expectedServers,
   };
   return [
@@ -88,6 +89,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+    ...DEEPAGENTS_MANAGED_SERVER_MATCH_HELPERS,
     `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
     "if runtime_kind == 'auto':",
     "    runtime_kind = 'unknown'",
@@ -131,9 +133,15 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "    servers = data.get('mcpServers', {})",
     "    if not isinstance(servers, dict):",
     "        fail_rollback(f'Invalid managed MCP v2 server map at {config_path}')",
-    "    if any(payload['expectedServers'].get(name) != current for name, current in servers.items()):",
+    "    if any(not deepagents_server_matches(current, payload['expectedServers'].get(name), True) for name, current in servers.items()):",
     "        fail_rollback(f'Refusing to overwrite drifted managed MCP v2 projection at {config_path}')",
-    "    data = {'mcpServers': payload['expectedServers']}",
+    "    next_servers = {}",
+    "    for name, expected in payload['expectedServers'].items():",
+    "        if name != payload['server'] and name in servers:",
+    "            next_servers[name] = servers[name]",
+    "        else:",
+    "            next_servers[name] = expected",
+    "    data = {'mcpServers': next_servers}",
     "else:",
     "    servers = data.setdefault('mcpServers', {})",
     "    if not isinstance(servers, dict):",
@@ -173,7 +181,8 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
     "    fail_rollback(f'Could not verify managed MCP rollback state at {config_path}: {exc}')",
     "if is_v2:",
-    "    restored = persisted == {'mcpServers': payload['expectedServers']}",
+    "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
+    "    restored = isinstance(persisted_servers, dict) and set(persisted_servers) == set(payload['expectedServers']) and all(deepagents_server_matches(persisted_servers.get(name), expected, True) for name, expected in payload['expectedServers'].items())",
     "else:",
     "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
     "    restored = isinstance(persisted_servers, dict) and persisted_servers.get(payload['server']) == payload['expected']",
