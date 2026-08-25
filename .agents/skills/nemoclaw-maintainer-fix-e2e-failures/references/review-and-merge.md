@@ -57,7 +57,7 @@ from an `origin/main` worktree. Remove the temporary worktree after the decision
 interrupted or denied run.
 
 Use one supported `kind`: `ambiguous-write`, `fork-workflow-approval`, `review`, `merge`, or
-`post-merge-e2e`. The executable scenarios in `test/maintainer-fix-e2e-policy.test.ts` define each
+`post-merge-e2e`. The executable scenarios in `test/automation/pull-requests/maintainer-fix-e2e-policy.test.ts` define each
 required state field.
 
 Perform only the entry returned in `allowedWrites`. An empty list denies the requested write.
