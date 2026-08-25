@@ -17,20 +17,31 @@ jobs:
   reproduce:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 210
     env:
       INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out trusted reproduction lane
+        timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
-            tools/e2e/brev-launchable-issue-9880.sh
+            test/e2e/
+            test/helpers/
+            tools/e2e/
+            package.json
+            package-lock.json
+            vitest.config.ts
+            nemoclaw/vitest.project.ts
+            tsconfig.json
+            oxlint.config.ts
+            oxfmt.config.ts
           sparse-checkout-cone-mode: false
 
       - name: Authorize maintainer dispatch
+        timeout-minutes: 5
         env:
           ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -43,8 +54,20 @@ jobs:
             case "$role" in maintain|admin) ;; *) echo "::error::maintain or admin permission is required"; exit 1 ;; esac
           done
 
+      - name: Set up Node
+        timeout-minutes: 10
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - id: prepare
         name: Prepare Brev CLI and evidence directory
+        timeout-minutes: 20
         env:
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
@@ -65,26 +88,30 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
       - name: Reproduce issue 9880 on the staging Launchable
-        timeout-minutes: 65
+        timeout-minutes: 120
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
-          GH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
+          E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
+          E2E_TARGET_ID: issue-9880-staging-launchable
           HOME: ${{ runner.temp }}/issue-9880-home
+          NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
-        run: tools/e2e/brev-launchable-issue-9880.sh
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
 
       - name: Verify workflow-owned workspace cleanup
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
         timeout-minutes: 15
         env:
-          BREV_DELETE_TIMEOUT_SECONDS: "720"
+          BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
+          E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
           HOME: ${{ runner.temp }}/issue-9880-home
-          WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
-        run: tools/e2e/brev-launchable-issue-9880.sh cleanup-owned-workspace
+        run: node --experimental-strip-types tools/e2e/cleanup-brev-workspace.mts
 
       - name: Remove Brev credentials
         if: always()
+        timeout-minutes: 5
         env:
           HOME: ${{ runner.temp }}/issue-9880-home
         run: |
@@ -93,12 +120,9 @@ jobs:
           test ! -e "$HOME"
 
       - name: Upload issue 9880 evidence
+        timeout-minutes: 10
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: issue-9880-staging-reproduction-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ steps.prepare.outputs.work_dir }}/lane.log
-            ${{ steps.prepare.outputs.work_dir }}/issue-9880.json
-            ${{ steps.prepare.outputs.work_dir }}/issue-9880.log
-            ${{ steps.prepare.outputs.work_dir }}/cleanup.json
+          path: ${{ steps.prepare.outputs.work_dir }}/
