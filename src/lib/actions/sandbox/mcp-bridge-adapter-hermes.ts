@@ -44,9 +44,6 @@ export function buildHermesMcpRegisterCommand(
     url: entry.url,
     headers: entryHeaders(entry, credentialRevision),
     replace_existing: replaceExisting,
-    ...(credentialRevision
-      ? { credential_name: entry.env[0], credential_revision: credentialRevision }
-      : {}),
   };
   return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }

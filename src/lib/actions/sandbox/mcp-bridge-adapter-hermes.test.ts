@@ -71,7 +71,7 @@ describe("Hermes MCP config adapter", () => {
     ]);
   });
 
-  it("declares the readiness-proven credential revision for transaction validation (#10155)", () => {
+  it("projects the readiness-proven credential revision without helper-only metadata (#10155)", () => {
     const command = buildHermesMcpRegisterCommand(baseEntry, false, "v12");
 
     expect(JSON.parse(command[3] ?? "{}")).toEqual({
@@ -79,8 +79,6 @@ describe("Hermes MCP config adapter", () => {
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
       replace_existing: false,
-      credential_name: "GITHUB_TOKEN",
-      credential_revision: "v12",
     });
   });
 

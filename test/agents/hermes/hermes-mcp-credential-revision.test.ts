@@ -13,7 +13,7 @@ const TRANSACTION = path.resolve(
 );
 
 describe("Hermes MCP credential revision transaction", () => {
-  it("accepts the declared bounded revision and preserves exact comparison (#10155)", () => {
+  it("accepts a child-visible bounded revision and preserves exact comparison (#10155)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -30,8 +30,6 @@ base = {
     "url": "https://mcp.example.test/mcp",
     "headers": {"Authorization": "Bearer openshell:resolve:env:v12_FAKE_TOKEN"},
     "replace_existing": True,
-    "credential_name": "FAKE_TOKEN",
-    "credential_revision": "v12",
 }
 canonical = {
     "server": "fake",
@@ -42,18 +40,32 @@ canonical = {
 cases = {
     "exact": base,
     "canonical": canonical,
-    "missingRevision": {key: value for key, value in base.items() if key != "credential_revision"},
-    "missingName": {key: value for key, value in base.items() if key != "credential_name"},
-    "mismatchedRevision": {**base, "credential_revision": "v11"},
-    "malformedRevision": {**base, "credential_revision": "v"},
-    "overlongRevision": {**base, "credential_revision": "v" + "1" * 21},
+    "malformedRevision": {
+        **base,
+        "headers": {"Authorization": "Bearer openshell:resolve:env:v-12_FAKE_TOKEN"},
+    },
+    "overlongRevision": {
+        **base,
+        "headers": {
+            "Authorization": "Bearer openshell:resolve:env:v" + "1" * 21 + "_FAKE_TOKEN"
+        },
+    },
     "wrongName": {**base, "headers": {"Authorization": "Bearer openshell:resolve:env:v12_OTHER_TOKEN"}},
     "unobserved": {
         **base,
-        "headers": {"Authorization": "Bearer openshell:resolve:env:v12_OTHER_TOKEN"},
-        "credential_name": "OTHER_TOKEN",
+        "headers": {"Authorization": "Bearer openshell:resolve:env:v11_FAKE_TOKEN"},
     },
-    "metadataOnRemove": {**base, "force": False},
+    "metadataOnAdd": {
+        **base,
+        "credential_name": "FAKE_TOKEN",
+        "credential_revision": "v12",
+    },
+    "metadataOnRemove": {
+        **base,
+        "credential_name": "FAKE_TOKEN",
+        "credential_revision": "v12",
+        "force": False,
+    },
 }
 cases["metadataOnRemove"].pop("replace_existing")
 results = {}
@@ -69,7 +81,6 @@ revisioned_candidate = module._managed_candidate(base)
 stale_candidate = module._managed_candidate({
     **base,
     "headers": {"Authorization": "Bearer openshell:resolve:env:v11_FAKE_TOKEN"},
-    "credential_revision": "v11",
 })
 comparison = {
     "bounded": module._managed_candidate_matches(
@@ -97,10 +108,8 @@ print(json.dumps({"validation": results, "comparison": comparison}))`,
         canonical: "accepted",
         exact: "accepted",
         malformedRevision: "rejected",
+        metadataOnAdd: "rejected",
         metadataOnRemove: "rejected",
-        mismatchedRevision: "rejected",
-        missingName: "rejected",
-        missingRevision: "rejected",
         overlongRevision: "rejected",
         unobserved: "rejected",
         wrongName: "rejected",
