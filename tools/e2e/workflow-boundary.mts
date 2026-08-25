@@ -1246,7 +1246,7 @@ function validateFreeStandingJobSelector(
       ? ["generate-matrix", "openshell-dev-artifact"]
       : jobName === "cloud-onboard"
         ? ["base-image-publication", "generate-matrix"]
-      : "generate-matrix";
+        : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -2668,7 +2668,8 @@ function validateExactPrManagedImageCatalogBoundary(
       BASE_SHA: "${{ inputs.base_sha }}",
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
+      GITHUB_TOKEN:
+        "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned == 'true' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || github.token }}",
       MANAGED_IMAGE_PUBLICATION_SHA: "${{ inputs.managed_image_publication_sha }}",
       PR_NUMBER: "${{ inputs.pr_number }}",
     }) ||
