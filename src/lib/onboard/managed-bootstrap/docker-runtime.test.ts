@@ -67,6 +67,7 @@ import type {
 import {
   completeDockerManagedNativeGpuFallbackOwnerCleanup,
   createDockerManagedBootstrapSurface,
+  formatDockerGpuModeFailureDetails,
 } from "./docker-runtime";
 import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-create";
@@ -237,6 +238,27 @@ describe("Docker managed-bootstrap native fallback owner cleanup", () => {
   });
 });
 
+describe("Docker managed-bootstrap GPU probe diagnostics", () => {
+  it("includes each failed mode without exposing credentials", () => {
+    const details = formatDockerGpuModeFailureDetails([
+      {
+        mode: {
+          kind: "gpus",
+          label: "--gpus all",
+          device: "all",
+          args: ["--gpus", "all"],
+        },
+        ok: false,
+        error: "proxy request failed with token=secret-value",
+      },
+    ]);
+
+    expect(details).toContain("--gpus all");
+    expect(details).toContain("token=<REDACTED>");
+    expect(details).not.toContain("secret-value");
+  });
+});
+
 describe("Docker managed-bootstrap GPU probe image", () => {
   it("pulls an uncached WSL sandbox image before bounded GPU mode probes", async () => {
     const { dependencies, dockerRun } = gpuModeDependencies();
@@ -263,20 +285,14 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     expect(dockerRun.mock.calls).toHaveLength(2);
     const firstProbeArgs = dockerRun.mock.calls[0]?.[0] ?? [];
     const secondProbeArgs = dockerRun.mock.calls[1]?.[0] ?? [];
-    expect(firstProbeArgs).toEqual(
-      expect.arrayContaining(["--gpus", "all", "--pull", "never"]),
-    );
+    expect(firstProbeArgs).toEqual(expect.arrayContaining(["--gpus", "all", "--pull", "never"]));
     expect(secondProbeArgs).toEqual(
       expect.arrayContaining(["--runtime", "nvidia", "--pull", "never"]),
     );
     expect(firstProbeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
     expect(secondProbeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
-    expect(dockerRun.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({ timeout: 30_000 }),
-    );
-    expect(dockerRun.mock.calls[1]?.[1]).toEqual(
-      expect.objectContaining({ timeout: 30_000 }),
-    );
+    expect(dockerRun.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
+    expect(dockerRun.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
   });
 
   it("skips the pull when the exact WSL sandbox image is already local", async () => {
@@ -359,26 +375,26 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       },
       reason: "could not start (spawn docker failed)",
     },
-  ])("stops before GPU mode probing when the WSL image pull $outcome", async ({
-    pullResult,
-    reason,
-  }) => {
-    const { dependencies, dockerRun } = gpuModeDependencies();
-    const seed = authority("openclaw");
-    const input = compatibilityLifecycleInput(seed, dependencies);
-    sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
-    dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
-    dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue(pullResult);
-    const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
+  ])(
+    "stops before GPU mode probing when the WSL image pull $outcome",
+    async ({ pullResult, reason }) => {
+      const { dependencies, dockerRun } = gpuModeDependencies();
+      const seed = authority("openclaw");
+      const input = compatibilityLifecycleInput(seed, dependencies);
+      sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
+      dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
+      dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue(pullResult);
+      const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
 
-    await expect(
-      lifecycle.runCreate(async () => ({ value: "created", receipt: seed.handle.createReceipt })),
-    ).rejects.toThrow(
-      `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
-    );
-    expect(dockerRun).not.toHaveBeenCalled();
-    expect(adapterMocks.prepare).not.toHaveBeenCalled();
-  });
+      await expect(
+        lifecycle.runCreate(async () => ({ value: "created", receipt: seed.handle.createReceipt })),
+      ).rejects.toThrow(
+        `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
+      );
+      expect(dockerRun).not.toHaveBeenCalled();
+      expect(adapterMocks.prepare).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("Docker managed-bootstrap lifecycle composition", () => {
