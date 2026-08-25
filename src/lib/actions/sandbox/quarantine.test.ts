@@ -99,21 +99,23 @@ function harness(
   assert.equal(providerBase.lifecycle.supported, true);
   assert.equal(providerBase.quarantine.supported, true);
   const start = vi.fn(providerBase.lifecycle.start);
-  const prepare = vi.fn(() => {
-    if (options.prepareFails) throw new Error("replaced OpenShell identity");
-    return {
-      schemaVersion: 1 as const,
-      providerId: "docker",
-      sandboxName: "alpha",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "registry-generation-1",
-      liveIdentityFingerprint: LIVE_ID,
-      providerHandle: PROVIDER_HANDLE,
-      providerLifecycleGeneration: "provider-running",
-      runtime: { kind: "docker-container", handle: RUNTIME_HANDLE },
-    };
-  });
+  const preparedAuthority = {
+    schemaVersion: 1 as const,
+    providerId: "docker",
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "registry-generation-1",
+    liveIdentityFingerprint: LIVE_ID,
+    providerHandle: PROVIDER_HANDLE,
+    providerLifecycleGeneration: "provider-running",
+    runtime: { kind: "docker-container", handle: RUNTIME_HANDLE },
+  };
+  const prepare = options.prepareFails
+    ? vi.fn(() => {
+        throw new Error("replaced OpenShell identity");
+      })
+    : vi.fn(() => preparedAuthority);
   const stop = vi.fn(() => {
     order.push("workload-stop");
     runtimeState = "stopped";
@@ -332,13 +334,63 @@ describe("sandbox quarantine", () => {
   });
 
   it.each([
-    "initial receipt",
-    "messaging stop",
-    "dashboard stop",
-    "service-access stop",
-    "workload stop",
-    "final receipt",
-  ])("keeps the durable fence across the %s crash boundary (#10140)", (boundary) => {
+    {
+      boundary: "initial receipt",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.writeReceipt.mockImplementation(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after initial receipt write began");
+        });
+      },
+    },
+    {
+      boundary: "messaging stop",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.stopMessaging.mockImplementationOnce(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after messaging stop");
+        });
+      },
+    },
+    {
+      boundary: "dashboard stop",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.teardownDashboard.mockImplementationOnce(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after dashboard stop");
+        });
+      },
+    },
+    {
+      boundary: "service-access stop",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.stopServiceAccess.mockImplementationOnce(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after service-access stop");
+        });
+      },
+    },
+    {
+      boundary: "workload stop",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.stop.mockImplementationOnce(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after workload stop");
+        });
+      },
+    },
+    {
+      boundary: "final receipt",
+      install: (test: ReturnType<typeof harness>, assertFencePublished: () => void) => {
+        test.writeReceipt
+          .mockImplementationOnce(() => undefined)
+          .mockImplementationOnce(() => {
+            assertFencePublished();
+            throw new Error("simulated interruption after final receipt write began");
+          });
+      },
+    },
+  ])("keeps the durable fence across the $boundary crash boundary (#10140)", ({ install }) => {
     const test = harness({
       initial: sandbox({
         agent: "hermes",
@@ -351,39 +403,7 @@ describe("sandbox quarantine", () => {
     const assertFencePublished = (): void => {
       expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
     };
-    if (boundary === "initial receipt") {
-      test.writeReceipt.mockImplementation(() => {
-        assertFencePublished();
-        throw new Error("simulated interruption after initial receipt write began");
-      });
-    } else if (boundary === "messaging stop") {
-      test.stopMessaging.mockImplementationOnce(() => {
-        assertFencePublished();
-        throw new Error("simulated interruption after messaging stop");
-      });
-    } else if (boundary === "dashboard stop") {
-      test.teardownDashboard.mockImplementationOnce(() => {
-        assertFencePublished();
-        throw new Error("simulated interruption after dashboard stop");
-      });
-    } else if (boundary === "service-access stop") {
-      test.stopServiceAccess.mockImplementationOnce(() => {
-        assertFencePublished();
-        throw new Error("simulated interruption after service-access stop");
-      });
-    } else if (boundary === "workload stop") {
-      test.stop.mockImplementationOnce(() => {
-        assertFencePublished();
-        throw new Error("simulated interruption after workload stop");
-      });
-    } else {
-      test.writeReceipt
-        .mockImplementationOnce(() => undefined)
-        .mockImplementationOnce(() => {
-          assertFencePublished();
-          throw new Error("simulated interruption after final receipt write began");
-        });
-    }
+    install(test, assertFencePublished);
 
     const result = quarantineSandbox(
       "alpha",

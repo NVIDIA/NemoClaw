@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
@@ -22,8 +23,7 @@ import {
 
 const AGENT_NAME = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const AGENT = loadAgent(AGENT_NAME);
-const QUALIFICATION = AGENT.quarantineQualification;
-if (!QUALIFICATION) throw new Error(`Agent '${AGENT_NAME}' has no quarantine qualification`);
+const QUALIFICATION = AGENT.quarantineQualification!;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-quarantine-${AGENT_NAME}`;
 validateSandboxName(SANDBOX_NAME);
 const IDEMPOTENCY_KEY = `quarantine-live-${AGENT_NAME}-request`;
@@ -32,7 +32,7 @@ const SECRET_CANARY = `quarantine-live-${AGENT_NAME}-secret-canary`;
 function commandJson(result: ShellProbeResult, label: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    assert(parsed && typeof parsed === "object" && !Array.isArray(parsed));
     return parsed as Record<string, unknown>;
   } catch {
     throw new Error(`${label} did not return one JSON document: ${resultText(result)}`);
@@ -161,12 +161,10 @@ test(
     const ownedForwardPorts = [...getOccupiedPorts(forwardsBeforeQuarantine.stdout)]
       .filter(([, owner]) => owner === SANDBOX_NAME)
       .map(([port]) => Number(port));
-    if ((AGENT.forward_ports ?? []).length > 0) {
-      expect(
-        ownedForwardPorts.length,
-        "qualified gateway agent has an owned access forward",
-      ).toBeGreaterThan(0);
-    }
+    expect(
+      ownedForwardPorts.length,
+      "qualified gateway agent has every declared access forward",
+    ).toBeGreaterThanOrEqual((AGENT.forward_ports ?? []).length);
     const marker = await execInSandbox(
       sandbox,
       "printf quarantine-preserved >/sandbox/quarantine-marker",
@@ -205,16 +203,19 @@ test(
     expect(receipt.status).toBe("quarantined");
     const attempts = receipt.fence?.attempts ?? [];
     expect(attempts[0]).toMatchObject({ operation: "fence-persistence", outcome: "succeeded" });
-    for (const operation of [
-      "messaging-stop",
-      "dashboard-stop",
-      "service-access-stop",
-      "workload-stop",
-      "execution-observation",
-      "sandbox-access-observation",
-    ]) {
-      expect(attempts).toContainEqual(expect.objectContaining({ operation, outcome: "succeeded" }));
-    }
+    expect(attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: "messaging-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "dashboard-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "service-access-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "workload-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "execution-observation", outcome: "succeeded" }),
+        expect.objectContaining({
+          operation: "sandbox-access-observation",
+          outcome: "succeeded",
+        }),
+      ]),
+    );
     const receiptPath = String(payload.receiptPath);
     const receiptBytes = fs.readFileSync(receiptPath, "utf8");
     expect(receiptBytes).not.toContain(IDEMPOTENCY_KEY);
@@ -242,13 +243,11 @@ test(
       `${AGENT_NAME}-quarantine-openshell-access-denied`,
     );
     expect(deniedExec.exitCode, resultText(deniedExec)).not.toBe(0);
-    for (const port of ownedForwardPorts) {
-      await expectHostPortFree(
-        host,
-        port,
-        `${AGENT_NAME}-quarantine-forward-${String(port)}-stopped`,
-      );
-    }
+    await Promise.all(
+      ownedForwardPorts.map(async (port) =>
+        expectHostPortFree(host, port, `${AGENT_NAME}-quarantine-forward-${String(port)}-stopped`),
+      ),
+    );
     const deniedCommands: [string[], string][] = [
       [[SANDBOX_NAME, "exec", "--", "true"], "exec"],
       [[SANDBOX_NAME, "start"], "start"],
@@ -262,9 +261,44 @@ test(
         "onboard-reuse",
       ],
     ];
-    for (const [args, label] of deniedCommands) {
-      await expectDenied(host, args, `${AGENT_NAME}-quarantine-${label}-denied`, hosted);
-    }
+    await expectDenied(host, deniedCommands[0][0], `${AGENT_NAME}-quarantine-exec-denied`, hosted);
+    await expectDenied(host, deniedCommands[1][0], `${AGENT_NAME}-quarantine-start-denied`, hosted);
+    await expectDenied(
+      host,
+      deniedCommands[2][0],
+      `${AGENT_NAME}-quarantine-recover-denied`,
+      hosted,
+    );
+    await expectDenied(
+      host,
+      deniedCommands[3][0],
+      `${AGENT_NAME}-quarantine-rebuild-denied`,
+      hosted,
+    );
+    await expectDenied(
+      host,
+      deniedCommands[4][0],
+      `${AGENT_NAME}-quarantine-restore-denied`,
+      hosted,
+    );
+    await expectDenied(
+      host,
+      deniedCommands[5][0],
+      `${AGENT_NAME}-quarantine-shields-denied`,
+      hosted,
+    );
+    await expectDenied(
+      host,
+      deniedCommands[6][0],
+      `${AGENT_NAME}-quarantine-upgrade-denied`,
+      hosted,
+    );
+    await expectDenied(
+      host,
+      deniedCommands[7][0],
+      `${AGENT_NAME}-quarantine-onboard-reuse-denied`,
+      hosted,
+    );
 
     progress.phase("verify observational evidence commands and idempotent recovery");
     const status = await host.nemoclaw([SANDBOX_NAME, "status"], {

@@ -35,20 +35,19 @@ vi.mock("../state/mcp-lifecycle-lock-acquisition", async (importOriginal) => {
       operation: () => unknown,
       options?: Parameters<typeof actual.withMcpLifecycleLock>[2],
     ) => {
-      if (!lifecycleMocks.deferNext) {
-        return actual.withMcpLifecycleLock(sandboxName, operation, options);
-      }
-      lifecycleMocks.deferNext = false;
-      return new Promise<unknown>((resolve, reject) => {
-        lifecycleMocks.release = () => {
-          try {
-            Promise.resolve(operation()).then(resolve, reject);
-          } catch (error) {
-            reject(error);
-          }
-        };
-        lifecycleMocks.entered(sandboxName);
-      });
+      return lifecycleMocks.deferNext
+        ? new Promise<unknown>((resolve, reject) => {
+            lifecycleMocks.deferNext = false;
+            lifecycleMocks.release = () => {
+              try {
+                Promise.resolve(operation()).then(resolve, reject);
+              } catch (error) {
+                reject(error);
+              }
+            };
+            lifecycleMocks.entered(sandboxName);
+          })
+        : actual.withMcpLifecycleLock(sandboxName, operation, options);
     },
   };
 });
@@ -405,10 +404,7 @@ describe("NemoClawCommand", () => {
     "rejects a queued mutation when quarantine is published before lock acquisition (#10140)",
     testTimeoutOptions(30_000),
     async () => {
-      let quarantined = false;
-      quarantineMocks.guard.mockImplementation(() => {
-        if (quarantined) throw new Error("quarantined after lifecycle lock wait");
-      });
+      quarantineMocks.guard.mockImplementation(() => undefined);
       lifecycleMocks.deferNext = true;
       const command = makeRawQuarantineRaceCommand().executeLifecycle();
       await vi.waitFor(() => expect(lifecycleMocks.entered).toHaveBeenCalledWith("alpha"), {
@@ -417,7 +413,9 @@ describe("NemoClawCommand", () => {
       expect(quarantineMocks.guard).not.toHaveBeenCalled();
       expect(RawQuarantineRaceCommand.ran).toBe(false);
 
-      quarantined = true;
+      quarantineMocks.guard.mockImplementation(() => {
+        throw new Error("quarantined after lifecycle lock wait");
+      });
       expect(lifecycleMocks.release).not.toBeNull();
       lifecycleMocks.release?.();
       await expect(command).rejects.toThrow("quarantined after lifecycle lock wait");

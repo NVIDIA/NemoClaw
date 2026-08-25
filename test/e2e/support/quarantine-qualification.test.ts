@@ -11,8 +11,9 @@ import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 describe("all-agent quarantine qualification", () => {
-  it("maps every default selectable manifest to its own required live lane (#10140)", () => {
-    for (const agentName of listAgents({})) {
+  it.each(listAgents({}))(
+    "maps default selectable manifest %s to its own required live lane (#10140)",
+    (agentName) => {
       const qualification = loadAgent(agentName, {}).quarantineQualification;
       expect(qualification, agentName).not.toBeNull();
       expect(catalogueTarget(qualification!.liveE2eTarget)).toMatchObject({
@@ -22,8 +23,8 @@ describe("all-agent quarantine qualification", () => {
         prAdvisorSelectable: true,
         releaseRequired: true,
       });
-    }
-  });
+    },
+  );
 
   it("keeps the quarantine core manifest-driven without agent-name branches (#10140)", () => {
     const source = fs.readFileSync(
