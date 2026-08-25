@@ -313,7 +313,10 @@ describe("initial sandbox policy real preset merge", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       [],
-      { agentName: "openclaw", additionalPresets: ["discord"] },
+      // A sandbox name is required now that the OpenClaw Discord preset binds
+      // its credential: {sandboxName}-discord-bridge cannot be materialized
+      // without one. Onboard and snapshot restore both supply it.
+      { agentName: "openclaw", additionalPresets: ["discord"], sandboxName: "openclaw-discord" },
     );
     const policy = readPreparedPolicy(prepared);
 

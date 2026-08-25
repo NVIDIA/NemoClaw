@@ -406,12 +406,16 @@ describe("ManifestCompiler", () => {
       "telegram:~/.hermes/.env",
       "telegram:~/.hermes/config.yaml",
       "telegram:~/.hermes/config.yaml",
-      "discord:~/.hermes/.env",
+      // No discord .env entry: this case configures no server ID, so every
+      // remaining Discord env line resolves to undefined once the bot-token
+      // line is gone, and agent-render-engine drops a render with no lines.
       "discord:~/.hermes/config.yaml",
       "discord:~/.hermes/config.yaml",
       "wechat:~/.hermes/.env",
       "wechat:~/.hermes/config.yaml",
-      "slack:~/.hermes/.env",
+      // Same as Discord above: this case configures no Slack allowlist, so with
+      // the bot/app token lines gone every remaining Slack env line resolves to
+      // undefined and the render is dropped for having no lines.
       "slack:~/.hermes/config.yaml",
       "whatsapp:~/.hermes/.env",
       "whatsapp:~/.hermes/config.yaml",
@@ -424,24 +428,11 @@ describe("ManifestCompiler", () => {
     expect(JSON.stringify(plan.agentRender)).toContain(
       "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     );
-    expect(plan.runtimeSetup?.envAliases).toEqual([
-      {
-        channelId: "slack",
-        envKey: "SLACK_BOT_TOKEN",
-        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-        value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        message:
-          "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-      },
-      {
-        channelId: "slack",
-        envKey: "SLACK_APP_TOKEN",
-        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-        value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-        message:
-          "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-      },
-    ]);
+    // No channel declares a runtime env alias any more. Slack's was retired
+    // once OpenShell 0.0.106 bound SLACK_* to the policy endpoint: the alias
+    // carries no revision, so the binding refuses it. The alias machinery
+    // itself stays in agents/hermes/runtime-config-guard.py.
+    expect(plan.runtimeSetup?.envAliases).toEqual([]);
     expect(plan.buildSteps).toEqual([
       {
         channelId: "teams",

@@ -338,8 +338,12 @@ async function hermesChannelIsActive(
       'grep -Eq "^DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN$" /sandbox/.hermes/.env',
     wechat:
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
+    // Slack renders no token line: OpenShell binds SLACK_* to the policy
+    // endpoint and injects revision-scoped placeholders, and Hermes loads .env
+    // with override=True, so a rendered line would shadow them. The allowlist
+    // line is what proves the channel still renders.
     slack:
-      'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
+      'grep -Eq "^SLACK_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^SLACK_(BOT|APP)_TOKEN=" /sandbox/.hermes/.env',
     // The DM policy is derived from the mode and the allowlist rather than
     // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:

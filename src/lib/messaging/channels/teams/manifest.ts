@@ -113,7 +113,14 @@ export const teamsManifest = {
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
-          appPassword: "{{credential.teamsClientSecret.placeholder}}",
+          // No appPassword here: OpenShell 0.0.106 injects
+          // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
+          // the canonical form once the policy binds the credential. The
+          // OpenClaw Teams token resolver falls back to
+          // process.env.MSTEAMS_APP_PASSWORD. The Hermes env line below is
+          // deliberately unchanged: Hermes reads TEAMS_CLIENT_SECRET, which is
+          // not the provider env key, so it has no injected value to fall back
+          // to.
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
             port: "{{teamsConfig.webhookPort}}",

@@ -95,7 +95,7 @@ export async function applyAgentConfigAtOpenShell(
             ),
             resolvedTarget,
           )
-        : applyEnvLines(existing, render.filter(isEnvLinesRender));
+        : applyEnvLines(plan, existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
   }
@@ -276,10 +276,15 @@ type CredentialPlaceholderRule = {
   readonly placeholder: string;
 };
 
-function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+function activeCredentialBindings(
+  plan: SandboxMessagingPlan,
+): readonly SandboxMessagingPlan["credentialBindings"][number][] {
   const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
-  return plan.credentialBindings.flatMap((binding) => {
-    if (!active.has(binding.channelId)) return [];
+  return plan.credentialBindings.filter((binding) => active.has(binding.channelId));
+}
+
+function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+  return activeCredentialBindings(plan).flatMap((binding) => {
     if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
       return [];
     }
@@ -367,7 +372,27 @@ function setJsonPath(
   cursor[finalSegment] = value;
 }
 
+// Credential keys this plan owns but no longer renders. Upserting alone would
+// carry them over, and Hermes loads ~/.hermes/.env with override=True, so a
+// stale canonical placeholder shadows the revision-scoped value OpenShell
+// injects into the process environment and the channel stays unauthenticated.
+// Scoped to the plan's own credential keys so unrelated .env entries survive.
+function staleCredentialEnvKeys(
+  plan: SandboxMessagingPlan,
+  desired: ReadonlyMap<string, string>,
+): Set<string> {
+  const stale = new Set<string>();
+  for (const binding of activeCredentialBindings(plan)) {
+    const envKey = binding.providerEnvKey;
+    if (typeof envKey === "string" && envKey.length > 0 && !desired.has(envKey)) {
+      stale.add(envKey);
+    }
+  }
+  return stale;
+}
+
 function applyEnvLines(
+  plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
 ): string {
@@ -383,16 +408,18 @@ function applyEnvLines(
       }
     }
   }
+  const stale = staleCredentialEnvKeys(plan, desired);
 
   const written = new Set<string>();
   const output = (existing ?? "")
     .split(/\n/)
     .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
-    .map((line) => {
+    .flatMap((line) => {
       const key = readEnvLineKey(line);
-      if (!key || !desired.has(key)) return line;
+      if (key !== null && stale.has(key)) return [];
+      if (!key || !desired.has(key)) return [line];
       written.add(key);
-      return desired.get(key) as string;
+      return [desired.get(key) as string];
     });
 
   for (const [key, line] of desired) {

@@ -97,7 +97,11 @@ export const discordManifest = {
           enabled: true,
           accounts: {
             default: {
-              token: "{{credential.discordBotToken.placeholder}}",
+              // No token here: OpenShell 0.0.106 injects
+              // DISCORD_BOT_TOKEN as a revision-scoped placeholder and
+              // rejects the canonical form once the policy binds the
+              // credential. resolveDiscordToken falls back to
+              // process.env.DISCORD_BOT_TOKEN for the default account.
               enabled: true,
               healthMonitor: {
                 enabled: false,
@@ -142,7 +146,6 @@ export const discordManifest = {
       agent: "hermes",
       target: "~/.hermes/.env",
       lines: [
-        "DISCORD_BOT_TOKEN={{credential.discordBotToken.placeholder}}",
         "NEMOCLAW_DISCORD_GUILD_IDS={{discord.guildIds.csv}}",
         "DISCORD_ALLOWED_USERS={{discord.allowedUsers.csv}}",
         "DISCORD_ALLOW_ALL_USERS={{discord.allowAllUsers}}",

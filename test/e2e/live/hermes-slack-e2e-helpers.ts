@@ -462,14 +462,20 @@ PY`,
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
-required = {
-    "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    "API_SERVER_PORT=18642",
-}
+required = {"API_SERVER_PORT=18642"}
 missing = sorted(required - lines)
+# Slack tokens must not be rendered here. OpenShell binds SLACK_* to the policy
+# endpoint and injects revision-scoped placeholders into the process
+# environment; a rendered line would shadow them, because Hermes loads this file
+# with override=True.
+leaked = sorted(
+    key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
+    if any(line.startswith(key + "=") for line in lines)
+)
 if missing:
     print("FAIL missing " + ", ".join(missing))
+elif leaked:
+    print("FAIL rendered " + ", ".join(leaked))
 else:
     print("OK")
 PY`,
