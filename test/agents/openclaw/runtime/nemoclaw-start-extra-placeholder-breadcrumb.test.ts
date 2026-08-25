@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   placeholderPlan,
   runRefresh,
-} from "./nemoclaw-start-extra-placeholder-breadcrumb-helpers.ts";
+} from "../../../nemoclaw-start-extra-placeholder-breadcrumb-helpers.ts";
 
 // The extra-placeholder canonicalization + accepted-keys breadcrumb contract is
 // asserted end-to-end only in the live messaging-providers E2E (cases X4a/X4b

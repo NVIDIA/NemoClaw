@@ -11,10 +11,7 @@ import { isWsl } from "../../../src/lib/platform";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "runtime-config-guard.py",
+  "../../../agents/hermes/runtime-config-guard.py",
 );
 const SANDBOX_GID_EXPECTED = 12345;
 const EACCES = 13;

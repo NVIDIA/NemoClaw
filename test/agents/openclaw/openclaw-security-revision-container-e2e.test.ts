@@ -5,8 +5,12 @@ import { randomUUID } from "node:crypto";
 
 import { describe } from "vitest";
 
-import { type DockerCommandResult, DockerProbe, resultText } from "./e2e/fixtures/docker-probe.ts";
-import { expect, test } from "./e2e/fixtures/e2e-test.ts";
+import {
+  type DockerCommandResult,
+  DockerProbe,
+  resultText,
+} from "../../e2e/fixtures/docker-probe.ts";
+import { expect, test } from "../../e2e/fixtures/e2e-test.ts";
 
 const TARGET_ID = "openclaw-security-revision-container-e2e";
 const RUN_ENV = "NEMOCLAW_RUN_OPENCLAW_SECURITY_REVISION_CONTAINER_E2E";

@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { test } from "./e2e/fixtures/workflow-e2e-test.ts";
+import { test } from "../e2e/fixtures/workflow-e2e-test.ts";
 import { runManagedImageBuildlessE2e } from "../helpers/managed-image-buildless-e2e";
 
 describe("managed image buildless onboarding orchestration contract", () => {
