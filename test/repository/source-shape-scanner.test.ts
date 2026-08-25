@@ -260,7 +260,7 @@ describe("source-shape scanner", () => {
       import { expect, it } from "vitest";
 
       it("reads a deep config path", () => {
-        const raw = readFileSync("../../nemoclaw-blueprint/blueprint.yaml", "utf8");
+        const raw = readFileSync("../../../nemoclaw-blueprint/blueprint.yaml", "utf8");
         expect(raw).toContain("version:");
       });
 
@@ -335,7 +335,7 @@ describe("source-shape scanner", () => {
       });
 
       it("ignores a required fixture", () => {
-        expect(require("../fixtures/package.json").name).toBe("fixture");
+        expect(require("./fixtures/package.json").name).toBe("fixture");
       });
     `);
 
