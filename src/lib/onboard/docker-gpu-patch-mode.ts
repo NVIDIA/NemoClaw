@@ -200,6 +200,7 @@ function probeDockerGpuMode(
   mode: DockerGpuPatchMode,
   image: string,
   deps: DockerGpuPatchDeps,
+  pullPolicy: "missing" | "never",
 ): { ok: boolean; error: string | null; cleanupConfirmed: boolean } {
   const run = deps.dockerRun ?? dockerRun;
   const remove = deps.dockerRm ?? dockerRm;
@@ -208,7 +209,8 @@ function probeDockerGpuMode(
     .slice(2, 8)}`;
   let outcome: { ok: boolean; error: string | null };
   try {
-    const result = run(["create", "--name", probeName, ...mode.args, image, "true"], {
+    const pullArgs = pullPolicy === "never" ? ["--pull", "never"] : [];
+    const result = run(["create", "--name", probeName, ...pullArgs, ...mode.args, image, "true"], {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -278,6 +280,7 @@ export function selectDockerGpuPatchMode(
     device?: string | null;
     backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
+    pullPolicy?: "never";
   },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
@@ -291,7 +294,7 @@ export function selectDockerGpuPatchMode(
     dockerDesktopWsl: options.dockerDesktopWsl,
   })) {
     for (let attemptNumber = 0; attemptNumber < attemptsPerMode; attemptNumber += 1) {
-      const result = probeDockerGpuMode(mode, options.image, deps);
+      const result = probeDockerGpuMode(mode, options.image, deps, options.pullPolicy ?? "missing");
       const attempt = { mode, ok: result.ok, error: result.error };
       attempts.push(attempt);
       if (!result.cleanupConfirmed) return { mode: null, attempts };
