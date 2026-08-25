@@ -151,6 +151,26 @@ describe("managed-image activation catalog assembly", () => {
     }
   });
 
+  it("rejects a symbolic-link catalog output", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-link-test-"));
+    try {
+      const contractPaths = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const contractPath = path.join(directory, `${agent}.json`);
+        fs.writeFileSync(contractPath, JSON.stringify(contract(agent, index)));
+        return contractPath;
+      });
+      const targetPath = path.join(directory, "target.json");
+      const outputPath = path.join(directory, "catalog.json");
+      fs.writeFileSync(targetPath, "unchanged\n");
+      fs.symlinkSync(targetPath, outputPath);
+
+      expect(() => writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, outputPath)).toThrow();
+      expect(fs.readFileSync(targetPath, "utf8")).toBe("unchanged\n");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     [
       "candidate revision",

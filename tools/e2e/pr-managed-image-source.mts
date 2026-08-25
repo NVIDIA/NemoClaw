@@ -15,6 +15,7 @@ import {
   githubRequest,
   parseBaseImagePushPaths,
 } from "./base-image-publication.mts";
+import { createPrivateRegularFile } from "./private-file.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const BASE_IMAGE_WORKFLOW_PATH = ".github/workflows/base-image.yaml";
@@ -91,11 +92,7 @@ export function writeManagedImageCatalog(
   );
   const catalog = assembleManagedImageCatalog(contracts, candidateSha);
   fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
-  fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
+  createPrivateRegularFile(outputPath, `${JSON.stringify(catalog)}\n`);
 }
 
 async function readChangedFiles(
