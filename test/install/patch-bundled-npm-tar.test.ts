@@ -129,7 +129,7 @@ describe("npm bundled node-tar remediation", () => {
     const target = fixture("11.16.0", "7.5.15");
     const archive = path.join(
       import.meta.dirname,
-      "..",
+      "../..",
       "tools",
       "mcp-tool-discovery-runtime",
       "npm-cache-seed",
@@ -148,7 +148,7 @@ describe("npm bundled node-tar remediation", () => {
     const archive = path.join(temporaryDirectory(), `tar-${FIXED_TAR_VERSION}.tgz`);
     const cacheSeed = path.join(
       import.meta.dirname,
-      "..",
+      "../..",
       "tools",
       "mcp-tool-discovery-runtime",
       "npm-cache-seed",

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CONTROL_HELPER = path.join(REPO_ROOT, "scripts", "gateway-control.sh");
 const NONCE = "a".repeat(64);
 

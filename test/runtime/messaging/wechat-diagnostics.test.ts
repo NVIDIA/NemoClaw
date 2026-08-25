@@ -20,6 +20,8 @@ import { describe, expect, it } from "vitest";
 const DIAGNOSTICS_PATH = path.join(
   import.meta.dirname,
   "..",
+  "..",
+  "..",
   "src",
   "lib",
   "messaging",

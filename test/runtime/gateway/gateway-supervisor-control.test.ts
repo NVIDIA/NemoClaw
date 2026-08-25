@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const REPO_ROOT = join(import.meta.dirname, "../..");
+const REPO_ROOT = join(import.meta.dirname, "../../..");
 const SUPERVISOR_LIBRARY = join(REPO_ROOT, "scripts/lib/gateway-supervisor.sh");
 const CONTROL_HELPER = join(REPO_ROOT, "scripts/gateway-control.sh");
 const VALID_NONCE = "a".repeat(64);

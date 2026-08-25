@@ -30,7 +30,7 @@ vi.mock("../../../src/lib/onboard/policy-context-seed", () => ({
   seedInitialPolicyContext: vi.fn(),
 }));
 
-const repoRoot = path.join(import.meta.dirname, "../..");
+const repoRoot = path.join(import.meta.dirname, "../../..");
 
 function runAdapterScript(
   scriptBody: string,

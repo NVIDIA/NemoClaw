@@ -193,7 +193,7 @@ describe("Fern changelog documentation", () => {
     expect(overview).not.toContain("Component Version Policy");
     expect(updateSandboxes).toContain("## Understand Agent Version Pins");
     expect(commands).toContain(
-      "../../../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins",
+      "../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins",
     );
   });
 
@@ -223,7 +223,7 @@ describe("Fern changelog documentation", () => {
     variants.forEach((variant) => {
       expect(variant.layout?.filter((node) => node.changelog)).toEqual([
         {
-          changelog: "../.././changelog",
+          changelog: "./changelog",
           title: "Release Notes",
           slug: "release-notes",
         },
