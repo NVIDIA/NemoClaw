@@ -127,20 +127,19 @@ describe("managed-image direct E2E timeout diagnostics", () => {
     ).toEqual(expected);
   });
 
-  it("excludes unrecognized command output from the diagnostic", () => {
+  it("excludes unrecognized marker output from the diagnostic", () => {
     const secret = "not-for-diagnostics";
-    const command: ManagedImageDirectDiagnosticCommand = () => ({
-      status: 0,
-      stdout: `running-${secret}\n`,
-      stderr: secret,
-    });
+    const command: ManagedImageDirectDiagnosticCommand = (args) =>
+      args[0] === "inspect"
+        ? { status: 0, stdout: "running\n", stderr: "" }
+        : { status: 0, stdout: `present\n${secret}\n`, stderr: secret };
 
     const diagnostic = collectManagedImageDirectTimeoutDiagnostic(CONTAINER_ID, command);
 
     expect(diagnostic).toEqual({
       completionMarker: "unavailable",
       forwardedCommandMarker: "unavailable",
-      containerState: "unavailable",
+      containerState: "running",
       managedStartupStage: "diagnostic-unavailable",
     });
     expect(JSON.stringify(diagnostic)).not.toContain(secret);
