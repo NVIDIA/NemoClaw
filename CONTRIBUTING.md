@@ -353,7 +353,7 @@ metrics list every accepted exception so these contracts remain visible during r
 
 When the managed sandbox image changes, update both `digest` and `components.sandbox.image` in
 `nemoclaw-blueprint/blueprint.yaml` with the same SHA-256 digest. Release tooling should rewrite
-both fields together. `test/validate-blueprint.test.ts` rejects a mutable image tag or a mismatch
+both fields together. `test/onboarding/validate-blueprint.test.ts` rejects a mutable image tag or a mismatch
 between the two digest fields.
 
 ### Focused Vitest Feedback

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Process-level driver for the uninstall confirm-prompt pty tests. Loaded by
-// test/uninstall-prompt-pty.test.ts via `tsx <driver>` under `script -qec`
+// test/install/uninstall-prompt-pty.test.ts via `tsx <driver>` under `script -qec`
 // (a pseudo-TTY), so fd 0 is a real terminal device; not picked up by
 // Vitest's discovery (lives under test/fixtures/, which is excluded from the
 // test glob).

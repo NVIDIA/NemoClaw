@@ -30,6 +30,8 @@ export type WipeSandboxStateDeps = {
   warn?: (message: string) => void;
 };
 
+export class SandboxWorkspaceCleanupTimeoutError extends Error {}
+
 /**
  * Wipe a sandbox's persistent state (the agent-manifest state dirs/files such
  * as `workspace/USER.md`) while the sandbox is still live, before
@@ -52,7 +54,7 @@ export type WipeSandboxStateDeps = {
  *   clean-re-onboard contract today, so the wipe issues `sandbox exec` while
  *   the sandbox is still live and lets the subsequent `sandbox delete` tear
  *   the pod down.
- * - Regression test: test/destroy-wipe-sandbox-state.test.ts covers the
+ * - Regression test: test/runtime/sandbox/destroy-wipe-sandbox-state.test.ts covers the
  *   workspace target, declared prefix expansion, the best-effort warn path, the
  *   path-escape rejection (state_dirs + state_files), and the contract
  *   assertion that the script targets workspace/ under the config dir with
@@ -209,8 +211,8 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     },
   );
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
-    throw new Error(
-      `OpenShell workspace cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Its remote result is unknown, so NemoClaw preserved the sandbox registry entry. Start the recorded OpenShell gateway, then retry destroy.`,
+    throw new SandboxWorkspaceCleanupTimeoutError(
+      `OpenShell workspace cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Its remote result is unknown, so NemoClaw preserved the sandbox registry entry.`,
     );
   }
   if (result.status !== 0) {

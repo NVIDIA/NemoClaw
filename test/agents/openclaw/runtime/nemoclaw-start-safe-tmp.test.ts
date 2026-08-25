@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../support/shell-function-extractor";
 
-const START_SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
 
 function safeTmpHelpers(src: string): string {
   const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");

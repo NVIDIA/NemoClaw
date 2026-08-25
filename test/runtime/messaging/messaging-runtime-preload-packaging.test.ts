@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "../..");
+const repoRoot = path.join(import.meta.dirname, "../../..");
 const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
 describe("messaging runtime preload packaging", () => {

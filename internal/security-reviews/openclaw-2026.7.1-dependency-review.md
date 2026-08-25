@@ -706,7 +706,7 @@ parent without a warning.
 NemoClaw's generated OpenClaw audit configuration keeps intentional loopback
 `allowInsecureAuth` findings and provenance-known loopback device-auth opt-out
 findings visible as accepted findings.
-`test/generate-openclaw-config-security-audit.test.ts` locks the generated
+`test/generation/generate-openclaw-config-security-audit.test.ts` locks the generated
 suppression scope, and `test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts`
 locks the pinned OpenClaw check IDs and details.
 `test/e2e/live/dashboard-remote-bind.test.ts` proves that a clean-host remote
@@ -745,7 +745,7 @@ production build args.
 ## Issue #4434 full live acceptance
 
 `scripts/patch-openclaw-issue-4434-diagnostics.mts` and
-`test/issue-4434-error-fields.test.ts` remain tied to the gateway/upstream
+`test/e2e-runtime/issue-4434-error-fields.test.ts` remain tied to the gateway/upstream
 reporting layer. The #4434 compatibility-shim disposition is explicitly accepted
 for this release. 3/3 fields are present in the NemoClaw-patched runtime output,
 while 3/3 fields are missing in the upstream-shaped `openclaw@2026.7.1` output.

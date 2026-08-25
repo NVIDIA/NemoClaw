@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
-  path.join(import.meta.dirname, "../..", "src", "lib", "policy", "index.ts"),
+  path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
 ) as typeof import("../../../src/lib/policy");
 const CUSTOM_PRESET = "network_policies:\n  example:\n    host: example.com\n";
 const MALFORMED_BASE_POLICIES = [
