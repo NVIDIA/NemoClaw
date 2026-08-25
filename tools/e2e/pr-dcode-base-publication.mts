@@ -116,7 +116,7 @@ function parseCatalog(raw: string, candidateSha: string): ManagedImageContractV1
   return parseManagedImageContractV1(assembled[AGENT], AGENT, "linux/amd64");
 }
 
-/** Give Docker only the host and transport settings required for an anonymous public pull. */
+/** Limit controller data exposed to the Docker image inspection subprocess. */
 export function buildDockerInspectionEnvironment(
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
