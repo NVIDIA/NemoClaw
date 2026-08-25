@@ -1295,14 +1295,10 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `$$nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
-<AgentOnly variant="openclaw">
-
-While an OpenClaw session opened by `connect` remains active, NemoClaw watches for a Shields auto-relock that occurs after the connection begins.
+While a session opened by `connect` remains active, NemoClaw watches for a Shields auto-relock that occurs after the connection begins.
 When one occurs, the host terminal prints one warning for that event on stderr, explains that restricted operations can now fail, and shows the exact `$$nemoclaw <name> shields down --timeout ...` command to run on the host.
 The connected session remains open.
 If the Shields audit cannot be read, NemoClaw keeps the session open and might not print the advisory warning.
-
-</AgentOnly>
 
 Without `--probe-only`, `connect` does not pull a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
