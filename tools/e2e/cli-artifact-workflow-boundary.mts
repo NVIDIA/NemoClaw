@@ -352,21 +352,26 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   ]);
 
   const prepareIndex = producerSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const candidateCheckoutIndex = producerSteps.findIndex(
+    (step) => step.name === "Check out E2E candidate",
+  );
   const nativePodmanToolchainStageIndex = producerSteps.indexOf(nativePodmanToolchainStage);
   const packageIndex = producerSteps.indexOf(packageStep);
   const uploadIndex = producerSteps.indexOf(uploadStep);
   const provenanceIndex = producerSteps.indexOf(provenanceStep);
   if (
     !(
-      prepareIndex >= 0 &&
-      prepareIndex < nativePodmanToolchainStageIndex &&
-      nativePodmanToolchainStageIndex < packageIndex &&
+      nativePodmanToolchainStageIndex >= 0 &&
+      nativePodmanToolchainStageIndex < candidateCheckoutIndex &&
+      candidateCheckoutIndex < prepareIndex &&
       prepareIndex < packageIndex &&
       packageIndex < uploadIndex &&
       uploadIndex < provenanceIndex
     )
   ) {
-    errors.push("CLI artifact producer must build, package, upload, then record provenance");
+    errors.push(
+      "CLI artifact producer must stage immutable toolchains before candidate checkout, then build, package, upload, and record provenance",
+    );
   }
 }
 
