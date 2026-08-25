@@ -230,6 +230,8 @@ fs.statSync = (target, ...rest) => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }

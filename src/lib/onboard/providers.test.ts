@@ -38,6 +38,14 @@ const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   inference_capable: false,
 });
 
+const MESSAGING_ENDPOINTLESS_PROFILE_EXPORT = JSON.stringify({
+  id: "nemoclaw-mcp-v1",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+});
+
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
@@ -693,6 +701,10 @@ describe("onboard provider helpers", () => {
       (command, options) => {
         calls.push({ command, env: options?.env });
         switch (command[1]) {
+          case "profile":
+            return command.includes("export")
+              ? { status: 1, stdout: "", stderr: "provider profile not found" }
+              : { status: 0, stdout: "", stderr: "" };
           case "get":
             return created
               ? {
@@ -714,19 +726,19 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-discord-bridge"]);
     expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      "provider profile export nemoclaw-mcp-v1 --output json",
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
       "provider get alpha-discord-bridge",
     ]);
-    expect(calls[2]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls[3]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
   it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {
     const commands: string[] = [];
     const profileResults: Record<string, RunResult> = {
-      import: { status: 1, stdout: "", stderr: "profile already exists" },
       export: {
         status: 0,
         stdout: JSON.stringify({
@@ -758,10 +770,7 @@ describe("onboard provider helpers", () => {
         { bestEffort: true },
       ),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
-    expect(commands).toEqual([
-      expect.stringMatching(/^provider profile import --file /u),
-      "provider profile export nemoclaw-mcp-v1 --output json",
-    ]);
+    expect(commands).toEqual(["provider profile export nemoclaw-mcp-v1 --output json"]);
   });
 
   it.each([
@@ -783,7 +792,7 @@ describe("onboard provider helpers", () => {
         (command) => {
           commands.push(command.join(" "));
           return command[1] === "profile"
-            ? { status: 0 }
+            ? { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT }
             : {
                 status: 0,
                 stdout: `Name: ${name}\nType: generic\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
@@ -802,7 +811,11 @@ describe("onboard provider helpers", () => {
       stdout: "",
       stderr: 'Error: status: Unavailable, message: "provider not found"',
     };
-    const profileResult = { status: 0, stdout: "", stderr: "" };
+    const profileResult = {
+      status: 0,
+      stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT,
+      stderr: "",
+    };
 
     expect(() =>
       upsertMessagingProviders(
@@ -816,7 +829,7 @@ describe("onboard provider helpers", () => {
         ],
         (command) => {
           const joined = command.join(" ");
-          const result = joined.startsWith("provider profile import ")
+          const result = joined.startsWith("provider profile ")
             ? profileResult
             : new Map([["provider get alpha-discord-bridge", getResult]]).get(joined);
           mutations.push(...(result ? [] : [joined]));
@@ -847,6 +860,7 @@ describe("onboard provider helpers", () => {
         commands.push(command.join(" "));
         switch (command[1]) {
           case "profile":
+            return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT };
           case "delete":
             return { status: 0 };
           case "create":
@@ -864,7 +878,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual([name]);
     expect(commands).toEqual([
-      expect.stringMatching(/^provider profile import --file /u),
+      "provider profile export nemoclaw-mcp-v1 --output json",
       `provider get ${name}`,
       `provider delete ${name}`,
       `provider create --name ${name} --type nemoclaw-mcp-v1 --credential ${credentialKey}`,

@@ -19,10 +19,15 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   inspectMcpProvider,
+  observeMcpCredentialRevision,
   providerAttached,
   providerMatchesCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
+import type {
+  McpAttachedCredentialRevision,
+  McpCredentialRevisionObservation,
+} from "./mcp-bridge-provider-readiness";
 import {
   credentialResolutionWarning,
   probeCredentialResolution,
@@ -86,9 +91,17 @@ function getAdapterRegistration(
   adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
   hermesReconciliation?: HermesMcpReconciliationResult,
+  credentialRevision?: McpAttachedCredentialRevision,
+  credentialObservationDetail?: string,
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
+  if (credentialObservationDetail) {
+    return {
+      registered: null,
+      detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+    };
+  }
   if (adapter === "hermes-config" && hermesReconciliation) {
     return hermesReconciliation.ok
       ? { registered: true }
@@ -100,10 +113,11 @@ function getAdapterRegistration(
           entry,
           false,
           openClawMcporterRoot(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR)),
+          credentialRevision,
         )
       : adapter === "hermes-config"
-        ? buildHermesMcpStatusCommand(entry)
-        : buildDeepAgentsMcpStatusCommand(entry);
+        ? buildHermesMcpStatusCommand(entry, credentialRevision)
+        : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
   const result = executeSandboxCommand(sandboxName, command);
   if (!result) return { registered: null, detail: "sandbox unreachable" };
   if (result.status === 0) {
@@ -134,6 +148,31 @@ export interface McpBridgeStatusOptions {
    * layer restricts this live operation to an explicitly named server.
    */
   discoverTools?: boolean;
+}
+
+function attachedCredentialRevision(
+  observation: McpCredentialRevisionObservation | null | undefined,
+): McpAttachedCredentialRevision | undefined {
+  return observation !== undefined &&
+    observation !== null &&
+    observation !== "absent" &&
+    observation !== "canonical"
+    ? observation
+    : undefined;
+}
+
+function credentialObservationDetail(
+  observation: McpCredentialRevisionObservation | null | undefined,
+): string | undefined {
+  if (observation === null)
+    return "the current OpenShell credential revision could not be observed";
+  if (observation === "absent") {
+    return "a fresh OpenShell exec did not expose the credential placeholder";
+  }
+  if (observation === "canonical") {
+    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder";
+  }
+  return undefined;
 }
 
 export async function statusMcpBridge(
@@ -189,11 +228,39 @@ export async function statusMcpBridge(
     ];
   }
 
+  const credentialObservations = new Map<string, McpCredentialRevisionObservation | null>();
+  for (const [name, entry] of entries) {
+    if (!entry || storedCredentialWarning(entry) !== undefined) continue;
+    try {
+      credentialObservations.set(name, observeMcpCredentialRevision(sandboxName, entry));
+    } catch {
+      credentialObservations.set(name, null);
+    }
+  }
+  const credentialRevisions = new Map<string, McpAttachedCredentialRevision>();
+  for (const [name, observation] of credentialObservations) {
+    const revision = attachedCredentialRevision(observation);
+    if (revision) credentialRevisions.set(name, revision);
+  }
+  const hermesCredentialObservationDetail = entries
+    .map(([name, entry]) =>
+      entry && storedCredentialWarning(entry) === undefined
+        ? credentialObservationDetail(credentialObservations.get(name))
+        : undefined,
+    )
+    .find((detail) => detail !== undefined);
+
   const hermesReconciliation =
     agent.name === "hermes" &&
     (entries.length > 0 || (sandbox.mcp?.managedServerNames?.length ?? 0) > 0) &&
     entries.every(([, entry]) => !entry || storedCredentialWarning(entry) === undefined)
-      ? inspectHermesMcpRuntimeIntent(sandboxName)
+      ? hermesCredentialObservationDetail
+        ? {
+            ok: false as const,
+            state: "error" as const,
+            detail: hermesCredentialObservationDetail,
+          }
+        : inspectHermesMcpRuntimeIntent(sandboxName, { credentialRevisions })
       : undefined;
   if (entries.length === 0 && hermesReconciliation && !hermesReconciliation.ok) {
     throw new McpBridgeError(
@@ -264,11 +331,28 @@ export async function statusMcpBridge(
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
+    const credentialObservation = entry ? credentialObservations.get(name) : undefined;
+    const credentialRevision = attachedCredentialRevision(credentialObservation);
+    const observationDetail = credentialObservationDetail(credentialObservation);
     const readiness = {
       policyGatewayPresent: policyPresence,
       providerAttached: attached,
       providerCredentialReady,
     };
+    const adapterRegistration = unsafeCredentialMayBeAttached
+      ? {
+          registered: null,
+          detail:
+            "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
+        }
+      : getAdapterRegistration(
+          sandboxName,
+          support.adapter,
+          entry,
+          hermesReconciliation,
+          credentialRevision,
+          observationDetail,
+        );
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
@@ -277,7 +361,21 @@ export async function statusMcpBridge(
               detail:
                 "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
-          : probeCredentialResolution(sandboxName, entry, support.adapter, readiness)
+          : observationDetail
+            ? { ok: null, detail: `probe skipped: ${observationDetail}` }
+            : adapterRegistration.registered !== true
+              ? {
+                  ok: null,
+                  detail:
+                    "probe skipped: the managed agent adapter does not match the current credential revision",
+                }
+              : probeCredentialResolution(
+                  sandboxName,
+                  entry,
+                  support.adapter,
+                  readiness,
+                  credentialRevision,
+                )
         : undefined;
     const resolutionWarning = credentialResolution
       ? credentialResolutionWarning(entry?.env[0], credentialResolution)
@@ -338,13 +436,7 @@ export async function statusMcpBridge(
         registryPresent: !!registeredPolicy,
         gatewayPresent: policyPresence,
       },
-      adapter: unsafeCredentialMayBeAttached
-        ? {
-            registered: null,
-            detail:
-              "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
-          }
-        : getAdapterRegistration(sandboxName, support.adapter, entry, hermesReconciliation),
+      adapter: adapterRegistration,
       ...(toolDiscovery ? { toolDiscovery } : {}),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),

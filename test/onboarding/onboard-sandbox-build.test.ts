@@ -58,6 +58,8 @@ const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
@@ -280,6 +282,8 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
@@ -446,6 +450,7 @@ platform.isWsl = () => false;
 const commands = [];
 const logs = [];
 const baseResolutionCalls = [];
+let sandboxCreated = false;
 const originalLog = console.log;
 console.log = (...args) => {
   logs.push(args.join(" "));
@@ -488,6 +493,8 @@ buildContext.stageOptimizedSandboxBuildContext = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
@@ -500,7 +507,9 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
+    return sandboxCreated ? "Name: my-assistant\\nPhase: Ready\\n" : "";
+  }
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -518,6 +527,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  sandboxCreated = true;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -599,6 +609,8 @@ const commands = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
@@ -703,6 +715,8 @@ const commands = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }

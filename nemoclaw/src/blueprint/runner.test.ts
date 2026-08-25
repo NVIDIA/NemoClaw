@@ -28,7 +28,8 @@ vi.mock("node:os", () => ({
   homedir: () => FAKE_HOME,
 }));
 
-vi.mock("node:crypto", () => ({
+vi.mock("node:crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:crypto")>()),
   randomUUID: () => FIXED_RUN_UUID,
 }));
 
