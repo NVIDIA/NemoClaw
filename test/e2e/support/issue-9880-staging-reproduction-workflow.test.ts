@@ -366,7 +366,7 @@ function validateWorkspaceCleanup(
       cleanup.env?.BREV_WORKSPACE_OWNERSHIP_FILE ===
         scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
       cleanup.env?.HOME === prepare?.env?.HOME &&
-      String(cleanup.run).includes("tools/e2e/cleanup-brev-workspace.mts") &&
+      String(cleanup.run).includes("./node_modules/.bin/tsx tools/e2e/cleanup-brev-workspace.mts") &&
       Number(cleanup["timeout-minutes"]) * MINUTE_MS >= timeouts.cleanupTimeoutMs,
     "workflow must always reconcile its owned Brev workspace before removing credentials",
   );
