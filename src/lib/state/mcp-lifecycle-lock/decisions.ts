@@ -116,7 +116,6 @@ export type McpLifecycleGateDecision =
 export function decideMcpLifecycleGate(
   committedContainment: LockObservation | null,
   timerDeadlineExpired: boolean,
-  timerDeadlineAbandoned = false,
 ): McpLifecycleGateDecision {
   if (committedContainment) {
     return {
@@ -125,11 +124,9 @@ export function decideMcpLifecycleGate(
       containment: committedContainment,
     };
   }
-  if (!timerDeadlineExpired) return { kind: "proceed" };
-  // A departed timer (dead PID, or start-identity mismatch) can never publish
-  // the fence this wait is for. After the caller proves abandonment, ordinary
-  // mutation may enter instead of spinning until timeout (NVIDIA/NemoClaw#10066).
-  return timerDeadlineAbandoned ? { kind: "proceed" } : { kind: "wait", reason: "timer-deadline" };
+  // Ordinary mutation stays closed after restoreAt, including when the timer
+  // process is already gone. Lockdown recovery uses the deadline-fence path.
+  return timerDeadlineExpired ? { kind: "wait", reason: "timer-deadline" } : { kind: "proceed" };
 }
 
 export type McpLifecycleTakeoverDecision = { kind: "proceed" } | { kind: "refuse" };
@@ -140,4 +137,22 @@ export function decideMcpLifecycleTakeover(
   observedToken: string | undefined,
 ): McpLifecycleTakeoverDecision {
   return observedToken === expectedToken ? { kind: "proceed" } : { kind: "refuse" };
+}
+
+export interface AbandonedTimerGeneration {
+  key: string;
+  token: string;
+}
+
+/**
+ * Admit recovery only for the snapshot that completed grace. A later marker
+ * read that disagrees is a replacement generation and must wait again.
+ */
+export function decideAbandonedTimerRecoveryToken(
+  aged: AbandonedTimerGeneration | null,
+  current: AbandonedTimerGeneration | null,
+): string | undefined {
+  if (!aged || !current) return undefined;
+  if (aged.key !== current.key || aged.token !== current.token) return undefined;
+  return aged.token;
 }

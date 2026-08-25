@@ -7,6 +7,7 @@ import {
   decideMcpLifecycleLock,
   decideMcpLifecycleGate,
   decideMcpLifecycleTakeover,
+  decideAbandonedTimerRecoveryToken,
   type CorruptGenerationState,
   type DecideMcpLifecycleLockInput,
 } from "./decisions";
@@ -138,20 +139,12 @@ describe("lifecycle lock decisions", () => {
   });
 
   it.each([
-    ["open", null, false, false, "proceed"],
-    ["timer deadline", null, true, false, "wait"],
-    ["abandoned timer deadline", null, true, true, "proceed"],
-    ["committed containment", observation(owner()), false, false, "refuse"],
-    ["containment over an abandoned timer", observation(owner()), true, true, "refuse"],
-  ] as const)(
-    "maps the %s gate to %s",
-    (_name, containment, timerExpired, timerAbandoned, kind) => {
-      expect(decideMcpLifecycleGate(containment, timerExpired, timerAbandoned).kind).toBe(kind);
-    },
-  );
-
-  it("ignores abandonment for a timer that has not passed its deadline", () => {
-    expect(decideMcpLifecycleGate(null, false, true)).toEqual({ kind: "proceed" });
+    ["open", null, false, "proceed"],
+    ["timer deadline", null, true, "wait"],
+    ["committed containment", observation(owner()), false, "refuse"],
+    ["containment over an expired timer", observation(owner()), true, "refuse"],
+  ] as const)("maps the %s gate to %s", (_name, containment, timerExpired, kind) => {
+    expect(decideMcpLifecycleGate(containment, timerExpired).kind).toBe(kind);
   });
 
   it("marks a stale timer-bound main generation for containment during reaping", () => {
@@ -171,5 +164,23 @@ describe("lifecycle lock decisions", () => {
     ["removed token", "a".repeat(32), undefined, "refuse"],
   ] as const)("maps %s takeover authority to %s", (_name, expected, observed, kind) => {
     expect(decideMcpLifecycleTakeover(expected, observed).kind).toBe(kind);
+  });
+
+  it.each([
+    [
+      "unchanged snapshot",
+      { key: "a:1:", token: "a".repeat(32) },
+      { key: "a:1:", token: "a".repeat(32) },
+      "a".repeat(32),
+    ],
+    [
+      "replacement key",
+      { key: "a:1:", token: "a".repeat(32) },
+      { key: "b:1:", token: "b".repeat(32) },
+      undefined,
+    ],
+    ["missing confirm", { key: "a:1:", token: "a".repeat(32) }, null, undefined],
+  ] as const)("admits recovery only for an %s", (_name, aged, current, token) => {
+    expect(decideAbandonedTimerRecoveryToken(aged, current)).toBe(token);
   });
 });
