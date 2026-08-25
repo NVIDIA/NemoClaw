@@ -8,17 +8,19 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  decideAbandonedTimerRecoveryToken,
+  type AbandonedTimerGeneration,
+} from "../domain/sandbox/abandoned-timer-recovery";
+import {
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerDeadlineExpired,
   readShieldsTimerMarker,
   readShieldsTimerTakeoverToken,
 } from "./mcp-lifecycle-lock/shields-timer-authority";
 import {
-  decideAbandonedTimerRecoveryToken,
   decideMcpLifecycleGate,
   decideMcpLifecycleLock,
   decideMcpLifecycleTakeover,
-  type AbandonedTimerGeneration,
   type CorruptGenerationState,
 } from "./mcp-lifecycle-lock/decisions";
 import {
@@ -301,26 +303,34 @@ function createAbandonedTimerDeadlineTracker(
   stateDir: string,
   graceMs: number,
   monotonicNow: () => number,
-): (now: number) => AbandonedTimerGeneration | null {
+): {
+  agedSnapshot: (now: number) => AbandonedTimerGeneration | null;
+  reset: () => void;
+} {
   let generation: string | null = null;
   let firstSeenAt: number | null = null;
-  return (now: number) => {
-    if (!isShieldsTimerDeadlineAbandoned(sandboxName, stateDir, now)) {
-      generation = null;
-      firstSeenAt = null;
-      return null;
-    }
-    const snapshot = localAbandonedTimerGeneration.read(sandboxName, stateDir);
-    if (!snapshot) {
-      generation = null;
-      firstSeenAt = null;
-      return null;
-    }
-    if (generation !== snapshot.key) {
-      generation = snapshot.key;
-      firstSeenAt = monotonicNow();
-    }
-    return monotonicNow() - (firstSeenAt ?? monotonicNow()) >= graceMs ? snapshot : null;
+  const reset = () => {
+    generation = null;
+    firstSeenAt = null;
+  };
+  return {
+    reset,
+    agedSnapshot: (now: number) => {
+      if (!isShieldsTimerDeadlineAbandoned(sandboxName, stateDir, now)) {
+        reset();
+        return null;
+      }
+      const snapshot = localAbandonedTimerGeneration.read(sandboxName, stateDir);
+      if (!snapshot) {
+        reset();
+        return null;
+      }
+      if (generation !== snapshot.key) {
+        generation = snapshot.key;
+        firstSeenAt = monotonicNow();
+      }
+      return monotonicNow() - (firstSeenAt ?? monotonicNow()) >= graceMs ? snapshot : null;
+    },
   };
 }
 
@@ -365,10 +375,11 @@ async function waitForAbandonedTimerRecoveryToken(
     if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName, false);
     const now = Date.now();
     if (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, now)) return undefined;
-    const aged = trackAbandonedTimerDeadline(now);
+    const aged = trackAbandonedTimerDeadline.agedSnapshot(now);
     if (aged) {
       const token = confirmAbandonedTimerRecoveryToken(sandboxName, options.stateDir, aged);
       if (token) return token;
+      trackAbandonedTimerDeadline.reset();
     } else if (!isShieldsTimerDeadlineAbandoned(sandboxName, options.stateDir, now)) {
       return undefined;
     }
@@ -405,10 +416,11 @@ function waitForAbandonedTimerRecoveryTokenSync(
     if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName, true);
     const now = Date.now();
     if (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, now)) return undefined;
-    const aged = trackAbandonedTimerDeadline(now);
+    const aged = trackAbandonedTimerDeadline.agedSnapshot(now);
     if (aged) {
       const token = confirmAbandonedTimerRecoveryToken(sandboxName, options.stateDir, aged);
       if (token) return token;
+      trackAbandonedTimerDeadline.reset();
     } else if (!isShieldsTimerDeadlineAbandoned(sandboxName, options.stateDir, now)) {
       return undefined;
     }

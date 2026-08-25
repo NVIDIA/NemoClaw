@@ -334,26 +334,48 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(operation).toHaveBeenCalledTimes(1);
   });
 
-  it("does not recover with a token observed only after another generation's grace", async () => {
+  it("restarts grace after A, A, B, A, A confirmation mismatch", async () => {
     const tokenA = "a".repeat(32);
     const tokenB = "b".repeat(32);
     writeTimerMarker(tokenA, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
     const snapA = { token: tokenA, key: `${tokenA}:2147483647:` };
     const snapB = { token: tokenB, key: `${tokenB}:2147483647:` };
-    let reads = 0;
+    const mismatchAt: number[] = [];
+    let enteredAt = 0;
+    let now = 0;
     vi.spyOn(localAbandonedTimerGeneration, "read").mockImplementation(() => {
-      reads += 1;
-      return reads === 3 ? snapB : snapA;
+      const fromConfirm = Number(
+        (new Error().stack ?? "").includes("confirmAbandonedTimerRecoveryToken"),
+      );
+      mismatchAt.push(...Array.from({ length: fromConfirm }, () => now));
+      const confirmPick = [snapB, snapA, snapA][Math.max(0, mismatchAt.length - 1)];
+      return [snapA, confirmPick][fromConfirm];
     });
-    const operation = vi.fn(() => "entered");
-
-    await expect(
-      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+    const pending = withMcpLifecycleLock(
+      SANDBOX_NAME,
+      () => {
+        enteredAt = now;
+        return "entered";
+      },
+      {
         ...options(),
         recoverAbandonedExpiredTimer: true,
-      }),
-    ).resolves.toBe("entered");
-    expect(operation).toHaveBeenCalledTimes(1);
+        pollIntervalMs: 1,
+        timeoutMs: 5_000,
+        corruptLockGraceMs: 50,
+        monotonicNow: () => now,
+      },
+    );
+    const tick = setInterval(() => {
+      now += 10;
+    }, 4);
+    try {
+      await expect(pending).resolves.toBe("entered");
+    } finally {
+      clearInterval(tick);
+    }
+    expect(mismatchAt.length).toBeGreaterThan(0);
+    expect(enteredAt).toBeGreaterThanOrEqual(mismatchAt[0] + 50);
   });
 
   it("keeps waiting when an expired timer's process is still alive", async () => {
