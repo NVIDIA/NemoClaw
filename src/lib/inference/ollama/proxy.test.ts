@@ -461,3 +461,40 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     expect(active.httpCommands.map((command) => command[0])).not.toContain("curl");
   });
 });
+
+describe("buildOllamaAuthProxySpawnEnv bind-probe override forwarding (#10240)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete require.cache[PROXY_DIST];
+  });
+
+  it("forwards NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE=1 into the proxy spawn env", () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE", "1");
+    delete require.cache[PROXY_DIST];
+    const proxy = require(PROXY_DIST);
+
+    const env = proxy.buildOllamaAuthProxySpawnEnv("token", null);
+
+    expect(env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE).toBe("1");
+  });
+
+  it("omits the override when unset, so the proxy still enforces the loopback bind probe", () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE", "");
+    delete require.cache[PROXY_DIST];
+    const proxy = require(PROXY_DIST);
+
+    const env = proxy.buildOllamaAuthProxySpawnEnv("token", null);
+
+    expect(env).not.toHaveProperty("NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE");
+  });
+
+  it("ignores a non-'1' value the same way the proxy's own check does", () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE", "true");
+    delete require.cache[PROXY_DIST];
+    const proxy = require(PROXY_DIST);
+
+    const env = proxy.buildOllamaAuthProxySpawnEnv("token", null);
+
+    expect(env).not.toHaveProperty("NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE");
+  });
+});

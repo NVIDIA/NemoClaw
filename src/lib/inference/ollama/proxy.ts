@@ -355,6 +355,24 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
+// The proxy process reads its own env (see assertBackendBoundToLoopback in
+// ollama-auth-proxy.mts), but it is spawned with an explicit allowlisted env
+// rather than inheriting the parent's — so an override the operator sets on
+// the parent `nemoclaw onboard` command must be forwarded explicitly here to
+// take effect (#10240).
+function buildOllamaAuthProxySpawnEnv(token: string, url: string | null): Record<string, string> {
+  return {
+    OLLAMA_PROXY_TOKEN: token,
+    OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
+    OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+    [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
+    ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
+    ...(process.env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE === "1"
+      ? { NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE: "1" }
+      : {}),
+  };
+}
+
 function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
   // Clear any stale status file so a read after this spawn observes the new
   // proxy's exit reason (or finds no file when the proxy starts cleanly).
@@ -362,13 +380,7 @@ function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null
   const url = backendUrl || readProxyStateFile(PROXY_BACKEND_PATH);
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
-    env: {
-      OLLAMA_PROXY_TOKEN: token,
-      OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
-      OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-      [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
-      ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
-    },
+    env: buildOllamaAuthProxySpawnEnv(token, url),
     buildEnv: buildSubprocessEnv,
   });
   persistProxyPid(child.pid);
@@ -1357,6 +1369,7 @@ function unloadOllamaModels(onlyModels?: readonly string[]) {
 }
 
 export {
+  buildOllamaAuthProxySpawnEnv,
   checkOllamaModelToolSupport,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
