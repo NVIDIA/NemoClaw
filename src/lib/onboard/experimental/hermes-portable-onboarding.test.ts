@@ -1195,6 +1195,28 @@ describe("Hermes portable onboarding transaction", () => {
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });
     expect(classifyHermesPortableRegistry(receipt, matching)).toMatchObject({ kind: "matching" });
     expect(
+      classifyHermesPortableRegistry(
+        receipt,
+        {
+          ...matching,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-alpha",
+        },
+        "session-alpha",
+      ),
+    ).toMatchObject({ kind: "matching" });
+    expect(
+      classifyHermesPortableRegistry(
+        receipt,
+        {
+          ...matching,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-beta",
+        },
+        "session-alpha",
+      ),
+    ).toMatchObject({ kind: "conflict" });
+    expect(
       classifyHermesPortableRegistry(receipt, { ...matching, openshellVersion: "0.0.101" }),
     ).toMatchObject({ kind: "conflict" });
     expect(

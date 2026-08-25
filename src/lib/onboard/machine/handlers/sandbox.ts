@@ -2028,9 +2028,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
-      if (!this.options.hermesPortableLifecycle) {
-        this.finalizeInferenceRouteReservation(state, sandboxName);
-      }
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>

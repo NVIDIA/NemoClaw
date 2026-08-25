@@ -471,50 +471,46 @@ describe("created DCode sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
-  it("warns but verifies and registers after a partial workspace restore (#6311)", () => {
+  it("rejects registration after a partial workspace restore (#6311)", () => {
     const fixture = makeRestoreFixture();
-    const registeredConfigs: string[] = [];
+    const register = vi.fn();
+    const getDcodeSelectionDrift = vi.fn();
     const error = vi.fn();
     try {
-      finalizeCreatedSandbox(
-        {
-          sandboxName: "dcode",
-          restoreBackupPath: fixture.backupPath,
-          preUpgradeBackup: false,
-          targetAgentType: "langchain-deepagents-code",
-          validateManagedDcode: true,
-          provider: "nvidia-prod",
-          model: "new-model",
-          preferredInferenceApi: null,
-        },
-        {
-          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-          restoreRecreatedSandboxState: (name, backup, options) => {
-            const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
-            return {
-              ...restored,
-              success: false,
-              failedDirs: ["skills"],
-              failedFiles: ["settings.json"],
-              error: "copy failed",
-            };
+      expect(() =>
+        finalizeCreatedSandbox(
+          {
+            sandboxName: "dcode",
+            restoreBackupPath: fixture.backupPath,
+            preUpgradeBackup: false,
+            targetAgentType: "langchain-deepagents-code",
+            validateManagedDcode: true,
+            provider: "nvidia-prod",
+            model: "new-model",
+            preferredInferenceApi: null,
           },
-          getDcodeSelectionDrift: (name, provider, model, api) =>
-            getDcodeSelectionDrift(name, provider, model, api, {
-              getGatewayName: () => "nemoclaw-18081",
-              runCaptureOpenshell: () =>
-                identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
-            }),
-          register: () => {
-            registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+          {
+            discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+            restoreRecreatedSandboxState: (name, backup, options) => {
+              const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
+              return {
+                ...restored,
+                success: false,
+                failedDirs: ["skills"],
+                failedFiles: ["settings.json"],
+                error: "copy failed",
+              };
+            },
+            getDcodeSelectionDrift,
+            register,
+            note: vi.fn(),
+            error,
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
           },
-          note: vi.fn(),
-          error,
-          exitProcess: (code): never => {
-            throw new Error(`exit ${code}`);
-          },
-        },
-      );
+        ),
+      ).toThrow("exit 1");
 
       expect(error).toHaveBeenCalledWith(
         "  Warning: workspace state restore was incomplete for sandbox 'dcode'.",
@@ -523,19 +519,15 @@ describe("created DCode sandbox finalization", () => {
       expect(error).toHaveBeenCalledWith("  Failed files: settings.json");
       expect(error).toHaveBeenCalledWith("  Restore reason: copy failed");
       expect(error).toHaveBeenCalledWith(
-        "  NemoClaw will register the sandbox with its current configuration.",
+        "  State was not restored and registry metadata was not updated.",
       );
+      expect(error).toHaveBeenCalledWith("  Remove the unregistered sandbox before retrying:");
+      expect(error).toHaveBeenCalledWith('    openshell sandbox delete "dcode"');
       expect(error).toHaveBeenCalledWith(
         `  Keep the snapshot for manual recovery: ${fixture.backupPath}`,
       );
-      expect(error).toHaveBeenCalledWith(
-        "  Recover the missing state before you use or rebuild the sandbox.",
-      );
-      expect(registeredConfigs).toHaveLength(1);
-      expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
-      expect(registeredConfigs[0]).not.toContain("old-model");
-      expect(registeredConfigs[0]).toContain("[ui]\nshow_scrollbar = true");
-      expect(registeredConfigs[0]).not.toContain('theme = "dark"');
+      expect(register).not.toHaveBeenCalled();
+      expect(getDcodeSelectionDrift).not.toHaveBeenCalled();
     } finally {
       process.env.PATH = fixture.oldPath;
     }
@@ -1051,7 +1043,7 @@ describe("created sandbox completion actions", () => {
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          reservationSessionId: schema5 ? undefined : "session-owner",
+          reservationSessionId: "session-owner",
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",

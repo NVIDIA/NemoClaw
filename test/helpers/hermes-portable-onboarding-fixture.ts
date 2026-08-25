@@ -424,7 +424,11 @@ export function createHermesPortableTransactionFixture(
           })();
         revalidate();
         events.push("registry");
-        registryEntry = matchingRegistryEntry(input);
+        registryEntry = {
+          ...matchingRegistryEntry(input),
+          pendingRouteReservation: true,
+          reservationSessionId: input.inferenceRouteReservation.sessionId,
+        };
         return registryEntry;
       }),
     afterRegistryCommit: async () => {
