@@ -742,7 +742,8 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
-    getGatewayCompatContainerName: () => gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    getGatewayCompatContainerName: () =>
+      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
@@ -1668,7 +1669,6 @@ const createSandboxWithBaseImageResolution =
     sandboxCreateOrchestrationRuntime,
   );
 
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
@@ -1890,9 +1890,9 @@ async function handleNimLocalSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
   const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
-  const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
+  const { models, usableMemoryMB } = nim.getNimModelOptions(localGpu);
   if (models.length === 0) {
-    console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    console.log(`  No NIM model fits ${usableMemoryMB} MB. Falling back to cloud API.`);
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
     return "selected";
@@ -1906,7 +1906,7 @@ async function handleNimLocalSelection(
       sel = models.find((m) => m.name === targetModel);
       if (!sel) {
         const label = args.requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
-        console.error(`  Unsupported ${label}: ${targetModel}`);
+        console.error(nim.nimModelSelectionError(targetModel, label, localGpu));
         process.exit(1);
       }
     } else {
@@ -1915,7 +1915,7 @@ async function handleNimLocalSelection(
     note(`  [non-interactive] NIM model: ${sel.name}`);
   } else {
     console.log("");
-    console.log("  Models that fit your GPU:");
+    console.log(`  Models that fit ${usableMemoryMB} MB of usable GPU memory:`);
     models.forEach((m, i) => {
       console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
     });
@@ -1980,7 +1980,6 @@ async function handleNimLocalSelection(
 
   console.log(`  Pulling NIM image for ${catalogModel}...`);
   nim.pullNimImage(catalogModel);
-
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
@@ -1989,6 +1988,7 @@ async function handleNimLocalSelection(
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+    nim.stopNimContainerByNameOrThrow(nimContainerNameLocal);
     console.error("  NIM failed to start. Falling back to cloud API.");
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
@@ -2810,7 +2810,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false, preserveDeferredExitSession = false, preserveIncompleteSession = false;
+  let completed = false,
+    preserveDeferredExitSession = false,
+    preserveIncompleteSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const lockedRuntime = await resumeRuntime.prepare(
@@ -2919,7 +2921,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
 
-      registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed || preserveIncompleteSession);
+      registerIncompleteOnboardExitHandlerForSession(
+        onboardSession,
+        () => completed || preserveIncompleteSession,
+      );
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,
@@ -3095,8 +3100,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         recordRepairEvent,
       });
 
-      // #2753: for an unfinished sandbox, an explicit requested name precedes
-      // the checkpointed name from the interrupted session.
+      // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
         recordedSandboxName,
@@ -3175,7 +3179,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 recoverySessionId,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection: setupNimFlow.createHermesPortableOllamaInferenceResolver({ runtimeContext: lockedRuntime.portableRuntimeContext, credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV, getReservationSessionId: () => session?.sessionId, runGatewayOpenshell: runCoreGatewayOpenshell }),
+            resolveHostLocalInferenceStartupSelection:
+              setupNimFlow.createHermesPortableOllamaInferenceResolver({
+                runtimeContext: lockedRuntime.portableRuntimeContext,
+                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+                getReservationSessionId: () => session?.sessionId,
+                runGatewayOpenshell: runCoreGatewayOpenshell,
+              }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3196,21 +3206,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             isInferenceRouteReady,
             isRoutedInferenceProvider,
             reconcileModelRouter,
-            reupsertRoutedProvider: (gatewayName, p, url, ce) => {
-              const r = routedInference.upsertRoutedProvider(p, url, ce, {
-                upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(
-                  upsertProvider,
-                  gatewayName,
-                ),
-                hydrateCredentialEnv,
-              });
-              return {
-                ok: r.ok,
-                endpointUrl: r.endpointUrl,
-                message: r.result.message,
-                status: r.result.status,
-              };
-            },
+            reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
+              upsertProvider,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+              hydrateCredentialEnv,
+            }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
@@ -3308,7 +3308,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
-
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
@@ -3487,7 +3486,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exitCode = completed ? 0 : 1;
     });
   } catch (error) {
-    preserveDeferredExitSession = onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
+    preserveDeferredExitSession =
+      onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
     try {
