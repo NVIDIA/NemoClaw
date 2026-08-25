@@ -243,7 +243,7 @@ describe("Podman container engine command adapter", () => {
     expect(capture).toHaveBeenCalledOnce();
     expect(capture.mock.calls[0]?.[1].slice(0, 2)).toEqual([
       "unshare",
-      `/proc/${String(process.pid)}/exe`,
+      fs.realpathSync(process.execPath),
     ]);
     expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
       path: directory,

@@ -26,6 +26,7 @@ import {
 // Immutable metadata is checked before and after every dispatch. Rehash the
 // full executable before every 64th command within this operation.
 const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
+const MANAGED_ROOT_HELPER_EXECUTABLE = fs.realpathSync(process.execPath);
 const MANAGED_ROOT_DESCRIPTOR_SCRIPT = `
 const fs = require("node:fs");
 const payload = JSON.parse(process.argv[1]);
@@ -321,7 +322,7 @@ export function createPodmanContainerEngine(
       mode: input.mode,
     });
     const result = boundEngine.captureHost(
-      ["unshare", `/proc/${String(process.pid)}/exe`, "-e", MANAGED_ROOT_DESCRIPTOR_SCRIPT, payload],
+      ["unshare", MANAGED_ROOT_HELPER_EXECUTABLE, "-e", MANAGED_ROOT_DESCRIPTOR_SCRIPT, payload],
       15_000,
     );
     if (result.status !== 0 || result.error) {
