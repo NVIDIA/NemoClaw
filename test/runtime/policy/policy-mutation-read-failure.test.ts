@@ -14,6 +14,7 @@ const policies = requireForTest(
 const policyAuthority = requireForTest(
   path.join(
     import.meta.dirname,
+    "..",
     "../..",
     "src",
     "lib",
@@ -23,7 +24,7 @@ const policyAuthority = requireForTest(
   ),
 ) as typeof import("../../../src/lib/adapters/openshell/policy-authority");
 const registry = requireForTest(
-  path.join(import.meta.dirname, "../..", "src", "lib", "state", "registry.ts"),
+  path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
 const CUSTOM_PRESET = "network_policies:\n  example:\n    host: example.com\n";
 const MALFORMED_BASE_POLICIES = [

@@ -52,7 +52,7 @@ describe("OpenRouter onboarding inference setup", () => {
       expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: "sk-or-test" });
       const commands = harness.commands.map(({ command }) => command);
       expect(commands).toEqual([
-        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
+        "provider profile -g nemoclaw export openai --output json",
         "provider get -g nemoclaw openrouter-api",
         "provider update -g nemoclaw openrouter-api --credential OPENROUTER_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
         "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
@@ -157,7 +157,7 @@ describe("OpenRouter onboarding inference setup", () => {
 
       expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: null });
       expect(harness.commands.map(({ command }) => command)).toEqual([
-        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
+        "provider profile -g nemoclaw export openai --output json",
         "provider get -g nemoclaw openrouter-api",
         "provider update -g nemoclaw openrouter-api --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
         "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",

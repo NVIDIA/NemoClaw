@@ -13,7 +13,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -1714,31 +1721,55 @@ export function actionStatus(rid?: string): void {
   }
 
   const name = runDir.split("/").pop() ?? "unknown";
-  try {
-    const planData = readFileSync(join(runDir, "plan.json"), "utf-8");
-    const parsedPlan: unknown = JSON.parse(planData);
-    const safePlan = buildStatusRunPlan(parsedPlan, name);
-    if (!safePlan) {
-      throw new Error("plan.json must contain a JSON object");
-    }
-    log(JSON.stringify(safePlan, null, 2));
-  } catch (error) {
+  const planFile = join(runDir, "plan.json");
+  const unknownStatus = (
+    receiptErrorKind: "corrupt" | "inaccessible" | "invalid" | "missing",
+    error: unknown,
+  ): void => {
     const detail = boundedCommandError(error instanceof Error ? error.message : String(error));
     log(
       JSON.stringify(
         {
           run_id: name,
           status: "unknown",
+          receipt_error_kind: receiptErrorKind,
           receipt_error: detail,
           run_directory: runDir,
           recovery:
-            "Restore a complete plan.json receipt in this run directory before running reconcile or rollback.",
+            "Do not reconstruct plan.json. Reconcile and rollback remain disabled. Recover the original receipt from a trusted copy produced by this exact run, then ask a NemoClaw maintainer to validate its run ID, sandbox ownership, provider ownership, and policy transition before using it. If no trusted copy exists, stop and ask a NemoClaw maintainer for recovery direction.",
         },
         null,
         2,
       ),
     );
+  };
+
+  if (!existsSync(planFile)) {
+    unknownStatus("missing", new Error("plan.json is missing"));
+    return;
   }
+  let planData: string;
+  try {
+    planData = readFileSync(planFile, "utf-8");
+  } catch (error) {
+    const code = isPlainObject(error) && typeof error.code === "string" ? error.code : undefined;
+    unknownStatus(code === "ENOENT" ? "missing" : "inaccessible", error);
+    return;
+  }
+
+  let parsedPlan: unknown;
+  try {
+    parsedPlan = JSON.parse(planData);
+  } catch (error) {
+    unknownStatus("corrupt", error);
+    return;
+  }
+  const safePlan = buildStatusRunPlan(parsedPlan, name);
+  if (!safePlan) {
+    unknownStatus("invalid", new Error("plan.json must contain a valid run receipt"));
+    return;
+  }
+  log(JSON.stringify(safePlan, null, 2));
 }
 
 export async function actionReconcile(rid: string): Promise<void> {

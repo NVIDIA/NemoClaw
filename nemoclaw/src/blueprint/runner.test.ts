@@ -39,7 +39,7 @@ vi.mock("node:fs", async (importOriginal) => {
     ...original,
     existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
-    readFileSync: memory.readFileSync,
+    readFileSync: vi.fn(memory.readFileSync),
     renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
@@ -64,6 +64,8 @@ const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
 const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
   await import("./runner.js");
+const { readFileSync } = await import("node:fs");
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -1284,7 +1286,12 @@ describe("runner", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
       actionStatus("nc-run-1");
-      expect(capturedJsonOutput()).toMatchObject({ run_id: "nc-run-1", status: "unknown" });
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "missing",
+        recovery: expect.stringContaining("Do not reconstruct plan.json"),
+      });
     });
 
     it("reports recovery details when plan.json is corrupt", () => {
@@ -1296,9 +1303,28 @@ describe("runner", () => {
       expect(capturedJsonOutput()).toEqual({
         run_id: "nc-run-1",
         status: "unknown",
+        receipt_error_kind: "corrupt",
         receipt_error: expect.stringContaining("JSON"),
         run_directory: `${RUNS_DIR}/nc-run-1`,
-        recovery: expect.stringContaining("Restore a complete plan.json receipt"),
+        recovery: expect.stringContaining("trusted copy produced by this exact run"),
+      });
+      expect(stdoutText()).not.toContain("Restore a complete plan.json");
+    });
+
+    it("distinguishes an inaccessible plan receipt from a missing receipt", () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(`${RUNS_DIR}/nc-run-1/plan.json`, JSON.stringify({ run_id: "nc-run-1" }));
+      mockedReadFileSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      });
+
+      actionStatus("nc-run-1");
+
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "inaccessible",
+        recovery: expect.stringContaining("stop and ask a NemoClaw maintainer"),
       });
     });
 

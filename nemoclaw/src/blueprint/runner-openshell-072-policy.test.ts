@@ -39,6 +39,7 @@ vi.mock("node:fs", async (importOriginal) => {
   const memory = inMemoryFsMethods(store, { spy: vi.fn });
   return {
     ...original,
+    existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
     readdirSync: memory.readdirSync,
@@ -658,11 +659,13 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     expect(stdoutCapture.jsonOutput()).toMatchObject({
       run_id: runId,
       status: "unknown",
+      receipt_error_kind: "invalid",
       run_directory: stateDir,
-      recovery: expect.stringContaining("Restore a complete plan.json receipt"),
+      recovery: expect.stringContaining("Do not reconstruct plan.json"),
     });
     await expect(actionReconcile(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
     await expect(actionRollback(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 
   const reconciliationPlan = {

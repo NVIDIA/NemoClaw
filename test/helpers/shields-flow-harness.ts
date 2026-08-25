@@ -72,6 +72,19 @@ export const managedPolicyMutationAuthority = {
   },
 };
 
+export function bindManagedPolicyMutationAuthority(
+  policy: typeof import("../../src/lib/policy"),
+): MockInstance[] {
+  return [
+    vi
+      .spyOn(policy, "inspectPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
+      .spyOn(policy, "recheckPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+  ];
+}
+
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;

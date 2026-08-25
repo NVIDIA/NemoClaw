@@ -52,6 +52,14 @@ export type DirectSetupHarnessOptions = {
   overrides?: Partial<SetupInferenceDeps>;
 };
 
+const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+
 type DirectCommandRoute = {
   name: string;
   matches(command: string): boolean;
@@ -280,7 +288,17 @@ export function createDirectSetupInferenceHarnessFactory(
         env: runOptions.env,
         ignoreError: runOptions.ignoreError,
       });
-      return directRunResult(options.runOpenshell?.(args, runOptions, commands));
+      const routed = options.runOpenshell?.(args, runOptions, commands);
+      if (routed !== undefined) return directRunResult(routed);
+      if (
+        args[0] === "provider" &&
+        args[1] === "profile" &&
+        args.includes("export") &&
+        args.includes("openai")
+      ) {
+        return directRunResult({ status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE });
+      }
+      return directRunResult();
     };
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility: () => ({ ok: true }),
