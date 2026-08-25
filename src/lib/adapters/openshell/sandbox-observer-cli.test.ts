@@ -10,7 +10,11 @@ import {
   type CliOpenShellSandboxObserverDeps,
   parseCliOpenShellSandboxInventory,
 } from "./sandbox-observer-cli";
-import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
+import {
+  externalOpenShellGateway,
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "./sandbox-observer";
 
 function createCliOpenShellSandboxObserver(
   deps: Omit<CliOpenShellSandboxObserverDeps, "defaultTimeoutMs">,
@@ -217,5 +221,37 @@ describe("CLI OpenShell sandbox observer", () => {
       ok: false,
       error: { kind: "timeout", message: "OpenShell sandbox observation timed out." },
     });
+  });
+
+  it("does not route an explicit external target through ambient CLI state (#9872)", async () => {
+    const capture = vi.fn(() => captured(0, "ambient Ready"));
+    const observer = createCliOpenShellSandboxObserver({ capture });
+    const lookup = createCliOpenShellSandboxLookup({ capture });
+    const target = externalOpenShellGateway(
+      "https://openshell.example.test:8443",
+      "research",
+      "configured-release",
+    );
+
+    await expect(observer.listSandboxes({ target })).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "invalid_request",
+        message: "The CLI sandbox observer does not accept external OpenShell targets.",
+      },
+    });
+    await expect(lookup({ target, sandboxName: "alpha" })).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "invalid_request",
+          message: "The CLI sandbox lookup does not accept external OpenShell targets.",
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).not.toHaveBeenCalled();
   });
 });

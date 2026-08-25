@@ -216,6 +216,16 @@ export function createCliOpenShellSandboxLookup(
   deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs">,
 ): CliOpenShellSandboxLookup {
   return async (request) => {
+    if (request.target.kind === "external") {
+      return {
+        result: failure({
+          kind: "command",
+          reason: "invalid_request",
+          message: "The CLI sandbox lookup does not accept external OpenShell targets.",
+        }),
+        displayOutput: "",
+      };
+    }
     const result = await deps.capture(targetArgs("get", request.target, request.sandboxName), {
       ignoreError: true,
       includeStderr: true,
@@ -250,6 +260,13 @@ export function createCliOpenShellSandboxObserver(
   const listSandboxes = async (
     request: ListOpenShellSandboxesRequest,
   ): Promise<OpenShellSandboxResult<OpenShellSandboxInventory>> => {
+    if (request.target.kind === "external") {
+      return failure({
+        kind: "command",
+        reason: "invalid_request",
+        message: "The CLI sandbox observer does not accept external OpenShell targets.",
+      });
+    }
     const result = await capture(targetArgs("list", request.target), {
       ignoreError: true,
       includeStderr: true,
