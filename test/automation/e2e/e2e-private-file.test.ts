@@ -12,7 +12,7 @@ import {
   appendPrivateRegularFile,
   readPrivateRegularFile,
   writePrivateRegularFile,
-} from "../tools/e2e/private-file.mts";
+} from "../../../tools/e2e/private-file.mts";
 
 describe("private E2E controller files", () => {
   it("writes private regular files without following links or truncating hardlink targets", () => {

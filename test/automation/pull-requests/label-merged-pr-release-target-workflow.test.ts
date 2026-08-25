@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { readYaml, type WorkflowJob } from "../.././helpers/e2e-workflow-contract";
+import { readYaml, type WorkflowJob } from "../../helpers/e2e-workflow-contract";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]

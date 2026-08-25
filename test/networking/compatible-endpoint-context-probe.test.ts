@@ -16,9 +16,9 @@ import {
 import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
-} from ".././e2e/fixtures/fake-openai-compatible";
-import { startTestProgress, type TestProgress } from ".././e2e/fixtures/progress.ts";
-import { testTimeout } from ".././helpers/timeouts";
+} from "../e2e/fixtures/fake-openai-compatible";
+import { startTestProgress, type TestProgress } from "../e2e/fixtures/progress.ts";
+import { testTimeout } from "../helpers/timeouts";
 
 const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
 let progress: TestProgress | null = null;

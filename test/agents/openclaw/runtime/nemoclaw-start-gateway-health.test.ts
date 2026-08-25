@@ -22,7 +22,7 @@ import {
   START_SCRIPT,
   safeTmpHelpers,
   writeProcStatFunction,
-} from "./nemoclaw-start-gateway.test-helpers";
+} from "../../../nemoclaw-start-gateway.test-helpers";
 
 function gatewayMarkerFunction(src: string, name: string, markerPath: string): string {
   return extractShellFunction(src, name).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);

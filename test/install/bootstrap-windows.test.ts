@@ -3,7 +3,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { testTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 import {
   BOOTSTRAP_WINDOWS,
   POWERSHELL_BATCH_EXEC_TIMEOUT_MS,
@@ -14,7 +14,7 @@ import {
   resolvePowerShell,
   runPowerShellBatch,
   runPowerShellProcess,
-} from "./support/bootstrap-windows-test-helpers";
+} from "../support/bootstrap-windows-test-helpers";
 
 const POWERSHELL_TEST_TIMEOUT = testTimeoutOptions(
   Math.max(30_000, POWERSHELL_PROCESS_EXEC_TIMEOUT_MS + 5_000),

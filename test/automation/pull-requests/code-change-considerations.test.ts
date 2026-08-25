@@ -12,7 +12,7 @@ import {
   buildSystemPrompt,
   readTrustedCodeChangeConsiderations,
 } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
-import { metadata } from "../.././helpers/pr-review-advisor-test-fixtures";
+import { metadata } from "../../helpers/pr-review-advisor-test-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const RESOURCE_PATH = path.join(

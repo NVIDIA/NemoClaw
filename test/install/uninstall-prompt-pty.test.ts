@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { execTimeout, testTimeoutOptions } from ".././helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 // Deterministic runtime validation for #5188: the uninstall confirm prompts
 // must wait for typed input on a real terminal even when fd 0 is already
