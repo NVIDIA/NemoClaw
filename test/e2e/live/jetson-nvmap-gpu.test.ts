@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { getBuildIdentity } from "../../../src/lib/core/version";
 import { MANAGED_IMAGE_REPOSITORIES } from "../../../src/lib/onboard/managed-image/contract";
+import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -36,17 +38,15 @@ function sandboxManagedImage(): {
 } {
   expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { imageTag?: unknown; workload?: unknown }>;
+    sandboxes?: Record<string, SandboxEntry>;
   };
   const entry = registry.sandboxes?.[SANDBOX_NAME];
-  const imageTag = entry?.imageTag;
-  const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
-  expect(normalizedImageTag, `registry imageTag missing for ${SANDBOX_NAME}`).not.toBe("");
-  expect(entry?.workload).toBeTypeOf("object");
-  expect(entry?.workload).not.toBeNull();
+  if (!entry) throw new Error(`registry entry missing for ${SANDBOX_NAME}`);
+  const authority = readManagedWorkloadAuthority(entry);
+  if (!authority) throw new Error(`managed workload authority missing for ${SANDBOX_NAME}`);
   return {
-    imageTag: normalizedImageTag,
-    workload: entry?.workload as Record<string, unknown>,
+    imageTag: authority.receipt.reference,
+    workload: authority.receipt,
   };
 }
 
