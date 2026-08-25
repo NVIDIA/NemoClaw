@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./provider-command";
 
 export type EndpointlessProviderProfileRunner = (
@@ -94,6 +95,13 @@ export type EndpointlessProviderProfileResult =
       readonly reason: "export-failed" | "import-failed" | "incompatible";
     };
 
+/** OpenShell provider type registered for every OpenAI-surface inference route. */
+export const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
+
+export type OpenAiProviderProfileCheck =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly messages: readonly string[] };
+
 /** Import one endpointless profile or validate the exact existing contract. */
 export function ensureEndpointlessProviderProfile(input: {
   readonly profileId: string;
@@ -156,4 +164,47 @@ export function ensureEndpointlessProviderProfile(input: {
     return { ok: false, reason: "incompatible" };
   }
   return { ok: true };
+}
+
+/** Validate or import the endpointless OpenAI profile through the OpenShell adapter. */
+export function checkOpenAiInferenceProviderProfile(deps: {
+  readonly runOpenshell: EndpointlessProviderProfileRunner;
+  readonly root?: string;
+}): OpenAiProviderProfileCheck {
+  const result = ensureEndpointlessProviderProfile({
+    profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
+    inferenceCapable: true,
+    profilePath: endpointlessProviderProfilePath(
+      deps.root ?? REPOSITORY_ROOT,
+      OPENAI_GATEWAY_PROVIDER_TYPE,
+    ),
+    runOpenshell: deps.runOpenshell,
+  });
+  if (result.ok) return { ok: true };
+
+  if (result.reason === "import-failed") {
+    return {
+      ok: false,
+      messages: [
+        `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
+        "    Confirm OpenShell is available and authorized, then retry this command.",
+      ],
+    };
+  }
+  if (result.reason === "export-failed") {
+    return {
+      ok: false,
+      messages: [
+        `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
+        "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
+      ],
+    };
+  }
+  return {
+    ok: false,
+    messages: [
+      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
+      "    Remove the conflicting profile, then retry this command.",
+    ],
+  };
 }

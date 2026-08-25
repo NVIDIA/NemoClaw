@@ -65,6 +65,7 @@ const {
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
 const { redactFull }: typeof import("../security/redact") = require("../security/redact");
 const {
+  loadRotateTokenSession,
   readStdin,
   rotateSandboxToken,
 }: typeof import("./config-rotate-token") = require("./config-rotate-token");
@@ -1422,6 +1423,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
     appendAuditEntry,
     captureOpenshellCommand,
     fail: configFail,
+    loadSession: loadRotateTokenSession,
     promptSecret,
     resolveAgentConfig,
     runOpenshellCommand,

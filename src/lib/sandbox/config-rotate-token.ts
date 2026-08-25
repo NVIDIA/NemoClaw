@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { checkOpenAiInferenceProviderProfile } from "../onboard/inference-providers/provider-profile";
+import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile";
+import type { Session } from "../state/onboard-session";
 
 export interface RotateTokenOpts {
   fromEnv?: string | null;
@@ -10,10 +11,21 @@ export interface RotateTokenOpts {
 
 type RotateTokenFailure = (lines: string | readonly string[], exitCode?: number) => never;
 
-type RotateTokenDeps = {
+type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxName"> & {
+  readonly providerType?: string;
+};
+
+export function loadRotateTokenSession(): RotateTokenSession | null {
+  const { loadSession } =
+    require("../state/onboard-session") as typeof import("../state/onboard-session");
+  return loadSession();
+}
+
+export type RotateTokenDeps = {
   readonly appendAuditEntry: typeof import("../shields/audit").appendAuditEntry;
   readonly captureOpenshellCommand: typeof import("../adapters/openshell/client").captureOpenshellCommand;
   readonly fail: RotateTokenFailure;
+  readonly loadSession: () => RotateTokenSession | null;
   readonly promptSecret: typeof import("../credentials/store").promptSecret;
   readonly resolveAgentConfig: (sandboxName: string) => import("./agent-config").AgentConfigTarget;
   readonly runOpenshellCommand: typeof import("../adapters/openshell/client").runOpenshellCommand;
@@ -28,12 +40,7 @@ export async function rotateSandboxToken(
 ): Promise<void> {
   deps.validateName(sandboxName, "sandbox name");
 
-  const {
-    loadSession,
-  }: typeof import("../state/onboard-session") = require("../state/onboard-session");
-  const session = loadSession() as
-    | (NonNullable<ReturnType<typeof loadSession>> & { readonly providerType?: string })
-    | null;
+  const session = deps.loadSession();
   if (!session || !session.credentialEnv) {
     deps.fail([
       `  Cannot determine credential for sandbox '${sandboxName}'.`,

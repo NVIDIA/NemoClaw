@@ -17,11 +17,11 @@
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import {
+  checkOpenAiInferenceProviderProfile,
   endpointlessProviderProfilePath,
   ensureEndpointlessProviderProfile,
 } from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { checkOpenAiInferenceProviderProfile } from "../../onboard/inference-providers/provider-profile";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";

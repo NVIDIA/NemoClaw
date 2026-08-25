@@ -6,9 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { checkOpenAiInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
-import { checkOpenAiInferenceProviderProfile } from "../inference-providers/provider-profile";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
 import {
   parseHostLocalInferenceReceipt,

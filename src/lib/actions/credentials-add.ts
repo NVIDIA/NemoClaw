@@ -4,16 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
+import {
+  checkOpenAiInferenceProviderProfile,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "../adapters/openshell/provider-profile";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
   isBridgeProviderName,
   recoverGatewayForCredentialMutationOrExit,
 } from "../credentials/command-support";
-import {
-  checkOpenAiInferenceProviderProfile,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../onboard/inference-providers/provider-profile";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";

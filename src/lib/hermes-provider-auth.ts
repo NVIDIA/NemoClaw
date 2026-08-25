@@ -11,8 +11,8 @@
 
 import type { StdioOptions } from "node:child_process";
 
+import { checkOpenAiInferenceProviderProfile } from "./adapters/openshell/provider-profile";
 import * as oauth from "./oauth-device-code";
-import { checkOpenAiInferenceProviderProfile } from "./onboard/inference-providers/provider-profile";
 
 const onboardProviders = require("./onboard/providers") as {
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;

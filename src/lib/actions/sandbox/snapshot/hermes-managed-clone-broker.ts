@@ -3,13 +3,13 @@
 
 import { randomBytes } from "node:crypto";
 
+import { checkOpenAiInferenceProviderProfile } from "../../../adapters/openshell/provider-profile";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import {
   getHermesToolGatewayCloneBroker,
   type HermesToolGatewayCloneBroker,
 } from "../../../hermes-tool-gateway-clone-broker";
 import type { PreparedManagedWorkloadCloneHandoff } from "../../../onboard/workload/clone";
-import { checkOpenAiInferenceProviderProfile } from "../../../onboard/inference-providers/provider-profile";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import {
@@ -199,9 +199,7 @@ function isUnknownActivationOutcome(error: unknown): boolean {
   );
 }
 
-function ensureHermesCloneInferenceProviderProfile(
-  runOpenshell: ManagedCloneProviderRunner,
-): void {
+function ensureHermesCloneInferenceProviderProfile(runOpenshell: ManagedCloneProviderRunner): void {
   const profile = checkOpenAiInferenceProviderProfile({
     runOpenshell: (args, options) =>
       runOpenshell(args, {
