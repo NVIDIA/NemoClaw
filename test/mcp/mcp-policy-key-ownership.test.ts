@@ -10,6 +10,16 @@ import { describe, expect, it } from "vitest";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.106'; exit 0; fi`;
+const MANAGED_POLICY_AUTHORITY_CLAUSE = `if [ "$1 $2" = "policy get" ]; then
+  case " $* " in
+    *" --output json "*)
+      sandbox=""
+      for sandbox in "$@"; do :; done
+      printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "$sandbox"
+      exit 0
+      ;;
+  esac
+fi`;
 
 const PRESET = `network_policies:
   example:
@@ -29,6 +39,7 @@ function runApply(
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\n${
@@ -79,6 +90,7 @@ function runContentMatch(liveName: string) {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: ${liveName}\n    endpoints: []\n'
 `,
     { mode: 0o755 },
@@ -109,6 +121,7 @@ function runFailedPolicyMutation(operation: "apply" | "remove") {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
   exit 0
@@ -174,6 +187,7 @@ function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
 fi
@@ -295,9 +309,18 @@ describe("MCP-generated network policy ownership", () => {
       path.join(binDir, "openshell"),
       `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export openai --output json" ]; then
+  printf '%s\n' '{"id":"openai","credentials":[],"endpoints":[],"binaries":[],"inference_capable":true}'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export nemoclaw-mcp-v1 --output json" ]; then
+  printf '%s\n' '{"id":"nemoclaw-mcp-v1","credentials":[],"endpoints":[],"binaries":[],"inference_capable":false}'
   exit 0
 fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
@@ -386,9 +409,18 @@ bridge.addMcpBridge("alpha", {
       path.join(binDir, "openshell"),
       `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export openai --output json" ]; then
+  printf '%s\n' '{"id":"openai","credentials":[],"endpoints":[],"binaries":[],"inference_capable":true}'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export nemoclaw-mcp-v1 --output json" ]; then
+  printf '%s\n' '{"id":"nemoclaw-mcp-v1","credentials":[],"endpoints":[],"binaries":[],"inference_capable":false}'
   exit 0
 fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
@@ -477,6 +509,7 @@ bridge.addMcpBridge("alpha", {
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -490,6 +523,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,

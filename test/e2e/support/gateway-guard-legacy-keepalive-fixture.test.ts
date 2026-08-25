@@ -159,7 +159,11 @@ describe("gateway guard legacy keepalive fixture", () => {
         openshellSandboxCommand: ["sleep", "infinity"],
         timeoutSecs: 180,
       },
-      { dockerCapture: expect.any(Function) },
+      {
+        dockerCapture: expect.any(Function),
+        runCaptureOpenshell: expect.any(Function),
+        runOpenshell: expect.any(Function),
+      },
     );
   });
 

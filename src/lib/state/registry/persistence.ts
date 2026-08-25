@@ -13,9 +13,7 @@ import {
   serializeSandboxMessagingStateForDisk,
 } from "../registry-messaging";
 import {
-  normalizeBaselineExclusions,
-  normalizeBaselineExclusionTransition,
-  normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAttribution,
   parseSandboxRegistryEntries,
   retainedDefaultSandbox,
 } from "../registry-normalization";
@@ -168,12 +166,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     "load",
   );
   const mcp = normalizeSandboxMcpState(entry.mcp);
-  const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
-  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
-    entry.baselineExclusionTransition,
-  );
-  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
   const quarantine = normalizeSandboxQuarantineFence(entry.quarantine);
+  const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -182,12 +176,9 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
-    baselineExclusions: _baselineExclusions,
-    baselineExclusionTransition: _baselineExclusionTransition,
-    customPolicies: _customPolicies,
     quarantine: _quarantine,
     ...rest
-  } = entry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -196,9 +187,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
-    ...(baselineExclusions ? { baselineExclusions } : {}),
-    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
-    ...(customPolicies ? { customPolicies } : {}),
     ...(quarantine ? { quarantine } : {}),
   };
 }
@@ -239,12 +227,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     "save",
   );
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
-  const baselineExclusions = normalizeBaselineExclusions(durable.baselineExclusions);
-  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
-    durable.baselineExclusionTransition,
-  );
-  const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
   const quarantine = normalizeSandboxQuarantineFence(durable.quarantine);
+  const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -253,12 +237,9 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
-    baselineExclusions: _baselineExclusions,
-    baselineExclusionTransition: _baselineExclusionTransition,
-    customPolicies: _customPolicies,
     quarantine: _quarantine,
     ...rest
-  } = durable as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
@@ -268,9 +249,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
-    ...(baselineExclusions ? { baselineExclusions } : {}),
-    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
-    ...(customPolicies ? { customPolicies } : {}),
     ...(quarantine ? { quarantine } : {}),
   };
 }

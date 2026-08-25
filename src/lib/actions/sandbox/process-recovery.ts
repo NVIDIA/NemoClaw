@@ -506,10 +506,15 @@ function finalRelaunchContainerFailureDetail(
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.lifecycleReleaseObserved === false) {
-    return "OpenShell did not release the sandbox name before the final recovery handoff. NemoClaw did not restart the replacement container or start the primary dashboard/API host forward";
+    return "OpenShell did not retire the previous lifecycle record before the final replacement start. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.replacementRestarted === false) {
     return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
+  if (completion.finalHandoffAcknowledged === false) {
+    return `OpenShell did not acknowledge the final replacement container handoff${
+      completion.lastSandboxPhase ? `; last sandbox phase was ${completion.lastSandboxPhase}` : ""
+    }. NemoClaw did not start the primary dashboard/API host forward`;
   }
   return null;
 }
@@ -759,6 +764,15 @@ function recoverSandboxProcesses(
         quiet,
         deps: {
           runOpenshell,
+          runCaptureOpenshell: (args, options) =>
+            captureOpenshell(args, {
+              ignoreError: true,
+              includeStderr: true,
+              killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
+              killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
+              timeout:
+                typeof options?.timeout === "number" ? options.timeout : OPENSHELL_PROBE_TIMEOUT_MS,
+            }).output,
           confirmMissingSupervisor: (containerId) =>
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
@@ -847,7 +861,7 @@ export function restartSandboxGateway(
                 requestGatewaySupervisorActionImpl:
                   deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
               }),
-          }),
+            }),
         ensureSandboxPortForward,
         ensureHermesDashboardPortForwardIfEnabled,
         recoverMessagingHostForward,
@@ -1628,7 +1642,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           quiet,
           initialManagedHealthPassed: recovery.kind === "managed",
           requireManagedProbe: recovery.kind === "relaunched",
-          timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+          // A legacy keepalive relaunch starts a new OpenClaw container. The
+          // #10153 failure exhausted the ordinary 30-second health budget
+          // during that full recreation. Give only this OpenClaw transition
+          // the existing 120-second recreated-sandbox readiness budget;
+          // other agents retain their declared gateway health timeout.
+          timeoutSeconds:
+            relaunch && (recoveryAgent === null || recoveryAgent.name === "openclaw")
+              ? Math.max(
+                  gatewayRecoveryTimeoutSeconds(recoveryAgent),
+                  GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
+                )
+              : gatewayRecoveryTimeoutSeconds(recoveryAgent),
           managedProbeImpl: relaunch
             ? () => confirmRelaunchedManagedHealth?.(210000) ?? null
             : (name) =>

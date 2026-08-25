@@ -64,4 +64,17 @@ describe("Hermes MCP config adapter", () => {
       "probe",
     ]);
   });
+
+  it("declares the readiness-proven credential revision for transaction validation (#10155)", () => {
+    const command = buildHermesMcpRegisterCommand(baseEntry, false, "v12");
+
+    expect(JSON.parse(command[3] ?? "{}")).toEqual({
+      server: "github",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+      replace_existing: false,
+      credential_name: "GITHUB_TOKEN",
+      credential_revision: "v12",
+    });
+  });
 });

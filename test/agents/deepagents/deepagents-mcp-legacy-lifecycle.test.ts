@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard-script-mocks.cjs";
+
 const mocks = vi.hoisted(() => ({
   applyPresetContent: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
@@ -20,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
@@ -116,8 +119,9 @@ beforeEach(() => {
     switch (true) {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
-      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
-        return { status: 0, stdout: "Imported provider profile", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile":
+        return mockManagedEndpointlessProviderProfileRun(args) ??
+          { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {
@@ -195,13 +199,11 @@ beforeEach(() => {
             stderr: "",
           };
         }
-        case command.includes("data = {'mcpServers': payload['expectedServers']}"):
+        case command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1"):
           adapterRegistered = true;
           return {
             status: 0,
-            stdout: command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED")
-              ? "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n"
-              : "",
+            stdout: "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n",
             stderr: "",
           };
         case command.includes(
@@ -227,7 +229,7 @@ beforeEach(() => {
         !isRevisionObservation && proof.includes('[ -z "${GITHUB_TOKEN+x}" ]');
       return {
         status: isDetachedProof && attached ? 1 : 0,
-        stdout: attached ? "canonical" : "absent",
+        stdout: attached ? `v${String(providerResourceVersion)}` : "absent",
         stderr: "",
       };
     });
@@ -404,6 +406,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       providerExists: true,
       markerCalls: 0,
     });
+    expect(adapterCalls.join("\n")).toContain("v2_GITHUB_TOKEN");
   });
 
   it("restores the old image when rebuild deletion aborts", async () => {
@@ -421,5 +424,6 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       providerExists: true,
       markerCalls: 0,
     });
+    expect(adapterCalls.join("\n")).toContain("v2_GITHUB_TOKEN");
   });
 });
