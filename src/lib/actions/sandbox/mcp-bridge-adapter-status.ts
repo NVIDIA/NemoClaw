@@ -136,10 +136,14 @@ export interface HermesMcpIntentPayload {
 export function buildHermesMcpIntentPayload(
   entries: readonly McpBridgeEntry[],
   managedServerNames: readonly string[],
+  credentialRevisions: ReadonlyMap<string, McpAttachedCredentialRevision> = new Map(),
 ): HermesMcpIntentPayload {
   const sortedEntries = [...entries].sort((left, right) => left.server.localeCompare(right.server));
   const present = Object.fromEntries(
-    sortedEntries.map((entry) => [entry.server, hermesManagedServerConfig(entry)]),
+    sortedEntries.map((entry) => [
+      entry.server,
+      hermesManagedServerConfig(entry, credentialRevisions.get(entry.server)),
+    ]),
   );
   const presentNames = new Set(Object.keys(present));
   const absent = [...new Set(managedServerNames)].filter((name) => !presentNames.has(name)).sort();

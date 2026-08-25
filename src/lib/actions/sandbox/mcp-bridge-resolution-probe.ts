@@ -54,7 +54,10 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
-import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import type {
+  McpAttachedCredentialRevision,
+  McpCredentialRevisionObservation,
+} from "./mcp-bridge-provider-readiness";
 import {
   type CredentialResolutionProbeReadiness,
   credentialResolutionReadinessSkipDetail,
@@ -385,6 +388,7 @@ export function probeCredentialResolution(
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
+  observedCredentialRevision?: McpCredentialRevisionObservation,
 ): CredentialResolutionProbe {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
@@ -399,14 +403,16 @@ export function probeCredentialResolution(
   } catch {
     return { ok: null, detail: "no credential binding or safe endpoint to probe" };
   }
-  let credentialRevision: ReturnType<typeof observeMcpCredentialRevision>;
-  try {
-    credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
-  } catch {
-    return {
-      ok: null,
-      detail: "probe skipped: the current OpenShell credential revision could not be observed",
-    };
+  let credentialRevision = observedCredentialRevision;
+  if (credentialRevision === undefined) {
+    try {
+      credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+    } catch {
+      return {
+        ok: null,
+        detail: "probe skipped: the current OpenShell credential revision could not be observed",
+      };
+    }
   }
   if (credentialRevision === "absent") {
     return {

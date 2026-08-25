@@ -350,6 +350,31 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
   });
 
+  it("reuses a status observation instead of starting a second revision check (#10079)", () => {
+    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+      const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+      return {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      };
+    });
+
+    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe, "v12");
+
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
+    expect(mocks.observeMcpCredentialRevision).not.toHaveBeenCalled();
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+  });
+
   it("does not probe with an identityless canonical placeholder (#10079)", () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("canonical");
 

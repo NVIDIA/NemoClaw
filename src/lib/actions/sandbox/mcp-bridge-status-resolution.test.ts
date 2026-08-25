@@ -46,6 +46,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 let providerAttachmentState = "attached";
 let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
+let persistedCredentialRevision = "v11";
+const hermesIntentPayloads = [];
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     if (providerInspectionState === "absent") {
@@ -70,17 +72,31 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       stderr: "",
     };
   }
+  if (args[0] === "sandbox" && args[1] === "exec" && args.includes("inspect")) {
+    const payload = JSON.parse(args[args.length - 1]);
+    hermesIntentPayloads.push(payload);
+    const authorization = payload.present?.github?.headers?.Authorization;
+    const matches = authorization ===
+      "Bearer openshell:resolve:env:" + persistedCredentialRevision + "_GITHUB_TOKEN";
+    return matches
+      ? { status: 0, stdout: '{"ok":true,"state":"matched"}\n', stderr: "" }
+      : { status: 2, stdout: "", stderr: "Hermes MCP config does not match persisted managed intent" };
+  }
   throw new Error("Unexpected OpenShell call: " + args.join(" "));
 };
 let activePolicyState = "match";
 policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
 let providerCredentialObservation = "v11";
-processRecovery.executeSandboxExecCommand = () => ({
-  status: 0,
-  stdout: providerCredentialObservation,
-  stderr: "",
-});
+let credentialObservationCount = 0;
+processRecovery.executeSandboxExecCommand = () => {
+  credentialObservationCount += 1;
+  return {
+    status: 0,
+    stdout: providerCredentialObservation,
+    stderr: "",
+  };
+};
 processRecovery.executeSandboxCommand = (sandboxName, command) => {
   executedSandboxCommands.push(command);
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
@@ -114,7 +130,13 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
       stderr: "",
     };
   }
-  return { status: 0, stdout: "registered", stderr: "" };
+  const expectedAuthorization =
+    "openshell:resolve:env:" + persistedCredentialRevision + "_GITHUB_TOKEN";
+  return {
+    status: 0,
+    stdout: command.includes(expectedAuthorization) ? "registered" : "mismatch",
+    stderr: "",
+  };
 };
 registry.registerSandbox({
   name: "alpha",
@@ -216,6 +238,8 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   const outcomes = [];
   for (const observation of ["v19", "canonical"]) {
     providerCredentialObservation = observation;
+    persistedCredentialRevision = observation === "v19" ? "v19" : "v11";
+    credentialObservationCount = 0;
     executedSandboxCommands.length = 0;
     const [status] = await bridge.statusMcpBridge("alpha", "github", {
       probeCredentialResolution: true,
@@ -227,6 +251,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       observation,
       resolution: status.provider.credentialResolution,
       probeCommand: probeCommand ?? null,
+      credentialObservationCount,
     });
   }
   process.stdout.write(JSON.stringify(outcomes));
@@ -236,6 +261,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       observation: string;
       resolution: { ok: boolean | null; detail?: string };
       probeCommand: string | null;
+      credentialObservationCount: number;
     }>;
 
     expect(outcomes[0]?.probeCommand).toContain(
@@ -246,6 +272,75 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     );
     expect(outcomes[1]?.probeCommand).toBeNull();
     expect(outcomes[1]?.resolution.detail).toContain("revision-scoped placeholder");
+    expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
+  });
+
+  it("reports stale persisted revisions for every agent adapter (#10079)", () => {
+    const home = createTempHome("nemoclaw-mcp-status-stale-revision-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  providerCredentialObservation = "v12";
+  persistedCredentialRevision = "v11";
+  const outcomes = [];
+  for (const [agent, adapter] of [
+    ["openclaw", "mcporter"],
+    ["langchain-deepagents-code", "deepagents-config"],
+    ["hermes", "hermes-config"],
+  ]) {
+    const current = registry.getSandbox("alpha");
+    const entry = { ...current.mcp.bridges.github, agent, adapter };
+    registry.updateSandbox("alpha", {
+      agent,
+      mcp: { bridges: { github: entry }, managedServerNames: ["github"] },
+    });
+    credentialObservationCount = 0;
+    executedSandboxCommands.length = 0;
+    hermesIntentPayloads.length = 0;
+    const [status] = await bridge.statusMcpBridge("alpha", "github", {
+      probeCredentialResolution: true,
+    });
+    outcomes.push({
+      agent,
+      adapter: status.adapter,
+      resolution: status.provider.credentialResolution,
+      credentialObservationCount,
+      adapterCommand: executedSandboxCommands.find(
+        (command) => !command.includes("NEMOCLAW_MCP_PROBE"),
+      ) ?? null,
+      hermesIntent: hermesIntentPayloads[0] ?? null,
+      probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+    });
+  }
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    const outcomes = JSON.parse(stdout) as Array<{
+      agent: string;
+      adapter: { registered: boolean | null; detail?: string };
+      resolution: { ok: boolean | null; detail?: string };
+      credentialObservationCount: number;
+      adapterCommand: string | null;
+      hermesIntent: unknown;
+      probed: boolean;
+    }>;
+
+    expect(outcomes.map((outcome) => outcome.adapter.registered)).toEqual([false, false, false]);
+    expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1, 1]);
+    expect(outcomes.map((outcome) => outcome.probed)).toEqual([false, false, false]);
+    outcomes.forEach((outcome) => {
+      expect(outcome.resolution).toEqual({
+        ok: null,
+        detail:
+          "probe skipped: the managed agent adapter does not match the current credential revision",
+      });
+    });
+    expect(outcomes[0]?.adapterCommand).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
+    expect(outcomes[1]?.adapterCommand).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
+    expect(JSON.stringify(outcomes[2]?.hermesIntent)).toContain(
+      "openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
   });
 
   it("skips status probe traffic until exact policy and provider readiness are verified (#6379)", () => {
