@@ -16,6 +16,7 @@ import {
   attachProvider,
   detachMissingProviderReference,
   ensureMcpBridgeProviderProfile,
+  mcpAttachedCredentialRevisionForProviderVersion,
   refreshMcpProviderEnvironment,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
@@ -172,15 +173,23 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    refreshMcpProviderEnvironment(entry);
+    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
+      ...(entryAdapter === "mcporter"
+        ? {
+            expectedRevision: mcpAttachedCredentialRevisionForProviderVersion(
+              synchronizedProvider.resourceVersion,
+            ),
+          }
+        : {}),
     });
     registerAgentAdapter(
       sandboxName,
-      (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
+      entryAdapter,
       entry,
       adapterEnvValues,
       { replaceExisting: true, credentialRevision },
@@ -241,9 +250,17 @@ export async function restoreExistingMcpBridgeRuntime(
     });
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
-    refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      ...(adapter === "mcporter"
+        ? {
+            expectedRevision: mcpAttachedCredentialRevisionForProviderVersion(
+              synchronizedProvider.resourceVersion,
+            ),
+          }
+        : {}),
+    });
     registerAgentAdapter(
       sandboxName,
       adapter,

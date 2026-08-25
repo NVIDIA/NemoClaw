@@ -191,7 +191,7 @@ replace(provider, "upsertMcpProvider", () => ({
   action: "created",
   inspection: {
     credentialKeys: ["LOCAL_MCP_TOKEN"], exists: true,
-    id: "11111111-2222-4333-8444-555555555555", resourceVersion: "1", type: "nemoclaw-mcp-v1",
+    id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
   },
 }));
 replace(provider, "attachProvider", () => {});
