@@ -9,7 +9,7 @@
 # Script output is HPA-focused only; see ../README.md for full operations.
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/install-hpa.sh
 #   ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
 

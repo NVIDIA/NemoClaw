@@ -7,7 +7,7 @@
 # Kubernetes gateway can pull. No inference API key enters the image.
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   AGENT_NAME=openclaw AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-openclaw-k8s:v0.0.104 \
 #     ./scripts/build-agent-sandbox-image.sh
 #   AGENT_NAME=hermes AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-hermes-k8s:v0.0.104 \

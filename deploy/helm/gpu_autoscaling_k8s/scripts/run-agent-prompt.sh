@@ -8,7 +8,7 @@
 #   openshell sandbox exec -n "${AGENT_SANDBOX_NAME:-deepagents-onprem}" -- dcode
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   AGENT_NAME=deepagents ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 
 set -euo pipefail

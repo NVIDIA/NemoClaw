@@ -16,7 +16,7 @@
 #     valid YAML (the kind of silent breakage a template-only change can cause).
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/test-render-contract.sh
 
 set -euo pipefail

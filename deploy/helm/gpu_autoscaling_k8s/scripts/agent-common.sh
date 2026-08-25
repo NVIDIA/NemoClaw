@@ -77,6 +77,23 @@ agent_common_run_mode() {
   esac
 }
 
+# Loopback health endpoint exposed by each long-running agent gateway.
+agent_common_gateway_health_url() {
+  case "$1" in
+    openclaw) echo "http://localhost:18789/health" ;;
+    hermes) echo "http://localhost:8642/health" ;;
+    deepagents) return 1 ;;
+  esac
+}
+
+# OpenClaw can exit successfully after degrading to an embedded runtime when its
+# gateway is unavailable. Treat every upstream marker as a verification failure.
+agent_common_output_has_embedded_fallback() {
+  local output="${1:-}"
+  grep -Eqi 'EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded' \
+    <<<"${output}"
+}
+
 # True (exit 0) if this agent's upstream policy grants integrate.api.nvidia.com and
 # create-agent-sandbox.sh must remove it, since this recipe is on-premises-only.
 agent_common_grants_nvidia_endpoint() {
@@ -125,30 +142,4 @@ agent_common_create_smoke_test() {
   esac
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     curl -fsS https://inference.local/v1/models >/dev/null
-}
-
-# Ask a real question through the actual agent binary/CLI — one shape per agent kind.
-# This must exercise the agent itself (its own model routing, tool loop, config), not just
-# a raw HTTP probe of the inference endpoint — the smoke test above already covers that
-# routing is reachable, so a curl here would be redundant with it and would prove nothing
-# about the agent runtime. openclaw/hermes use each project's own documented headless,
-# non-interactive, no-Gateway-required entry point (`agent exec` / `-z`), matching how
-# deepagents already used `dcode -n`.
-agent_common_create_example_query() {
-  local agent="${1:?agent}" sandbox_name="${2:?sandbox_name}"
-  local query='In one sentence, what is an AI agent sandbox?'
-  case "${agent}" in
-    openclaw)
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        openclaw agent exec "${query}" >/dev/null
-      ;;
-    hermes)
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        hermes -z "${query}" >/dev/null
-      ;;
-    deepagents)
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        dcode -n "${query}" >/dev/null
-      ;;
-  esac
 }

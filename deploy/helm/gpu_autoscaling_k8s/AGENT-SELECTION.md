@@ -18,6 +18,10 @@ agent × `inference.runtime` pairing is equally documented or exercised upstream
 [Agent and runtime support](README.md#agent-and-runtime-support) before picking one,
 especially for Deep Agents Code.
 
+Official platform references: [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart),
+[Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart),
+and [Deep Agents Code quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart).
+
 **Not yet independently validated end-to-end against a live cluster** (see
 [Validated hardware](README.md#validated-hardware)); OpenClaw is the most exercised of
 the three. Please file an issue with anything you find while trying Hermes or Deep Agents
@@ -31,8 +35,8 @@ Code, especially on `dgx02`-class (8×H100) hardware.
 | Upstream | [`agents/openclaw`](https://github.com/NVIDIA/NemoClaw/tree/main/agents/openclaw) | [`agents/hermes`](https://github.com/NVIDIA/NemoClaw/tree/main/agents/hermes) | [`agents/langchain-deepagents-code`](https://github.com/NVIDIA/NemoClaw/tree/main/agents/langchain-deepagents-code) |
 | Shape | Long-running gateway + dashboard | Long-running gateway + dashboard | Terminal harness (one-shot per prompt) |
 | Interactive entry | `openclaw tui` | `hermes` | `dcode` |
-| Headless / scripted entry (used by this recipe's example query) | `openclaw agent exec "<prompt>"` (embedded, no Gateway needed) | `hermes -z "<prompt>"` (embedded one-shot) | `dcode -n "<prompt>"` |
-| Health surface used by this recipe | `openclaw plugins inspect nemoclaw --json` | `hermes --version` + `config.yaml` existence check | `dcode --version` + `config.toml` existence check |
+| Headless / scripted entry (used by verification) | `openclaw agent --agent main -m "<prompt>"` (requires its gateway) | `hermes -z "<prompt>"` | `dcode -n "<prompt>"` |
+| Health surface used by this recipe | `:18789/health` + plugin inspection | `:8642/health` + version/config checks | `dcode --version` + `config.toml` check (no gateway) |
 | Runtime script | `run-agent-sandbox.sh` (foreground, keep terminal open) | `run-agent-sandbox.sh` (foreground, keep terminal open) | `run-agent-prompt.sh "<prompt>"` (one-shot, exits) |
 | Default sandbox name | `nemoclaw-onprem` | `hermes-onprem` | `deepagents-onprem` |
 | Default OpenShell provider name | `onprem-ollama` | `onprem-hermes` | `onprem-deepagents` |
@@ -45,8 +49,8 @@ This page has no commands of its own to copy-paste; it's reference material for 
 `AGENT_NAME` you set in [step 4](README.md#4-agent-sandbox-image-openshell) of that
 Quick start (`openclaw`, `hermes`, or `deepagents` — see [Comparison](#comparison) below).
 The only place the three agents' commands actually diverge is the last line of
-[step 5](README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes keep
-`run-agent-sandbox.sh` in the foreground, Deep Agents Code runs one-shot prompts with
+[step 5](README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes start and keep
+`run-agent-sandbox.sh` in the foreground before verification; Deep Agents Code runs one-shot prompts with
 `run-agent-prompt.sh "<prompt>"` instead (there's also `openshell sandbox exec -n
 deepagents-onprem -- dcode` for an interactive session — needs a TTY).
 
@@ -69,18 +73,18 @@ Agents Code's policy never grants it, so there's nothing to remove there.
 | `OPENSHELL_PROVIDER_NAME` | See [Comparison](#comparison) | OpenShell inference provider name |
 | `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | `2` / `4Gi` | Sandbox pod requests |
 | `NEMOCLAW_TARGET_NODE` | unset (portable) | Pin the sandbox to a specific node |
-| `VERIFY_HEALTH_TIMEOUT_SEC` | `90` | `verify-agent-sandbox.sh` timeout for OpenClaw's plugin inspect and Hermes's `--version` check |
+| `VERIFY_HEALTH_TIMEOUT_SEC` | `90` | Plugin/version checks and OpenClaw/Hermes gateway readiness timeout |
 | `VERIFY_SMOKE_TIMEOUT_SEC` | `30` | `verify-agent-sandbox.sh` timeout for the Hermes/Deep Agents Code config-file existence checks and Deep Agents Code's `dcode --version` |
 | `VERIFY_CURL_TIMEOUT_SEC` | `120` | `verify-agent-sandbox.sh` timeout for the `/v1/models` GET (network-routing check only, all three agents) |
-| `VERIFY_OPENCLAW_TIMEOUT_SEC` | `120` | `verify-agent-sandbox.sh` timeout for OpenClaw's real `openclaw agent exec "<prompt>"` call |
+| `VERIFY_OPENCLAW_TIMEOUT_SEC` | `120` | Timeout for OpenClaw's real `openclaw agent --agent main -m "<prompt>"` call |
 | `VERIFY_HERMES_TIMEOUT_SEC` | `120` | `verify-agent-sandbox.sh` timeout for Hermes's real `hermes -z "<prompt>"` call |
 | `VERIFY_DCODE_TIMEOUT_SEC` | `120` | `verify-agent-sandbox.sh` timeout for Deep Agents Code's real `dcode -n "<prompt>"` call |
 
 ## Example verify output
 
-All three agents follow the same shape: a health/version check, a build-time config check
-(Hermes/Deep Agents Code only), a `/v1/models` GET that only proves the sandbox's network
-route to inference is reachable, and finally a **real prompt through that agent's own
+All three agents follow the same shape: CLI/config checks, gateway health for
+OpenClaw/Hermes, a `/v1/models` GET that proves the sandbox's inference route is
+reachable, and finally a **real prompt through that agent's own
 headless CLI** — never a curl straight to `/v1/chat/completions` — so a pass actually
 proves the agent itself can answer, not just that the network path exists.
 
@@ -89,14 +93,16 @@ proves the agent itself can answer, not just that the network path exists.
 ```text
 [verify] Inspecting nemoclaw plugin (timeout 90s)...
 Plugin inspect OK.
+[verify] Waiting for NemoClaw/OpenClaw gateway at http://localhost:18789/health (timeout 90s)...
+[verify] Gateway health OK (HTTP 200).
 [verify] GET https://inference.local/v1/models (timeout 120s)...
 models: llama3.2:3b
-[verify] openclaw agent exec (headless) — this is the real agent binary, not a curl probe (timeout 120s)
+[verify] openclaw agent --agent main -m (headless) — this is the real agent binary, not a curl probe (timeout 120s)
 [verify] Example query: In one sentence, what is an AI agent sandbox?
 [verify] Answer: An AI agent sandbox is a simulated environment where an AI agent
 can interact and learn in a safe, controlled space.
 OK: sandbox nemoclaw-onprem reached https://inference.local for models and answered a real prompt through NemoClaw/OpenClaw (llama3.2:3b).
-Runtime (optional foreground): AGENT_NAME=openclaw ./scripts/run-agent-sandbox.sh
+Runtime: NemoClaw/OpenClaw gateway is healthy; keep run-agent-sandbox.sh attached.
 ```
 
 **Hermes**:
@@ -106,6 +112,8 @@ Runtime (optional foreground): AGENT_NAME=openclaw ./scripts/run-agent-sandbox.s
 hermes --version OK.
 [verify] Checking config.yaml was generated (timeout 30s)...
 config.yaml OK.
+[verify] Waiting for NemoClaw/Hermes gateway at http://localhost:8642/health (timeout 90s)...
+[verify] Gateway health OK (HTTP 200).
 [verify] GET https://inference.local/v1/models (timeout 120s)...
 models: llama3.2:3b
 [verify] hermes -z (headless) — this is the real agent binary, not a curl probe (timeout 120s)
@@ -113,7 +121,7 @@ models: llama3.2:3b
 [verify] Answer: An AI agent sandbox is a simulated environment where an AI agent
 can interact and learn in a safe, controlled space.
 OK: sandbox hermes-onprem reached https://inference.local for models and answered a real prompt through NemoClaw/Hermes (llama3.2:3b).
-Runtime (optional foreground): AGENT_NAME=hermes ./scripts/run-agent-sandbox.sh
+Runtime: NemoClaw/Hermes gateway is healthy; keep run-agent-sandbox.sh attached.
 ```
 
 **Deep Agents Code** (terminal harness — no health probe, real `dcode -n` call instead):
@@ -158,23 +166,19 @@ is absent.
 
 ## Notes
 
-- `create-agent-sandbox.sh`'s and `verify-agent-sandbox.sh`'s "example query" step runs a
-  real prompt through each agent's own headless CLI — `openclaw agent exec "<prompt>"`,
+- `verify-agent-sandbox.sh` runs a real prompt through each agent's own headless CLI —
+  `openclaw agent --agent main -m "<prompt>"`,
   `hermes -z "<prompt>"`, or `dcode -n "<prompt>"` — never a curl straight to
-  `https://inference.local/v1/chat/completions`. The `/v1/models` GET earlier in both
-  scripts already proves the sandbox's network route to inference is reachable; a curl-based
-  "example query" on top of that would only re-prove the same routing and would not exercise
-  OpenClaw's or Hermes's own model routing, config, or agent loop at all.
+  `https://inference.local/v1/chat/completions`. The earlier `/v1/models` GET already
+  proves network reachability; verification also rejects all known OpenClaw
+  embedded-fallback markers so a broken gateway cannot produce a false pass.
 - Hermes forwards two ports inside the sandbox per its manifest: the dashboard on `18789`
   and the OpenAI-compatible API on `8642`. Neither is exposed by `create-agent-sandbox.sh`
-  today (it only uses `openshell sandbox exec` for the smoke checks above) — reaching the
+  today — reaching the
   dashboard from outside the sandbox would need its own `kubectl port-forward` to the
-  sandbox pod, which this recipe has not set up or validated. Neither port is listening
-  yet at `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` time either, since nothing
-  has started the Hermes gateway process (see the idle-sandbox note below) — that's why
-  those two scripts check for Hermes's build-time-generated `config.yaml` instead of
-  probing `:8642` directly; only `run-agent-sandbox.sh` actually starts the gateway and
-  makes port `8642` reachable.
+  sandbox pod, which this recipe has not set up or validated. `create-agent-sandbox.sh`
+  checks the generated config while the sandbox is idle. Start `run-agent-sandbox.sh`
+  before verification; verification then requires the `:8642/health` endpoint.
 - Deep Agents Code (`dcode`) has no dashboard, no gateway process, and no port to forward —
   it runs, answers, and exits for every invocation. There is nothing for the HPA/monitoring
   stack to distinguish as "the agent is up" beyond the sandbox pod itself being Ready.
@@ -189,14 +193,10 @@ is absent.
   auto-restart. Combined topology (privilege drop + agent-specific tooling) may require
   capabilities like `SYS_ADMIN` / `NET_ADMIN` in a restrictive admission policy — check your
   cluster's Pod Security admission before assuming a clean create.
-- Current NemoClaw guidance does not document pairing Deep Agents Code with a local
-  Ollama inference backend, and this recipe hasn't independently validated any Deep
-  Agents Code + `inference.runtime` combination end-to-end (see
-  [Agent and runtime support](README.md#agent-and-runtime-support)). Both the full manual
-  [Quick start](README.md#quick-start) and `scripts/try-it.sh` will run
-  `AGENT_NAME=deepagents` with `inference.runtime=ollama` if you ask for it (neither
-  blocks the combination) — `try-it.sh` just prints a warning first. Treat that specific
-  pairing as unsupported/untested, not a documented option.
+- Current NemoClaw guidance documents Deep Agents Code with vLLM and NIM, but does not
+  offer local Ollama for that agent. This recipe still permits Deep Agents Code + Ollama
+  through the common OpenAI-compatible route and prints a warning in `try-it.sh`; treat
+  that specific pairing as recipe-experimental until live-tested.
 
 ## Uninstall
 

@@ -8,7 +8,7 @@
 # (openclaw | hermes | deepagents) without assigning it a GPU.
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   AGENT_NAME=hermes AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-hermes-k8s:v0.0.104 \
 #     ./scripts/create-agent-sandbox.sh
 
@@ -188,9 +188,6 @@ fi
 unset EFFECTIVE_POLICY
 
 agent_common_create_smoke_test "${AGENT_NAME}" "${SANDBOX_NAME}"
-# Example: ask a real question through the agent's own CLI (not a curl probe), which in
-# turn reaches OpenShell → Envoy (or metrics-proxy Service) → GPU inference internally.
-agent_common_create_example_query "${AGENT_NAME}" "${SANDBOX_NAME}"
 
 echo "${AGENT_DISPLAY_NAME} sandbox ${SANDBOX_NAME} is ready without a GPU."
 if kubectl get gateway "${INFERENCE_RELEASE}-metrics-proxy" -n "${INFERENCE_NAMESPACE}" >/dev/null 2>&1; then
@@ -198,10 +195,12 @@ if kubectl get gateway "${INFERENCE_RELEASE}-metrics-proxy" -n "${INFERENCE_NAME
 else
   echo "Inference routes through OpenShell → metrics-proxy Service → ${BASE_URL} (Envoy LB disabled); only the GPU HPA pods request GPUs."
 fi
-echo "Verify anytime: AGENT_NAME=${AGENT_NAME} ./scripts/verify-agent-sandbox.sh"
 if [[ "$(agent_common_run_mode "${AGENT_NAME}")" == "gateway" ]]; then
-  echo "Start ${AGENT_DISPLAY_NAME} in a dedicated terminal: AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-sandbox.sh"
+  echo "Start ${AGENT_DISPLAY_NAME} in a dedicated terminal, then verify it:"
+  echo "  AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-sandbox.sh"
+  echo "  AGENT_NAME=${AGENT_NAME} ./scripts/verify-agent-sandbox.sh"
 else
-  echo "${AGENT_DISPLAY_NAME} has no long-running gateway; run one-shot prompts with:"
+  echo "Verify the terminal agent, then run one-shot prompts with:"
+  echo "  AGENT_NAME=${AGENT_NAME} ./scripts/verify-agent-sandbox.sh"
   echo "  AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-prompt.sh \"your prompt here\""
 fi

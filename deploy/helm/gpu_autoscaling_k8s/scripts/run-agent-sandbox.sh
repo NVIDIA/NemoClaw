@@ -11,7 +11,7 @@
 # deepagents has no long-running gateway to start — use run-agent-prompt.sh instead.
 #
 # Usage:
-#   cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
+#   cd deploy/helm/gpu_autoscaling_k8s
 #   AGENT_NAME=hermes ./scripts/run-agent-sandbox.sh
 
 set -euo pipefail

@@ -124,13 +124,14 @@ Do not paste kubeconfig, registry credentials, OIDC secrets, or inference API ke
 
 ## Quick start
 
-From an empty clone to a working sandbox. Run from `examples/recipes/nvidia/kubernetes-gpu-autoscaling/` unless noted. Deeper options: [Install details](#install-details), [OpenShell details](#openshell-details).
+From an empty clone to a working sandbox. Run from `deploy/helm/gpu_autoscaling_k8s/`
+unless noted. Deeper options: [Install details](#install-details), [OpenShell details](#openshell-details).
 
 ### 1. Clone and tools
 
 ```bash
-git clone https://github.com/NVIDIA/nemoclaw-community.git
-cd nemoclaw-community/examples/recipes/nvidia/kubernetes-gpu-autoscaling
+git clone https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw/deploy/helm/gpu_autoscaling_k8s
 source versions.env
 uv tool install "openshell==${OPENSHELL_VERSION}"
 openshell --version
@@ -204,17 +205,24 @@ Terminal 1 — keep running:
 kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080
 ```
 
-Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then create/verify/run the sandbox for the `AGENT_NAME` you picked in step 4 (re-export it here if this is a fresh shell):
+Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then create the sandbox for the `AGENT_NAME` you picked in step 4 (re-export it here if this is a fresh shell):
 
 ```bash
 export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
 export INFERENCE_MODEL=llama3.2:3b   # must match the GPU chart model
 ./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh   # example: "In one sentence, what is an AI agent sandbox?" — see [Example test](#example-test)
 
-# OpenClaw / Hermes — long-running gateway, keep this terminal in the foreground:
+# OpenClaw / Hermes — start the gateway and keep this terminal in the foreground:
 ./scripts/run-agent-sandbox.sh
-# Deep Agents Code — no gateway; run one-shot prompts instead:
+```
+
+For OpenClaw or Hermes, run verification from a third terminal after the gateway starts
+(re-export the same `AGENT_NAME` and `INFERENCE_MODEL` there). For Deep Agents Code,
+which has no gateway, run it directly from Terminal 2:
+
+```bash
+./scripts/verify-agent-sandbox.sh   # sends one real synthesized prompt
+# Deep Agents Code only — additional one-shot prompt:
 # ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
@@ -342,17 +350,17 @@ Every default here fits comfortably on a single L40S (48 GB) or H100 (80 GB) wit
 
 #### Agent and runtime support
 
-The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime` pairings identically — every combination technically renders and routes traffic the same way. But "renders" isn't the same as "documented and exercised," and upstream NemoClaw guidance doesn't endorse every pairing equally:
+The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime` pairings identically, and the contract suite renders every combination. Official NemoClaw guidance currently documents the following local-runtime choices:
 
 | Agent | Ollama | vLLM | NIM |
 |-------|--------|------|-----|
-| **OpenClaw** | Yes | Yes | Experimental |
-| **Hermes** | Yes | Yes | Experimental |
-| **Deep Agents Code** | Not currently documented | Not currently documented | Not currently documented |
+| **OpenClaw** | Documented | Documented | Documented |
+| **Hermes** | Documented | Documented | Documented |
+| **Deep Agents Code** | Recipe experimental | Documented | Documented |
 
-- **NIM is experimental** for OpenClaw and Hermes: functionally wired and covered by this recipe's tests, but newer and less exercised than Ollama/vLLM.
-- **Deep Agents Code has no currently documented local-runtime pairing upstream.** In particular, current NemoClaw guidance advises against pairing Deep Agents Code with local Ollama specifically. This recipe does not block any Deep Agents Code + runtime combination (Deep Agents Code just calls whatever OpenAI-compatible `/v1` endpoint OpenShell hands it), but treat all three as community-tested only, not an officially validated pairing — start from OpenClaw or Hermes if you want the most-exercised path.
-- `./scripts/try-it.sh`, the one-shot shortcut, accepts `INFERENCE_RUNTIME=ollama|vllm|nim` for any `AGENT_NAME`. It does not block `AGENT_NAME=deepagents` with `INFERENCE_RUNTIME=ollama` (this recipe never blocks a Deep Agents Code + runtime combination — see above), but it does print a warning for that specific pairing since it's the one cell upstream NemoClaw guidance doesn't currently document.
+- References: [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart), [Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart), and [Deep Agents Code quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart).
+- The recipe supports Deep Agents Code + Ollama through the same OpenAI-compatible route, but current NemoClaw guidance does not offer local Ollama for Deep Agents Code. `try-it.sh` allows that pairing with a warning.
+- Static contracts do not replace live GPU validation. Treat combinations not listed under [Validated hardware](#validated-hardware) as experimental until tested on your cluster.
 
 #### Switching runtimes
 
@@ -518,14 +526,16 @@ health-check step — see [`AGENT-SELECTION.md`](AGENT-SELECTION.md#example-veri
 ```text
 [verify] Inspecting nemoclaw plugin (timeout 90s)...
 Plugin inspect OK.
+[verify] Waiting for NemoClaw/OpenClaw gateway at http://localhost:18789/health (timeout 90s)...
+[verify] Gateway health OK (HTTP 200).
 [verify] GET https://inference.local/v1/models (timeout 120s)...
 models: llama3.2:3b
-[verify] openclaw agent exec (headless) — this is the real agent binary, not a curl probe (timeout 120s)
+[verify] openclaw agent --agent main -m (headless) — this is the real agent binary, not a curl probe (timeout 120s)
 [verify] Example query: In one sentence, what is an AI agent sandbox?
 [verify] Answer: An AI agent sandbox is a simulated environment where an AI agent
 can interact and learn in a safe, controlled space.
 OK: sandbox nemoclaw-onprem reached https://inference.local for models and answered a real prompt through NemoClaw/OpenClaw (llama3.2:3b).
-Runtime (optional foreground): AGENT_NAME=openclaw ./scripts/run-agent-sandbox.sh
+Runtime: NemoClaw/OpenClaw gateway is healthy; keep run-agent-sandbox.sh attached.
 ```
 
 Exact assistant wording varies by model and sampling; a non-empty answer plus the final `OK:` line means the example path passed. Small models (for example `llama3.2:3b`) may not know product-specific names like “NemoClaw”.
@@ -721,17 +731,7 @@ After scale-up you should see multiple pod series. metrics-proxy `/metrics` scra
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `try-it.sh` | Runs the whole Quick start end to end (incl. `hpa-load-test.sh`), `AGENT_NAME` / `INFERENCE_RUNTIME` at the top; requires explicit opt-in for the insecure-eval shortcut |
-| `install-hpa.sh` | Monitoring + chart + HPA (+ Envoy if enabled) |
-| `hpa-load-test.sh` / `hpa-reset.sh` | Autoscaling (+ Envoy) test / restore idle |
-| `cluster-recover.sh` | Destructive release recovery for the selected release only — see script comments before use |
-| `get-metrics-proxy-pods.sh` / `get-hpa.sh` / `hpa-watch.sh` | Inspect / watch |
-| `install-openshell-k8s.sh` | OpenShell gateway |
-| `build-agent-sandbox-image.sh` / `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Agent sandbox lifecycle — pick the agent (`openclaw`, `hermes`, or `deepagents`, mirroring [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents)) via a single `AGENT_NAME` flag; see [`AGENT-SELECTION.md`](AGENT-SELECTION.md) |
-| `agent-common.sh` | Per-agent config table sourced by the scripts above |
-| `test-*-contract.*` | Static / local contract checks |
+See [`scripts/README.md`](scripts/README.md) for the single script-purpose reference.
 
 ### Upgrade from pre-metrics-proxy releases
 

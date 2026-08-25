@@ -4,7 +4,7 @@
 #
 # Test-drive wrapper for this recipe: install GPU inference (Ollama, vLLM, or NIM) + HPA,
 # run the synthetic HPA load test (scale-up → Envoy LeastRequest check → scale-down), then
-# build/create/verify/run one CPU sandbox agent (OpenClaw, Hermes, or Deep Agents Code).
+# build/create/start/verify one CPU sandbox agent (OpenClaw, Hermes, or Deep Agents Code).
 # This just calls the recipe's own scripts in order with AGENT_NAME / INFERENCE_RUNTIME
 # wired through — see ../README.md and ../AGENT-SELECTION.md for what each step does and
 # for the non-shortcut (TLS + OIDC) path.
@@ -148,11 +148,18 @@ echo "=== 5/7: Install OpenShell gateway ==="
 
 echo "=== 6/7: Port-forward + connect OpenShell CLI (no second terminal needed) ==="
 PF_LOG="$(mktemp)"
+AGENT_RUNTIME_LOG=""
+AGENT_RUNTIME_PID=""
 kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080 >"${PF_LOG}" 2>&1 &
 PF_PID=$!
 cleanup() {
+  if [[ -n "${AGENT_RUNTIME_PID}" ]]; then
+    kill "${AGENT_RUNTIME_PID}" 2>/dev/null || true
+    wait "${AGENT_RUNTIME_PID}" 2>/dev/null || true
+  fi
   kill "${PF_PID}" 2>/dev/null || true
   rm -f "${PF_LOG}"
+  [[ -z "${AGENT_RUNTIME_LOG}" ]] || rm -f "${AGENT_RUNTIME_LOG}"
 }
 trap cleanup EXIT INT TERM
 
@@ -177,13 +184,22 @@ else
 fi
 openshell status
 
-echo "=== 7/7: Create, verify, and run ${AGENT_NAME} sandbox ==="
+echo "=== 7/7: Create, start, and verify ${AGENT_NAME} sandbox ==="
 ./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh
 
 if [[ "$(agent_common_run_mode "${AGENT_NAME}")" == "terminal" ]]; then
-  ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
+  ./scripts/verify-agent-sandbox.sh
+  echo "${AGENT_NAME} verification complete. Run more prompts with:"
+  echo "  AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-prompt.sh \"your prompt here\""
 else
-  echo "Starting ${AGENT_NAME} in the foreground — Ctrl+C to stop:"
-  ./scripts/run-agent-sandbox.sh
+  AGENT_RUNTIME_LOG="$(mktemp)"
+  ./scripts/run-agent-sandbox.sh >"${AGENT_RUNTIME_LOG}" 2>&1 &
+  AGENT_RUNTIME_PID=$!
+  if ! ./scripts/verify-agent-sandbox.sh; then
+    echo "ERROR: ${AGENT_NAME} verification failed; runtime log follows:" >&2
+    tail -n 100 "${AGENT_RUNTIME_LOG}" >&2 || true
+    exit 1
+  fi
+  echo "${AGENT_NAME} gateway verified and running — Ctrl+C to stop."
+  wait "${AGENT_RUNTIME_PID}"
 fi

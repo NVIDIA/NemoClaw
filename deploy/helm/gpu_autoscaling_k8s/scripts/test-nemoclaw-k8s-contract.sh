@@ -33,6 +33,14 @@ grep -Fq "'tolerations[0].key=nvidia.com/gpu'" "${INSTALL_SCRIPT}"
 grep -Fq 'hpa_common_inference_secret_contract' "${SCRIPT_DIR}/hpa-load-test.sh"
 grep -Fq 'ENABLE_ENVOY_LB' "${SCRIPT_DIR}/install-hpa.sh"
 grep -Fq 'ingress.gateway.enabled' "${SCRIPT_DIR}/hpa-common.sh"
+OLD_RECIPE_PATH='examples/recipes/nvidia/'\
+'kubernetes-gpu-autoscaling'
+if grep -R -Fq "${OLD_RECIPE_PATH}" \
+  "${CHART_DIR}/README.md" "${SCRIPT_DIR}"; then
+  echo "FAIL: NemoClaw chart docs still reference the old nemoclaw-community path" >&2
+  exit 1
+fi
+grep -Fq 'cd NemoClaw/deploy/helm/gpu_autoscaling_k8s' "${CHART_DIR}/README.md"
 
 # --- agent-common.sh config-table contract ------------------------------------
 # Every agent must resolve to a non-empty value for every lookup function, and the
@@ -66,6 +74,12 @@ fi
 [[ "$(agent_common_run_mode openclaw)" == "gateway" ]]
 [[ "$(agent_common_run_mode hermes)" == "gateway" ]]
 [[ "$(agent_common_run_mode deepagents)" == "terminal" ]]
+[[ "$(agent_common_gateway_health_url openclaw)" == "http://localhost:18789/health" ]]
+[[ "$(agent_common_gateway_health_url hermes)" == "http://localhost:8642/health" ]]
+if agent_common_gateway_health_url deepagents >/dev/null; then
+  echo "FAIL: terminal-only Deep Agents Code must not expose a gateway health URL" >&2
+  exit 1
+fi
 agent_common_grants_nvidia_endpoint openclaw
 agent_common_grants_nvidia_endpoint hermes
 if agent_common_grants_nvidia_endpoint deepagents; then
@@ -122,13 +136,19 @@ grep -Fq -- '--no-tty -- /bin/true' "${CREATE_SCRIPT}"
 grep -Fq 'agent_common_grants_nvidia_endpoint' "${CREATE_SCRIPT}"
 grep -Fq -- '--remove-endpoint integrate.api.nvidia.com:443' "${CREATE_SCRIPT}"
 grep -Fq 'agent_common_create_smoke_test' "${CREATE_SCRIPT}"
-grep -Fq 'agent_common_create_example_query' "${CREATE_SCRIPT}"
+if grep -Fq 'agent_common_create_example_query' "${CREATE_SCRIPT}"; then
+  echo "FAIL: sandbox creation must not run an agent query before its gateway starts" >&2
+  exit 1
+fi
 
 # agent_common_create_smoke_test (used by create-agent-sandbox.sh, called right after
 # `openshell sandbox create -- /bin/true` above) must not probe Hermes's gateway port:
 # OpenShell leaves sandboxes idle until run-agent-sandbox.sh execs nemoclaw-start later.
 grep -Fq 'NEMOCLAW_HERMES_CONFIG_OK' "${SCRIPT_DIR}/agent-common.sh"
-if grep -Fq 'http://localhost:8642/health' "${SCRIPT_DIR}/agent-common.sh"; then
+SMOKE_FUNCTION="$(
+  sed -n '/^agent_common_create_smoke_test()/,/^}/p' "${SCRIPT_DIR}/agent-common.sh"
+)"
+if grep -Fq 'http://localhost:8642/health' <<<"${SMOKE_FUNCTION}"; then
   echo "FAIL: agent_common_create_smoke_test must not probe Hermes's gateway port before" \
     "run-agent-sandbox.sh has started it (OpenShell leaves sandboxes idle)" >&2
   exit 1
@@ -138,28 +158,51 @@ grep -Fq 'agent_common_validate' "${VERIFY_SCRIPT}"
 grep -Fq 'openclaw plugins inspect nemoclaw --json' "${VERIFY_SCRIPT}"
 grep -Fq 'hermes --version' "${VERIFY_SCRIPT}"
 grep -Fq 'NEMOCLAW_HERMES_CONFIG_OK' "${VERIFY_SCRIPT}"
-if grep -Fq 'http://localhost:8642/health' "${VERIFY_SCRIPT}"; then
-  echo "FAIL: verify-agent-sandbox.sh must not probe Hermes's gateway port before" \
-    "run-agent-sandbox.sh has started it (OpenShell leaves sandboxes idle)" >&2
-  exit 1
-fi
+grep -Fq 'agent_common_gateway_health_url' "${VERIFY_SCRIPT}"
+grep -Fq 'start AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-sandbox.sh first' "${VERIFY_SCRIPT}"
 grep -Fq 'dcode --version' "${VERIFY_SCRIPT}"
 grep -Fq 'NEMOCLAW_DEEPAGENTS_CONFIG_OK' "${VERIFY_SCRIPT}"
 grep -Fq 'dcode -n' "${VERIFY_SCRIPT}"
 grep -Fq 'https://inference.local/v1/models' "${VERIFY_SCRIPT}"
 
-# The "example query" must exercise each agent's own headless CLI entry point, not a raw
+# Verification must exercise each agent's own headless CLI entry point, not a raw
 # curl to the inference endpoint — a curl there would only re-prove the network route
 # already covered by the /v1/models check above, not that the agent itself can answer.
-grep -Fq 'openclaw agent exec' "${VERIFY_SCRIPT}"
+grep -Fq 'openclaw agent --agent main -m' "${VERIFY_SCRIPT}"
 grep -Fq 'hermes -z' "${VERIFY_SCRIPT}"
-grep -Fq 'openclaw agent exec' "${SCRIPT_DIR}/agent-common.sh"
-grep -Fq 'hermes -z' "${SCRIPT_DIR}/agent-common.sh"
-if grep -Fq 'https://inference.local/v1/chat/completions' "${VERIFY_SCRIPT}" "${SCRIPT_DIR}/agent-common.sh"; then
-  echo "FAIL: OpenClaw/Hermes example query must go through the agent's own CLI" \
-    "(openclaw agent exec / hermes -z), not a curl bypass to /v1/chat/completions" >&2
+if grep -Fq 'openclaw agent exec' "${VERIFY_SCRIPT}" "${SCRIPT_DIR}/agent-common.sh"; then
+  echo "FAIL: OpenClaw must use its supported 'agent --agent main -m' command" >&2
   exit 1
 fi
+if grep -Fq 'https://inference.local/v1/chat/completions' "${VERIFY_SCRIPT}" "${SCRIPT_DIR}/agent-common.sh"; then
+  echo "FAIL: OpenClaw/Hermes example query must go through the agent's own CLI" \
+    "(openclaw agent --agent main -m / hermes -z), not a curl bypass to /v1/chat/completions" >&2
+  exit 1
+fi
+
+# Reject every embedded-fallback marker recognized by the pinned NemoClaw release.
+for fallback_output in \
+  'EMBEDDED FALLBACK: gateway unavailable' \
+  '[agent/embedded] using embedded runtime' \
+  '{"fallbackFrom":"gateway"}' \
+  '{"transport":"embedded"}'; do
+  if ! agent_common_output_has_embedded_fallback "${fallback_output}"; then
+    echo "FAIL: embedded fallback marker was accepted: ${fallback_output}" >&2
+    exit 1
+  fi
+done
+if agent_common_output_has_embedded_fallback 'normal agent response'; then
+  echo "FAIL: normal agent output was classified as embedded fallback" >&2
+  exit 1
+fi
+grep -Fq 'agent_common_output_has_embedded_fallback "${ANSWER}"' "${VERIFY_SCRIPT}"
+
+# The end-to-end shortcut must launch a gateway agent before verification.
+TRY_IT_SCRIPT="${SCRIPT_DIR}/try-it.sh"
+START_LINE="$(grep -nF './scripts/run-agent-sandbox.sh >"${AGENT_RUNTIME_LOG}" 2>&1 &' "${TRY_IT_SCRIPT}" | cut -d: -f1)"
+VERIFY_LINE="$(grep -nF 'if ! ./scripts/verify-agent-sandbox.sh; then' "${TRY_IT_SCRIPT}" | cut -d: -f1)"
+[[ -n "${START_LINE}" && -n "${VERIFY_LINE}" && "${START_LINE}" -lt "${VERIFY_LINE}" ]] \
+  || { echo "FAIL: try-it.sh must start gateway agents before verification" >&2; exit 1; }
 
 grep -Fq 'agent_common_validate' "${RUN_SANDBOX_SCRIPT}"
 grep -Fq 'agent_common_run_mode' "${RUN_SANDBOX_SCRIPT}"
