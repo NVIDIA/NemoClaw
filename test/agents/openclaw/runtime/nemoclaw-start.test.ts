@@ -2840,7 +2840,7 @@ describe("provider placeholder refresh (#4251)", () => {
     },
   );
 
-  it("preserves the OpenShell credential revision in Bolt-compatible Slack configuration aliases (#10153)", () => {
+  it("preserves Slack credential revisions longer than 20 digits in persisted configuration aliases (#10153)", () => {
     const run = runRefresh(
       {
         channels: {
@@ -2855,18 +2855,18 @@ describe("provider placeholder refresh (#4251)", () => {
         },
       },
       {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
-        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v123456789012345678901_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v123456789012345678901_SLACK_APP_TOKEN",
       },
     );
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.result.stderr).not.toContain("slack.default");
     expect(run.config.channels.slack.accounts.default.botToken).toBe(
-      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
+      "xoxb-OPENSHELL-RESOLVE-ENV-v123456789012345678901_SLACK_BOT_TOKEN",
     );
     expect(run.config.channels.slack.accounts.default.appToken).toBe(
-      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
+      "xapp-OPENSHELL-RESOLVE-ENV-v123456789012345678901_SLACK_APP_TOKEN",
     );
   });
 
