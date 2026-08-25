@@ -43,6 +43,7 @@
  * #2701 guard-chain assertion.
  */
 
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
@@ -367,6 +368,32 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     },
     redactionValues: [credentialCanary],
     timeoutMs: 240_000,
+  });
+  await host.command(
+    "docker",
+    [
+      "exec",
+      "--env",
+      "LD_PRELOAD=",
+      "--env",
+      "PYTHONPATH=",
+      "--user",
+      "root",
+      originalContainerId,
+      "/usr/local/bin/nemoclaw-gateway-control",
+      "probe",
+      randomBytes(32).toString("hex"),
+    ],
+    {
+      artifactName: "restart-managed-control-after-recovery",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  await host.command("docker", ["top", originalContainerId, "-eo", "pid,ppid,stat,user,comm"], {
+    artifactName: "restart-process-state-after-recovery",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);

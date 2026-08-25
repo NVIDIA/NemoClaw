@@ -161,8 +161,12 @@ describe("GatewayClient recovery helpers (#2701)", () => {
     it("waits for the exact missing-supervisor proof and a quiet settle", async () => {
       const events: string[] = [];
       const runner = new ScriptedRunner((_call, reply) => {
+        const isMissingSupervisor =
+          reply.stderr === "SUPERVISOR_NOT_RUNNING\n" ||
+          reply.stderr ===
+            "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n";
         events.push(
-          reply.stderr === "SUPERVISOR_NOT_RUNNING\n" ? "probe-not-running" : "probe-unavailable",
+          isMissingSupervisor ? "probe-not-running" : "probe-unavailable",
         );
       });
       runner.queue(
@@ -170,8 +174,14 @@ describe("GatewayClient recovery helpers (#2701)", () => {
           exitCode: 1,
           stderr: "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
         },
-        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
-        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
+        {
+          exitCode: 1,
+          stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
+        },
+        {
+          exitCode: 1,
+          stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
+        },
       );
       const gateway = buildGateway(runner);
       const sleep = vi.fn(async (milliseconds: number) => {
@@ -215,11 +225,11 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       });
     });
 
-    it("does not accept a composite missing-supervisor diagnostic", async () => {
+    it("does not accept missing-supervisor output from another control stage (#10153)", async () => {
       const runner = new ScriptedRunner();
       runner.queue({
         exitCode: 1,
-        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
+        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight\n",
       });
       const gateway = buildGateway(runner);
 

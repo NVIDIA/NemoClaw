@@ -98,13 +98,17 @@ function isMissingManagedSupervisorProof(result: ShellProbeResult): boolean {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+  const hasExactMissingSupervisorProof =
+    stderrLines[0] === "SUPERVISOR_NOT_RUNNING" &&
+    (stderrLines.length === 1 ||
+      (stderrLines.length === 2 &&
+        stderrLines[1] === "NEMOCLAW_CONTROL_STAGE=discover-supervisor"));
   return (
     result.exitCode === 1 &&
     result.timedOut === false &&
     result.signal === null &&
     result.stdout.trim() === "" &&
-    stderrLines.length === 1 &&
-    stderrLines[0] === "SUPERVISOR_NOT_RUNNING"
+    hasExactMissingSupervisorProof
   );
 }
 

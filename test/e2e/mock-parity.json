@@ -188,6 +188,7 @@
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
+        "test/e2e/support/e2e-recovery-helpers.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",

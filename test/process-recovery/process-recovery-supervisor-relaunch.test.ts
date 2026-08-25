@@ -236,6 +236,64 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
+  it("waits through the trusted discovery-stage missing-supervisor transition (#10153)", () => {
+    mockOpenClawSandbox("restart-box");
+    setImmediateRecoveryPolling();
+    const requestGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
+      })
+      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE);
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS\nrestart-box  127.0.0.1  18789  12345  running",
+    });
+
+    const result = checkAndRecoverSandboxProcesses("restart-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate when missing-supervisor output names another stage (#10153)", () => {
+    mockOpenClawSandbox("wrong-stage-box");
+    setImmediateRecoveryPolling();
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight",
+    }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+
+    const result = checkAndRecoverSandboxProcesses("wrong-stage-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
+
   it("does not mutate on an embellished no-supervisor marker", () => {
     mockOpenClawSandbox("embellished-box");
     setImmediateRecoveryPolling();

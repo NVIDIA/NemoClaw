@@ -386,7 +386,13 @@ function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null):
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
+  if (lines[0] !== "SUPERVISOR_NOT_RUNNING") return false;
+  // The installed controller adds its exact discovery stage to this proof.
+  // Any other stage or diagnostic remains terminal.
+  return (
+    lines.length === 1 ||
+    (lines.length === 2 && lines[1] === "NEMOCLAW_CONTROL_STAGE=discover-supervisor")
+  );
 }
 
 function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult | null): boolean {
