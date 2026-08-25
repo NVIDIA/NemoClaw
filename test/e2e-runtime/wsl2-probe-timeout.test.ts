@@ -54,8 +54,8 @@ describe("WSL2 inference verification timeouts (#987)", () => {
 
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
     function runProbeWithCurlStatuses(statuses: number[], isWsl = false) {
-      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
-      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
+      const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
+      const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
       const calls: string[][] = [];
@@ -138,8 +138,8 @@ describe("WSL2 inference verification timeouts (#987)", () => {
     };
 
     function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
-      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
-      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
+      const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
+      const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
       const atomics = globalThis as typeof globalThis & {
@@ -175,8 +175,8 @@ describe("WSL2 inference verification timeouts (#987)", () => {
     }
 
     function runCalibratedProbeWithResults(results: ProbeResultFixture[], clock: number[]) {
-      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
-      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
+      const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
+      const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
       const now = vi.spyOn(Date, "now");

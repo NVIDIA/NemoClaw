@@ -652,15 +652,31 @@ async function destroySandboxUnlocked(
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    if (destructiveResult.gatewayUnreachable) {
+    const shieldsRecoveryRequired =
+      destructiveResult.shieldsRelockRequiresGateway ||
+      destructiveResult.workspaceTimeoutRequiresShieldsRecovery === true;
+    if (shieldsRecoveryRequired) {
       if (destructiveResult.shieldsRelockRequiresGateway) {
         console.error(
-          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the auto-restore timer can still lock the config when the gateway returns.`,
+          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the seven-attempt auto-restore recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
         );
+      } else {
         console.error(
-          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
+          `  The workspace cleanup timeout left an active shields timer authoritative. Local state was preserved so bounded recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
         );
-      } else if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
+      }
+      console.error(
+        `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'). Run '${CLI_NAME} ${sandboxName} shields status' to verify recovery or follow its durable containment guidance. Retry destroy only after recovery permits it; --force cannot safely discard a record while shields recovery is unresolved.`,
+      );
+    } else if (destructiveResult.timedOut) {
+      console.error(
+        `  NemoClaw preserved the local sandbox record because OpenShell did not confirm the remote operation.`,
+      );
+      console.error(
+        `  Run '${CLI_NAME} ${sandboxName} status' to check or start the recorded gateway, then retry destroy; --force cannot discard the record after a timeout.`,
+      );
+    } else if (destructiveResult.gatewayUnreachable) {
+      if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains the exact host-local inference ownership required to retire the managed runtime.`,
         );

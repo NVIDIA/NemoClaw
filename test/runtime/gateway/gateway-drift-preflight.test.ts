@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { nodeOptionsWithoutSourceLoader } from "../../helpers/source-loader-options";
 
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 let workRoot: string | null = null;
 

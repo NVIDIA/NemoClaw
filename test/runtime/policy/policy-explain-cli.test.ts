@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 
 type CliResult = {
   status: number | null;

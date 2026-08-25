@@ -16,8 +16,8 @@ import {
   sliceBlock,
 } from "../helpers/corporate-ca-support";
 
-const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-const HERMES_START = join(import.meta.dirname, "../agents/hermes/start.sh");
+const OPENCLAW_START = join(import.meta.dirname, "..", "../scripts/nemoclaw-start.sh");
+const HERMES_START = join(import.meta.dirname, "..", "../agents/hermes/start.sh");
 
 const OPENSHELL_PEM = "-----BEGIN CERTIFICATE-----\nOPENSHELL-ROOT\n-----END CERTIFICATE-----\n";
 const CORPORATE_PEM = "-----BEGIN CERTIFICATE-----\nCORPORATE-ROOT\n-----END CERTIFICATE-----\n";

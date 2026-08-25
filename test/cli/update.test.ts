@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
-const CLI = path.join(TEST_DIR, "..", "bin", "nemoclaw.js");
-const HERMES_CLI = path.join(TEST_DIR, "..", "bin", "nemohermes.js");
+const CLI = path.join(TEST_DIR, "../..", "bin", "nemoclaw.js");
+const HERMES_CLI = path.join(TEST_DIR, "../..", "bin", "nemohermes.js");
 const DEEPAGENTS_ALIAS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-update-bin-"));
 const DEEPAGENTS_CLI = path.join(DEEPAGENTS_ALIAS_DIR, "nemo-deepagents");
 fs.symlinkSync(CLI, DEEPAGENTS_CLI);
