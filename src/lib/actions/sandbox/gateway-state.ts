@@ -21,6 +21,7 @@ import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
   getKnownSandboxTargetGatewayName,
+  getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
 
@@ -122,6 +123,26 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
 }
 
+/** Resolve the authoritative gateway for a persisted sibling ownership row. */
+export function resolvePersistedSandboxOwnershipGateway(sandbox: SandboxEntry): string {
+  return getPersistedSandboxTargetGatewayName(sandbox);
+}
+
+/** Capture one gateway's live sandbox phases for host-global model ownership. */
+export function captureSandboxOwnershipPhases(
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+): { readonly output: string; readonly status: number | null } {
+  const result = captureOpenshell(gatewayScopedArgs(["sandbox", "list"], gatewayName), {
+    env: environment,
+    ignoreError: true,
+    includeStderr: true,
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  return { output: result.output, status: result.status };
+}
+
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
@@ -216,6 +237,17 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
+  const suffixLineIdx = cleanLines.findIndex(
+    (line, index) =>
+      index > policyLineIdx &&
+      /^\s*(?:Id|Name|Phase|Resource version|Labels|Annotations|Policy source|Revision):(?:\s|$)/u.test(
+        line,
+      ),
+  );
+  const suffix =
+    suffixLineIdx === -1
+      ? ""
+      : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
   const cleanLivePolicy = stripAnsi(String(livePolicyOutput));
   const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
   const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
@@ -239,7 +271,7 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
-  return `${before}\n\n${indented}\n`;
+  return `${before}\n\n${indented}${suffix}\n`;
 }
 
 /** Query sandbox presence and return its output with the live enforced policy. */

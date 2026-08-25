@@ -69,6 +69,7 @@ let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -90,6 +91,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 });
 
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args[0] === "status" && args[1] === "--output" && args[2] === "json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
@@ -395,12 +398,15 @@ const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const teardownAuthority = require("./src/lib/onboard/gateway-teardown-authority.js");
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({ recovered: true, attempted: false });
 teardownAuthority.resolveGatewayCredentialMutationAuthority = () => ({});
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args[0] === "provider" && args[1] === "create") {
     mark("credential-provider-create-entered");
     const sleep = new Int32Array(new SharedArrayBuffer(4));
@@ -444,6 +450,7 @@ const providerId = "11111111-2222-4333-8444-555555555555";
 let observedProviderName = null;
 
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -456,6 +463,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 });
 
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args[0] === "status" && args[1] === "--output" && args[2] === "json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
@@ -541,6 +550,7 @@ function runStatusProcess(home: string) {
   const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -552,6 +562,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
