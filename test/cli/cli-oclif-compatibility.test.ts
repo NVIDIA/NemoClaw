@@ -8,9 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import SandboxConfigSetCommand from "../src/commands/sandbox/config/set";
-import SandboxStatusCommand from "../src/commands/sandbox/status";
-import StatusCommand from "../src/commands/status";
+import SandboxConfigSetCommand from "../../src/commands/sandbox/config/set";
+import SandboxStatusCommand from "../../src/commands/sandbox/status";
+import StatusCommand from "../../src/commands/status";
 import { withDirectPublicDispatch } from "./support/public-dispatch-test-harness.js";
 
 const require = createRequire(import.meta.url);
@@ -27,10 +27,10 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("renders native sandbox help without registry recovery", async () => {
-    const cliPath = require.resolve("../src/nemoclaw.js");
-    const registryPath = require.resolve("../src/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../src/lib/runner.js");
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -116,13 +116,13 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("hands exact public sandbox execution to oclif by command id", async () => {
-    const cliPath = require.resolve("../src/nemoclaw.js");
-    const registryPath = require.resolve("../src/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../src/lib/runner.js");
-    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
-    const sandboxConnectPath = require.resolve("../src/lib/actions/sandbox/connect.js");
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
+    const sandboxConnectPath = require.resolve("../../src/lib/actions/sandbox/connect.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -308,12 +308,12 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("forwards exec command help flags after -- instead of rendering NemoClaw help", async () => {
-    const cliPath = require.resolve("../src/nemoclaw.js");
-    const registryPath = require.resolve("../src/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../src/lib/runner.js");
-    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -404,10 +404,10 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("keeps exact global execution on direct command IDs to avoid flexible taxonomy overmatching", async () => {
-    const cliPath = require.resolve("../src/nemoclaw.js");
-    const runnerPath = require.resolve("../src/lib/runner.js");
-    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRunner = require.cache[runnerPath];

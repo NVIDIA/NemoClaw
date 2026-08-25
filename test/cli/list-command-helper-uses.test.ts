@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "list-command-helper-uses.mts");
 
 type HelperMatch = {
@@ -126,7 +126,7 @@ describe("list-command-helper-uses", () => {
     const rootDir = makeFixture("nemoclaw-cmd-helper-", {
       "src/runner.ts": "export default { run(cmd: readonly string[]) { return cmd; } };\n",
       "src/app.ts": 'import runner from "./runner";\nrunner.run(["docker", "ps"]);\n',
-      "test/app.test.ts": 'import runner from "../src/runner";\nrunner.run(["git", "status"]);\n',
+      "test/app.test.ts": 'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
     });
 
     const summaries = parseJsonOutput<CommandSummary[]>(
@@ -141,7 +141,7 @@ describe("list-command-helper-uses", () => {
     const rootDir = makeFixture("nemoclaw-cmd-helper-", {
       "src/runner.ts": "export default { run(cmd: readonly string[]) { return cmd; } };\n",
       "src/app.ts": 'import runner from "./runner";\nrunner.run(["docker", "ps"]);\n',
-      "test/app.test.ts": 'import runner from "../src/runner";\nrunner.run(["git", "status"]);\n',
+      "test/app.test.ts": 'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
     });
 
     const matches = parseJsonOutput<HelperMatch[]>(

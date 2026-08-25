@@ -57,7 +57,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
-const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 const REGISTERED = "bug5974-alpha";
 
 describe("user-error/startup surfaces return non-zero exit (#5974)", () => {

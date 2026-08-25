@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { help as renderRootHelp } from "../src/lib/actions/root-help";
+import { help as renderRootHelp } from "../../src/lib/actions/root-help";
 
 describe("root help", () => {
   afterEach(() => {

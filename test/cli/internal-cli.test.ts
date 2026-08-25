@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 
 describe("internal oclif namespace", () => {
   it("passes internal subcommands directly to oclif space-separated routing", () => {

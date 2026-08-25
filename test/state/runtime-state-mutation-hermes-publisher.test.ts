@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT = path.join(import.meta.dirname, "..");
+const ROOT = path.join(import.meta.dirname, "../..");
 const PUBLISHER = path.join(ROOT, "scripts", "runtime_state_mutation_hermes_publisher.py");
 const CAPABILITY = path.join(ROOT, "agents", "hermes", "runtime-state-mutation-publisher-v1.json");
 const STATE_PLAN = path.join(ROOT, "agents", "hermes", "state-lock-plan.json");
