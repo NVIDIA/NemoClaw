@@ -30,9 +30,11 @@ If policy authority becomes external while Shields is down, NemoClaw keeps the
 saved restrictive policy snapshot and refuses to set policy. The external
 policy authority must make the effective policy for the named sandbox match the
 saved restrictive snapshot and current managed MCP entries without changing
-policy authority. Then run `nemoclaw <sandbox> shields up`. NemoClaw verifies
-the exact effective policy and locks configuration. `shields status` reports
-this recovery requirement while the sandbox remains unlocked.
+policy authority. `shields status` identifies that required policy by its
+canonical JSON SHA-256 digest and network policy keys. Then run
+`nemoclaw <sandbox> shields up`. NemoClaw verifies the exact effective policy
+and locks configuration. If policy changes during the lock, NemoClaw records
+the verified config lock and keeps Shields down until policy recovery succeeds.
 
 A legacy sandbox record retains the first qualified `policyAuthority` after a later operation fails.
 An inspection that cannot determine authority does not change the record.
