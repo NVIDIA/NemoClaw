@@ -9,9 +9,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
+  createExternalPolicyMutationAuthority,
   createShieldsFlowHarness,
   externalPolicyAuthorityInspection,
-  externalPolicyMutationAuthority,
   type ShieldsFlowHarness,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -223,7 +223,7 @@ describe("external Shields policy recovery", () => {
       "must make the effective policy",
     );
 
-    const restoredExternalAuthority = externalPolicyMutationAuthority(
+    const restoredExternalAuthority = createExternalPolicyMutationAuthority(
       readRestrictivePolicy(harness, sandboxName),
     );
     harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
@@ -244,10 +244,10 @@ describe("external Shields policy recovery", () => {
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     const policySetsAfterDown = countPolicySets(harness);
-    const restoredExternalAuthority = externalPolicyMutationAuthority(
+    const restoredExternalAuthority = createExternalPolicyMutationAuthority(
       readRestrictivePolicy(harness, sandboxName),
     );
-    const changedExternalAuthority = externalPolicyMutationAuthority({
+    const changedExternalAuthority = createExternalPolicyMutationAuthority({
       version: 1,
       network_policies: {},
     });
