@@ -3,8 +3,8 @@
 //
 // The inference-set stopped-sandbox contract (#10251, a regression of #6997):
 // when `sandbox exec` fails because the sandbox itself is not ready, the
-// actionable recovery guidance must survive a non-empty, wrapped OpenShell
-// "not ready (phase: ...)" detail on stderr.
+// actionable recovery guidance must survive non-empty OpenShell not-ready
+// details on stderr, including the phase and structured diagnostic forms.
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -64,27 +64,41 @@ describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
     delete require.cache[inferenceSetModulePath];
   });
 
-  it("surfaces the stopped-sandbox recovery guidance for a wrapped not-ready detail", () => {
-    stubFailedExec(
-      "Error:   x sandbox 'sandbox-a' is not ready (phase: Error); wait for it to\n  reach Ready state",
-    );
-    const { readInSandboxConfigOrFail, readSandboxConfig } = loadConfigReaders();
+  it.each([
+    {
+      label: "a wrapped phase detail",
+      stderr:
+        "Error:   x sandbox 'sandbox-a' is not ready (phase: Error); wait for it to\n  reach Ready state",
+      rawFragment: "phase: Error",
+    },
+    {
+      label: "the structured not-ready detail",
+      stderr:
+        "Error: code: 'The system is not in a state required for the operation's execution', message: \"sandbox is not ready\"",
+      rawFragment: "The system is not in a state required",
+    },
+  ])(
+    "surfaces stopped-sandbox recovery guidance for $label (#10251)",
+    ({ rawFragment, stderr }) => {
+      stubFailedExec(stderr);
+      const { readInSandboxConfigOrFail, readSandboxConfig } = loadConfigReaders();
 
-    let error: unknown;
-    try {
-      readInSandboxConfigOrFail({ readSandboxConfig }, "sandbox-a", OPENCLAW_TARGET);
-    } catch (thrown) {
-      error = thrown;
-    }
+      let error: unknown;
+      try {
+        readInSandboxConfigOrFail({ readSandboxConfig }, "sandbox-a", OPENCLAW_TARGET);
+      } catch (thrown) {
+        error = thrown;
+      }
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Is the sandbox running?");
-    expect((error as Error).message).toContain("Start the sandbox and retry.");
-    // The raw OpenShell detail must not leak into the user-facing message —
-    // the generic stopped-sandbox message replaces it, matching the
-    // already-empty-read case.
-    expect((error as Error).message).not.toContain("phase: Error");
-  });
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Is the sandbox running?");
+      expect((error as Error).message).toContain("Start the sandbox and retry.");
+      // The raw OpenShell detail must not leak into the user-facing message —
+      // the generic stopped-sandbox message replaces it, matching the
+      // already-empty-read case.
+      expect((error as Error).message).not.toContain(rawFragment);
+    },
+  );
 
   it("still surfaces the raw detail for an unrelated exec failure", () => {
     stubFailedExec("Error: connection refused");

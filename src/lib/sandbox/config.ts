@@ -20,9 +20,9 @@ const {
   DEFAULT_AGENT_CONFIG,
   resolveAgentConfig: resolveAgentConfigTarget,
 }: typeof import("./agent-config") = require("./agent-config");
-const { stripAnsi }: typeof import("../adapters/openshell/client") = require(
-  "../adapters/openshell/client",
-);
+const {
+  stripAnsi,
+}: typeof import("../adapters/openshell/client") = require("../adapters/openshell/client");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -457,7 +457,12 @@ function isSandboxNotReadyExecDetail(detail: string): boolean {
     .replace(/[×│]/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
-  return /sandbox '[^']*' is not ready \(phase: \w+\)/i.test(normalized);
+  return (
+    /sandbox '[^']*' is not ready \(phase: \w+\)/i.test(normalized) ||
+    /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i.test(
+      normalized,
+    )
+  );
 }
 
 /**
