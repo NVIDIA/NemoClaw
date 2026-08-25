@@ -376,7 +376,7 @@ navigation:
             collapsed: open-by-default
             contents:
               - page: "Platform Support"
-                path: reference/platform-support.mdx
+                path: _build/agent-variants/reference/platform-support.openclaw.generated.mdx
                 slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.openclaw.generated.mdx
@@ -760,7 +760,7 @@ navigation:
             collapsed: open-by-default
             contents:
               - page: "Platform Support"
-                path: reference/platform-support.mdx
+                path: _build/agent-variants/reference/platform-support.deepagents.generated.mdx
                 slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.deepagents.generated.mdx
@@ -1157,7 +1157,7 @@ navigation:
             collapsed: open-by-default
             contents:
               - page: "Platform Support"
-                path: reference/platform-support.mdx
+                path: _build/agent-variants/reference/platform-support.hermes.generated.mdx
                 slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.hermes.generated.mdx
