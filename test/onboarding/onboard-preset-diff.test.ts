@@ -318,106 +318,20 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm", "googlechat"]);
   });
 
-  // Regression for #5967: Discord (and every messaging channel other than
-  // Slack) is not flagged `requiredAtCreate`, so its policy preset is never
-  // injected into the create-time boot policy. The policy finalization step
-  // must still merge the enabled channel's preset into the effective selection
-  // so it is applied to the gateway and persisted to the registry — otherwise
-  // `policy-list` shows `○ discord` even though Discord was configured during
-  // onboard. The Slack tests above pass purely because Slack happens to be
-  // requiredAtCreate; these tests guard the channels that are not.
-  it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "suggested",
-      policyPresets: "",
-      // Discord is not injected at create time, so it is absent from the
-      // already-applied boot presets — unlike Slack.
-      alreadyApplied: [],
-      selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["discord"] },
-    });
+  // Regression for #5967: these channels are not `requiredAtCreate`, so their
+  // policy presets are absent from the create-time boot policy. Finalization
+  // must still apply enabled presets and remove disabled presets through the
+  // shared channel-to-preset registry path.
+  const nonCreateTimeChannelPresets = [
+    "discord",
+    "telegram",
+    "teams",
+    "whatsapp",
+    "wechat",
+    "googlechat",
+  ].map((channel) => ({ channel }));
 
-    assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
-    assert.ok(
-      payload.appliedCalls.includes("discord"),
-      `Discord must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
-    );
-    assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
-  });
-
-  it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "custom",
-      policyPresets: "npm,pypi",
-      alreadyApplied: [],
-      selectionOptions: { enabledChannels: ["discord"] },
-    });
-
-    assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
-    assert.ok(
-      payload.appliedCalls.includes("discord"),
-      `Discord must be applied while Discord messaging is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
-    );
-    assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
-  });
-
-  it("custom non-interactive selection removes disabled Discord while honoring the explicit preset list (#5967)", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "custom",
-      policyPresets: "npm",
-      alreadyApplied: ["npm", "pypi", "discord"],
-      selectionOptions: { disabledChannels: ["discord"] },
-    });
-
-    assert.deepEqual(payload.chosen, ["npm"]);
-    assert.deepEqual(payload.removedCalls.slice().sort(), ["discord", "pypi"]);
-    assert.deepEqual(payload.finalApplied, ["npm"]);
-  });
-
-  // The #5967 fix is channel-agnostic — it iterates the channel→preset registry
-  // rather than special-casing Slack/Discord. Telegram is another channel that is
-  // not `requiredAtCreate`, so its egress preset is never injected at create time;
-  // exercising it end-to-end through the real `setupPoliciesWithSelection` path
-  // guards the security-critical egress-policy application for a second, distinct
-  // non-required channel (not just Discord).
-  it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "suggested",
-      policyPresets: "",
-      alreadyApplied: [],
-      selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["telegram"] },
-    });
-
-    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "telegram"]);
-    assert.ok(
-      payload.appliedCalls.includes("telegram"),
-      `Telegram must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
-    );
-    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "telegram"]);
-  });
-
-  it("custom non-interactive selection removes disabled Telegram while honoring the explicit preset list (#5967)", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "custom",
-      policyPresets: "npm",
-      alreadyApplied: ["npm", "pypi", "telegram"],
-      selectionOptions: { disabledChannels: ["telegram"] },
-    });
-
-    assert.deepEqual(payload.chosen, ["npm"]);
-    assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", "telegram"]);
-    assert.deepEqual(payload.finalApplied, ["npm"]);
-  });
-
-  // Cover the remaining non-`requiredAtCreate` channels end-to-end through the
-  // real `setupPoliciesWithSelection` path. They flow through the same
-  // channel→preset registry iteration as Discord/Telegram, so each apply/remove
-  // case guards the egress-policy application for every shipped channel — not
-  // only the two already covered above (#5967).
-  const optionalChannelPresets = ["teams", "whatsapp", "wechat", "googlechat"].map((channel) => ({
-    channel,
-  }));
-
-  it.each(optionalChannelPresets)(
+  it.each(nonCreateTimeChannelPresets)(
     "resume selection applies the $channel policy required by a configured $channel channel (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({
@@ -436,7 +350,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     },
   );
 
-  it.each(optionalChannelPresets)(
+  it.each(nonCreateTimeChannelPresets)(
     "custom non-interactive selection removes disabled $channel while honoring the explicit preset list (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({
@@ -451,6 +365,22 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       assert.deepEqual(payload.finalApplied, ["npm"]);
     },
   );
+
+  it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", async () => {
+    const payload = await runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,pypi",
+      alreadyApplied: [],
+      selectionOptions: { enabledChannels: ["discord"] },
+    });
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
+    assert.ok(
+      payload.appliedCalls.includes("discord"),
+      `Discord must be applied while Discord messaging is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
+  });
 
   it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", async () => {
     const payload = await runPolicyScenario({
