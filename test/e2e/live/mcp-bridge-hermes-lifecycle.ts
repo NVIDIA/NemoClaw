@@ -33,15 +33,14 @@ export async function assertHermesConfig(
   const script = [
     "set -eu",
     "/opt/hermes/.venv/bin/python - <<'PY'",
-    "import os, pathlib, re, yaml",
+    "import pathlib, re, yaml",
     "path = pathlib.Path('/sandbox/.hermes/config.yaml')",
     "text = path.read_text(encoding='utf-8')",
     "data = yaml.safe_load(text) or {}",
     `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    "current = os.environ.get('FAKE_MCP_SECRET', '')",
-    "assert re.fullmatch(r'openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', current)",
-    "assert entry['headers']['Authorization'] == 'Bearer ' + current",
+    "authorization = entry['headers']['Authorization']",
+    "assert re.fullmatch(r'Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', authorization)",
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");

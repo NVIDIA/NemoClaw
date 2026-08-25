@@ -74,21 +74,6 @@ function sandboxWithInspectionState(state: string): SandboxClient {
 }
 
 describe("Hermes MCP live rollback inspection", () => {
-  it("compares persisted authorization with the fresh revision-scoped exec placeholder", async () => {
-    const runner = new RecordingRunner();
-    const sandbox = new SandboxClient(runner);
-
-    await assertHermesConfig(sandbox, "hermes-e2e", "https://mcp.example.test/mcp");
-
-    const script = runner.calls[0]?.args.at(-1) ?? "";
-    expect(script).toContain("current = os.environ.get('FAKE_MCP_SECRET', '')");
-    expect(script).toContain(
-      "assert re.fullmatch(r'openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', current)",
-    );
-    expect(script).toContain("assert entry['headers']['Authorization'] == 'Bearer ' + current");
-    expect(script).not.toContain("Bearer openshell:resolve:env:FAKE_MCP_SECRET'");
-  });
-
   it("accepts the managed inspection helper's matched result", async () => {
     await expect(
       assertHermesReloadRollback(
@@ -110,6 +95,19 @@ describe("Hermes MCP live rollback inspection", () => {
       actual: { ok: true, state: "current" },
       expected: { ok: true, state: "matched" },
     });
+  });
+});
+
+describe("Hermes MCP managed configuration assertion", () => {
+  it("requires the revision-scoped OpenShell credential placeholder (#10155)", async () => {
+    const runner = new RecordingRunner();
+    const sandbox = new SandboxClient(runner);
+
+    await assertHermesConfig(sandbox, "hermes-e2e", "https://mcp.example.test/mcp");
+
+    const command = runner.calls[0]?.args.at(-1) ?? "";
+    expect(command).toContain("Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET");
+    expect(command).not.toContain("== 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'");
   });
 });
 

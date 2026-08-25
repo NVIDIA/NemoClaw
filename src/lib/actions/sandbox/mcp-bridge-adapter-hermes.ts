@@ -36,12 +36,16 @@ const HERMES_MCP_LIFECYCLE_NOT_READY =
 export function buildHermesMcpRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string[] {
   const payload = {
     server: entry.server,
     url: entry.url,
-    headers: entryHeaders(entry),
+    headers: entryHeaders(entry, credentialRevision),
     replace_existing: replaceExisting,
+    ...(credentialRevision
+      ? { credential_name: entry.env[0], credential_revision: credentialRevision }
+      : {}),
   };
   return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }
@@ -81,8 +85,13 @@ export function buildHermesMcpProbeCommand(): string[] {
 export function inspectHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): AdapterRegistrationInspection {
-  return inspectAdapterRegistrationCommand(sandboxName, entry, buildHermesMcpStatusCommand(entry));
+  return inspectAdapterRegistrationCommand(
+    sandboxName,
+    entry,
+    buildHermesMcpStatusCommand(entry, credentialRevision),
+  );
 }
 
 function parseLastJsonObject(output: string): Record<string, unknown> | null {
@@ -271,8 +280,12 @@ function runHermesAdapterCommand(
   }
 }
 
-function verifyHermesAdapterRegistration(sandboxName: string, entry: McpBridgeEntry): void {
-  const inspection = inspectHermesAdapterRegistration(sandboxName, entry);
+function verifyHermesAdapterRegistration(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): void {
+  const inspection = inspectHermesAdapterRegistration(sandboxName, entry, credentialRevision);
   if (inspection.state === "registered") return;
   const detail = inspection.state === "error" ? inspection.detail : inspection.state;
   throw new McpBridgeError(
@@ -290,22 +303,27 @@ export function registerHermesAdapter(
   runHermesAdapterCommand(
     sandboxName,
     entry,
-    buildHermesMcpRegisterCommand(entry, replaceExisting),
+    buildHermesMcpRegisterCommand(entry, replaceExisting, credentialRevision),
     `Hermes MCP config registration failed for '${entry.server}'.`,
     { envValues, requireReload: true },
   );
-  verifyHermesAdapterRegistration(sandboxName, entry);
+  verifyHermesAdapterRegistration(sandboxName, entry, credentialRevision);
   if (credentialRevision === undefined) return;
   const afterReloadRevision = observeMcpCredentialRevision(sandboxName, entry);
   if (afterReloadRevision === credentialRevision) return;
+  if (afterReloadRevision === "absent" || afterReloadRevision === "canonical") {
+    throw new McpBridgeError(
+      `Hermes MCP credential revision was unavailable after reloading '${entry.server}'.`,
+    );
+  }
   runHermesAdapterCommand(
     sandboxName,
     entry,
-    buildHermesMcpRegisterCommand(entry, true),
+    buildHermesMcpRegisterCommand(entry, true, afterReloadRevision),
     `Hermes MCP config convergence failed for '${entry.server}'.`,
     { envValues, requireReload: true },
   );
-  verifyHermesAdapterRegistration(sandboxName, entry);
+  verifyHermesAdapterRegistration(sandboxName, entry, afterReloadRevision);
   if (observeMcpCredentialRevision(sandboxName, entry) !== afterReloadRevision) {
     throw new McpBridgeError(
       `Hermes MCP credential revision did not converge after reloading '${entry.server}'.`,

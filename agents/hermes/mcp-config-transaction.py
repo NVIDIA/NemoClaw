@@ -71,6 +71,10 @@ MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
+REVISIONED_ENV_PLACEHOLDER_RE = re.compile(
+    r"^Bearer openshell:resolve:env:(v[0-9]{1,20})_([A-Za-z_][A-Za-z0-9_]{0,127})$"
+)
+OPENSHELL_CREDENTIAL_REVISION_RE = re.compile(r"^v[0-9]{1,20}$")
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
 BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.106.json"
 ANSI_ESCAPE_RE = re.compile(
@@ -361,6 +365,8 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError("Unsupported MCP config action")
     allowed = {"server", "url", "headers"}
     allowed.add("replace_existing" if action == "add" else "force")
+    if action == "add":
+        allowed.update({"credential_name", "credential_revision"})
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise ValueError(
@@ -453,78 +459,41 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         raise ValueError("MCP mutation payload must contain one Authorization header")
     authorization = headers.get("Authorization")
-    authorization_match = (
-        ENV_PLACEHOLDER_RE.fullmatch(authorization)
-        if isinstance(authorization, str)
-        else None
-    )
+    declared_credential_name = payload.get("credential_name")
+    credential_revision = payload.get("credential_revision")
+    if credential_revision is not None and (
+        not isinstance(credential_revision, str)
+        or OPENSHELL_CREDENTIAL_REVISION_RE.fullmatch(credential_revision) is None
+    ):
+        raise ValueError("Hermes MCP credential revision is invalid")
+    authorization_match = None
+    credential_name = None
+    if isinstance(authorization, str) and credential_revision is not None:
+        authorization_match = REVISIONED_ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if (
+            authorization_match is not None
+            and authorization_match.group(1) == credential_revision
+            and isinstance(declared_credential_name, str)
+            and authorization_match.group(2) == declared_credential_name
+        ):
+            credential_name = authorization_match.group(2)
+        else:
+            authorization_match = None
+    elif isinstance(authorization, str) and declared_credential_name is None:
+        authorization_match = ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if authorization_match is not None:
+            credential_name = authorization_match.group(1)
     if authorization_match is None:
         raise ValueError(
             "Hermes MCP Authorization must contain an OpenShell environment placeholder"
         )
-    if action == "add" and _credential_name_is_reserved(authorization_match.group(1)):
+    if action == "add" and (
+        not isinstance(credential_name, str)
+        or _credential_name_is_reserved(credential_name)
+    ):
         raise ValueError(
             "Hermes MCP Authorization uses a reserved credential environment name"
         )
-
-
-def _intent_credential_env_key(authorization: object) -> str:
-    authorization_match = (
-        ENV_PLACEHOLDER_RE.fullmatch(authorization)
-        if isinstance(authorization, str)
-        else None
-    )
-    if authorization_match is None:
-        raise ValueError(
-            "Hermes MCP Authorization must contain a canonical OpenShell environment placeholder"
-        )
-    return authorization_match.group(1)
-
-
-def _runtime_placeholder_matches(
-    value: object, env_key: str, allow_canonical: bool = False
-) -> bool:
-    canonical = f"openshell:resolve:env:{env_key}"
-    if allow_canonical and value == canonical:
-        return True
-    return (
-        re.fullmatch(
-            rf"openshell:resolve:env:v[0-9]{{1,20}}_{re.escape(env_key)}",
-            value,
-        )
-        is not None
-        if isinstance(value, str)
-        else False
-    )
-
-
-def _runtime_authorization(authorization: object) -> str:
-    """Bind canonical host intent to this fresh OpenShell child revision."""
-    env_key = _intent_credential_env_key(authorization)
-    canonical = f"openshell:resolve:env:{env_key}"
-    runtime_placeholder = os.environ.get(env_key)
-    if runtime_placeholder != canonical and not _runtime_placeholder_matches(
-        runtime_placeholder, env_key
-    ):
-        raise ValueError(
-            "Hermes MCP credential environment does not contain a bounded OpenShell placeholder"
-        )
-    return f"Bearer {runtime_placeholder}"
-
-
-def _materialize_runtime_payload(
-    action: str, payload: dict[str, object]
-) -> dict[str, object]:
-    if action == "remove" and payload.get("force") is True:
-        return dict(payload)
-    headers = payload.get("headers")
-    if not isinstance(headers, dict):
-        raise ValueError("MCP mutation payload headers must be an object")
-    projected = dict(payload)
-    projected["headers"] = {
-        "Authorization": _runtime_authorization(headers.get("Authorization"))
-    }
-    return projected
 
 
 def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
@@ -544,56 +513,45 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _managed_candidate_matches(
-    actual: object,
-    canonical_payload: dict[str, object],
-    allow_canonical: bool = False,
+    actual: object, expected: dict[str, object], allow_revisioned: bool
 ) -> bool:
-    if not isinstance(actual, dict):
+    if actual == expected:
+        return True
+    if not allow_revisioned or not isinstance(actual, dict):
         return False
-    headers = canonical_payload.get("headers")
-    authorization = headers.get("Authorization") if isinstance(headers, dict) else None
-    try:
-        env_key = _intent_credential_env_key(authorization)
-    except ValueError:
+    if set(actual) != set(expected):
         return False
+    for name, value in expected.items():
+        if name != "headers" and actual.get(name) != value:
+            return False
     actual_headers = actual.get("headers")
-    if not isinstance(actual_headers, dict) or set(actual_headers) != {"Authorization"}:
+    expected_headers = expected.get("headers")
+    if not isinstance(actual_headers, dict) or not isinstance(expected_headers, dict):
         return False
+    if set(actual_headers) != {"Authorization"} or set(expected_headers) != {
+        "Authorization"
+    }:
+        return False
+    expected_authorization = expected_headers.get("Authorization")
     actual_authorization = actual_headers.get("Authorization")
-    if not isinstance(actual_authorization, str) or not actual_authorization.startswith(
-        "Bearer "
-    ):
+    expected_match = (
+        ENV_PLACEHOLDER_RE.fullmatch(expected_authorization)
+        if isinstance(expected_authorization, str)
+        else None
+    )
+    if expected_match is None:
         return False
-    if not _runtime_placeholder_matches(
-        actual_authorization.removeprefix("Bearer "), env_key, allow_canonical
-    ):
+    expected_name = expected_match.group(1)
+    if OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(expected_name):
         return False
-    expected = _managed_candidate(canonical_payload)
-    expected["headers"] = {"Authorization": actual_authorization}
-    return actual == expected
-
-
-def _materialize_inspection_payload(
-    payload: dict[str, object]
-) -> dict[str, object]:
-    present = payload.get("present")
-    absent = payload.get("absent")
-    if not isinstance(present, dict) or not isinstance(absent, list):
-        raise ValueError("Hermes MCP inspection payload has invalid shape")
-    materialized: dict[str, dict[str, object]] = {}
-    for server, expected in present.items():
-        if not isinstance(expected, dict):
-            raise ValueError("Hermes MCP inspection expected config must be an object")
-        synthetic = {
-            "server": server,
-            "url": expected.get("url"),
-            "headers": expected.get("headers"),
-            "replace_existing": True,
-        }
-        materialized[server] = _managed_candidate(
-            _materialize_runtime_payload("add", synthetic)
-        )
-    return {"present": materialized, "absent": list(absent)}
+    if not isinstance(actual_authorization, str):
+        return False
+    prefix = "Bearer openshell:resolve:env:v"
+    suffix = f"_{expected_name}"
+    if not actual_authorization.startswith(prefix) or not actual_authorization.endswith(suffix):
+        return False
+    revision = actual_authorization[len(prefix) : -len(suffix)]
+    return revision.isdigit() and 1 <= len(revision) <= 20
 
 
 _MANAGED_CANDIDATE_FIELDS = frozenset(
@@ -663,12 +621,14 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
         servers = {}
     if not isinstance(servers, dict):
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
-    runtime_payload = _materialize_inspection_payload(payload)
-    present = runtime_payload["present"]
+    present = payload["present"]
     absent = payload["absent"]
     if not isinstance(present, dict) or not isinstance(absent, list):
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
-    matches = all(servers.get(name) == expected for name, expected in present.items())
+    matches = all(
+        _managed_candidate_matches(servers.get(name), expected, True)
+        for name, expected in present.items()
+    )
     matches = matches and all(name not in servers for name in absent)
     if not matches:
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
@@ -680,7 +640,6 @@ def _mutate(
     data: object,
     action: str,
     payload: dict[str, object],
-    canonical_payload: dict[str, object] | None = None,
 ) -> tuple[dict, bool]:
     if not isinstance(data, dict):
         raise ValueError("Invalid Hermes config: expected a YAML object")
@@ -713,8 +672,7 @@ def _mutate(
         return data, False
     if payload.get("force") is not True:
         current = servers.get(server_name)
-        canonical_intent = canonical_payload if canonical_payload is not None else payload
-        if not _managed_candidate_matches(current, canonical_intent, True):
+        if not _managed_candidate_matches(current, _managed_candidate(payload), True):
             raise ValueError(
                 f"Refusing to remove modified Hermes MCP server '{server_name}'. Use --force to remove it."
             )
@@ -826,8 +784,6 @@ def _recover_committed_apply_snapshot(
 
 def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     _validate_payload(action, payload)
-    canonical_payload = payload
-    payload = _materialize_runtime_payload(action, payload)
     privileged = os.geteuid() == 0
     guard = _load_guard()
     original_text, original_snapshot = guard._read_text(CONFIG_PATH)
@@ -842,7 +798,7 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     parsed = yaml.safe_load(original_text)
     if parsed is None:
         parsed = {}
-    updated, changed = _mutate(parsed, action, payload, canonical_payload)
+    updated, changed = _mutate(parsed, action, payload)
     if not changed:
         try:
             _refresh_and_verify_hashes(guard, privileged, "intend")
@@ -892,17 +848,13 @@ def apply_transaction_and_reload(
 ) -> dict[str, object]:
     """Commit config+hashes and runtime reload as one recoverable operation."""
     _validate_payload(action, payload)
-    canonical_payload = payload
-    runtime_payload = _materialize_runtime_payload(action, payload)
     privileged = os.geteuid() == 0
     guard = _load_guard()
     original_text, original_snapshot = guard._read_text(CONFIG_PATH)
     parsed = yaml.safe_load(original_text)
     if parsed is None:
         parsed = {}
-    expected_data, expected_changed = _mutate(
-        parsed, action, runtime_payload, canonical_payload
-    )
+    expected_data, expected_changed = _mutate(parsed, action, payload)
     expected_text = (
         yaml.safe_dump(expected_data, sort_keys=False)
         if expected_changed
