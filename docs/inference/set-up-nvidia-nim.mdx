@@ -41,7 +41,7 @@ NemoClaw filters the model list against detected free GPU memory.
 If free memory is unavailable, NemoClaw uses total GPU memory.
 NemoClaw also applies runtime memory limits for the host.
 On DGX Spark, NemoClaw caps usable memory at 50 percent of total memory to match NIM's reported unified-memory limit.
-The Nemotron 3 Super catalogue minimum includes NIM's reported runtime allocation.
+The Nemotron 3 Super catalog minimum includes NIM's reported runtime allocation.
 On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and aggregate total VRAM.
 
 On Docker 29.x and hosts that use the containerd image store, NemoClaw resolves the host-platform manifest digest before pulling a multi-architecture image when the registry publishes an index.
