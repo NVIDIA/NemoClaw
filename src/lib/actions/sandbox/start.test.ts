@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import {
   createDockerRuntimeProviderBundle,
   createKubernetesRuntimeProviderBundle,
@@ -159,12 +160,12 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState).not.toHaveBeenCalled();
   });
 
-  it("restores sealed access before recovering sandbox processes (#8112)", () => {
+  it("restores sealed access before recovering sandbox processes (#8112)", async () => {
     const restoreAccess = vi.fn();
     const recovery = SUCCESSFUL_RECOVERY;
     const restoreProcesses = vi.fn(() => recovery);
 
-    const result = restoreStoppedSandboxStartupState("my-sandbox", {
+    const result = await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady: vi.fn(),
@@ -179,11 +180,11 @@ describe("startSandbox", () => {
     expect(result).toBe(recovery);
   });
 
-  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
+  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", async () => {
     const restoreAccess = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady: vi.fn(),
@@ -194,12 +195,12 @@ describe("startSandbox", () => {
     expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
   });
 
-  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", () => {
+  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", async () => {
     const restoreAccess = vi.fn();
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady,
@@ -215,11 +216,11 @@ describe("startSandbox", () => {
     );
   });
 
-  it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", () => {
+  it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: vi.fn(),
       waitForSandboxReady,
@@ -266,16 +267,30 @@ describe("startSandbox", () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-readiness-"));
       vi.stubEnv("HOME", home);
       const listOutputs = ["my-sandbox Error", "my-sandbox Provisioning", "my-sandbox Ready"];
-      const captureSandboxList = vi.fn(() => ({
-        status: 0,
-        output: listOutputs.shift() ?? "my-sandbox Ready",
-        stdout: "",
-        stderr: "",
-      }));
+      const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
+        const output = listOutputs.shift() ?? "my-sandbox Ready";
+        const phase = output.split(/\s+/u)[1] ?? null;
+        return {
+          ok: true,
+          value: {
+            sandboxes: [
+              {
+                name: "my-sandbox",
+                phase,
+                readiness:
+                  phase === "Ready" ? "ready" : phase === "Error" ? "terminal" : "not_ready",
+              },
+            ],
+          },
+        };
+      });
+      const observer: OpenShellSandboxObserver = {
+        listSandboxes,
+      };
       const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
       const h = harness({
         allowDockerRuntimeInspection: false,
-        captureSandboxList,
+        observer,
         environment: { ...process.env, HOME: home },
         restoreLockedStartupAccess: vi.fn(),
         restoreProcessState: restoreProcesses,
@@ -286,10 +301,10 @@ describe("startSandbox", () => {
         const result = await startSandbox("my-sandbox", h.deps);
 
         expect(result.exitCode).toBe(0);
-        expect(captureSandboxList).toHaveBeenCalledTimes(3);
+        expect(listSandboxes).toHaveBeenCalledTimes(3);
         expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
         expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
-        expect(captureSandboxList.mock.invocationCallOrder[2]).toBeLessThan(
+        expect(listSandboxes.mock.invocationCallOrder[2]).toBeLessThan(
           restoreProcesses.mock.invocationCallOrder[0],
         );
         expect(restoreProcesses.mock.invocationCallOrder[0]).toBeLessThan(
