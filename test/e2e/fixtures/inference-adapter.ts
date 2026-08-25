@@ -29,10 +29,8 @@ import type { TestProgress, TestProgressCapability } from "./progress.ts";
  * as compatible inference and rejects endpoint overrides outside its static
  * allowlist; `public-nvidia` reads the public `NVIDIA_API_KEY` credential and
  * stages it only under the runtime's historical `NVIDIA_INFERENCE_API_KEY`
- * alias. A trusted-main manual PR controller can supply the public credential
- * through the historical alias until it supplies `NVIDIA_API_KEY`. Every mode
- * registers its credential for artifact redaction and removes credentials owned
- * by the other modes.
+ * alias. Every mode registers its credential for artifact redaction and
+ * removes credentials owned by the other modes.
  *
  * Tests normally consume the `inference` fixture from `e2e-test.ts`, pass
  * `inference.env()` to install/onboard commands, use its model and provider
@@ -86,9 +84,6 @@ const INTERNAL_NVIDIA_ALLOWED_HOSTS = ["inference-api.nvidia.com"] as const;
 const MODEL_PROBE_TIMEOUT_MS = 30_000;
 const PUBLIC_NVIDIA_ALLOWED_HOSTS = ["integrate.api.nvidia.com"] as const;
 const SANDBOX_HOST_ALIAS = "host.openshell.internal";
-const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-const CORRELATION_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
   const raw = env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase();
@@ -106,36 +101,6 @@ export function requirePublicNvidiaInferenceKey(value: string): string {
     );
   }
   return value;
-}
-
-function usesTrustedMainManualPrController(environment: NodeJS.ProcessEnv): boolean {
-  const candidateRevision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
-  const workflowRevision = environment.GITHUB_SHA?.trim() ?? "";
-  return (
-    environment.GITHUB_ACTIONS === "true" &&
-    environment.GITHUB_EVENT_NAME === "workflow_dispatch" &&
-    REVISION_PATTERN.test(candidateRevision) &&
-    REVISION_PATTERN.test(workflowRevision) &&
-    candidateRevision !== workflowRevision &&
-    CORRELATION_ID_PATTERN.test(environment.NEMOCLAW_E2E_CORRELATION_ID?.trim() ?? "")
-  );
-}
-
-function publicNvidiaInferenceKey(
-  secrets: HostedInferenceSecrets,
-  environment: NodeJS.ProcessEnv,
-): string {
-  const current = secrets.optional?.(PUBLIC_NVIDIA_CREDENTIAL_ENV);
-  const historical = secrets.optional?.(HOSTED_INFERENCE_SECRET);
-  if (current && historical && current !== historical) {
-    throw new Error("NVIDIA_API_KEY and NVIDIA_INFERENCE_API_KEY contain different values");
-  }
-  if (current) return requirePublicNvidiaInferenceKey(current);
-  const source =
-    historical && usesTrustedMainManualPrController(environment)
-      ? HOSTED_INFERENCE_SECRET
-      : PUBLIC_NVIDIA_CREDENTIAL_ENV;
-  return requirePublicNvidiaInferenceKey(secrets.required(source));
 }
 
 function joinEndpoint(baseUrl: string, suffix: string): string {
@@ -473,7 +438,9 @@ export async function createE2EInferenceAdapter(
       artifacts: options.artifacts,
     });
   }
-  const apiKey = publicNvidiaInferenceKey(options.secrets, env);
+  const apiKey = requirePublicNvidiaInferenceKey(
+    options.secrets.required(PUBLIC_NVIDIA_CREDENTIAL_ENV),
+  );
   const model = env.NEMOCLAW_MODEL || DEFAULT_PUBLIC_NVIDIA_MODEL;
   return new PublicNvidiaInferenceAdapter({
     apiKey,

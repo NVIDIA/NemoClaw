@@ -140,7 +140,7 @@ describe("OpenClaw pairing helper contracts", () => {
 
     try {
       await expect(createSlackSocketClient(proxyPort, targetPort)()).resolves.toEqual(envelope);
-      await vi.waitFor(() => expect(proxy.websocketBytes()).toBeGreaterThan(0), {
+      await vi.waitFor(() => expect(proxy.websocketMessages()).not.toHaveLength(0), {
         interval: 10,
         timeout: 1_000,
       });
@@ -151,6 +151,10 @@ describe("OpenClaw pairing helper contracts", () => {
           "u",
         ),
       );
+      expect(JSON.parse(proxy.websocketMessages()[0] ?? "{}")).toEqual({
+        type: "socket_mode_client_hello",
+        token: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+      });
     } finally {
       await closeServer(proxy.server);
     }
@@ -303,6 +307,51 @@ describe("OpenClaw pairing helper contracts", () => {
     expect(result.stderr).toEqual(expect.stringContaining(error));
     expect(result.stderr).toEqual(expect.stringContaining("NETWORK_ATTEMPTED=false"));
   });
+
+  it.each(["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"])(
+    "accepts the revision-scoped OpenShell credential reference for %s",
+    (name) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nparseManagedCredentialReference(${JSON.stringify(name)}); console.log("VALID");\n`,
+        encoding: "utf8",
+        env: { ...process.env, [name]: `openshell:resolve:env:v42_${name}` },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("VALID\n");
+      expect(result.stdout).not.toContain("openshell:resolve:env:");
+    },
+  );
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "raw secret", value: "xapp-raw-secret" },
+    { name: "identityless canonical reference", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    {
+      name: "identityless provider alias",
+      value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+    {
+      name: "wrong credential key",
+      value: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+    },
+  ])(
+    "rejects an invalid Slack app credential reference before network access: $name",
+    ({ value }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false; try { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+        encoding: "utf8",
+        env: { ...process.env, SLACK_APP_TOKEN: value },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference issued to the sandbox",
+      );
+      expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+      expect(result.stderr).not.toContain(value || "xapp-raw-secret");
+    },
+  );
 
   it("keeps Discord Gateway proof source valid for sandbox node heredoc", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {

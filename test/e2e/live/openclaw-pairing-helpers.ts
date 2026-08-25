@@ -369,18 +369,17 @@ console.log("DISCORD_PAIRING_E2E_RESULT " + JSON.stringify({ code: result.code, 
 NODE
 `.replace("__LOAD_CONVERSATION_RUNTIME_SOURCE__", LOAD_CONVERSATION_RUNTIME_SOURCE);
 
-// Source-of-truth boundary: the Slack live probe owns only validation for its
-// localized fake API port and proxy environment because those values are injected
-// by the Vitest harness before the probe opens direct Node socket/http clients.
-// Invalid state: a malformed fake port or proxy env, or a proxy destination other
-// than the NemoClaw/OpenShell gateway proxy emitted by scripts/nemoclaw-start.sh,
-// would otherwise hide the real pairing failure behind a low-level network error
-// or route the fake Slack websocket through an unexpected host. Source-fix
-// constraint: do not change global sandbox proxy generation for this probe; fail
-// closed here before network access. Support tests cover malformed values and an
-// unexpected-but-valid HTTP proxy host. Remove this localized parser once the
-// Slack probe delegates Socket Mode/REST traffic to a shared fake-provider client
-// instead of hand-rolled sockets.
+// Source-of-truth boundary: the Slack live probe validates its localized fake API
+// ports, proxy environment, and the revision-scoped credential references issued
+// to the sandbox before it opens direct Node.js socket and HTTP clients. Invalid
+// state would otherwise hide a pairing failure behind a low-level network error,
+// route the fake Slack WebSocket through an unexpected host, or send a credential
+// reference without a revision that OpenShell must reject for an endpoint-bound provider.
+// Source-fix constraint: do not change global sandbox proxy generation for this
+// probe; fail closed here before network access. Support tests cover malformed
+// values, an unexpected HTTP proxy host, and invalid credential references. Remove
+// this localized parser once the probe delegates Socket Mode and REST traffic to a
+// shared fake-provider client instead of custom socket clients.
 export const SLACK_PROBE_INPUT_VALIDATION_SOURCE = String.raw`
 function parseFakeSlackPort(name) {
   const raw = process.env[name] || "";
@@ -403,6 +402,14 @@ function parseProxyTarget() {
   if (parsed.hostname !== "10.200.0.1" || port !== 3128) throw new Error("unexpected HTTP proxy for Slack pairing probe");
   return { host: parsed.hostname, port };
 }
+function parseManagedCredentialReference(name) {
+  if (name !== "SLACK_APP_TOKEN" && name !== "SLACK_BOT_TOKEN") throw new Error("unexpected Slack credential reference name");
+  const value = process.env[name] || "";
+  if (!new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + name + "$").test(value)) {
+    throw new Error(name + " must be the revision-scoped OpenShell credential reference issued to the sandbox");
+  }
+  return value;
+}
 `;
 
 export const SLACK_PAIRING_SCRIPT = String.raw`
@@ -417,7 +424,7 @@ slack_pairing_user="$3"
 : "${"$"}{OPENCLAW_STATE_DIR:?OPENCLAW_STATE_DIR missing}"
 : "${"$"}{OPENCLAW_CONFIG_PATH:?OPENCLAW_CONFIG_PATH missing}"
 : "${"$"}{OPENCLAW_OAUTH_DIR:?OPENCLAW_OAUTH_DIR missing}"
-exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_REST_PORT="$fake_slack_rest_port" FAKE_SLACK_WEBSOCKET_PORT="$fake_slack_websocket_port" SLACK_PAIRING_USER="$slack_pairing_user" node --input-type=module <<'NODE'
+exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_REST_PORT="$fake_slack_rest_port" FAKE_SLACK_WEBSOCKET_PORT="$fake_slack_websocket_port" SLACK_PAIRING_USER="$slack_pairing_user" SLACK_APP_TOKEN="${"$"}{SLACK_APP_TOKEN:-}" SLACK_BOT_TOKEN="${"$"}{SLACK_BOT_TOKEN:-}" node --input-type=module <<'NODE'
 __LOAD_CONVERSATION_RUNTIME_SOURCE__
 import crypto from "node:crypto";
 import http from "node:http";
@@ -457,9 +464,18 @@ function receiveSlackSocketEvent() {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT");
   const proxy = parseProxyTarget();
+  const appToken = parseManagedCredentialReference("SLACK_APP_TOKEN");
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("timed out waiting for fake Slack Socket Mode event")), 30000);
     let handshake = Buffer.alloc(0);
     let framed = Buffer.alloc(0);
     let upgraded = false;
@@ -483,14 +499,12 @@ function receiveSlackSocketEvent() {
         if (end === -1) return;
         const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
         if (!statusLine.includes("101")) {
-          clearTimeout(timer);
-          socket.destroy();
-          reject(new Error("fake Slack websocket upgrade failed: " + statusLine));
+          fail(new Error("fake Slack websocket upgrade failed: " + statusLine));
           return;
         }
         upgraded = true;
         framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN" })));
+        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: appToken })));
       } else {
         framed = Buffer.concat([framed, chunk]);
       }
@@ -498,9 +512,14 @@ function receiveSlackSocketEvent() {
         const frame = decodeServerFrame(framed);
         if (!frame) break;
         framed = framed.slice(frame.totalLength);
+        if (frame.opcode === 8) {
+          fail(new Error("fake Slack websocket closed before the Socket Mode event"));
+          return;
+        }
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
+        settled = true;
         clearTimeout(timer);
         socket.end();
         socket.destroy();
@@ -508,13 +527,14 @@ function receiveSlackSocketEvent() {
         return;
       }
     });
-    socket.on("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error("fake Slack websocket closed before the Socket Mode event")));
   });
 }
 function postPairingReply(text, channel) {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort("FAKE_SLACK_REST_PORT");
-  const token = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  const token = parseManagedCredentialReference("SLACK_BOT_TOKEN");
   const data = new URLSearchParams({ token, channel, text }).toString();
   return new Promise((resolve, reject) => {
     const req = http.request({

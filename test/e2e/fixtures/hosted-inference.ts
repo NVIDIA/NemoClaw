@@ -21,7 +21,6 @@ export const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const PORTABLE_DESCRIPTOR_VALIDITY_MS = 60 * 60_000;
 
 export interface HostedInferenceSecrets {
-  optional?(name: string): string | undefined;
   required(name: string): string;
 }
 
