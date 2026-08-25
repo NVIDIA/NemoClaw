@@ -4,7 +4,7 @@
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readYaml } from ".././helpers/e2e-workflow-contract.ts";
+import { readYaml } from "../helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_DIRECTORY = ".github/workflows";
 const CATEGORIES = [

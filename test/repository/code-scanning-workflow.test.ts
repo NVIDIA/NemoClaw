@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readYaml, type Workflow } from ".././helpers/e2e-workflow-contract";
+import { readYaml, type Workflow } from "../helpers/e2e-workflow-contract";
 
 const workflow = readYaml<Workflow>(".github/workflows/code-scanning.yaml");
 const shellcheckSteps = workflow.jobs.shellcheck?.steps ?? [];
