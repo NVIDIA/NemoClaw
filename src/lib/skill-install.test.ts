@@ -113,7 +113,6 @@ describe("validateRelativePath", () => {
   });
 });
 
-
 describe("collectFiles", () => {
   let tmpDir: string;
 
@@ -206,6 +205,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.stateDir).toBe("/sandbox/.openclaw");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
+    expect(paths.workspaceSkillDir).toBe("/sandbox/.openclaw/workspace/skills/weather");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
@@ -223,6 +223,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.stateDir).toBe("/sandbox/.openclaw");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
+    expect(paths.workspaceSkillDir).toBe("/sandbox/.openclaw/workspace/skills/my-skill");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
@@ -240,6 +241,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.stateDir).toBe("/sandbox/.hermes");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
     expect(paths.mirrorDir).toBeNull();
+    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBeNull();
     expect(paths.reloadsSkillsOnSessionStart).toBe(true);
@@ -260,6 +262,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.stateDir).toBe("/sandbox/.deepagents");
     expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
     expect(paths.mirrorDir).toBeNull();
+    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(true);
     expect(paths.sessionFile).toBeNull();
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
@@ -277,6 +280,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.stateDir).toBe("/sandbox/.future");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
     expect(paths.mirrorDir).toBeNull();
+    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBeNull();
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);

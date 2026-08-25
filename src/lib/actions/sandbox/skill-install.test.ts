@@ -12,6 +12,7 @@ const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const skillInstall = vi.hoisted(() => ({
   validateSkillName: vi.fn(),
   resolveSkillPaths: vi.fn(),
+  checkWorkspaceSkillCollision: vi.fn(),
   checkExisting: vi.fn(),
   removeSkill: vi.fn(),
   verifyRemove: vi.fn(),
@@ -43,6 +44,7 @@ const paths = {
   stateDir: "/sandbox/.openclaw",
   uploadDir: "/sandbox/.openclaw/skills/demo-skill",
   mirrorDir: "$HOME/.openclaw/skills/demo-skill",
+  workspaceSkillDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   uploadDirSharedWithAgent: false,
   sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
   reloadsSkillsOnSessionStart: false,
@@ -58,6 +60,7 @@ const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
   uploadDir: "/sandbox/.deepagents/agent/skills/demo-skill",
   mirrorDir: null,
+  workspaceSkillDir: null,
   uploadDirSharedWithAgent: true,
   sessionFile: null,
   reloadsSkillsOnSessionStart: false,
@@ -95,6 +98,7 @@ describe("sandbox skill action orchestration", () => {
     getSessionAgent.mockReturnValue(agent);
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(false);
     skillInstall.checkExisting.mockReturnValue(true);
     skillInstall.removeSkill.mockReturnValue({
       success: true,
@@ -186,6 +190,36 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
     expect(tempConfig).not.toBe("");
     expect(fs.existsSync(tempConfig)).toBe(false);
+  });
+
+  it("refuses removal when an OpenClaw workspace skill shadows the managed skill (#10210)", async () => {
+    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(true);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("an OpenClaw workspace skill with that name exists"),
+    );
+    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
+    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
+    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the removal workspace collision probe is inconclusive", async () => {
+    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(null);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Could not check for an OpenClaw workspace skill named 'demo-skill'.",
+    );
+    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
+    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
+    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
   });
 
   it("removes and verifies an existing skill, then deletes the temp SSH config", async () => {
@@ -341,6 +375,45 @@ describe("sandbox skill action orchestration", () => {
     expect(fs.existsSync(tempConfig)).toBe(false);
     expectTempSshConfigCleanedUp(tempConfig);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("refuses install when a same-named OpenClaw workspace skill would shadow it (#10210)", async () => {
+    const skillDir = makeSkillDir();
+    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(true);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("an OpenClaw workspace skill with that name exists"),
+    );
+    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
+    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
+    expect(skillInstall.postInstall).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the OpenClaw workspace collision probe is inconclusive", async () => {
+    const skillDir = makeSkillDir();
+    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(null);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Could not check for an OpenClaw workspace skill named 'demo-skill'.",
+    );
+    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
+    expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
   it("fresh-installs and verifies Deep Agents content without generic upload mutation", async () => {

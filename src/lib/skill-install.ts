@@ -24,6 +24,7 @@ import { shellQuote, sshExec } from "./skill-remote";
 
 export { validateSkillName } from "./skill-name";
 export {
+  checkWorkspaceSkillCollision,
   checkExisting,
   type RemoveResult,
   removeSkill,
@@ -103,6 +104,8 @@ export interface SkillPaths {
   uploadDir: string;
   /** Directory the agent actually loads skills from, or null when it equals uploadDir */
   mirrorDir: string | null;
+  /** Higher-precedence agent-owned skill path that NemoClaw must not mutate. */
+  workspaceSkillDir: string | null;
   /**
    * Whether the agent's own tooling also writes into uploadDir. Shared
    * destinations support only atomic fresh installs because their existing
@@ -164,6 +167,7 @@ export function resolveSkillPaths(
     stateDir: dir,
     uploadDir: sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`,
     mirrorDir: mirror ? mirror(dir, skillName) : null,
+    workspaceSkillDir: isOpenClaw ? `${dir}/workspace/skills/${skillName}` : null,
     uploadDirSharedWithAgent: Boolean(sharedDir),
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     reloadsSkillsOnSessionStart: agentName === "hermes",

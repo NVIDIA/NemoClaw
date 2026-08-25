@@ -21,6 +21,32 @@ export interface SshResult {
 }
 
 /**
+ * Check for a higher-precedence OpenClaw workspace skill with the same name.
+ * NemoClaw never mutates this agent-owned path.
+ */
+export function checkWorkspaceSkillCollision(
+  ctx: SshContext,
+  paths: SkillPaths,
+  opts: { sshExecImpl?: typeof sshExec } = {},
+): boolean | null {
+  if (!paths.workspaceSkillDir) return false;
+  const runSsh = opts.sshExecImpl ?? sshExec;
+  const probe = [
+    "const fs=require('node:fs');",
+    "try{fs.lstatSync(process.argv[1]);console.log('EXISTS');}",
+    "catch(error){if(error?.code==='ENOENT')console.log('ABSENT');else process.exit(1);}",
+  ].join("");
+  const result = runSsh(
+    ctx,
+    `node --eval ${shellQuote(probe)} ${shellQuote(paths.workspaceSkillDir)}`,
+  );
+  if (result === null || result.status !== 0) return null;
+  if (result.stdout === "EXISTS") return true;
+  if (result.stdout === "ABSENT") return false;
+  return null;
+}
+
+/**
  * Run a command on the sandbox via SSH with optional stdin content.
  * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
  */

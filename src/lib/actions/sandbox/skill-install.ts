@@ -117,6 +117,46 @@ export function printPluginInstallHint(): void {
   );
 }
 
+function printSkillUploadFailureHint(sandboxName: string): void {
+  console.error(
+    "  Skill uploads write to the agent skills directory, which is locked while shields are up.",
+  );
+  console.error(
+    `  If shields are up, run \`${CLI_NAME} ${sandboxName} shields down\` before installing skills.`,
+  );
+}
+
+/** Report an agent-owned workspace collision without mutating either skill location. */
+function refuseWorkspaceSkillCollision(skillName: string, workspaceSkillDir: string): void {
+  console.error(
+    `  Refusing to change '${skillName}': an OpenClaw workspace skill with that name exists.`,
+  );
+  console.error(
+    `  Inspect ${workspaceSkillDir} and use the OpenClaw or ClawHub workflow to remove it.`,
+  );
+  console.error("  NemoClaw does not replace or delete agent-owned workspace skills.");
+  process.exitCode = 1;
+}
+
+/** Allow managed mutation only after the higher-precedence workspace path is known absent. */
+function canMutateManagedSkill(
+  ctx: skillInstall.SshContext,
+  paths: skillInstall.SkillPaths,
+  skillName: string,
+): boolean {
+  const workspaceCollision = skillInstall.checkWorkspaceSkillCollision(ctx, paths);
+  if (workspaceCollision === null) {
+    console.error(`  Could not check for an OpenClaw workspace skill named '${skillName}'.`);
+    process.exitCode = 1;
+    return false;
+  }
+  if (workspaceCollision && paths.workspaceSkillDir) {
+    refuseWorkspaceSkillCollision(skillName, paths.workspaceSkillDir);
+    return false;
+  }
+  return true;
+}
+
 /**
  * Remove an installed skill from a live sandbox by name.
  */
@@ -174,6 +214,8 @@ export async function removeSandboxSkill(
 
   try {
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
+
+    if (!canMutateManagedSkill(ctx, paths, skillName)) return;
 
     const existsCheck = skillInstall.checkExisting(ctx, paths);
     if (existsCheck === null) {
@@ -356,6 +398,8 @@ export async function installSandboxSkill(
 
   try {
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
+
+    if (!canMutateManagedSkill(ctx, paths, frontmatter.name)) return;
 
     if (paths.uploadDirSharedWithAgent) {
       const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths, {

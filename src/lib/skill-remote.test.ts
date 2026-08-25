@@ -4,7 +4,12 @@
 import { describe, expect, it } from "vitest";
 import { resolveSkillPaths } from "./skill-install";
 import { validateSkillName } from "./skill-name";
-import { checkExisting, removeSkill, verifyRemove } from "./skill-remote";
+import {
+  checkExisting,
+  checkWorkspaceSkillCollision,
+  removeSkill,
+  verifyRemove,
+} from "./skill-remote";
 
 describe("validateSkillName", () => {
   it("accepts valid skill names", () => {
@@ -34,6 +39,72 @@ describe("validateSkillName", () => {
   it("rejects dot and double-dot to prevent directory traversal on rm -rf", () => {
     expect(validateSkillName(".")).toBe(false);
     expect(validateSkillName("..")).toBe(false);
+  });
+});
+
+describe("checkWorkspaceSkillCollision", () => {
+  it("detects the higher-precedence OpenClaw workspace skill (#10210)", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+    const commands: string[] = [];
+    const collision = checkWorkspaceSkillCollision(
+      { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" },
+      paths,
+      {
+        sshExecImpl: (_ctx, command) => {
+          commands.push(command);
+          return { status: 0, stdout: "EXISTS", stderr: "" };
+        },
+      },
+    );
+
+    expect(collision).toBe(true);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain("fs.lstatSync(process.argv[1])");
+    expect(commands[0]).toContain("ENOENT");
+    expect(commands[0]).toContain("'/sandbox/.openclaw/workspace/skills/test-skill'");
+  });
+
+  it("does not probe workspace paths for other agents", () => {
+    const paths = resolveSkillPaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "test-skill",
+    );
+    const commands: string[] = [];
+    const collision = checkWorkspaceSkillCollision(
+      { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" },
+      paths,
+      {
+        sshExecImpl: (_ctx, command) => {
+          commands.push(command);
+          return { status: 0, stdout: "EXISTS", stderr: "" };
+        },
+      },
+    );
+
+    expect(collision).toBe(false);
+    expect(commands).toEqual([]);
+  });
+
+  it("returns null when workspace ownership cannot be determined", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+    const collision = checkWorkspaceSkillCollision(
+      { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" },
+      paths,
+      { sshExecImpl: () => null },
+    );
+
+    expect(collision).toBeNull();
+  });
+
+  it("returns null when the remote probe reports an inaccessible path", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+    const collision = checkWorkspaceSkillCollision(
+      { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" },
+      paths,
+      { sshExecImpl: () => ({ status: 1, stdout: "", stderr: "permission denied" }) },
+    );
+
+    expect(collision).toBeNull();
   });
 });
 
