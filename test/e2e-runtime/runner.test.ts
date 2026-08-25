@@ -800,6 +800,39 @@ describe("regression guards", () => {
     }
   });
 
+  it("run shows the OpenShell runtime hint for a failing bash -c openshell command (#10247)", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalExit = process.exit;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({ status: 1, stdout: "", stderr: "" });
+    process.exit = (code) => {
+      throw new Error(`exit:${code}`);
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      expect(() => run(["bash", "-c", "openshell sandbox create foo"])).toThrow("exit:1");
+      // The equivalent runShell("openshell sandbox create foo") path already shows
+      // this hint (spawnAndHandle passes the real renderedCommand); run() through
+      // runArrayCmd must show it too, not silently drop it.
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  This error originated from the OpenShell runtime layer.",
+      );
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      process.exit = originalExit;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      errorSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
   it("runInteractive keeps stdin inherited while redacting captured output", () => {
     const originalSpawnSync = childProcess.spawnSync;
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
