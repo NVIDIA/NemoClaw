@@ -37,6 +37,9 @@ const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
+const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
+const GLIBC_PROBE_RUN =
+  "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -1106,6 +1109,32 @@ export function readSandboxImagesWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): SandboxImagesWorkflow {
   return YAML.parse(readFileSync(workflowPath, "utf8")) as SandboxImagesWorkflow;
+}
+
+export function validateGlibcProbeLifecycleWorkflowPaths(
+  prWorkflow: SandboxImagesWorkflow,
+  imageWorkflow: SandboxImagesWorkflow,
+): string[] {
+  const errors: string[] = [];
+  for (const [label, workflow] of [
+    ["PR self-hosted workflow", prWorkflow],
+    ["sandbox image workflow", imageWorkflow],
+  ] as const) {
+    const job = workflow.jobs["test-e2e-gateway-isolation"] ?? {};
+    const jobSteps = steps(job);
+    const matchingSteps = jobSteps.filter((step) => step.name === GLIBC_PROBE_STEP_NAME);
+    const matchingRuns = Object.values(workflow.jobs)
+      .flatMap((candidate) => steps(candidate))
+      .filter((step) => step.run === GLIBC_PROBE_RUN);
+    if (
+      matchingSteps.length !== 1 ||
+      matchingSteps[0]?.run !== GLIBC_PROBE_RUN ||
+      matchingRuns.length !== 1
+    ) {
+      errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
+    }
+  }
+  return errors;
 }
 
 export function validateSandboxImagesWorkflow(

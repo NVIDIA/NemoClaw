@@ -84,6 +84,7 @@ const OPAQUE_INPUTS = [
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/pr-self-hosted.yaml",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
@@ -296,6 +297,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
 
     expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
