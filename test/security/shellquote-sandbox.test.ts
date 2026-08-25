@@ -88,6 +88,19 @@ const asText = (command) => Array.isArray(command) ? command.join(" ") : String(
 runner.run = (command, opts = {}) => {
   const text = asText(command);
   commands.push({ type: "run", command: text, env: opts.env || null });
+  if (text.includes("provider profile") && text.includes("export nemoclaw-mcp-v1")) {
+    return {
+      status: 0,
+      stdout: Buffer.from(JSON.stringify({
+        id: "nemoclaw-mcp-v1",
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inference_capable: false,
+      })),
+      stderr: Buffer.alloc(0),
+    };
+  }
   if (text.includes("sandbox get") && text.includes("my-assistant")) {
     return {
       status: 0,
