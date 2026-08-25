@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   createShieldsFlowHarness,
   externalPolicyAuthorityInspection,
+  externalPolicyMutationAuthority,
   type ShieldsFlowHarness,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -168,18 +169,6 @@ function countPolicySets(harness: ShieldsFlowHarness): number {
   ).length;
 }
 
-function externalAuthority(effectivePolicy: Record<string, unknown>) {
-  return {
-    authority: "externally-managed" as const,
-    authorityRecordedNow: false,
-    gatewayName: "nemoclaw",
-    inspection: {
-      authority: "externally-managed" as const,
-      effectivePolicy,
-    },
-  };
-}
-
 function readRestrictivePolicy(harness: ShieldsFlowHarness, sandboxName: string) {
   const state = harness.getShieldsPosture(sandboxName, false).state;
   return YAML.parse(fs.readFileSync(String(state.shieldsPolicySnapshotPath), "utf-8")) as Record<
@@ -234,7 +223,7 @@ describe("external Shields policy recovery", () => {
       "must make the effective policy",
     );
 
-    const restoredExternalAuthority = externalAuthority(
+    const restoredExternalAuthority = externalPolicyMutationAuthority(
       readRestrictivePolicy(harness, sandboxName),
     );
     harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
@@ -255,10 +244,13 @@ describe("external Shields policy recovery", () => {
     });
     harness.shieldsDown(sandboxName, { throwOnError: true });
     const policySetsAfterDown = countPolicySets(harness);
-    const restoredExternalAuthority = externalAuthority(
+    const restoredExternalAuthority = externalPolicyMutationAuthority(
       readRestrictivePolicy(harness, sandboxName),
     );
-    const changedExternalAuthority = externalAuthority({ version: 1, network_policies: {} });
+    const changedExternalAuthority = externalPolicyMutationAuthority({
+      version: 1,
+      network_policies: {},
+    });
     harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
     harness.policyRecoveryAuthoritySpy.mockImplementation(() =>
       harness.getOpenClawPosture() === "locked"
