@@ -107,10 +107,14 @@ agent_common_create_smoke_test() {
         openclaw plugins inspect nemoclaw --json >/dev/null
       ;;
     hermes)
+      # NOT a gateway health probe: OpenShell keeps sandboxes idle (`sleep infinity`)
+      # until run-agent-sandbox.sh execs nemoclaw-start in the foreground, so nothing
+      # listens on Hermes's gateway port (8642) yet at this point. Mirror the deepagents
+      # check below instead — confirm the build-time-generated config is present.
       openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
         hermes --version >/dev/null
       openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        curl -fsS http://localhost:8642/health >/dev/null
+        bash -c 'test -s /sandbox/.hermes/config.yaml && echo NEMOCLAW_HERMES_CONFIG_OK' >/dev/null
       ;;
     deepagents)
       openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
@@ -123,17 +127,24 @@ agent_common_create_smoke_test() {
     curl -fsS https://inference.local/v1/models >/dev/null
 }
 
-# Ask a real question through the actual agent binary/API — one shape per agent kind.
+# Ask a real question through the actual agent binary/CLI — one shape per agent kind.
+# This must exercise the agent itself (its own model routing, tool loop, config), not just
+# a raw HTTP probe of the inference endpoint — the smoke test above already covers that
+# routing is reachable, so a curl here would be redundant with it and would prove nothing
+# about the agent runtime. openclaw/hermes use each project's own documented headless,
+# non-interactive, no-Gateway-required entry point (`agent exec` / `-z`), matching how
+# deepagents already used `dcode -n`.
 agent_common_create_example_query() {
-  local agent="${1:?agent}" sandbox_name="${2:?sandbox_name}" model="${3:?model}"
+  local agent="${1:?agent}" sandbox_name="${2:?sandbox_name}"
   local query='In one sentence, what is an AI agent sandbox?'
   case "${agent}" in
-    openclaw | hermes)
+    openclaw)
       openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        curl -fsS https://inference.local/v1/chat/completions \
-          -H 'Content-Type: application/json' \
-          -d "{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"${query}\"}],\"max_tokens\":256,\"stream\":false}" \
-        >/dev/null
+        openclaw agent exec "${query}" >/dev/null
+      ;;
+    hermes)
+      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+        hermes -z "${query}" >/dev/null
       ;;
     deepagents)
       openshell sandbox exec -n "${sandbox_name}" --no-tty -- \

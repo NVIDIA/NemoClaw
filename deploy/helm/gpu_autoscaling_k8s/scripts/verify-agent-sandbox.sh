@@ -48,6 +48,8 @@ MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
 HEALTH_TIMEOUT_SEC="${VERIFY_HEALTH_TIMEOUT_SEC:-90}"
 SMOKE_TIMEOUT_SEC="${VERIFY_SMOKE_TIMEOUT_SEC:-30}"
 CURL_TIMEOUT_SEC="${VERIFY_CURL_TIMEOUT_SEC:-120}"
+OPENCLAW_TIMEOUT_SEC="${VERIFY_OPENCLAW_TIMEOUT_SEC:-120}"
+HERMES_TIMEOUT_SEC="${VERIFY_HERMES_TIMEOUT_SEC:-120}"
 DCODE_TIMEOUT_SEC="${VERIFY_DCODE_TIMEOUT_SEC:-120}"
 
 sandbox_exec() {
@@ -86,11 +88,18 @@ case "${AGENT_NAME}" in
     fi
     log "hermes --version OK."
 
-    log "GET http://localhost:8642/health (timeout ${HEALTH_TIMEOUT_SEC}s)..."
-    if ! sandbox_exec "${HEALTH_TIMEOUT_SEC}" curl -fsS --max-time "${HEALTH_TIMEOUT_SEC}" http://localhost:8642/health >/dev/null; then
-      fail "Hermes health probe timed out or failed after ${HEALTH_TIMEOUT_SEC}s"
-    fi
-    log "Health probe OK."
+    # NOT a gateway health probe: OpenShell keeps sandboxes idle (`sleep infinity`) until
+    # run-agent-sandbox.sh execs nemoclaw-start in the foreground, so nothing listens on
+    # Hermes's gateway port (8642) at verify time. Confirm the build-time-generated config
+    # is present instead (mirrors the deepagents config.toml check below).
+    log "Checking config.yaml was generated (timeout ${SMOKE_TIMEOUT_SEC}s)..."
+    CONFIG_CHECK="$(
+      sandbox_exec "${SMOKE_TIMEOUT_SEC}" \
+        bash -c 'test -s /sandbox/.hermes/config.yaml && echo NEMOCLAW_HERMES_CONFIG_OK'
+    )" || fail "config.yaml smoke check timed out or failed after ${SMOKE_TIMEOUT_SEC}s"
+    [[ "${CONFIG_CHECK}" == "NEMOCLAW_HERMES_CONFIG_OK" ]] \
+      || fail "config.yaml smoke check returned unexpected output: ${CONFIG_CHECK}"
+    log "config.yaml OK."
     ;;
   deepagents)
     log "Checking dcode --version (timeout ${SMOKE_TIMEOUT_SEC}s)..."
@@ -121,32 +130,37 @@ print("models:", ", ".join(ids))' \
   "${MODEL}" "${MODELS_JSON}"
 
 QUERY='In one sentence, what is an AI agent sandbox?'
-if [[ "${RUN_MODE}" == "terminal" ]]; then
-  log "dcode -n (headless) — this is the real agent binary, not a curl probe (timeout ${DCODE_TIMEOUT_SEC}s)"
-  log "Example query: ${QUERY}"
-  ANSWER="$(sandbox_exec "${DCODE_TIMEOUT_SEC}" dcode -n "${QUERY}")" \
-    || fail "dcode -n timed out or failed after ${DCODE_TIMEOUT_SEC}s"
-  [[ -n "${ANSWER}" ]] || fail "dcode -n returned an empty response"
-else
-  log "POST https://inference.local/v1/chat/completions"
-  log "Example query: ${QUERY}"
-  CHAT_JSON="$(
-    sandbox_exec "${CURL_TIMEOUT_SEC}" \
-      curl -fsS --max-time "${CURL_TIMEOUT_SEC}" https://inference.local/v1/chat/completions \
-        -H 'Content-Type: application/json' \
-        -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"${QUERY}\"}],\"max_tokens\":256,\"stream\":false}"
-  )" || fail "POST /v1/chat/completions timed out or failed after ${CURL_TIMEOUT_SEC}s"
-  ANSWER="$(
-    python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); choices=payload.get("choices") or [];
-assert choices, f"chat/completions returned no choices: {payload!r}";
-content=((choices[0].get("message") or {}).get("content") or "").strip();
-assert content, "chat/completions returned an empty assistant message";
-print(content)' "${CHAT_JSON}"
-  )"
-fi
+# Exercise the actual agent binary/CLI for every agent, not a curl probe of the inference
+# endpoint — the /v1/models GET above already proves that route is reachable, so a second
+# curl here (as OpenClaw/Hermes previously used) would only re-prove routing, not that the
+# agent itself can answer through its own runtime. Each case uses that project's own
+# documented headless, non-interactive, no-Gateway-required entry point.
+case "${AGENT_NAME}" in
+  openclaw)
+    log "openclaw agent exec (headless) — this is the real agent binary, not a curl probe (timeout ${OPENCLAW_TIMEOUT_SEC}s)"
+    log "Example query: ${QUERY}"
+    ANSWER="$(sandbox_exec "${OPENCLAW_TIMEOUT_SEC}" openclaw agent exec "${QUERY}")" \
+      || fail "openclaw agent exec timed out or failed after ${OPENCLAW_TIMEOUT_SEC}s"
+    [[ -n "${ANSWER}" ]] || fail "openclaw agent exec returned an empty response"
+    ;;
+  hermes)
+    log "hermes -z (headless) — this is the real agent binary, not a curl probe (timeout ${HERMES_TIMEOUT_SEC}s)"
+    log "Example query: ${QUERY}"
+    ANSWER="$(sandbox_exec "${HERMES_TIMEOUT_SEC}" hermes -z "${QUERY}")" \
+      || fail "hermes -z timed out or failed after ${HERMES_TIMEOUT_SEC}s"
+    [[ -n "${ANSWER}" ]] || fail "hermes -z returned an empty response"
+    ;;
+  deepagents)
+    log "dcode -n (headless) — this is the real agent binary, not a curl probe (timeout ${DCODE_TIMEOUT_SEC}s)"
+    log "Example query: ${QUERY}"
+    ANSWER="$(sandbox_exec "${DCODE_TIMEOUT_SEC}" dcode -n "${QUERY}")" \
+      || fail "dcode -n timed out or failed after ${DCODE_TIMEOUT_SEC}s"
+    [[ -n "${ANSWER}" ]] || fail "dcode -n returned an empty response"
+    ;;
+esac
 log "Answer: ${ANSWER}"
 
-echo "OK: sandbox ${SANDBOX_NAME} reached https://inference.local for models and a real prompt (${MODEL})."
+echo "OK: sandbox ${SANDBOX_NAME} reached https://inference.local for models and answered a real prompt through ${AGENT_DISPLAY_NAME} (${MODEL})."
 if [[ "${RUN_MODE}" == "gateway" ]]; then
   echo "Runtime (optional foreground): AGENT_NAME=${AGENT_NAME} ./scripts/run-agent-sandbox.sh"
 else

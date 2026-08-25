@@ -188,8 +188,9 @@ fi
 unset EFFECTIVE_POLICY
 
 agent_common_create_smoke_test "${AGENT_NAME}" "${SANDBOX_NAME}"
-# Example: ask a real question through OpenShell → Envoy (or metrics-proxy Service) → GPU inference.
-agent_common_create_example_query "${AGENT_NAME}" "${SANDBOX_NAME}" "${MODEL}"
+# Example: ask a real question through the agent's own CLI (not a curl probe), which in
+# turn reaches OpenShell → Envoy (or metrics-proxy Service) → GPU inference internally.
+agent_common_create_example_query "${AGENT_NAME}" "${SANDBOX_NAME}"
 
 echo "${AGENT_DISPLAY_NAME} sandbox ${SANDBOX_NAME} is ready without a GPU."
 if kubectl get gateway "${INFERENCE_RELEASE}-metrics-proxy" -n "${INFERENCE_NAMESPACE}" >/dev/null 2>&1; then

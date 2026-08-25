@@ -124,15 +124,42 @@ grep -Fq -- '--remove-endpoint integrate.api.nvidia.com:443' "${CREATE_SCRIPT}"
 grep -Fq 'agent_common_create_smoke_test' "${CREATE_SCRIPT}"
 grep -Fq 'agent_common_create_example_query' "${CREATE_SCRIPT}"
 
+# agent_common_create_smoke_test (used by create-agent-sandbox.sh, called right after
+# `openshell sandbox create -- /bin/true` above) must not probe Hermes's gateway port:
+# OpenShell leaves sandboxes idle until run-agent-sandbox.sh execs nemoclaw-start later.
+grep -Fq 'NEMOCLAW_HERMES_CONFIG_OK' "${SCRIPT_DIR}/agent-common.sh"
+if grep -Fq 'http://localhost:8642/health' "${SCRIPT_DIR}/agent-common.sh"; then
+  echo "FAIL: agent_common_create_smoke_test must not probe Hermes's gateway port before" \
+    "run-agent-sandbox.sh has started it (OpenShell leaves sandboxes idle)" >&2
+  exit 1
+fi
+
 grep -Fq 'agent_common_validate' "${VERIFY_SCRIPT}"
 grep -Fq 'openclaw plugins inspect nemoclaw --json' "${VERIFY_SCRIPT}"
 grep -Fq 'hermes --version' "${VERIFY_SCRIPT}"
-grep -Fq 'http://localhost:8642/health' "${VERIFY_SCRIPT}"
+grep -Fq 'NEMOCLAW_HERMES_CONFIG_OK' "${VERIFY_SCRIPT}"
+if grep -Fq 'http://localhost:8642/health' "${VERIFY_SCRIPT}"; then
+  echo "FAIL: verify-agent-sandbox.sh must not probe Hermes's gateway port before" \
+    "run-agent-sandbox.sh has started it (OpenShell leaves sandboxes idle)" >&2
+  exit 1
+fi
 grep -Fq 'dcode --version' "${VERIFY_SCRIPT}"
 grep -Fq 'NEMOCLAW_DEEPAGENTS_CONFIG_OK' "${VERIFY_SCRIPT}"
 grep -Fq 'dcode -n' "${VERIFY_SCRIPT}"
-grep -Fq 'https://inference.local/v1/chat/completions' "${VERIFY_SCRIPT}"
 grep -Fq 'https://inference.local/v1/models' "${VERIFY_SCRIPT}"
+
+# The "example query" must exercise each agent's own headless CLI entry point, not a raw
+# curl to the inference endpoint — a curl there would only re-prove the network route
+# already covered by the /v1/models check above, not that the agent itself can answer.
+grep -Fq 'openclaw agent exec' "${VERIFY_SCRIPT}"
+grep -Fq 'hermes -z' "${VERIFY_SCRIPT}"
+grep -Fq 'openclaw agent exec' "${SCRIPT_DIR}/agent-common.sh"
+grep -Fq 'hermes -z' "${SCRIPT_DIR}/agent-common.sh"
+if grep -Fq 'https://inference.local/v1/chat/completions' "${VERIFY_SCRIPT}" "${SCRIPT_DIR}/agent-common.sh"; then
+  echo "FAIL: OpenClaw/Hermes example query must go through the agent's own CLI" \
+    "(openclaw agent exec / hermes -z), not a curl bypass to /v1/chat/completions" >&2
+  exit 1
+fi
 
 grep -Fq 'agent_common_validate' "${RUN_SANDBOX_SCRIPT}"
 grep -Fq 'agent_common_run_mode' "${RUN_SANDBOX_SCRIPT}"
