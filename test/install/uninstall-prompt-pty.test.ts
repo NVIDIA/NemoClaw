@@ -22,7 +22,7 @@ import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const DRIVER = path.join(import.meta.dirname, "fixtures", "uninstall-prompt-pty-driver.ts");
+const DRIVER = path.join(import.meta.dirname, "..", "fixtures", "uninstall-prompt-pty-driver.ts");
 const UNINSTALL_SH = path.join(REPO_ROOT, "uninstall.sh");
 
 const ptySupported =

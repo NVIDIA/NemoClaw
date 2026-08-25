@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // but the body documents five layer sections (it adds Gateway Authentication).
 // It also keeps the Sandbox Hardening link on the canonical
 // manage-sandboxes/configure-sandboxes/ route rather than the retired deployment/ path.
-const REPO_ROOT = path.dirname(import.meta.dirname);
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOC = path.join(REPO_ROOT, "docs", "security", "best-practices.mdx");
 const text = fs.readFileSync(DOC, "utf-8");
 

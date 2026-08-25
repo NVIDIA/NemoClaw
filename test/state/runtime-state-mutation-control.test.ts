@@ -7,9 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const CONTROLLER = path.join(
   import.meta.dirname,
-  "..",
-  "scripts",
-  "runtime-state-mutation-control.py",
+  "../../scripts/runtime-state-mutation-control.py",
 );
 
 const HARNESS = String.raw`

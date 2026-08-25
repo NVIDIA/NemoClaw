@@ -29,8 +29,8 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 // The driver is `.ts` rather than `.cjs` per the
 // codebase-growth guardrail that forbids newly added .js/.cjs/.mjs files.
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
-const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.ts");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const DRIVER = path.join(import.meta.dirname, "..", "fixtures", "strict-tool-call-probe-driver.ts");
 const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
 const SOURCE_NODE_OPTIONS = [process.env.NODE_OPTIONS, `--require=${SOURCE_REQUIRE_HOOK}`]
   .filter(Boolean)

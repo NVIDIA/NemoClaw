@@ -122,7 +122,7 @@ function runCli(
   subcommand: string,
   extraEnv: Record<string, string> = {},
 ) {
-  const repoRoot = path.join(import.meta.dirname, "../..");
+  const repoRoot = path.join(import.meta.dirname, "../../..");
   // Put the fixture bin (with the healthy docker stub) first so the #4428
   // Docker preflight sees a reachable daemon regardless of the host runner.
   const homeLocalBin = path.join(tmpDir, ".local", "bin");
