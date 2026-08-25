@@ -35,7 +35,12 @@ describe("messaging credential provider profile", () => {
         "--file",
         "/repo/nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml",
       ],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
   });
 
