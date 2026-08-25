@@ -67,6 +67,7 @@ import type {
 import {
   completeDockerManagedNativeGpuFallbackOwnerCleanup,
   createDockerManagedBootstrapSurface,
+  formatDockerGpuModeFailureDetails,
 } from "./docker-runtime";
 import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-create";
@@ -241,6 +242,27 @@ describe("Docker managed-bootstrap native fallback owner cleanup", () => {
     ).resolves.toBe(handoff);
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(recoverUnfinished).not.toHaveBeenCalled();
+  });
+});
+
+describe("Docker managed-bootstrap GPU probe diagnostics", () => {
+  it("includes each failed mode without exposing credentials", () => {
+    const details = formatDockerGpuModeFailureDetails([
+      {
+        mode: {
+          kind: "gpus",
+          label: "--gpus all",
+          device: "all",
+          args: ["--gpus", "all"],
+        },
+        ok: false,
+        error: "proxy request failed with token=secret-value",
+      },
+    ]);
+
+    expect(details).toContain("--gpus all");
+    expect(details).toContain("token=<REDACTED>");
+    expect(details).not.toContain("secret-value");
   });
 });
 
