@@ -89,8 +89,6 @@ export interface PublicationRun {
   id: number;
   attempt: number;
   workflowId: number;
-  event: "push" | "workflow_dispatch";
-  headBranch: string;
   headSha: string;
   status: string;
   conclusion: string | null;
@@ -103,8 +101,6 @@ export type PublicationSelection =
 
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
-  publicationBranch?: string;
-  publicationEvent?: "push" | "workflow_dispatch";
   request: (path: string) => Promise<unknown>;
   requireWorkflowSuccess?: boolean;
   selectNearestSuccessfulRun?: boolean;
@@ -148,11 +144,7 @@ function positiveSafeInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
-function exactString<const Expected extends string>(
-  value: unknown,
-  expected: Expected,
-  label: string,
-): Expected {
+function exactString(value: unknown, expected: string, label: string): string {
   if (value !== expected) {
     throw new Error(`${label} must be ${expected}`);
   }
@@ -364,13 +356,7 @@ export function validateWorkflow(payload: unknown): number {
   return workflowId;
 }
 
-function validateRun(
-  value: unknown,
-  index: number,
-  expectedWorkflowId: number,
-  expectedEvent: "push" | "workflow_dispatch",
-  expectedBranch: string,
-): PublicationRun {
+function validateRun(value: unknown, index: number, expectedWorkflowId: number): PublicationRun {
   const run = asRecord(value);
   const id = positiveSafeInteger(run.id, `workflow run ${index} id`);
   const attempt = positiveSafeInteger(run.run_attempt, `workflow run ${index} attempt`);
@@ -380,8 +366,8 @@ function validateRun(
     throw new Error(`workflow run ${index} workflow id does not match the base-image workflow`);
   }
   const headSha = sha(run.head_sha, `workflow run ${index} head SHA`);
-  const event = exactString(run.event, expectedEvent, `workflow run ${index} event`);
-  const headBranch = exactString(run.head_branch, expectedBranch, `workflow run ${index} branch`);
+  exactString(run.event, "push", `workflow run ${index} event`);
+  exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
   exactString(run.name, WORKFLOW_NAME, `workflow run ${index} name`);
   exactString(asRecord(run.repository).full_name, REPOSITORY, `workflow run ${index} repository`);
@@ -410,8 +396,6 @@ function validateRun(
     id,
     attempt,
     workflowId: expectedWorkflowId,
-    event,
-    headBranch,
     headSha,
     status,
     conclusion,
@@ -423,11 +407,7 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
-  options: {
-    readonly completedSuccessOnly?: boolean;
-    readonly publicationBranch?: string;
-    readonly publicationEvent?: "push" | "workflow_dispatch";
-  } = {},
+  options: { readonly completedSuccessOnly?: boolean } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -439,12 +419,10 @@ export function selectPublicationRun(
     throw new Error("workflow run listing is incomplete");
   }
 
-  const publicationBranch = options.publicationBranch ?? MAIN_BRANCH;
-  const publicationEvent = options.publicationEvent ?? "push";
   const runs = response.workflow_runs.flatMap((value, index) => {
     const run = asRecord(value);
     return typeof run.head_sha === "string" && history.distanceBySha.has(run.head_sha)
-      ? [validateRun(run, index, workflowId, publicationEvent, publicationBranch)]
+      ? [validateRun(run, index, workflowId)]
       : [];
   });
   if (new Set(runs.map((run) => run.id)).size !== runs.length) {
@@ -545,7 +523,7 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
 }
 
 export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
-  const actual = validateRun(payload, 0, expected.workflowId, expected.event, expected.headBranch);
+  const actual = validateRun(payload, 0, expected.workflowId);
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
@@ -651,38 +629,16 @@ export async function waitForBaseImagePublication(
   if (!Number.isSafeInteger(options.pollMs) || options.pollMs < 1) {
     throw new Error("pollMs must be a positive integer");
   }
-  const publicationBranch = options.publicationBranch ?? MAIN_BRANCH;
-  const publicationEvent = options.publicationEvent ?? "push";
-  if (
-    publicationBranch.length === 0 ||
-    !SAFE_PATH_PATTERN.test(publicationBranch) ||
-    publicationBranch.startsWith("/") ||
-    publicationBranch.endsWith("/") ||
-    publicationBranch.includes("//") ||
-    publicationBranch.split("/").some((segment) => segment === "." || segment === "..")
-  ) {
-    throw new Error("publication branch is invalid");
-  }
-  if (publicationEvent === "push" && publicationBranch !== MAIN_BRANCH) {
-    throw new Error("non-main publication must use workflow_dispatch");
-  }
 
   const deadline = now() + options.waitMs;
   const workflowId = validateWorkflow(
     await options.request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
-  const query = new URLSearchParams({
-    branch: publicationBranch,
-    event: publicationEvent,
-    per_page: String(PAGE_SIZE),
-  });
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?${query.toString()}`;
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
   while (true) {
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId, {
       completedSuccessOnly: options.selectNearestSuccessfulRun === true,
-      publicationBranch,
-      publicationEvent,
     });
     if (selection.state === "selected") {
       const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
@@ -734,7 +690,7 @@ export async function waitForBaseImagePublication(
     notice(
       selection.state === "selected"
         ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
-        : `Waiting for a trusted ${publicationBranch} base-image ${publicationEvent} run covering ${options.history.relevantSha}`,
+        : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));
   }
@@ -857,8 +813,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const requireManagedImagePublication = env.REQUIRE_MANAGED_IMAGE_PUBLICATION ?? "0";
   const selectNearestSuccessfulRun = env.SELECT_NEAREST_SUCCESSFUL_PUBLICATION ?? "0";
   const allowNonHeadHistory = env.PUBLICATION_HISTORY_ALLOW_NON_HEAD ?? "0";
-  const publicationBranch = env.PUBLICATION_BRANCH ?? MAIN_BRANCH;
-  const publicationEvent = env.PUBLICATION_EVENT ?? "push";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -867,8 +821,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_REPOSITORY !== REPOSITORY) {
     throw new Error(`GITHUB_REPOSITORY must be ${REPOSITORY}`);
   }
-  if (env.GITHUB_REF !== `refs/heads/${publicationBranch}`) {
-    throw new Error("GITHUB_REF must match PUBLICATION_BRANCH");
+  if (env.GITHUB_REF !== "refs/heads/main") {
+    throw new Error("GITHUB_REF must be refs/heads/main");
   }
   if (!isBaseImagePublicationEvent(env.GITHUB_EVENT_NAME)) {
     throw new Error("GITHUB_EVENT_NAME must be push or workflow_dispatch");
@@ -896,13 +850,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   });
   const run = await waitForBaseImagePublication({
     history,
-    publicationBranch,
-    publicationEvent:
-      publicationEvent === "push" || publicationEvent === "workflow_dispatch"
-        ? publicationEvent
-        : (() => {
-            throw new Error("PUBLICATION_EVENT must be push or workflow_dispatch");
-          })(),
     request: (path) => githubRequest(path, token),
     requireWorkflowSuccess: requireManagedImagePublication === "1",
     selectNearestSuccessfulRun: selectNearestSuccessfulRun === "1",

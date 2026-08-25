@@ -120,8 +120,6 @@ function selectedRun(overrides: Partial<PublicationRun> = {}): PublicationRun {
     id: RUN_ID,
     attempt: 1,
     workflowId: WORKFLOW_ID,
-    event: "push",
-    headBranch: "main",
     headSha: RELEVANT_SHA,
     status: "completed",
     conclusion: "success",
@@ -505,31 +503,6 @@ describe("base-image publication evidence", () => {
     });
   });
 
-  it("binds an exact branch workflow-dispatch publication", () => {
-    const branch = "fix/managed-only";
-    const selection = selectPublicationRun(
-      runsPayload([
-        workflowRun({
-          event: "workflow_dispatch",
-          head_branch: branch,
-          head_sha: EXPECTED_SHA,
-        }),
-      ]),
-      history(),
-      WORKFLOW_ID,
-      { publicationBranch: branch, publicationEvent: "workflow_dispatch" },
-    );
-
-    expect(selection).toMatchObject({
-      state: "selected",
-      run: {
-        event: "workflow_dispatch",
-        headBranch: branch,
-        headSha: EXPECTED_SHA,
-      },
-    });
-  });
-
   it("does not select an incomplete or failed publication for branch reuse", () => {
     expect(
       selectPublicationRun(
@@ -773,47 +746,6 @@ describe("base-image publication evidence", () => {
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
     expect(notices).toHaveLength(2);
-  });
-
-  it("queries and verifies an exact branch workflow-dispatch publication", async () => {
-    const branch = "fix/managed-only";
-    const branchRun = workflowRun({
-      event: "workflow_dispatch",
-      head_branch: branch,
-      head_sha: EXPECTED_SHA,
-    });
-    const responses = [
-      workflowMetadata(),
-      runsPayload([branchRun]),
-      {
-        total_count: 3,
-        jobs: successfulJobs().map((job) => ({ ...job, head_sha: EXPECTED_SHA })),
-      },
-      branchRun,
-    ];
-    const requests: string[] = [];
-
-    await expect(
-      waitForBaseImagePublication({
-        history: history(),
-        publicationBranch: branch,
-        publicationEvent: "workflow_dispatch",
-        request: async (requestPath) => {
-          requests.push(requestPath);
-          return responses.shift();
-        },
-        requireWorkflowSuccess: true,
-        waitMs: 100,
-        pollMs: 10,
-      }),
-    ).resolves.toMatchObject({
-      event: "workflow_dispatch",
-      headBranch: branch,
-      headSha: EXPECTED_SHA,
-    });
-    expect(requests[1]).toBe(
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=fix%2Fmanaged-only&event=workflow_dispatch&per_page=100&page=1",
-    );
   });
 
   it("accepts required publishers while managed-image jobs remain in progress (#9549)", async () => {
