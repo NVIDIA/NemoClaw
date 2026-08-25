@@ -9,8 +9,8 @@ import {
 import { normalizePolicyTierName } from "../../../onboard/policy-tier-suppression";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "../../../onboard/runtime-provider/host-local-inference-routing";
 import * as policies from "../../../policy";
-import * as registry from "../../../policy/policy-registry";
-import type { SandboxEntry } from "../../../policy/policy-registry";
+import * as registry from "../../../state/registry";
+import type { SandboxEntry } from "../../../state/registry";
 import { getMessagingPlanFromEntry } from "../../../state/registry-messaging";
 import { MCP_BRIDGE_POLICY_SOURCE } from "../mcp-bridge-policy";
 import { resolveManagedMcpPolicyRequirementContents } from "./mcp-requirements";

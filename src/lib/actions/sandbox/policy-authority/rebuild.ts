@@ -17,7 +17,7 @@ import {
   type SandboxGatewayPresence,
 } from "../../../onboard/sandbox-recreate-probe";
 import * as policies from "../../../policy";
-import * as registry from "../../../policy/policy-registry";
+import * as registry from "../../../state/registry";
 import type { RebuildManifest } from "../../../state/sandbox";
 import { getPersistedSandboxTargetGatewayName } from "../gateway-target";
 import { MCP_BRIDGE_POLICY_SOURCE } from "../mcp-bridge-policy";
