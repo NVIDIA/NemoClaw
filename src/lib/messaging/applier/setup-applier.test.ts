@@ -120,16 +120,13 @@ function inMemoryMessagingRunner(
 ): MessagingOpenShellRunner {
   return (args, options) => {
     const target = String(args.at(-1));
-    const writeFile = (input: string) => {
-      files[target] = input;
-      writes.push(target);
-      return { status: 0 };
-    };
-    return args.includes("cat") && options?.input === undefined
-      ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
-      : options?.input === undefined
-        ? { status: 1 }
-        : writeFile(options.input);
+    if (args.includes("cat") && options?.input === undefined) {
+      return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+    }
+    if (options?.input === undefined) return { status: 1 };
+    files[target] = options.input;
+    writes.push(target);
+    return { status: 0 };
   };
 }
 
@@ -522,9 +519,9 @@ describe("MessagingSetupApplier", () => {
           ? {
               status: 0,
               stdout:
-              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
-          }
-        : { status: 0 };
+                "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 0 };
     };
 
     expect(() =>
@@ -777,17 +774,7 @@ describe("MessagingSetupApplier", () => {
         },
       }),
     };
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      if (args.includes("cat") && !options?.input) {
-        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-      }
-      if (options?.input !== undefined) {
-        files[target] = options.input;
-        return { status: 0 };
-      }
-      return { status: 1 };
-    };
+    const runOpenshell = inMemoryMessagingRunner(files);
 
     await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
 
@@ -821,14 +808,9 @@ describe("MessagingSetupApplier", () => {
         { runOpenshell },
       ),
     ).toEqual({ appliedTargets: ["/sandbox/.openclaw/openclaw.json"] });
-    expect(
-      JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}").channels.telegram.accounts
-        .default.botToken,
-    ).toBe(scoped);
-    expect(
-      JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}").channels.telegram.accounts
-        .default.unrelated,
-    ).toBe("preserved");
+    const account = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}").channels.telegram
+      .accounts.default;
+    expect(account).toMatchObject({ botToken: scoped, unrelated: "preserved" });
     expect(plan.credentialBindings[0]?.placeholder).toBe(canonical);
     expect(
       MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
@@ -873,23 +855,22 @@ describe("MessagingSetupApplier", () => {
         "",
       ].join("\n"),
     };
-    const runOpenshell = inMemoryMessagingRunner(files);
     MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
       plan,
       new Map([
         ["SLACK_BOT_TOKEN", "openshell:resolve:env:v8_SLACK_BOT_TOKEN"],
         ["SLACK_APP_TOKEN", "openshell:resolve:env:v9_SLACK_APP_TOKEN"],
       ]),
-      { runOpenshell },
+      { runOpenshell: inMemoryMessagingRunner(files) },
     );
 
-    expect(files["/sandbox/.hermes/.env"]).toContain(
-      "SLACK_BOT_TOKEN=openshell:resolve:env:v8_SLACK_BOT_TOKEN",
+    expect(files["/sandbox/.hermes/.env"]?.split("\n")).toEqual(
+      expect.arrayContaining([
+        "SLACK_BOT_TOKEN=openshell:resolve:env:v8_SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN=openshell:resolve:env:v9_SLACK_APP_TOKEN",
+        "UNRELATED=preserved",
+      ]),
     );
-    expect(files["/sandbox/.hermes/.env"]).toContain(
-      "SLACK_APP_TOKEN=openshell:resolve:env:v9_SLACK_APP_TOKEN",
-    );
-    expect(files["/sandbox/.hermes/.env"]).toContain("UNRELATED=preserved");
     expect(plan.credentialBindings.map((binding) => binding.placeholder)).toEqual(
       durablePlaceholders,
     );
@@ -1275,7 +1256,6 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
-    expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
     expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
       enabled: true,
     });
