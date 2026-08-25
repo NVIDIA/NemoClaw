@@ -195,7 +195,7 @@ process.exit(0);
 }
 
 function runCli(action: string, extraEnv: Record<string, string | undefined> = {}): HarnessResult {
-  const repoRoot = path.join(import.meta.dirname, "../..");
+  const repoRoot = path.join(import.meta.dirname, "../../..");
   const nodeBinDir = path.dirname(process.execPath);
   const result = spawnSync(
     process.execPath,
@@ -254,7 +254,7 @@ function writeDockerStub(gatewayName: string, gatewayPort: number) {
     `#!${process.execPath}
 const a = process.argv.slice(2);
 const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
-      path.join(import.meta.dirname, "helpers", "onboard-script-mocks.cjs"),
+      path.join(import.meta.dirname, "..", "..", "helpers", "onboard-script-mocks.cjs"),
     )});
 const invocationLog = ${JSON.stringify(dockerInvocationsFile)};
 require("fs").appendFileSync(invocationLog, JSON.stringify(a) + "\\n");
@@ -320,7 +320,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === ${JSON.stringify(
-      path.join(import.meta.dirname, "../..", "scripts", "install-openshell.sh"),
+      path.join(import.meta.dirname, "..", "../..", "scripts", "install-openshell.sh"),
     )}) {
   fs.appendFileSync(${JSON.stringify(installerInvocationsFile)}, "install\\n");
   process.exit(0);
@@ -394,7 +394,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
     // stale-recovery path: it locates the preserved registry entry, skips the
     // impossible backup (instead of dead-ending at "Cannot back up state"),
     // and proceeds to recreate from the preserved metadata.
-    const repoRoot = path.join(import.meta.dirname, "../..");
+    const repoRoot = path.join(import.meta.dirname, "../../..");
     const nodeBinDir = path.dirname(process.execPath);
     const rebuild = spawnSync(
       process.execPath,

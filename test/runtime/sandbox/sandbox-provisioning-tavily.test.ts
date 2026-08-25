@@ -11,7 +11,7 @@ import {
   runLoggedDockerShell,
 } from "../../helpers/dockerfile-run-shell";
 
-const DOCKERFILE = path.join(import.meta.dirname, "../..", "Dockerfile");
+const DOCKERFILE = path.join(import.meta.dirname, "..", "../..", "Dockerfile");
 
 function runPluginInstallBlock(
   functionDefinition: string,

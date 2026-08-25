@@ -325,7 +325,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     const created = spawnSync("mkfifo", [fifoPath], { encoding: "utf8", timeout: 5_000 });
     expect(created.status, created.stderr).toBe(0);
 
-    const moduleUrl = new URL("../tools/pr-review-advisor/github-context.mts", import.meta.url)
+    const moduleUrl = new URL("../../../tools/pr-review-advisor/github-context.mts", import.meta.url)
       .href;
     const read = spawnSync(
       process.execPath,
