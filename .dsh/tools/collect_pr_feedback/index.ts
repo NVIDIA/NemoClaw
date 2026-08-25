@@ -37,7 +37,7 @@ export default async function collect_pr_feedback(input: {
     throw new Error("bodyLimit must be between 100 and 10000");
   const repo = input.repository;
   const pr = input.pullNumber;
-  const run = async (args, allowed = [0]) => {
+  const run = async (args: string[], allowed: Integer[] = [0]): Promise<string> => {
     const result = await tools.run_github_cli({
       workdir: input.workdir,
       args,
@@ -45,16 +45,41 @@ export default async function collect_pr_feedback(input: {
     });
     return result.stdout.trim();
   };
-  const collectPages = async (path, projection, _description, _jqProjection) => {
-    const page = await tools.read_github_pages({
-      workdir: input.workdir,
-      repository: repo,
-      path,
-      pageSize: 10,
-      pageLimit: 10,
-    });
-    return { items: page.items.map(projection), pages: page.pagesRead, truncated: page.truncated };
+  const collectProjectedPages = async (
+    path: string,
+    projection: string,
+  ): Promise<{ items: Open<{}>[]; truncated: boolean }> => {
+    const items: Open<{}>[] = [];
+    const pageSize = 10;
+    const pageLimit = 10;
+    for (let page = 1; page <= pageLimit; page += 1) {
+      const text = await run([
+        "api",
+        "--include",
+        "repos/" + repo + "/" + path + "?per_page=" + pageSize + "&page=" + page,
+        "--jq",
+        projection,
+      ]);
+      const separator = text.match(/\r?\n\r?\n/u);
+      if (!separator || separator.index === undefined)
+        throw new Error("GitHub REST projection response omitted headers");
+      const headers = text.slice(0, separator.index);
+      const body = text.slice(separator.index + separator[0].length);
+      const values = body ? JSON.parse(body) : [];
+      if (
+        !Array.isArray(values) ||
+        values.some((item) => item === null || typeof item !== "object" || Array.isArray(item))
+      )
+        throw new Error("GitHub REST projection must be an array of objects");
+      items.push(...values);
+      if (items.length > 100) throw new Error("GitHub REST projection exceeded 100 items");
+      const hasNext = /^link:.*rel="next"/imu.test(headers);
+      if (!hasNext) return { items, truncated: false };
+      if (page === pageLimit) return { items, truncated: true };
+    }
+    throw new Error("GitHub REST projection did not terminate");
   };
+  const slice = "[:" + bodyLimit + "]";
   const [pullText, checksText, reviewsPage, inlinePage, discussionPage] = await Promise.all([
     run([
       "pr",
@@ -66,43 +91,21 @@ export default async function collect_pr_feedback(input: {
       "url,state,headRefOid,baseRefOid,mergeStateStatus,reviewDecision",
     ]),
     run(["pr", "checks", String(pr), "--repo", repo, "--json", "name,state,bucket,link"], [0, 8]),
-    collectPages(
+    collectProjectedPages(
       "pulls/" + pr + "/reviews",
-      (item) => ({
-        id: item.id,
-        user: item.user?.login ?? "",
-        state: item.state ?? "",
-        commitId: item.commit_id ?? "",
-        body: String(item.body ?? "").slice(0, bodyLimit),
-      }),
-      "Collect submitted pull request reviews",
-      'map({id,user:{login:.user.login},state,commit_id,body:((.body // "")[:' + bodyLimit + "])})",
+      'map({id,user:(.user.login // ""),state:(.state // ""),commitId:(.commit_id // ""),body:((.body // "")' +
+        slice +
+        ")})",
     ),
-    collectPages(
+    collectProjectedPages(
       "pulls/" + pr + "/comments",
-      (item) => ({
-        id: item.id,
-        user: item.user?.login ?? "",
-        path: item.path ?? "",
-        line: Number.isInteger(item.line) ? item.line : null,
-        body: String(item.body ?? "").slice(0, bodyLimit),
-        url: item.html_url ?? "",
-      }),
-      "Collect inline pull request comments",
-      'map({id,user:{login:.user.login},path,line,body:((.body // "")[:' +
-        bodyLimit +
-        "]),html_url})",
+      'map({id,user:(.user.login // ""),path:(.path // ""),line:(if (.line|type)=="number" then .line else null end),body:((.body // "")' +
+        slice +
+        '),url:(.html_url // "")})',
     ),
-    collectPages(
+    collectProjectedPages(
       "issues/" + pr + "/comments",
-      (item) => ({
-        id: item.id,
-        user: item.user?.login ?? "",
-        body: String(item.body ?? "").slice(0, bodyLimit),
-        url: item.html_url ?? "",
-      }),
-      "Collect pull request discussion comments",
-      'map({id,user:{login:.user.login},body:((.body // "")[:' + bodyLimit + "]),html_url})",
+      'map({id,user:(.user.login // ""),body:((.body // "")' + slice + '),url:(.html_url // "")})',
     ),
   ]);
   const pull = pullText ? JSON.parse(pullText) : {};
@@ -116,15 +119,33 @@ export default async function collect_pr_feedback(input: {
       mergeStateStatus: pull.mergeStateStatus ?? "",
       reviewDecision: pull.reviewDecision ?? "",
     },
-    checks: checks.map((item) => ({
-      name: item.name ?? "",
-      state: item.state ?? "",
-      bucket: item.bucket ?? "",
-      link: item.link ?? "",
+    checks: checks.map((item: Open<{}>) => ({
+      name: String(item.name ?? ""),
+      state: String(item.state ?? ""),
+      bucket: String(item.bucket ?? ""),
+      link: String(item.link ?? ""),
     })),
-    reviews: reviewsPage.items,
-    inlineComments: inlinePage.items,
-    discussionComments: discussionPage.items,
+    reviews: reviewsPage.items.map((item) => ({
+      id: item.id as Integer,
+      user: String(item.user ?? ""),
+      state: String(item.state ?? ""),
+      commitId: String(item.commitId ?? ""),
+      body: String(item.body ?? ""),
+    })),
+    inlineComments: inlinePage.items.map((item) => ({
+      id: item.id as Integer,
+      user: String(item.user ?? ""),
+      path: String(item.path ?? ""),
+      line: Number.isInteger(item.line) ? (item.line as Integer) : null,
+      body: String(item.body ?? ""),
+      url: String(item.url ?? ""),
+    })),
+    discussionComments: discussionPage.items.map((item) => ({
+      id: item.id as Integer,
+      user: String(item.user ?? ""),
+      body: String(item.body ?? ""),
+      url: String(item.url ?? ""),
+    })),
     truncation: {
       reviews: reviewsPage.truncated,
       inlineComments: inlinePage.truncated,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -18,6 +19,7 @@ import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
+  normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
   type QualifiedSandboxInferenceRouteReservation,
 } from "./registry/route-reservation";
@@ -39,6 +41,8 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAttribution,
+  normalizeSandboxPolicyAuthority,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -115,7 +119,11 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
-export { hasUnsafeHostMountTerminalText, normalizeCustomPolicyEntries };
+export {
+  hasUnsafeHostMountTerminalText,
+  normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAttribution,
+};
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
@@ -141,24 +149,61 @@ export function getDefault(): string | null {
 export function registerSandbox(
   entry: SandboxEntry,
   routeReservation?: QualifiedSandboxInferenceRouteReservation,
-  options: { pending?: boolean } = {},
+  options: { pending?: boolean; reservationSessionId?: string } = {},
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
+    const reserved = data.sandboxes[entry.name];
     if (
       routeReservation &&
-      (!isCurrentSandboxInferenceRouteReservation(
-        routeReservation,
-        data.sandboxes[entry.name] ?? null,
-      ) ||
+      (!isCurrentSandboxInferenceRouteReservation(routeReservation, reserved ?? null) ||
         !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
     ) {
       throw new Error("Cannot register a sandbox after its inference route reservation changed");
+    }
+    if (
+      !routeReservation &&
+      reserved?.pendingRouteReservation === true &&
+      typeof reserved.reservationSessionId === "string" &&
+      reserved.reservationSessionId.length > 0 &&
+      (options.pending !== true ||
+        typeof options.reservationSessionId !== "string" ||
+        options.reservationSessionId.length === 0 ||
+        options.reservationSessionId !== reserved.reservationSessionId)
+    ) {
+      throw new Error("Cannot stage a sandbox after its inference route reservation changed");
+    }
+    if (options.reservationSessionId) {
+      if (
+        reserved?.pendingRouteReservation !== true ||
+        reserved.reservationSessionId !== options.reservationSessionId ||
+        reserved.gatewayName !== entry.gatewayName ||
+        !isDeepStrictEqual(
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(reserved)),
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
+        )
+      ) {
+        throw new Error("Cannot stage a sandbox after its inference route reservation changed");
+      }
     }
     const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
     }
+    const requestedPolicyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+    const recordedPolicyAuthority = normalizeSandboxPolicyAuthority(
+      data.sandboxes[entry.name]?.policyAuthority,
+    );
+    if (
+      recordedPolicyAuthority !== undefined &&
+      requestedPolicyAuthority !== undefined &&
+      recordedPolicyAuthority !== requestedPolicyAuthority
+    ) {
+      throw new PolicyAuthorityRefusalError(
+        "Cannot register a sandbox after its policy authority changed",
+      );
+    }
+    const policyAuthority = requestedPolicyAuthority ?? recordedPolicyAuthority;
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
@@ -219,12 +264,17 @@ export function registerSandbox(
           : undefined,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
-      policies: entry.policies || [],
-      baselineExclusions: normalizeBaselineExclusions(entry.baselineExclusions),
-      baselineExclusionTransition: normalizeBaselineExclusionTransition(
-        entry.baselineExclusionTransition,
-      ),
-      policyTier: entry.policyTier || null,
+      ...(policyAuthority !== undefined ? { policyAuthority } : {}),
+      ...(policyAuthority === "externally-managed"
+        ? { policies: [] }
+        : {
+            policies: entry.policies || [],
+            baselineExclusions: normalizeBaselineExclusions(entry.baselineExclusions),
+            baselineExclusionTransition: normalizeBaselineExclusionTransition(
+              entry.baselineExclusionTransition,
+            ),
+            policyTier: entry.policyTier || null,
+          }),
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
       // Preserve absence on reconstructed legacy rows. Only a freshly built
@@ -281,6 +331,7 @@ export function registerSandbox(
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
+      reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
     data.sandboxes[entry.name] = registered;
     save(
@@ -365,7 +416,9 @@ export function reserveSandboxInferenceRoute(
     const next: SandboxEntry = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
-      reservationSessionId: route.reservationSessionId ?? existing?.reservationSessionId,
+      reservationSessionId:
+        route.reservationSessionId ??
+        (existing?.pendingRouteReservation === true ? existing.reservationSessionId : undefined),
       provider: normalized.provider,
       model: normalized.model,
       endpointUrl: normalized.endpointUrl,
@@ -377,7 +430,9 @@ export function reserveSandboxInferenceRoute(
         : {}),
       ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
       gatewayName: route.gatewayName,
-      gatewayPort: route.gatewayPort,
+      gatewayPort:
+        route.gatewayPort ??
+        (existing?.gatewayName === route.gatewayName ? existing.gatewayPort : undefined),
       ...(route.openshellDriver === undefined ? {} : { openshellDriver: route.openshellDriver }),
     };
     data.sandboxes[name] = next;
@@ -417,6 +472,19 @@ function changesHostLocalInferenceLifecycleAuthority(
   );
 }
 
+function assertRecordedPolicyAuthorityUnchanged(
+  current: SandboxEntry,
+  updates: Partial<SandboxEntry>,
+): void {
+  if (!Object.prototype.hasOwnProperty.call(updates, "policyAuthority")) return;
+  const requested = normalizeSandboxPolicyAuthority(updates.policyAuthority);
+  if (current.policyAuthority === undefined || requested === current.policyAuthority) return;
+  throw new PolicyAuthorityRefusalError(
+    `Refusing to update sandbox '${current.name}' because its policy authority changed ` +
+      `from ${current.policyAuthority} to ${requested ?? "unrecorded"}.`,
+  );
+}
+
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -426,8 +494,25 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    data.sandboxes[name] = { ...current, ...updates };
+    assertRecordedPolicyAuthorityUnchanged(current, updates);
+    data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
     save(data);
+    return true;
+  });
+}
+
+/** Publish only the owning route transaction and retain its receipt for exact retries. */
+export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (!current || !sessionId || current.reservationSessionId !== sessionId) return false;
+    if (current.pendingRouteReservation !== true) return true;
+    data.sandboxes[name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });
 }
@@ -437,7 +522,13 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
-    if (!current || current.pendingRouteReservation !== true) return false;
+    if (
+      !current ||
+      current.pendingRouteReservation !== true ||
+      current.reservationSessionId !== undefined
+    ) {
+      return false;
+    }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
@@ -471,7 +562,24 @@ export function restoreSandboxEntry(
 ): void {
   withLock(() => {
     const data = load();
-    save(reversibleRemoval.restoreSandboxEntryInRegistry(data, entry, options.defaultTransition));
+    const normalizedEntry = normalizeSandboxPolicyAttribution(entry);
+    const current = data.sandboxes[normalizedEntry.name];
+    if (
+      current &&
+      normalizeSandboxPolicyAuthority(current.policyAuthority) !==
+        normalizeSandboxPolicyAuthority(normalizedEntry.policyAuthority)
+    ) {
+      throw new PolicyAuthorityRefusalError(
+        `Refusing to restore sandbox '${normalizedEntry.name}' because its policy authority changed during recovery.`,
+      );
+    }
+    save(
+      reversibleRemoval.restoreSandboxEntryInRegistry(
+        data,
+        normalizedEntry,
+        options.defaultTransition,
+      ),
+    );
   });
 }
 
@@ -479,7 +587,10 @@ export function restoreSandboxEntry(
 export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
   return withLock(() => {
     const data = load();
-    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, receipt);
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, {
+      ...receipt,
+      entry: normalizeSandboxPolicyAttribution(receipt.entry),
+    });
     if (!result.restored) return false;
     save(result.registry);
     return result.restored;

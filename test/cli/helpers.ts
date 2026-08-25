@@ -316,8 +316,8 @@ export function writeHealthyDockerStub(localBin: string): void {
 
 /**
  * Answer the agent-request readiness probe inside an `openshell sandbox exec`
- * stub. The probe posts a completion over the same transport as the route
- * probe, and that transport trusts stdout only after the exec marker.
+ * stub. The general sandbox transport writes an exec marker before the HTTP
+ * response. The managed DCode launcher returns the HTTP response directly.
  */
 export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
   const bodyLines =
@@ -344,7 +344,10 @@ export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): 
   return [
     '  case "$*" in',
     "    *chat/completions*|*/v1/responses*|*/v1/messages*)",
-    `      printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    '      case "$*" in',
+    "        */usr/local/lib/nemoclaw/dcode-managed-exec*) ;;",
+    `        *) printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}' ;;`,
+    "      esac",
     `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
     ...bodyLines,
     `      exit ${String(exitCode)}`,

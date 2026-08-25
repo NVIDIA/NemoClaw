@@ -15,7 +15,10 @@ import { executeSandboxExecCommand } from "./process-recovery";
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
 
 export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
-export type McpAttachedCredentialRevision = Exclude<McpCredentialRevisionObservation, "absent">;
+export type McpAttachedCredentialRevision = Exclude<
+  McpCredentialRevisionObservation,
+  "absent" | "canonical"
+>;
 
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
@@ -182,9 +185,14 @@ export function waitForAttachedMcpCredential(
         lastAttempt = attempt;
       }
       const observation = attempt.kind === "observation" ? attempt.observation : null;
+      // The startup command can expose the identityless canonical placeholder
+      // before the process supervisor receives the attached provider snapshot.
+      // Endpoint-bound credentials become usable only when a fresh exec sees
+      // the revision-scoped placeholder issued by that snapshot.
       const attached =
         observation !== null &&
         observation !== "absent" &&
+        observation !== "canonical" &&
         (options.previousRevision === undefined || observation !== options.previousRevision);
       if (attached) attachedRevision = observation;
       return attached;
