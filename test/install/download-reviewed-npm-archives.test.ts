@@ -89,17 +89,30 @@ describe("reviewed npm archive downloads", () => {
   });
 
   it("stops a chunked archive when it exceeds the streaming size limit", async () => {
-    const chunks = Array.from({ length: 33 }, () => new Uint8Array(1024 * 1024));
+    const chunk = new Uint8Array(1024 * 1024);
+    const cancel = vi.fn();
     const archive = pin("alpha", Buffer.from("unused digest"));
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(new Blob(chunks).stream(), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(chunk);
+              },
+              cancel,
+            }),
+            { status: 200 },
+          ),
+      ),
     );
     const output = path.join(testRoot, "archives");
 
     await expect(downloadReviewedNpmArchives({ output, pins: [archive] })).rejects.toThrow(
       `downloaded npm archive size is invalid: ${archive.archive}`,
     );
+    expect(cancel).toHaveBeenCalledOnce();
     expect(existsSync(output)).toBe(false);
   });
 
