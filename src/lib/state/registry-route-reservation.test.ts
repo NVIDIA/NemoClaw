@@ -535,7 +535,6 @@ describe("sandbox inference route reservation", () => {
         agent: "hermes",
       });
       expect(registered.pendingRouteReservation).toBeUndefined();
-      expect(registered.reservationSessionId).toBe(EXACT_ROUTE_AUTHORITY.sessionId);
       expect(registry.getSandbox("alpha")).toEqual(registered);
     } finally {
       await fs.rm(home, { recursive: true, force: true });

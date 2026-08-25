@@ -296,9 +296,7 @@ export function registerSandbox(
       gatewayPort: entry.gatewayPort ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId:
-        options.pending === true
-          ? options.reservationSessionId
-          : routeReservation?.authority.sessionId,
+        options.pending === true ? options.reservationSessionId : undefined,
     };
     data.sandboxes[entry.name] = registered;
     save(
