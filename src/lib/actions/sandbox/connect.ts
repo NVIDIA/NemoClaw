@@ -1277,6 +1277,7 @@ export async function waitForSandboxReadyOrExit(
       timeoutMs: remainingMs(),
     });
     if (!result.ok) {
+      if (result.error.kind === "timeout" && Date.now() >= deadline) return null;
       failConnectReadinessObservation(sandboxName, result.error);
     }
     return result.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
