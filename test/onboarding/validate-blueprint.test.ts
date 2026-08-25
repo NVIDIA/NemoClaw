@@ -16,7 +16,6 @@ import YAML from "yaml";
 import { prepareInitialSandboxCreatePolicy } from "../../src/lib/onboard/initial-policy";
 import * as policies from "../../src/lib/policy";
 
-const BLUEPRINT_PATH = new URL("../../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
 const BASE_POLICY_PATH = new URL(
   "../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
