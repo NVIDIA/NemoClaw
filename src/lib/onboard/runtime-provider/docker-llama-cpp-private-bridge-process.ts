@@ -154,7 +154,10 @@ function writeUnauthorized(response: http.ServerResponse): void {
   response.end(UNAUTHORIZED_BODY);
 }
 
-function writeUpstreamUnavailable(response: http.ServerResponse): void {
+function writeUpstreamUnavailable(
+  response: http.ServerResponse,
+  options: { closeConnection?: boolean } = {},
+): void {
   if (response.destroyed || response.writableEnded) return;
   if (response.headersSent) {
     response.destroy();
@@ -169,6 +172,7 @@ function writeUpstreamUnavailable(response: http.ServerResponse): void {
   })}\n`;
   response.writeHead(502, {
     "Cache-Control": "no-store",
+    ...(options.closeConnection ? { Connection: "close" } : {}),
     "Content-Length": Buffer.byteLength(body),
     "Content-Type": "application/json",
     "X-Content-Type-Options": "nosniff",
@@ -270,8 +274,11 @@ function createLlamaCppPrivateBridgeRequestHandler(
     if (expectsContinue) {
       continueTimer = setTimeout(() => {
         continueTimer = undefined;
+        request.unpipe(upstream);
+        request.pause();
         upstream.destroy();
-        writeUpstreamUnavailable(response);
+        response.once("finish", () => request.destroy());
+        writeUpstreamUnavailable(response, { closeConnection: true });
       }, UPSTREAM_CONTINUE_TIMEOUT_MS);
       continueTimer.unref();
       upstream.flushHeaders();

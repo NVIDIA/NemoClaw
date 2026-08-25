@@ -601,7 +601,7 @@ describe("llama.cpp private bridge request authentication", () => {
   });
 
   it("bounds the wait for an upstream 100 Continue response", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setInterval", "setTimeout", "clearInterval", "clearTimeout"] });
     const upstream = http.createServer();
     let acceptRequest: (() => void) | undefined;
     const requestAccepted = new Promise<void>((resolve) => {
@@ -618,20 +618,55 @@ describe("llama.cpp private bridge request authentication", () => {
     );
     const bridgePort = await listen(bridge);
     try {
-      const resultPromise = request(bridgePort, {
-        authorization: `Bearer ${API_KEY}`,
-        body: '{"model":"default"}',
-        expectContinue: true,
-        method: "POST",
-        path: "/v1/chat/completions",
+      let uploadedChunks = 0;
+      let outgoing: http.ClientRequest;
+      let uploadTimer: ReturnType<typeof setInterval> | undefined;
+      let responseResult: { readonly connection: string | undefined; readonly status: number };
+      let resolveResponse: (() => void) | undefined;
+      const responseReceived = new Promise<void>((resolve) => {
+        resolveResponse = resolve;
+      });
+      const clientClosed = new Promise<void>((resolve) => {
+        outgoing = http.request(
+          {
+            headers: {
+              Authorization: `Bearer ${API_KEY}`,
+              "Content-Length": 16 * 1024 * 1024,
+              Expect: "100-continue",
+            },
+            host: "127.0.0.1",
+            method: "POST",
+            path: "/v1/chat/completions",
+            port: bridgePort,
+          },
+          (response) => {
+            responseResult = {
+              connection: response.headers.connection,
+              status: response.statusCode ?? 0,
+            };
+            response.resume();
+            response.once("end", () => resolveResponse?.());
+          },
+        );
+        outgoing.once("close", resolve);
+        outgoing.on("error", () => undefined);
+        outgoing.flushHeaders();
+        uploadTimer = setInterval(() => {
+          uploadedChunks += 1;
+          outgoing.write("x".repeat(16 * 1024));
+        }, 1_000);
       });
       await requestAccepted;
 
       await vi.advanceTimersByTimeAsync(30_000);
 
-      const result = await resultPromise;
-      expect(result).toMatchObject({ continued: false, status: 502 });
+      await responseReceived;
+      await clientClosed;
       await upstreamSocketClosed;
+      clearInterval(uploadTimer!);
+      expect(responseResult!).toEqual({ connection: "close", status: 502 });
+      expect(outgoing!.destroyed).toBe(true);
+      expect(uploadedChunks).toBeGreaterThan(0);
     } finally {
       vi.useRealTimers();
       await close(bridge);
