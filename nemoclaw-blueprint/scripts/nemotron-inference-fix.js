@@ -45,7 +45,7 @@
 //   sandboxed chat-completions traffic until the upstream clients/providers
 //   always emit the model-specific kwargs themselves.
 //
-//   Regression proof: test/nemotron-inference-fix.test.ts covers the helper
+//   Regression proof: test/inference/managed/nemotron-inference-fix.test.ts covers the helper
 //   logic, the http/https path, and a real Node fetch/undici request to a local
 //   OpenAI-compatible endpoint. The request fails before reaching the endpoint
 //   if this wrapper leaves a stale Content-Length after injecting kwargs.
@@ -73,7 +73,7 @@
 //   Ultra path usable in the niche tool-less configuration that triggers
 //   the bug.
 //
-//   Regression proof: test/nemotron-inference-fix.test.ts covers the
+//   Regression proof: test/inference/managed/nemotron-inference-fix.test.ts covers the
 //   inject/skip branches via the http stub AND a real fetch/undici request
 //   against a local OpenAI-compatible endpoint, asserting both the injected
 //   system message and the refreshed Content-Length. The runtime model-
@@ -118,7 +118,7 @@
 //   Stripping (not relocating) is correct because both accepted shapes are
 //   rejected and reasoning happens regardless of the field.
 //
-//   Regression proof: test/nemotron-inference-fix.test.ts covers the strip/
+//   Regression proof: test/inference/managed/nemotron-inference-fix.test.ts covers the strip/
 //   skip branches; the http/https/fetch transports share the same
 //   patchJsonBody path already exercised by the kwargs tests. Verified
 //   end-to-end against integrate.api.nvidia.com by replaying an Ultra request

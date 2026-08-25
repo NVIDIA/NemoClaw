@@ -806,7 +806,7 @@ async function destroySandboxUnlocked(
    * ownership metadata or resolve the runtime conflict and retry.
    * Regression proof: destroy-flow.test.ts proves both blocked retention and
    * that a repaired matching receipt permits registry and session retirement;
-   * test/image-cleanup.test.ts proves the lower-level fail-closed contract.
+   * test/platform/images/image-cleanup.test.ts proves the lower-level fail-closed contract.
    * Removal condition: remove this recovery boundary only when the provider or
    * registry owns authenticated reconciliation that can safely complete cleanup
    * without retaining the local ownership row.
