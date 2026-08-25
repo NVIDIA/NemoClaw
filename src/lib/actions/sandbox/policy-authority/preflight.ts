@@ -13,7 +13,7 @@ import {
   type SandboxPolicyAuthorityInspection,
 } from "../../../adapters/openshell/policy-authority";
 import { isPresetPolicyMap, parseNetworkPolicies } from "../../../policy/preset-parsing";
-import * as registry from "../../../policy/policy-registry";
+import * as registry from "../../../state/registry";
 import { getPersistedSandboxTargetGatewayName } from "../gateway-target";
 
 export { isPolicyAuthorityRefusalError } from "../../../adapters/openshell/policy-authority";
