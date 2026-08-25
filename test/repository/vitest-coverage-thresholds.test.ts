@@ -3,16 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  resolveVitestCoverageThresholds,
-  securityCoverageThresholds,
-} from "../helpers/vitest-coverage-thresholds";
-
-type RootTestOptions = {
-  coverage?: {
-    thresholds?: unknown;
-  };
-};
+import { resolveVitestCoverageThresholds } from "../helpers/vitest-coverage-thresholds";
 
 describe("Vitest security coverage thresholds", () => {
   it.each([

@@ -40,7 +40,7 @@ beforeEach(() => {
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
-  "../..",
+  "../../..",
   "src",
   "lib",
   "messaging",
@@ -50,7 +50,7 @@ const SCRIPT_PATH = path.join(
 );
 const GENERATOR_PATH = path.join(
   import.meta.dirname,
-  "../..",
+  "../../..",
   "scripts",
   "generate-openclaw-config.mts",
 );
