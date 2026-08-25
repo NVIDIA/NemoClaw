@@ -450,7 +450,7 @@ describe("initial sandbox policy real preset merge", () => {
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
-  it("exposes equal-specificity Hermes Slack credential routes (#10155)", () => {
+  it("uses a more specific route for the Hermes Slack app credential binding (#10155)", () => {
     const sandboxName = "hermes-slack-e2e";
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(
@@ -472,7 +472,7 @@ describe("initial sandbox policy real preset merge", () => {
         provider: endpoint.credential_binding?.provider,
       })),
     ).toEqual([
-      { path: undefined, provider: `${sandboxName}-slack-app` },
+      { path: "/api/apps.connections.open", provider: `${sandboxName}-slack-app` },
       { path: undefined, provider: `${sandboxName}-slack-bridge` },
     ]);
     expect(websocketEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
