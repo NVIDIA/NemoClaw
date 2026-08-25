@@ -6,21 +6,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { HERMES_DISCORD_REST_PROOF_SOURCE } from "../live/hermes-discord-proxy.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
+const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
+const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
 
 function runBinding(policyFile: string, protocol?: string) {
   return spawnSync(
     process.execPath,
     [
+      "--disable-warning=DEP0205",
       "--import",
       "tsx",
       HELPER,
@@ -30,7 +34,7 @@ function runBinding(policyFile: string, protocol?: string) {
       "43117",
       ...(protocol ? [protocol] : []),
     ],
-    { encoding: "utf8", timeout: 15_000 },
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
   );
 }
 
@@ -63,6 +67,15 @@ function successfulProbe(stdout = ""): ShellProbeResult {
 }
 
 describe("Hermes Discord E2E policy binding", () => {
+  beforeAll(async () => {
+    const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 15_000,
+    });
+    await requireSuccessfulPolicyBoundaryBuild(result);
+  });
+
   it("uses only the fresh revision-scoped exec credential for the REST proof", () => {
     expect(HERMES_DISCORD_REST_PROOF_SOURCE).toContain(
       'token = os.environ.get("DISCORD_BOT_TOKEN", "")',

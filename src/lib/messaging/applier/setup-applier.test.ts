@@ -103,6 +103,25 @@ async function withEnv<T>(
   }
 }
 
+function inMemoryMessagingRunner(
+  files: Record<string, string>,
+  writes: string[] = [],
+): MessagingOpenShellRunner {
+  return (args, options) => {
+    const target = String(args.at(-1));
+    const writeFile = (input: string) => {
+      files[target] = input;
+      writes.push(target);
+      return { status: 0 };
+    };
+    return args.includes("cat") && options?.input === undefined
+      ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+      : options?.input === undefined
+        ? { status: 1 }
+        : writeFile(options.input);
+  };
+}
+
 function planner(): MessagingWorkflowPlanner {
   return new MessagingWorkflowPlanner(
     createBuiltInChannelManifestRegistry(),
@@ -778,20 +797,7 @@ describe("MessagingSetupApplier", () => {
       }),
     };
     const writes: string[] = [];
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      switch (true) {
-        case args.includes("cat") && options?.input === undefined:
-          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-        case options?.input !== undefined:
-          files[target] = options.input;
-          writes.push(target);
-          return { status: 0 };
-        default:
-          return { status: 1 };
-      }
-    };
-
+    const runOpenshell = inMemoryMessagingRunner(files, writes);
     expect(
       MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
         plan,
@@ -851,19 +857,7 @@ describe("MessagingSetupApplier", () => {
         "",
       ].join("\n"),
     };
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      switch (true) {
-        case args.includes("cat") && options?.input === undefined:
-          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-        case options?.input !== undefined:
-          files[target] = options.input;
-          return { status: 0 };
-        default:
-          return { status: 1 };
-      }
-    };
-
+    const runOpenshell = inMemoryMessagingRunner(files);
     MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
       plan,
       new Map([
@@ -1193,6 +1187,11 @@ describe("MessagingSetupApplier", () => {
     });
     const files: Record<string, string> = {
       "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          "openclaw-weixin": {
+            enabled: false,
+          },
+        },
         plugins: {
           entries: {
             acpx: {
@@ -1248,6 +1247,7 @@ describe("MessagingSetupApplier", () => {
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.plugins.entries.acpx.enabled).toBe(false);
     expect(openclawConfig.plugins.entries["openclaw-weixin"].enabled).toBe(true);
+    expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
     expect(openclawConfig.plugins.allow).toEqual(["openclaw-weixin"]);
     expect(openclawConfig.plugins.installs["openclaw-weixin"].spec).toBe(
       "@tencent-weixin/openclaw-weixin@2.4.3",

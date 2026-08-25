@@ -6,7 +6,14 @@ import { pathToFileURL } from "node:url";
 
 import YAML from "yaml";
 
-import * as policyBoundaryModule from "../../../nemoclaw/src/shared/openshell-policy-boundary.cts";
+// Import the tsc-compiled output, not the .cts source: a standalone `node
+// --import tsx` child process (this fixture's execution mode) hits a Node/tsx
+// loader conflict on newer Node versions where Node's own native .cts
+// handling intercepts the file before tsx's transform runs, producing
+// "Cannot use import statement outside a module". Every other consumer in
+// this repo already imports the compiled .cjs for the same reason.
+// sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+import * as policyBoundaryModule from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
 const policyBoundary = (
   "default" in policyBoundaryModule ? policyBoundaryModule.default : policyBoundaryModule

@@ -1669,7 +1669,6 @@ export async function connectSandbox(
             ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
           },
           sandboxName,
-          prepared.watchShields,
         ),
       };
     });
@@ -1695,7 +1694,6 @@ type PreparedConnectChild = {
   binary: string;
   args: string[];
   hostEnv?: NodeJS.ProcessEnv;
-  watchShields: boolean;
 };
 
 async function prepareConnectSandboxWithinLifecycleFence(
@@ -1953,6 +1951,5 @@ async function prepareConnectSandboxWithinLifecycleFence(
     binary: portableAuthority?.executablePath ?? getOpenshellBinary(),
     args: connectArgs,
     ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
-    watchShields: agent?.name === "openclaw" || sb?.agent === "openclaw",
   };
 }
