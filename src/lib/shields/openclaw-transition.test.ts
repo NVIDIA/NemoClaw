@@ -1432,11 +1432,10 @@ describe("external Shields policy recovery", () => {
     expect(countPolicySets(harness)).toBe(policySetsAfterDown);
     expect(harness.getOpenClawPosture()).toBe("mutable");
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process exit ${String(code)}`);
     }) as typeof process.exit);
     expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
-    expect(exitSpy).toHaveBeenCalledWith(2);
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "must make the effective policy",
     );
@@ -1476,7 +1475,6 @@ describe("external Shields policy recovery", () => {
       "policy verification after config lock failed",
     );
 
-    expect(harness.isShieldsDown(sandboxName)).toBe(true);
     expect(harness.getOpenClawPosture()).toBe("locked");
     expect(countPolicySets(harness)).toBe(policySetsAfterDown);
     const errors = harness.errorSpy.mock.calls.flat().join("\n");
@@ -1487,7 +1485,13 @@ describe("external Shields policy recovery", () => {
     expect(harness.auditSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "shields_up" }),
     );
-
+    expect(harness.getShieldsPosture(sandboxName, false).mode).toBe("locked_recovery");
+    expect(harness.isShieldsDown(sandboxName)).toBe(false);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
+    expect(harness.getOpenClawPosture()).toBe("locked");
     harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
     harness.shieldsUp(sandboxName, { throwOnError: true });
     expect(harness.isShieldsDown(sandboxName)).toBe(false);
