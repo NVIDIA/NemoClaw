@@ -90,6 +90,7 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
     expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
       sandboxName: SANDBOX,
       gatewayName: GATEWAY,
+      agentName: "langchain-deepagents-code",
       provider: "openrouter-api",
       model: MODEL,
       preferredInferenceApi: null,
