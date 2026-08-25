@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
-import { stateDirectoryDiscoverySshSource } from "./helpers/snapshot-state-discovery-fixture";
+import { stateDirectoryDiscoverySshSource } from "../helpers/snapshot-state-discovery-fixture";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -24,10 +24,10 @@ import { stateDirectoryDiscoverySshSource } from "./helpers/snapshot-state-disco
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"));
 process.env.HOME = TMP_HOME;
-const REPO_ROOT = path.join(import.meta.dirname, "../..");
+const REPO_ROOT = path.join(import.meta.dirname, "..");
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
-type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
+type SandboxStateModule = typeof import("../../src/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
   return (

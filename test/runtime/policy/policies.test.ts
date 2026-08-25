@@ -13,7 +13,7 @@ const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const policies = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
-) as typeof import("../src/lib/policy");
+) as typeof import("../../../src/lib/policy");
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };

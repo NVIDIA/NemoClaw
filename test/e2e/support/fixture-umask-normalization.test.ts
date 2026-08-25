@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-import vitestConfig from "../vitest.config";
+import vitestConfig from "../../../vitest.config";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,

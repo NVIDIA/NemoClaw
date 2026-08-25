@@ -18,7 +18,7 @@ function isOnboardKnownHostsInternals(
   return value !== null && typeof value.pruneKnownHostsEntries === "function";
 }
 
-const loadedOnboardKnownHostsModule = await import("../src/lib/onboard.js");
+const loadedOnboardKnownHostsModule = await import("../../src/lib/onboard.js");
 const onboardKnownHostsInternals = isOnboardKnownHostsInternals(loadedOnboardKnownHostsModule)
   ? loadedOnboardKnownHostsModule
   : null;

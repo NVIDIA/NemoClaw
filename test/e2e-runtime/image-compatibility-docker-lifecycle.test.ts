@@ -6,8 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { imageMeetsMinimumGlibc } from "../src/lib/sandbox-base-image/image-compatibility.js";
-import { testTimeoutOptions } from "./helpers/timeouts.js";
+import { imageMeetsMinimumGlibc } from "../../src/lib/sandbox-base-image/image-compatibility.js";
+import { testTimeoutOptions } from "../helpers/timeouts.js";
 
 const RUN_DOCKER_E2E = process.env.NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E === "1";
 const TEST_IMAGE = process.env.NEMOCLAW_TEST_IMAGE ?? "nemoclaw-production";

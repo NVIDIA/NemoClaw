@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
-import type { DualStationResumeState } from "../scripts/lib/dgx-station-peer.mts";
+import type { DualStationResumeState } from "../../scripts/lib/dgx-station-peer.mts";
 import {
   CONNECTIVITY_PROBE,
   clearDualStationResumeState,
   writeDualStationResumeState,
-} from "../scripts/prepare-dual-dgx-station.mts";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+} from "../../scripts/prepare-dual-dgx-station.mts";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 function readyState(): DualStationResumeState {
   return {

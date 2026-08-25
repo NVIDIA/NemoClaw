@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { sliceBlock } from "./helpers/corporate-ca-support";
+import { sliceBlock } from "../helpers/corporate-ca-support";
 
 const HELPER = path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");

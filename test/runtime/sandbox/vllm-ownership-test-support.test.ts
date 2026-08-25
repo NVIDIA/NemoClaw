@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { createStrictVllmOwnershipCapture } from "./support/vllm-ownership-test-support";
+import { createStrictVllmOwnershipCapture } from "../../support/vllm-ownership-test-support";
 
 describe("vLLM ownership test capture", () => {
   it("consumes explicit canonical and ambient ownership responses", () => {

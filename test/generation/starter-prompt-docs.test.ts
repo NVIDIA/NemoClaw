@@ -23,7 +23,7 @@ import {
   readPinnedPromptAssetBlob,
   requireExpectedPromptAssetRoutes,
   resolvePromptAssetRevision,
-} from ".././helpers/starter-prompt-asset-contract";
+} from "../helpers/starter-prompt-asset-contract";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

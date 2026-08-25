@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentStateLockPlan } from "../src/lib/agent/definition-types";
+import type { AgentStateLockPlan } from "../../../src/lib/agent/definition-types";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const MUTABLE_CONFIG_NORMALIZER = path.join(
@@ -176,20 +176,20 @@ function withMockedDockerExecFileSync<T>(
   const originalDockerSpawnSync = dockerExecModule.dockerSpawnSync;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const registryModule =
-    require("../src/lib/state/registry.js") as typeof import("../src/lib/state/registry");
+    require("../../../src/lib/state/registry.js") as typeof import("../../../src/lib/state/registry");
   const getSandboxSpy = vi.spyOn(registryModule, "getSandbox").mockReturnValue({
     agent: options.registryAgent ?? "openclaw",
     name: "sandbox-pod",
   } as never);
   const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
   const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
-  const transitionLockPath = require.resolve("../src/lib/shields/transition-lock.js");
+  const transitionLockPath = require.resolve("../../../src/lib/shields/transition-lock.js");
   const priorPrivilegedExec = require.cache[privilegedExecPath];
   const priorTransitionLock = require.cache[transitionLockPath];
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const transitionLock = require(
     transitionLockPath,
-  ) as typeof import("../src/lib/shields/transition-lock");
+  ) as typeof import("../../../src/lib/shields/transition-lock");
   delete require.cache[shieldsModulePath];
   require.cache[privilegedExecPath] = {
     id: privilegedExecPath,

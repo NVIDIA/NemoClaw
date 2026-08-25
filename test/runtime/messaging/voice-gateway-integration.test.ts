@@ -13,8 +13,8 @@ import type { AgentTurnClient, AgentTurnEvent } from "../../../src/lib/voice-gat
 import { readPrivateBearerDescriptors } from "../../../src/lib/voice-gateway/credential-file";
 import { OpenClawVoiceClient } from "../../../src/lib/voice-gateway/openclaw-client";
 import { VoiceSessionService } from "../../../src/lib/voice-gateway/session-service";
-import { PinnedOpenClawGateway } from "./fixtures/voice-gateway/pinned-openclaw-gateway";
-import { PinnedVoiceRuntimeAdapter } from "./fixtures/voice-gateway/pinned-runtime-adapter";
+import { PinnedOpenClawGateway } from "../../fixtures/voice-gateway/pinned-openclaw-gateway";
+import { PinnedVoiceRuntimeAdapter } from "../../fixtures/voice-gateway/pinned-runtime-adapter";
 
 const DEPLOYMENT_BEARER = "deployment-bearer-for-voice-gateway-tests";
 const OPENCLAW_CREDENTIAL = "openclaw-credential-stays-in-nemoclaw";

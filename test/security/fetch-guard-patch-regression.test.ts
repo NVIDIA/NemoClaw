@@ -11,7 +11,7 @@ import {
   dockerRunCommandBetween,
   runDockerfilePatchBlock,
   runFetchGuardPatchBlock,
-} from "./helpers/fetch-guard-patch-harness";
+} from "../helpers/fetch-guard-patch-harness";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "Dockerfile.base");

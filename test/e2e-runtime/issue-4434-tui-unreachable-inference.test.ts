@@ -7,7 +7,7 @@ import {
   extractFinalIssue4434ErrorBlock,
   hasFullIssue4434Diagnostics,
   stripTerminalControl,
-} from "./e2e/support/issue-4434-tui-capture.ts";
+} from "../e2e/support/issue-4434-tui-capture.ts";
 
 type ChatEvent = {
   state: "delta" | "final" | "error";

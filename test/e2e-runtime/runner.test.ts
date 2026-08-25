@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { redact, runCapture } from "../src/lib/runner";
+import { redact, runCapture } from "../../src/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "src", "lib", "platform.ts");

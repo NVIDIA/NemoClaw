@@ -21,7 +21,7 @@ function isOnboardValidationInternals(
   return value !== null && typeof value.getValidationProbeCurlArgs === "function";
 }
 
-const loadedOnboardValidationModule = await import("../src/lib/onboard.js");
+const loadedOnboardValidationModule = await import("../../src/lib/onboard.js");
 const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
   ? loadedOnboardValidationModule
   : null;

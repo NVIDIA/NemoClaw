@@ -3,11 +3,11 @@
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+import { makeMessagingPlan } from "../../helpers/messaging-plan-fixtures";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "./helpers/rebuild-flow-generic-harness";
+} from "../../helpers/rebuild-flow-generic-harness";
 
 installRebuildFlowTestHooks();
 

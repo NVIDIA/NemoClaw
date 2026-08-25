@@ -8,11 +8,11 @@ import os from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 describe("sandboxName command hardening in onboard.js", () => {
   it("rejects a marker-only security inventory fixture probe", async () => {
-    const helper = (await import("./helpers/onboard-script-mocks.cjs")) as {
+    const helper = (await import("../helpers/onboard-script-mocks.cjs")) as {
       isOpenClawSecurityInventoryProbe: (command: unknown) => boolean;
     };
 
@@ -37,7 +37,7 @@ describe("sandboxName command hardening in onboard.js", () => {
   });
 
   it("re-validates sandboxName at the createSandbox boundary", async () => {
-    const onboardModule = await import("../src/lib/onboard.js");
+    const onboardModule = await import("../../src/lib/onboard.js");
     const { createSandbox } = onboardModule as unknown as {
       createSandbox: (
         gpu: null,
@@ -199,7 +199,7 @@ try {
   });
 
   it("builds openshell argv with an explicit openshellBinary override", async () => {
-    const onboardModule = await import("../src/lib/onboard.js");
+    const onboardModule = await import("../../src/lib/onboard.js");
     const onboard = onboardModule as unknown as {
       openshellArgv: (args: string[], opts?: { openshellBinary?: string }) => string[];
     };

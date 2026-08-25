@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import SandboxConfigSetCommand from "../../src/commands/sandbox/config/set";
 import SandboxStatusCommand from "../../src/commands/sandbox/status";
 import StatusCommand from "../../src/commands/status";
-import { withDirectPublicDispatch } from "./support/public-dispatch-test-harness.js";
+import { withDirectPublicDispatch } from "../support/public-dispatch-test-harness.js";
 
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;

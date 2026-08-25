@@ -11,10 +11,10 @@ import { describe } from "vitest";
 import {
   packReviewedNpmArchive,
   removeReviewedNpmArchive,
-} from "../scripts/lib/reviewed-npm-archive.mts";
-import { shellQuote } from "./e2e/fixtures/clients/command.ts";
-import { type DockerCommandResult, DockerProbe, resultText } from "./e2e/fixtures/docker-probe.ts";
-import { expect, test } from "./e2e/fixtures/e2e-test.ts";
+} from "../../scripts/lib/reviewed-npm-archive.mts";
+import { shellQuote } from "../e2e/fixtures/clients/command.ts";
+import { type DockerCommandResult, DockerProbe, resultText } from "../e2e/fixtures/docker-probe.ts";
+import { expect, test } from "../e2e/fixtures/e2e-test.ts";
 
 const TARGET_ID = "historical-openclaw-security-revision-container-e2e";
 const RUN_ENV = "NEMOCLAW_RUN_HISTORICAL_OPENCLAW_SECURITY_REVISION_CONTAINER_E2E";

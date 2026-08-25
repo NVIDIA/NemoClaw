@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import policy from "../ci/reviewed-npm-lifecycle-allowlist.json";
+import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");

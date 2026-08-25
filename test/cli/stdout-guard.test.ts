@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   redirectInheritedChildStdoutToStderr,
   withStdoutRedirectedToStderr,
-} from "../src/lib/cli/stdout-guard.js";
+} from "../../src/lib/cli/stdout-guard.js";
 
 describe("withStdoutRedirectedToStderr", () => {
   let restore: (() => void) | null = null;

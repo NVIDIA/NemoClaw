@@ -11,7 +11,7 @@ import {
   emittedOutput,
   fixture,
   run,
-} from "./helpers/brev-launchable-e2e-fixture";
+} from "../helpers/brev-launchable-e2e-fixture";
 
 afterEach(() => {
   cleanupFixtures();

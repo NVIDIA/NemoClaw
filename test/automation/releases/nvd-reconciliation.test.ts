@@ -6,14 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { correlateAdvisories } from "../scripts/lib/advisory-early-warning.mts";
+import { correlateAdvisories } from "../../../scripts/lib/advisory-early-warning.mts";
 import {
   attachNvdReconciliations,
   deriveCveId,
   type NvdRecord,
   parseNvdRecord,
   reconcileSignalWithNvd,
-} from "../scripts/lib/nvd-reconciliation.mts";
+} from "../../../scripts/lib/nvd-reconciliation.mts";
 
 // NVD 2.0 API response (GET services.nvd.nist.gov/rest/json/cves/2.0?cveId=...)
 // modeled on the fast-uri advisory from the #7276 evidence table: analyzed by

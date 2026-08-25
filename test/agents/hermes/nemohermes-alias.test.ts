@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { execTimeout } from "./helpers/timeouts";
+import { execTimeout } from "../../helpers/timeouts";
 
 const HERMES_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemohermes.js");
 const NEMOCLAW_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");

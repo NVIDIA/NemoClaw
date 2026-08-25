@@ -8,7 +8,7 @@ import {
   classifyIssue4434AcceptanceFields,
   ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS,
   type Issue4434AcceptanceFields,
-} from "./e2e/support/issue-4434-tui-capture.ts";
+} from "../e2e/support/issue-4434-tui-capture.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");

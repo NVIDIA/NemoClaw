@@ -8,7 +8,7 @@ import {
   cleanupPackageFixtures,
   createPackageFixture,
   patchFixture,
-} from "./helpers/langchain-deepagents-code-patch-fixture";
+} from "../helpers/langchain-deepagents-code-patch-fixture";
 
 afterEach(cleanupPackageFixtures);
 

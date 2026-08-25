@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { type DependencyNode, findDependency } from "./fixtures/dependency-graph.ts";
+import { type DependencyNode, findDependency } from "../fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");

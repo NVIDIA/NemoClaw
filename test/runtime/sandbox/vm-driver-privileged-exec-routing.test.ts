@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const helperPath = require.resolve("../src/lib/sandbox/privileged-exec");
+const helperPath = require.resolve("../../../src/lib/sandbox/privileged-exec");
 const dockerRunPath = require.resolve("../src/lib/adapters/docker/run");
 const registryPath = require.resolve("../src/lib/state/registry");
 
@@ -23,7 +23,7 @@ echo "unexpected fake docker invocation: $*" >&2
 exit 64
 `;
 
-type PrivilegedExecHelper = typeof import("../src/lib/sandbox/privileged-exec");
+type PrivilegedExecHelper = typeof import("../../../src/lib/sandbox/privileged-exec");
 
 const restoredEnvKeys = new Set([
   "HOME",

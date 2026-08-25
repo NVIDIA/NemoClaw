@@ -32,7 +32,7 @@ import {
 import { recoverRegistryEntriesWithFallback } from "../../src/lib/list-command-deps.js";
 import { resolveGatewayName } from "../../src/lib/onboard/gateway-binding.js";
 import { nemoclawStateRoot } from "../../src/lib/state/state-root.js";
-import { testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 

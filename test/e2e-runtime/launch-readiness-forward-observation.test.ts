@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, expect, it, vi } from "vitest";
-import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
-import { areSandboxLaunchForwardsHealthy } from "../src/lib/actions/sandbox/forward-recovery.ts";
-import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
-import * as agentRuntime from "../src/lib/agent/runtime.ts";
-import * as registry from "../src/lib/state/registry.ts";
+import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
+import { areSandboxLaunchForwardsHealthy } from "../../src/lib/actions/sandbox/forward-recovery.ts";
+import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
+import * as agentRuntime from "../../src/lib/agent/runtime.ts";
+import * as registry from "../../src/lib/state/registry.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();

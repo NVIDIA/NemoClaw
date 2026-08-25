@@ -7,7 +7,7 @@ import {
   createGitHubFetchRouter,
   githubFetchRoute,
   type RecordedGitHubRequest,
-} from "../.././support/github-fetch-router.ts";
+} from "../../support/github-fetch-router.ts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_SHA = "d".repeat(40);

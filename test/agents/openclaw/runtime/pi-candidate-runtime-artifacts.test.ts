@@ -13,12 +13,12 @@ import {
   verifyPiCandidateArtifacts,
   verifyPiQualificationReceipts,
   verifyPiTrustBoundary,
-} from "../scripts/checks/pi-candidate-artifacts.mts";
+} from "../../../../scripts/checks/pi-candidate-artifacts.mts";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../../../../src/lib/onboard/managed-image/contract.ts";
-import { validateCandidateContract } from "../tools/managed-images/validate-candidate-contract.mts";
+import { validateCandidateContract } from "../../../../tools/managed-images/validate-candidate-contract.mts";
 
 const root = path.resolve(import.meta.dirname, "../../../..");
 

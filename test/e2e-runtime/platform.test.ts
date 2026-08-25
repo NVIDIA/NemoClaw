@@ -16,7 +16,7 @@ import {
   inferContainerRuntime,
   isWsl,
   shouldPatchCoredns,
-} from "../src/lib/platform";
+} from "../../src/lib/platform";
 
 const reachableDockerFallback = (dockerHost: string | undefined) => ({
   reachable: Boolean(dockerHost),

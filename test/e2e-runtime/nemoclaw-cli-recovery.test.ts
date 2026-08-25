@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
-import { SANDBOX_EXEC_STARTED_MARKER } from "../src/lib/actions/sandbox/sandbox-exec-output";
-import { testTimeoutOptions } from "./helpers/timeouts";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 describe("nemoclaw CLI runtime recovery", () => {
   it(

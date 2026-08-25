@@ -22,7 +22,7 @@ import {
   verifyCandidateInvocations,
   verifyDigest,
   verifyObservedVersion,
-} from "../tools/candidate-compat.mts";
+} from "../../tools/candidate-compat.mts";
 
 const SHA = "a".repeat(40);
 const VERSION = "0.0.99";

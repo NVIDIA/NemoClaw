@@ -18,8 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
-import type { HermesBuildSettings } from "../agents/hermes/config/build-env.ts";
-import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
+import type { HermesBuildSettings } from "../../../agents/hermes/config/build-env.ts";
+import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-policy.ts";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,

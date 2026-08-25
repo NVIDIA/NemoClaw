@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "vitest";
 
-import { testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 // Coverage guard for #4537. The Local Ollama onboarding path is the only
 // current caller that requires strict Chat Completions tool calls. This

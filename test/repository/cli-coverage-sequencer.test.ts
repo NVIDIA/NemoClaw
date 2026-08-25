@@ -19,7 +19,7 @@ import {
   shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
-} from ".././helpers/cli-coverage-sequencer";
+} from "../helpers/cli-coverage-sequencer";
 
 function assignmentKeys(entries: readonly WeightedShardEntry<string>[]) {
   return assignStableShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));

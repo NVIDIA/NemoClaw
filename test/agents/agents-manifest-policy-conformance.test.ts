@@ -17,13 +17,13 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildConfig } from "../scripts/generate-openclaw-config.mts";
+import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
 import {
   applyMessagingAgentRenderToObject,
   readMessagingBuildPlanFromEnv,
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
-import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "../helpers/openclaw-env-fixture";
+import { withLegacyMessagingPlanEnv } from "../messaging-plan-test-helper";
 
 const BASE_ENV = baseOpenClawGenerationEnv();
 
