@@ -8,14 +8,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   E2E_RENDER_LIMIT,
   trustedE2eRecommendationInventory,
-} from "../tools/advisors/e2e-recommendations.mts";
-import { deleteBotOwnedStickyComments, upsertStickyComment } from "../tools/advisors/github.mts";
-import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
+} from "../../../tools/advisors/e2e-recommendations.mts";
+import { deleteBotOwnedStickyComments, upsertStickyComment } from "../../../tools/advisors/github.mts";
+import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
 import { validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
-import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
-import { normalizeCombinedE2eResult, type ReviewMetadata } from "../tools/pr-review-advisor/analyze.mts";
-import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { runReadOnlyAdvisor } from "../../../tools/advisors/session.mts";
+import { normalizeCombinedE2eResult, type ReviewMetadata } from "../../../tools/pr-review-advisor/analyze.mts";
+import { renderSummary } from "../../../tools/pr-review-advisor/render-result.mts";
+import { buildComment } from "../../../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 

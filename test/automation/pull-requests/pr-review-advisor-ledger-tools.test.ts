@@ -13,7 +13,7 @@ import {
   REVIEW_FINDING_SOURCE_MAX_BYTES,
   type CandidateFindingInput,
   validateReviewFindingSubmission,
-} from "../tools/pr-review-advisor/review-ledger.mts";
+} from "../../../tools/pr-review-advisor/review-ledger.mts";
 
 function finding() {
   return {

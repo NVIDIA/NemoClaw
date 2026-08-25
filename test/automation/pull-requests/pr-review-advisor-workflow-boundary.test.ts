@@ -9,8 +9,8 @@ import YAML from "yaml";
 import {
   fetchLivePullFromGh,
   validateAdvisorArtifacts,
-} from "../tools/pr-review-advisor/validate-artifacts.mts";
-import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
+} from "../../../tools/pr-review-advisor/validate-artifacts.mts";
+import { validatePrReviewAdvisorWorkflowBoundary } from "../../../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(ROOT, ".github/workflows/pr-review-advisor.yaml");

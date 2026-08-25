@@ -5,15 +5,15 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { githubGraphql, upsertStickyComment } from "../tools/advisors/github.mts";
-import { collectStaticTestInventory } from "../tools/pr-review-advisor/deterministic-context.mts";
+import { githubGraphql, upsertStickyComment } from "../../../tools/advisors/github.mts";
+import { collectStaticTestInventory } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 import {
   declaresReplacement,
   extractIssueRefs,
   hasOpenPrReplacement,
   type OpenPrOverlap,
-} from "../tools/pr-review-advisor/github-context.mts";
-import { buildSystemPrompt } from "../tools/pr-review-advisor/trusted-guidance.mts";
+} from "../../../tools/pr-review-advisor/github-context.mts";
+import { buildSystemPrompt } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
 import { ROOT } from "../../helpers/pr-review-advisor-test-fixtures.ts";
 
 describe("PR review advisor", () => {

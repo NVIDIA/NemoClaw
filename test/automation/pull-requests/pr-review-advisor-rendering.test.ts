@@ -3,8 +3,8 @@
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { renderSummary } from "../../../tools/pr-review-advisor/render-result.mts";
+import { buildComment } from "../../../tools/pr-review-advisor/comment.mts";
 import {
   loadAdvisorSchema,
   metadata,

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { getDiff } from "../tools/advisors/git.mts";
+import { getDiff } from "../../../tools/advisors/git.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 

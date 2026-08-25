@@ -4,14 +4,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
-import { reviewQualityIssues } from "../tools/pr-review-advisor/review-quality.mts";
+import { renderSummary } from "../../../tools/pr-review-advisor/render-result.mts";
+import { reviewQualityIssues } from "../../../tools/pr-review-advisor/review-quality.mts";
 import {
   buildSystemPrompt,
   readTrustedSecurityRubric,
-} from "../tools/pr-review-advisor/trusted-guidance.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
-import { metadata, ROOT, validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
+} from "../../../tools/pr-review-advisor/trusted-guidance.mts";
+import { buildComment } from "../../../tools/pr-review-advisor/comment.mts";
+import { ROOT, validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
 
 describe("PR review advisor", () => {
   afterEach(() => {

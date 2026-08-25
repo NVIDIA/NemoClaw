@@ -8,14 +8,14 @@ import { describe, expect, it } from "vitest";
 import {
   E2E_RENDER_LIMIT,
   trustedE2eRecommendationInventory,
-} from "../tools/advisors/e2e-recommendations.mts";
+} from "../../../tools/advisors/e2e-recommendations.mts";
 import {
   buildComment,
   normalizeAdvisorReport,
   normalizeCommentOptions,
   readAdvisorReport,
   readCommentArtifacts,
-} from "../tools/pr-review-advisor/comment.mts";
+} from "../../../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 

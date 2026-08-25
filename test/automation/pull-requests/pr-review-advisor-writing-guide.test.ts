@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
+import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
 
 afterEach(() => {
   vi.restoreAllMocks();

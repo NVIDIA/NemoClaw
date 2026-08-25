@@ -7,13 +7,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
-import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
-import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
+import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../../../tools/advisors/session.mts";
+import { buildSynthesisTurn } from "../../../tools/pr-review-advisor/synthesis-turn.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 import {
   specialistSessionFileName,
   validateSpecialistSessionDirectory,
-} from "../tools/pr-review-advisor/specialist-sessions.mts";
+} from "../../../tools/pr-review-advisor/specialist-sessions.mts";
 
 const roots: string[] = [];
 afterEach(() => {

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
+import { validatePrReviewAdvisorWorkflowBoundary } from "../../../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(ROOT, ".github/workflows/pr-review-advisor.yaml");

@@ -13,16 +13,16 @@ import {
   RISK_RULES,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
-} from "../tools/advisors/risk-plan.mts";
+} from "../../../tools/advisors/risk-plan.mts";
 import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
-} from "../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
-} from "../tools/e2e/workflow-boundary.mts";
-import { classifyTestDepth } from "../tools/pr-review-advisor/deterministic-context.mts";
+} from "../../../tools/e2e/workflow-boundary.mts";
+import { classifyTestDepth } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 
 const HEAD_SHA = "a".repeat(40);
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
