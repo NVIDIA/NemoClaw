@@ -544,6 +544,13 @@ function reconcileAgentHeartbeat(
   }
 }
 
+/**
+ * Merge a backed-up `openclaw.json` snapshot onto a freshly regenerated one
+ * per `OPENCLAW_CONFIG_RESTORE_OWNERSHIP`: fresh output wins for
+ * rebuild-owned sections and fields, the backup restores durable user
+ * settings, and the reconcile helpers above re-own the routing/heartbeat
+ * fields inside the otherwise backup-durable `agents` section.
+ */
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
