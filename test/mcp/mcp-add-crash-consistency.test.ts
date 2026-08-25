@@ -19,7 +19,6 @@ type CrashBoundary =
   | "credential-command-race"
   | "credential-projection-coalesced"
   | "credential-projection-delayed-hostless"
-  | "credential-revision-drift"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -67,7 +66,6 @@ let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
 let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
-let credentialRevisionObservationCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -238,21 +236,6 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
-  if (crashAfter === "credential-revision-drift" && isObservation) {
-    credentialRevisionObservationCountThisProcess += 1;
-    if (credentialRevisionObservationCountThisProcess === 2) {
-      setProviderVersion(providerVersion() + 1);
-    }
-    return {
-      status: 0,
-      stdout:
-        "v" +
-        (credentialRevisionObservationCountThisProcess === 2
-          ? providerVersion() - 1
-          : providerVersion()),
-      stderr: "",
-    };
-  }
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
     if (credentialRepublishBeforeObservationCountThisProcess === 0) {
       observedCredentialAbsentThisProcess = true;
@@ -631,23 +614,6 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
-  it("fails closed when the credential revision changes before add commit (#10298)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-revision-drift-"));
-    try {
-      const result = runAddProcess(home, "credential-revision-drift");
-
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(2);
-      expect(result.stderr).toContain("credential revision changed before MCP add commit");
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
-      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {

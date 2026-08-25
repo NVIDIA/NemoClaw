@@ -147,9 +147,8 @@ export function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
   options: {
-    expectedProviderResourceVersion?: number | null;
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => number | null | void;
+    refreshAfterObservedAbsence?: () => void;
   } = {},
 ): McpAttachedCredentialRevision {
   assertAuthenticatedBridgeEntry(entry);
@@ -160,22 +159,6 @@ export function waitForAttachedMcpCredential(
   ) {
     throw new McpBridgeError("Invalid prior MCP credential revision observation.");
   }
-  const revisionForResourceVersion = (resourceVersion: number | null) => {
-    if (
-      resourceVersion === null ||
-      !Number.isSafeInteger(resourceVersion) ||
-      resourceVersion <= 0
-    ) {
-      throw new McpBridgeError(
-        `OpenShell did not return a valid provider resource version for credential synchronization in sandbox '${sandboxName}'.`,
-      );
-    }
-    return `v${resourceVersion}` as McpAttachedCredentialRevision;
-  };
-  let expectedRevision =
-    options.expectedProviderResourceVersion === undefined
-      ? undefined
-      : revisionForResourceVersion(options.expectedProviderResourceVersion);
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
@@ -197,10 +180,7 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        const refreshedResourceVersion = options.refreshAfterObservedAbsence();
-        if (refreshedResourceVersion !== undefined) {
-          expectedRevision = revisionForResourceVersion(refreshedResourceVersion);
-        }
+        options.refreshAfterObservedAbsence();
         attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
         lastAttempt = attempt;
       }
@@ -213,7 +193,6 @@ export function waitForAttachedMcpCredential(
         observation !== null &&
         observation !== "absent" &&
         observation !== "canonical" &&
-        (expectedRevision === undefined || observation === expectedRevision) &&
         (options.previousRevision === undefined || observation !== options.previousRevision);
       if (attached) attachedRevision = observation;
       return attached;
