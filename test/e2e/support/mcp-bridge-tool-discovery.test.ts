@@ -738,7 +738,13 @@ describe("Hermes initial MCP readiness", () => {
           finishToolStatus = resolve;
         }),
     );
-    const prepareModelTurn = vi.fn().mockResolvedValue(undefined);
+    let finishPreparation!: () => void;
+    const prepareModelTurn = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPreparation = resolve;
+        }),
+    );
     const runModelTurn = vi.fn().mockResolvedValue(undefined);
 
     const readiness = runHermesInitialMcpReadiness({
@@ -759,6 +765,9 @@ describe("Hermes initial MCP readiness", () => {
     expect(runModelTurn).not.toHaveBeenCalled();
 
     finishToolStatus();
+    await vi.waitFor(() => expect(prepareModelTurn).toHaveBeenCalledOnce());
+    expect(runModelTurn).not.toHaveBeenCalled();
+    finishPreparation();
     await readiness;
     expect(prepareModelTurn).toHaveBeenCalledOnce();
     expect(runModelTurn).toHaveBeenCalledOnce();
