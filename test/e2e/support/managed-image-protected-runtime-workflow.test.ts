@@ -381,6 +381,28 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects excluding local Dockerfile sources from native candidate qualification", () => {
+    const value = workflow();
+    multiarchJob(value).if = String(multiarchJob(value).if).replace(
+      "github.repository == 'NVIDIA/NemoClaw'",
+      "needs.generate-matrix.outputs.workload_source == 'managed-image' && github.repository == 'NVIDIA/NemoClaw'",
+    );
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must use the trusted execution plan",
+    );
+  });
+
+  it("rejects removing local multiarch base builds", () => {
+    const value = workflow();
+    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
+    bases.run = String(bases.run).replace("local-dockerfile)", "candidate-images)");
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup step 'Resolve exact platform base images' must include local-dockerfile)",
+    );
+  });
+
   it("requires the validated base publication before protected multiarch startup", () => {
     const value = workflow();
     multiarchJob(value).needs = "generate-matrix";

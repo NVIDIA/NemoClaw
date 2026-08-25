@@ -220,6 +220,7 @@ function runBuild(
   sourceRoot: string,
   extraArgs: readonly string[] = [],
   platform = "linux/amd64",
+  baseRegistry = "ghcr.io/nvidia/nemoclaw",
 ) {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
@@ -235,11 +236,11 @@ function runBuild(
       "--platform",
       platform,
       "--openclaw-base",
-      `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST}`,
+      `${baseRegistry}/sandbox-base@sha256:${DIGEST}`,
       "--hermes-base",
-      `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${DIGEST}`,
+      `${baseRegistry}/hermes-sandbox-base@sha256:${DIGEST}`,
       "--dcode-base",
-      `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${DIGEST}`,
+      `${baseRegistry}/langchain-deepagents-code-sandbox-base@sha256:${DIGEST}`,
       "--source-root",
       sourceRoot,
       ...extraArgs,
@@ -358,6 +359,20 @@ describe("protected managed-image build-cache boundary", () => {
         /--cache-to|--cache-from|--network none/,
       ),
     });
+  });
+
+  it("accepts exact bases from the isolated local registry", () => {
+    stubBuildInvocation();
+
+    const result = runBuild(
+      REPO_ROOT,
+      [],
+      "linux/arm64",
+      "localhost:5000/nemoclaw-managed-protected-base",
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
   });
 
   it("binds every protected build to the selected target architecture", () => {
