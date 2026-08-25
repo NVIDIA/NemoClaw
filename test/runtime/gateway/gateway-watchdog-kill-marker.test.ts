@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const START_SCRIPT = path.resolve(HERE, "..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.resolve(HERE, "..", "..", "..", "scripts", "nemoclaw-start.sh");
 
 function requireNonNegative(value: number, message: string): number {
   return value >= 0

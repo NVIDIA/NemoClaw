@@ -15,7 +15,7 @@ import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 // here — deep validation (provider allowlist, model id charset, custom endpoint
 // URL/credential/API normalization) is intentionally centralized in
 // runInferenceSet so the global and sandbox-first grammars share one
-// validation surface (covered by test/lib/actions/inference-set.test.ts).
+// validation surface (covered by the src/lib/actions/inference-set-*.test.ts suites).
 export default class SandboxInferenceSetCommand extends NemoClawCommand {
   static id = "sandbox:inference:set";
   static strict = true;

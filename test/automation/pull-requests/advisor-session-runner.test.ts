@@ -530,7 +530,7 @@ describe("advisor session runner", () => {
       [
         {
           ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "../.././required.txt"],
+          requiredReadPaths: ["required.txt", "./required.txt"],
         },
       ],
       (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),

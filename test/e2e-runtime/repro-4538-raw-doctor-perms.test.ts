@@ -37,7 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
 
 function extractShellFunctionFromSource(src: string, name: string): string {
   const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -341,7 +341,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
 // shell does), run raw `openclaw doctor --fix`, assert the contract survives —
 // inside a real NemoClaw sandbox image with the real OpenClaw CLI. Gated so it
 // only runs where docker + the image are available (locally, or a pipeline job):
-//   NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E=1 npx vitest run test/repro-4538-raw-doctor-perms.test.ts
+//   NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E=1 npx vitest run test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts
 const RUN_DOCKER_E2E = process.env.NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E === "1";
 
 function dockerAvailable(): boolean {

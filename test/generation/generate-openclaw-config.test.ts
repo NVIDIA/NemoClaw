@@ -1063,7 +1063,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         makeExtra({
           workspace: "/sandbox/.openclaw/foo/../workspace-research",
-          agentDir: "/sandbox/.openclaw/bar/../../agents/research",
+          agentDir: "/sandbox/.openclaw/bar/../agents/research",
         }),
       ]),
     });
