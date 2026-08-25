@@ -40,6 +40,7 @@ const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
 const GLIBC_PROBE_RUN =
   "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
+const REMOVED_GLIBC_PROBE_TEST_PATH = "test/image-compatibility-docker-lifecycle.test.ts";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -1123,13 +1124,16 @@ export function validateGlibcProbeLifecycleWorkflowPaths(
     const job = workflow.jobs["test-e2e-gateway-isolation"] ?? {};
     const jobSteps = steps(job);
     const matchingSteps = jobSteps.filter((step) => step.name === GLIBC_PROBE_STEP_NAME);
-    const matchingRuns = Object.values(workflow.jobs)
-      .flatMap((candidate) => steps(candidate))
-      .filter((step) => step.run === GLIBC_PROBE_RUN);
+    const workflowSteps = Object.values(workflow.jobs).flatMap((candidate) => steps(candidate));
+    const matchingRuns = workflowSteps.filter((step) => step.run === GLIBC_PROBE_RUN);
+    const containsRemovedRun = workflowSteps.some((step) =>
+      step.run?.includes(REMOVED_GLIBC_PROBE_TEST_PATH),
+    );
     if (
       matchingSteps.length !== 1 ||
       matchingSteps[0]?.run !== GLIBC_PROBE_RUN ||
-      matchingRuns.length !== 1
+      matchingRuns.length !== 1 ||
+      containsRemovedRun
     ) {
       errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
     }

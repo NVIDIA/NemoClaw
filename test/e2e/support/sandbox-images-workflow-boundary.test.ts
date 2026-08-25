@@ -76,6 +76,26 @@ describe("sandbox image workflow boundary", () => {
     ]);
   });
 
+  it.each([
+    ["PR self-hosted workflow", "prWorkflow"],
+    ["sandbox image workflow", "imageWorkflow"],
+  ] as const)("rejects the removed glibc probe beside the canonical %s step (#10155)", (_, key) => {
+    const { imageWorkflow, prWorkflow } = readWorkflows();
+    const workflow = { imageWorkflow, prWorkflow }[key];
+    const canonicalStep = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
+      (candidate) => candidate.name === "Run glibc probe lifecycle regression",
+    )!;
+    workflow.jobs["build-sandbox-images"].steps!.push({
+      ...canonicalStep,
+      name: "Run removed glibc probe",
+      run: canonicalStep.run!.replace("test/e2e-runtime/", "test/"),
+    });
+
+    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
+      `${key === "prWorkflow" ? "PR self-hosted workflow" : "sandbox image workflow"} must run the grouped glibc probe lifecycle test exactly once`,
+    ]);
+  });
+
   it("accepts the production-image handoff and focused metadata probe", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
 
