@@ -183,9 +183,11 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
 
     const result = await recoverRegistryEntries();
 
-    expect(
-      result.sandboxes.find((sandbox) => sandbox.name === "managed-without-receipt"),
-    ).not.toHaveProperty("policyAuthority");
+    const recovered = result.sandboxes.find(
+      (sandbox) => sandbox.name === "managed-without-receipt",
+    );
+    expect(recovered).toBeDefined();
+    expect(recovered).not.toHaveProperty("policyAuthority");
   });
 
   it("preserves recorded policy authority and attribution during session recovery (#9833)", async () => {
