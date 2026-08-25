@@ -13,10 +13,7 @@ import {
   type PortableDemoLifecycleDeps,
   recoverPortableDemoSandboxLifecycle,
 } from "./portable-demo-lifecycle";
-import {
-  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECONCILIATION_TOLERANCE_MS,
-  PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX,
-} from "./portable-demo-lifecycle-timing";
+import { PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX } from "./portable-demo-lifecycle-timing";
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
@@ -189,12 +186,6 @@ function gatewayTimingLines(log: ReturnType<typeof vi.fn>): string[] {
     .filter((line) => line.startsWith(PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX));
 }
 
-function timingMilliseconds(line: string, field: string): number {
-  const match = new RegExp(`(?:^| )${field}=(\\d+)ms(?: |$)`, "u").exec(line);
-  expect(match, `Missing timing field: ${field}`).not.toBeNull();
-  return Number(match?.[1]);
-}
-
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -245,20 +236,6 @@ describe("portable lifecycle recovery timing output", () => {
     expect(gatewayLine).toBe(
       "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms configIntegrity=15ms providerModelCors=11ms tokenPlaceholderHash=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=0ms sleep=0ms firstReadyAttempt=1 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=recorded",
     );
-    const nonOverlappingPhaseTotal = [
-      "launchToEntry",
-      "entrySetup",
-      "configIntegrity",
-      "providerModelCors",
-      "tokenPlaceholderHash",
-      "messagingChannelsPreloadsScan",
-      "workspaceAuthTemp",
-      "gatewaySpawn",
-      "spawnToFirstHealth",
-    ].reduce((total, field) => total + timingMilliseconds(gatewayLine, field), 0);
-    expect(
-      Math.abs(nonOverlappingPhaseTotal - timingMilliseconds(gatewayLine, "launchToFirstHealth")),
-    ).toBeLessThanOrEqual(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECONCILIATION_TOLERANCE_MS);
   });
 
   it("emits one already-running timing line from the lifecycle caller (#9200)", () => {
