@@ -235,7 +235,10 @@ describe("sandbox create policy authority checks", () => {
         events.push("capture-identity");
         return CREATED_IDENTITY;
       },
-      observeCreatedSandbox: vi.fn(() => createdObservation),
+      observeCreatedSandbox: () => {
+        events.push("observe-exact-created");
+        return createdObservation;
+      },
       cleanupTemporarySources: vi.fn(),
       deleteCreatedSandbox: vi.fn(),
       waitForCreatedSandboxAbsence: vi.fn(() => true),
@@ -247,9 +250,48 @@ describe("sandbox create policy authority checks", () => {
       "create-check",
       "create",
       "capture-identity",
+      "observe-exact-created",
       "ready-check",
+      "observe-exact-created",
       "register",
     ]);
+  });
+
+  it("does not continue when policy verification observes a replacement sandbox (#9833)", async () => {
+    const deleteCreatedSandbox = vi.fn();
+    const waitForCreatedSandboxAbsence = vi.fn(() => true);
+    const observeCreatedSandbox = vi
+      .fn()
+      .mockReturnValueOnce(createdObservation)
+      .mockReturnValue({
+        state: "ready" as const,
+        liveIdentityFingerprint: REPLACEMENT_IDENTITY,
+      });
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async () => "created",
+      captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
+      observeCreatedSandbox,
+      cleanupTemporarySources: vi.fn(),
+      deleteCreatedSandbox,
+      waitForCreatedSandboxAbsence,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining("live identity changed during policy verification"),
+        }),
+        expect.objectContaining({
+          message: expect.stringContaining("left the replacement in place"),
+        }),
+      ]),
+    );
+    expect(deleteCreatedSandbox).not.toHaveBeenCalled();
+    expect(waitForCreatedSandboxAbsence).not.toHaveBeenCalled();
   });
 
   it("removes create sources and the live sandbox when final authority validation fails (#9833)", async () => {
@@ -296,6 +338,7 @@ describe("sandbox create policy authority checks", () => {
       "create-check",
       "create",
       "capture-identity",
+      "observe-created",
       "ready-check",
       "cleanup-sources",
       "observe-created",
@@ -361,7 +404,7 @@ describe("sandbox create policy authority checks", () => {
       ]),
     );
     expect(deleteCreatedSandbox).toHaveBeenCalledOnce();
-    expect(observeCreatedSandbox).toHaveBeenCalledTimes(2);
+    expect(observeCreatedSandbox).toHaveBeenCalledTimes(3);
   });
 
   it("does not delete a replacement observed before cleanup (#9833)", async () => {
@@ -402,6 +445,7 @@ describe("sandbox create policy authority checks", () => {
     const deleteCreatedSandbox = vi.fn();
     const observeCreatedSandbox = vi
       .fn()
+      .mockReturnValueOnce(createdObservation)
       .mockReturnValueOnce(createdObservation)
       .mockReturnValueOnce({
         state: "ready" as const,
@@ -467,5 +511,33 @@ describe("sandbox create policy authority checks", () => {
     );
     expect(observeCreatedSandbox).not.toHaveBeenCalled();
     expect(deleteCreatedSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      description: "the exact created sandbox is missing",
+      observation: { state: "missing" as const, liveIdentityFingerprint: null },
+    },
+    {
+      description: "the exact created sandbox identity is ambiguous",
+      observation: { state: "ready" as const, liveIdentityFingerprint: null },
+    },
+  ])("refuses policy verification when $description (#9833)", async ({ observation }) => {
+    const revalidate = vi.fn().mockImplementationOnce(() => undefined);
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate,
+      create: async () => "created",
+      captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
+      observeCreatedSandbox: () => observation,
+      cleanupTemporarySources: vi.fn(),
+      deleteCreatedSandbox: vi.fn(),
+      waitForCreatedSandboxAbsence: vi.fn(() => true),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    const reported = error instanceof AggregateError ? error.errors : [error];
+    expect(reported.some((entry) => String(entry).match(/missing|ambiguous/u))).toBe(true);
+    expect(revalidate).toHaveBeenCalledOnce();
   });
 });

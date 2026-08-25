@@ -146,6 +146,8 @@ export type OnboardOptions = {
     | null;
   resume?: boolean;
   fresh?: boolean;
+  /** Operator-selected APF compatibility mode for fresh sandbox creation. */
+  apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */

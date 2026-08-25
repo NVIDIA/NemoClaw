@@ -68,6 +68,11 @@ const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
 ];
 
 describe("onboard command options", () => {
+  it("records only explicit APF interceptor selection (#9833)", () => {
+    expect(resolve({ "apf-interceptor": true }).apfInterceptorRequested).toBe(true);
+    expect(resolve({}).apfInterceptorRequested).toBeNull();
+  });
+
   it("resolves a generic serving profile ID without changing defaults (#8384)", () => {
     expect(
       resolve(
@@ -280,6 +285,7 @@ describe("onboard command options", () => {
       resume: true,
       fresh: false,
       recreateSandbox: true,
+      apfInterceptorRequested: null,
       fromDockerfile: dockerfilePath,
       sandboxName: "second-assistant",
       sandboxGpu: "enable",
@@ -327,6 +333,7 @@ describe("onboard command options", () => {
       resume: false,
       fresh: false,
       recreateSandbox: false,
+      apfInterceptorRequested: null,
       fromDockerfile: null,
       sandboxName: null,
       sandboxGpu: null,

@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { qualifySandboxPolicyAuthority, requiredOnboardPolicyPresets } from "./preflight";
+import {
+  createApfInterceptorPolicyVerifier,
+  qualifySandboxPolicyAuthority,
+  requiredOnboardPolicyPresets,
+} from "./preflight";
 
 const requiredPolicy = {
   policyPath: "/tmp/unused.yaml",
@@ -150,5 +154,172 @@ describe("sandbox policy authority preflight", () => {
       ).authority,
     ).toBe("nemoclaw-managed");
     expect(prepareRequiredPolicy).not.toHaveBeenCalled();
+  });
+});
+
+describe("APF-interceptor policy verification", () => {
+  it("records a contained sandbox-scoped policy as read-only without claiming provenance (#9833)", () => {
+    const cleanup = vi.fn(() => true);
+    const inspectSandboxPolicyAuthority = vi.fn(() => ({
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: {
+        version: 7,
+        network_policies: {
+          additional_route: { endpoints: ["other.example.com"] },
+          required_route: { endpoints: ["example.com"] },
+        },
+      },
+    }));
+    const verify = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      { inspectSandboxPolicyAuthority },
+    );
+
+    expect(verify("continue onboarding")).toEqual({ authority: "externally-managed" });
+    expect(inspectSandboxPolicyAuthority).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "demo",
+      gatewayName: "nemoclaw",
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when the post-create policy is global, insufficient, or changed (#9833)", () => {
+    const cleanup = vi.fn(() => true);
+    const inspectGlobalSource = vi.fn(() => ({
+      authority: "externally-managed" as const,
+      effectivePolicy: {
+        network_policies: { required_route: { endpoints: ["example.com"] } },
+      },
+    }));
+    const verifyGlobalSource = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      { inspectSandboxPolicyAuthority: inspectGlobalSource },
+    );
+    expect(() => verifyGlobalSource("continue onboarding")).toThrow(
+      /global policy source is ambiguous/u,
+    );
+    expect(cleanup).not.toHaveBeenCalled();
+
+    const inspectInsufficient = vi.fn(() => ({
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: { network_policies: {} },
+    }));
+    const verifyInsufficient = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      { inspectSandboxPolicyAuthority: inspectInsufficient },
+    );
+    expect(() => verifyInsufficient("continue onboarding")).toThrow(
+      /missing entries "required_route"/u,
+    );
+
+    const inspectChanged = vi
+      .fn()
+      .mockReturnValueOnce({
+        authority: "nemoclaw-managed" as const,
+        effectivePolicy: {
+          network_policies: {
+            required_route: { endpoints: ["example.com"] },
+            unrelated: { endpoints: ["first.example.com"] },
+          },
+        },
+      })
+      .mockReturnValueOnce({
+        authority: "nemoclaw-managed" as const,
+        effectivePolicy: {
+          network_policies: {
+            required_route: { endpoints: ["example.com"] },
+            unrelated: { endpoints: ["second.example.com"] },
+          },
+        },
+      });
+    const verifyChanged = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      { inspectSandboxPolicyAuthority: inspectChanged },
+    );
+    expect(() => verifyChanged("verify the created sandbox")).not.toThrow();
+    expect(() => verifyChanged("register providers")).toThrow(/effective policy changed/u);
+    expect(cleanup).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { description: "a missing observed effective policy", effectivePolicy: {} },
+    {
+      description: "an invalid observed effective policy version",
+      effectivePolicy: { version: "1", network_policies: {} },
+    },
+    {
+      description: "an invalid observed effective network policy",
+      effectivePolicy: { version: 1, network_policies: [] },
+    },
+  ])("fails closed for $description (#9833)", ({ effectivePolicy }) => {
+    const cleanup = vi.fn(() => true);
+    const verify = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      {
+        inspectSandboxPolicyAuthority: vi.fn(() => ({
+          authority: "nemoclaw-managed" as const,
+          effectivePolicy,
+        })),
+      },
+    );
+
+    expect(() => verify("continue onboarding")).toThrow(/observed effective.*invalid|missing/u);
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("reports policy refusal and temporary-policy cleanup failure together (#9833)", () => {
+    const cleanup = vi.fn(() => false);
+    const verify = createApfInterceptorPolicyVerifier(
+      {
+        sandboxName: "demo",
+        gatewayName: "nemoclaw",
+        prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+      },
+      {
+        inspectSandboxPolicyAuthority: vi.fn(() => ({
+          authority: "nemoclaw-managed" as const,
+          effectivePolicy: { network_policies: {} },
+        })),
+      },
+    );
+
+    const error = (() => {
+      try {
+        verify("continue onboarding");
+        return null;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining("missing entries") }),
+        expect.objectContaining({
+          message: expect.stringContaining("temporary sandbox policy could not be removed"),
+        }),
+      ]),
+    );
   });
 });

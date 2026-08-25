@@ -59,6 +59,15 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it("forwards explicit APF interceptor selection as a boolean (#9833)", async () => {
+    await OnboardCliCommand.run(["--apf-interceptor"], rootDir);
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({ "apf-interceptor": true }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
   it("accepts an exact managed runtime catalog without candidate activation", async () => {
     await OnboardCliCommand.run(
       ["--temp-managed-runtime-catalog", "managed-catalog.json"],

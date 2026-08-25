@@ -330,6 +330,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   servingProfileProvenance?: ServingProfileProvenance | null;
@@ -354,6 +355,7 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
+      apfInterceptorRequested?: boolean | null;
       hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
@@ -509,6 +511,12 @@ async function exitForResumeConflicts(
     }
     reportResumeConflict(conflict, deps);
   }
+  if (conflicts.some((conflict) => conflict.field === "APF interceptor")) {
+    deps.error(
+      `  Run: ${deps.cliName()} onboard --fresh --apf-interceptor  # start with APF interceptor selection`,
+    );
+    deps.exitProcess(1);
+  }
   deps.error(`  Run: ${deps.cliName()} onboard              # start a fresh onboarding session`);
   deps.error("  Or rerun with the original settings to continue that session.");
   deps.exitProcess(1);
@@ -570,6 +578,7 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    apfInterceptorRequested: input.apfInterceptorRequested ?? null,
     hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
@@ -609,6 +618,7 @@ function prepareFreshSession(
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    apfInterceptorRequested: input.apfInterceptorRequested === true,
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,
     vllmGpuDevice: parseVllmGpuDevice(process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]),

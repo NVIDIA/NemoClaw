@@ -21,6 +21,7 @@ export interface ResumeSessionLike {
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  apfInterceptorRequested?: boolean;
   metadata?: { fromDockerfile?: string | null; hostMounts?: SandboxHostMount[] } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
   checkpoint?: {
@@ -139,6 +140,7 @@ export function getResumeConfigConflicts(
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
     observabilityEnabled?: boolean | null;
+    apfInterceptorRequested?: boolean | null;
     hostMounts?: readonly SandboxHostMount[];
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
@@ -239,6 +241,14 @@ export function getResumeConfigConflicts(
       field: "tool disclosure",
       requested: requestedToolDisclosure,
       recorded: recordedToolDisclosure,
+    });
+  }
+
+  if (opts.apfInterceptorRequested === true && session?.apfInterceptorRequested !== true) {
+    conflicts.push({
+      field: "APF interceptor",
+      requested: "selected",
+      recorded: "not selected",
     });
   }
 

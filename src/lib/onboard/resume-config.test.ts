@@ -70,6 +70,36 @@ describe("authoritative rebuild resume config", () => {
     });
   });
 
+  it("preserves recorded APF selection when resume omits the flag (#9833)", () => {
+    expect(getResumeConfigConflicts({ apfInterceptorRequested: true }, {})).not.toContainEqual(
+      expect.objectContaining({ field: "APF interceptor" }),
+    );
+  });
+
+  it("accepts matching APF selection and rejects selecting it on a different resume (#9833)", () => {
+    expect(
+      getResumeConfigConflicts(
+        { apfInterceptorRequested: true },
+        { apfInterceptorRequested: true },
+      ),
+    ).not.toContainEqual(expect.objectContaining({ field: "APF interceptor" }));
+    expect(
+      getResumeConfigConflicts(
+        { apfInterceptorRequested: false },
+        { apfInterceptorRequested: true },
+      ),
+    ).toContainEqual({
+      field: "APF interceptor",
+      requested: "selected",
+      recorded: "not selected",
+    });
+    expect(getResumeConfigConflicts({}, { apfInterceptorRequested: true })).toContainEqual({
+      field: "APF interceptor",
+      requested: "selected",
+      recorded: "not selected",
+    });
+  });
+
   it("fails closed for a corrupt persisted tool-disclosure value", () => {
     const corrupt = normalizeSession({
       version: 1,

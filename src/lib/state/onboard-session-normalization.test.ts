@@ -16,6 +16,29 @@ function requireNormalizedSession(legacy: LegacySession) {
 }
 
 describe("onboard session normalization", () => {
+  it("keeps APF interceptor operator intent and defaults legacy sessions to false (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    expect(normalizeSession(selected)?.apfInterceptorRequested).toBe(true);
+
+    const legacy = { ...selected } as Partial<typeof selected>;
+    delete legacy.apfInterceptorRequested;
+    expect(
+      normalizeSession(legacy as Parameters<typeof normalizeSession>[0])?.apfInterceptorRequested,
+    ).toBe(false);
+    expect(
+      normalizeSession({ ...selected, apfInterceptorRequested: false })?.apfInterceptorRequested,
+    ).toBe(false);
+  });
+
+  it("refuses malformed saved APF interceptor intent instead of downgrading it (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    const malformed = { ...selected, apfInterceptorRequested: "true" };
+
+    expect(() =>
+      normalizeSession(malformed as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved APF compatibility selection is invalid/u);
+  });
+
   it("keeps recognized, absent, and legacy null policy authority values (#9833)", () => {
     const external = createSession({ policyAuthority: "externally-managed" });
     expect(normalizeSession(external)?.policyAuthority).toBe("externally-managed");

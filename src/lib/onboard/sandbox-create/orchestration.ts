@@ -144,7 +144,45 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Result>(input: {
     createdIdentityCaptureError = error;
   }
   try {
+    if (!createdLiveIdentityFingerprint) {
+      throw new Error(
+        `Cannot verify policy for sandbox '${input.sandboxName}' because its exact created identity was not captured.`,
+        createdIdentityCaptureError === null ? undefined : { cause: createdIdentityCaptureError },
+      );
+    }
+    const afterCreate = input.observeCreatedSandbox();
+    if (afterCreate.state === "missing") {
+      throw new Error(
+        `Cannot verify policy for sandbox '${input.sandboxName}' because the exact created sandbox is missing.`,
+      );
+    }
+    if (!afterCreate.liveIdentityFingerprint) {
+      throw new Error(
+        `Cannot verify policy for sandbox '${input.sandboxName}' because its current identity is ambiguous.`,
+      );
+    }
+    if (afterCreate.liveIdentityFingerprint !== createdLiveIdentityFingerprint) {
+      throw new Error(
+        `Cannot verify policy for sandbox '${input.sandboxName}' because its live identity changed before policy verification.`,
+      );
+    }
     input.revalidate(true, `finalizing sandbox '${input.sandboxName}'`);
+    const afterPolicyVerification = input.observeCreatedSandbox();
+    if (afterPolicyVerification.state === "missing") {
+      throw new Error(
+        `Cannot finalize sandbox '${input.sandboxName}' because the exact created sandbox disappeared during policy verification.`,
+      );
+    }
+    if (!afterPolicyVerification.liveIdentityFingerprint) {
+      throw new Error(
+        `Cannot finalize sandbox '${input.sandboxName}' because its identity became ambiguous during policy verification.`,
+      );
+    }
+    if (afterPolicyVerification.liveIdentityFingerprint !== createdLiveIdentityFingerprint) {
+      throw new Error(
+        `Cannot finalize sandbox '${input.sandboxName}' because its live identity changed during policy verification.`,
+      );
+    }
   } catch (validationError) {
     const compensationErrors: unknown[] = [];
     try {

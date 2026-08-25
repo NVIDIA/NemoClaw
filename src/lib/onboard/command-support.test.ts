@@ -42,6 +42,17 @@ describe("buildOnboardFlags --observability help", () => {
   });
 });
 
+describe("buildOnboardFlags --apf-interceptor help", () => {
+  it("exposes one-way operator selection without a generated --no form (#9833)", () => {
+    const flags = buildOnboardFlags();
+
+    expect(flags["apf-interceptor"].hidden).not.toBe(true);
+    expect(flags["apf-interceptor"].allowNo).not.toBe(true);
+    expect(flags["apf-interceptor"].description).toContain("verify the resulting sandbox policy");
+    expect(onboardUsage.join(" ")).toContain("--apf-interceptor");
+  });
+});
+
 describe("buildOnboardFlags --events help", () => {
   it("exposes the JSONL observer only on the canonical onboard command", () => {
     const onboardFlags = buildOnboardFlags({ includeEvents: true });
