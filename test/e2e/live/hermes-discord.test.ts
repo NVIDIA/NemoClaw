@@ -177,7 +177,7 @@ async function applyHermesFakeDiscordPolicy(options: {
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
+node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
 "$1" policy set --policy "$policy_file" --wait "$2"`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
