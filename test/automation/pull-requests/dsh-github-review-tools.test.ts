@@ -424,7 +424,12 @@ describe("isolated worktree namespace guards", () => {
         path: target,
         isolationKey: "session",
       }),
-    ).resolves.toMatchObject({ action: "planned", dryRun: true, path: "1" });
+    ).resolves.toMatchObject({
+      action: "planned",
+      dryRun: true,
+      path: "1",
+      absolutePath: target,
+    });
   });
 
   it.each(["root", "intermediate"] as const)(
@@ -546,7 +551,7 @@ describe("bounded PR feedback pagination", () => {
             user: "reviewer",
             state: "COMMENTED",
             commitId: HEAD_SHA,
-            body: "review",
+            body: "r".repeat(100),
           }))
         : [];
       const link =
@@ -554,7 +559,7 @@ describe("bounded PR feedback pagination", () => {
       const apiResponse = {
         ok: true,
         code: 0,
-        stdout: "HTTP/2.0 200 OK\n" + link + "\n" + JSON.stringify(values),
+        stdout: "HTTP/2.0 200 OK\r\n" + link + "\r\n" + JSON.stringify(values),
         stderr: "",
       };
       const command = args[0] + " " + args[1];
@@ -574,7 +579,13 @@ describe("bounded PR feedback pagination", () => {
     });
 
     expect(result.reviews).toHaveLength(100);
+    expect(result.reviews[0].body).toBe("r".repeat(100));
     expect(result.truncation.reviews).toBe(false);
+    expect(
+      runGithubCli.mock.calls
+        .filter(([call]) => call.args.some((arg: string) => arg.includes("/reviews?")))
+        .every(([call]) => call.args.some((arg: string) => arg.includes("[:100]"))),
+    ).toBe(true);
     expect(
       runGithubCli.mock.calls.filter(([call]) =>
         call.args.some((arg: string) => arg.includes("/reviews?")),

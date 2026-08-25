@@ -60,10 +60,11 @@ export default async function collect_pr_feedback(input: {
         "--jq",
         projection,
       ]);
-      const boundary = text.indexOf("\n\n");
-      if (boundary < 0) throw new Error("GitHub REST projection response omitted headers");
-      const headers = text.slice(0, boundary);
-      const body = text.slice(boundary + 2);
+      const separator = text.match(/\r?\n\r?\n/u);
+      if (!separator || separator.index === undefined)
+        throw new Error("GitHub REST projection response omitted headers");
+      const headers = text.slice(0, separator.index);
+      const body = text.slice(separator.index + separator[0].length);
       const values = body ? JSON.parse(body) : [];
       if (
         !Array.isArray(values) ||
