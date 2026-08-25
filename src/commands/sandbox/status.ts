@@ -6,11 +6,11 @@ import {
   isInferenceHealthFailing,
   showSandboxStatus,
 } from "../../lib/actions/sandbox/status";
-import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { NemoClawSandboxCommand } from "../../lib/cli/nemoclaw-sandbox-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 import { redactForLog } from "../../lib/security/redact";
 
-export default class SandboxStatusCommand extends NemoClawCommand {
+export default class SandboxStatusCommand extends NemoClawSandboxCommand {
   static id = "sandbox:status";
   static strict = true;
   static enableJsonFlag = true;

@@ -32,6 +32,16 @@ const mocks = vi.hoisted(() => {
     destroySandbox: vi.fn().mockResolvedValue(undefined),
     listSandboxChannels: vi.fn(),
     listSandboxPolicies: vi.fn(),
+    quarantineSandbox: vi.fn().mockReturnValue({
+      exitCode: 0,
+      status: "quarantined",
+      message: "quarantined",
+    }),
+    releaseSandboxQuarantine: vi.fn().mockReturnValue({
+      exitCode: 0,
+      status: "released",
+      message: "released",
+    }),
     rebuildSandbox: vi.fn().mockResolvedValue(undefined),
     restartSandboxGateway: vi.fn().mockReturnValue({ ok: true }),
     recoverSandboxWithHermesCronRestore: vi.fn().mockResolvedValue(undefined),
@@ -81,6 +91,12 @@ vi.mock("../../lib/actions/sandbox/policy-channel", () => ({
   listSandboxPolicies: mocks.listSandboxPolicies,
 }));
 
+vi.mock("../../lib/actions/sandbox/quarantine/index", () => ({
+  quarantineSandbox: mocks.quarantineSandbox,
+  releaseSandboxQuarantine: mocks.releaseSandboxQuarantine,
+  QUARANTINE_RELEASE_GUIDANCE: "Release does not start the sandbox.",
+}));
+
 vi.mock("../../lib/actions/sandbox/host-aliases", () => ({
   addSandboxHostAlias: mocks.addSandboxHostAlias,
   listSandboxHostAliases: mocks.listSandboxHostAliases,
@@ -120,6 +136,8 @@ import HostsListCommand from "./hosts/list";
 import HostsRemoveCommand from "./hosts/remove";
 import SandboxLogsCommand from "./logs";
 import SandboxPolicyListCommand from "./policy/list";
+import SandboxQuarantineCommand from "./quarantine";
+import SandboxQuarantineReleaseCommand from "./quarantine/release";
 import RebuildCliCommand from "./rebuild";
 import RecoverCliCommand from "./recover";
 import ShieldsDownCommand from "./shields/down";
@@ -193,6 +211,32 @@ describe("sandbox oclif command adapters", () => {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
     }
+  });
+
+  it("maps quarantine and exact release flags to typed action options (#10140)", async () => {
+    await SandboxQuarantineCommand.run(
+      [
+        "alpha",
+        "--reason",
+        "incident investigation",
+        "--idempotency-key",
+        "incident-42",
+      ],
+      rootDir,
+    );
+    await SandboxQuarantineReleaseCommand.run(
+      ["alpha", "--fence-id", "00000000-0000-4000-8000-000000000001"],
+      rootDir,
+    );
+
+    expect(mocks.quarantineSandbox).toHaveBeenCalledWith("alpha", {
+      reason: "incident investigation",
+      idempotencyKey: "incident-42",
+    });
+    expect(mocks.releaseSandboxQuarantine).toHaveBeenCalledWith(
+      "alpha",
+      "00000000-0000-4000-8000-000000000001",
+    );
   });
 
   it("does not hold the command lifecycle lock during an interactive connect (#9737)", async () => {

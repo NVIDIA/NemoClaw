@@ -19,6 +19,7 @@ import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
+import { assertSandboxActivationAllowed } from "./quarantine/guard";
 
 function verifyGateway(sandboxName: string): Promise<void> {
   const { connectSandbox } = require("./connect") as typeof import("./connect");
@@ -188,6 +189,7 @@ async function startSandboxWithinLifecycleFence(
 ): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+  assertSandboxActivationAllowed(sandboxName, "start", () => sandbox);
   const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
     sandbox,

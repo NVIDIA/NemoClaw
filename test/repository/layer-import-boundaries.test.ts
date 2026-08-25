@@ -124,6 +124,11 @@ describe("CLI layer import boundaries (#6245)", () => {
       source:
         'import { NemoClawCommand as Base } from "../lib/cli/nemoclaw-oclif-command";\nexport default class Example extends Base {}\n',
     },
+    {
+      name: "the NemoClaw sandbox command base",
+      source:
+        'import { NemoClawSandboxCommand as Base } from "../lib/cli/nemoclaw-sandbox-command";\nexport default class Example extends Base {}\n',
+    },
   ])("recognizes $name by its import binding (#6245)", ({ source }) => {
     const violations = scanFixture(fixturePath("src/commands", "command-binding"), source);
 

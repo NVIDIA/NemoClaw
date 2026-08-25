@@ -23,6 +23,7 @@ import {
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
+  assertSandboxActivationAllowed,
 } from "./gateway-target";
 
 const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
@@ -106,7 +107,15 @@ export {
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
 export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
-export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+export function withConnectSandboxLifecycleLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertSandboxActivationAllowed(sandboxName, "connect");
+    return operation();
+  });
+}
 
 type SandboxGatewayStateLookup = (
   sandboxName: string,

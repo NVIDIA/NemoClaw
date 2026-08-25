@@ -6,6 +6,7 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provi
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import type { SandboxEntry } from "../../../state/registry/types";
+import { assertSandboxActivationAllowed } from "../quarantine/guard";
 
 export {
   confirmHostLocalInferenceAuthority,
@@ -68,4 +69,8 @@ export function assertSandboxSnapshotCommandAvailable(
     | "sandbox:snapshot:restore",
 ): void {
   assertHermesPortableCommandUnavailable(sandboxName, commandId);
+}
+
+export function assertSandboxSnapshotRestoreTargetAllowed(targetSandbox: string): void {
+  assertSandboxActivationAllowed(targetSandbox, "snapshot restore");
 }

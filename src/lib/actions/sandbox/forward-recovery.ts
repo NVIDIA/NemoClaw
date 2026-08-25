@@ -145,11 +145,11 @@ export function teardownSandboxDashboardForward(
     resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
     runOpenshell?: DashboardForwardStopRunner;
   } = {},
-): void {
+): boolean {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
     const sandbox = getSandbox(sandboxName);
-    if (!sandbox) return;
+    if (!sandbox) return true;
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(sandbox);
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
     const port = resolvePort(sandboxName, { getSandbox: () => sandbox });
@@ -159,13 +159,15 @@ export function teardownSandboxDashboardForward(
       stdio: "ignore",
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
-    if (result.status !== 0) return;
-    waitForStoppedForwardPortRelease(
+    if (result.status !== 0) return false;
+    const isReachable = deps.isLocalForwardReachable ?? isLocalForwardReachable;
+    return waitForStoppedForwardPortRelease(
       port,
-      deps.isLocalForwardReachable ?? isLocalForwardReachable,
+      isReachable,
     );
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
+    return false;
   }
 }
 

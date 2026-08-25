@@ -267,6 +267,14 @@ export async function upgradeSandboxes(
     console.log("  No sandboxes found in the registry.");
     return;
   }
+  const quarantined = sandboxes.filter((sandbox) => sandbox.quarantine);
+  if (!checkOnly && quarantined.length > 0) {
+    const names = quarantined.map((sandbox) => sandbox.name).sort().join(", ");
+    throw new Error(
+      `Cannot upgrade while registered sandboxes are quarantined: ${names}. ` +
+        "Release each quarantine explicitly or destroy the sandbox first.",
+    );
+  }
 
   // OpenShell can no longer recreate legacy registry identities that fall
   // outside the canonical sandbox-name contract. Detect every such identity

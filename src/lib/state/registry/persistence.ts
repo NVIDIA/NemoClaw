@@ -27,6 +27,7 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "./host-local-inference";
 import type { SandboxEntry, SandboxRegistry } from "./types";
+import { normalizeSandboxQuarantineFence } from "./quarantine";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
 function cloneSandboxWorkloadReceiptOrThrow(
@@ -167,6 +168,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     entry.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
+  const quarantine = normalizeSandboxQuarantineFence(entry.quarantine);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -178,6 +180,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    quarantine: _quarantine,
     ...rest
   } = entry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
@@ -191,6 +194,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...(quarantine ? { quarantine } : {}),
   };
 }
 
@@ -235,6 +239,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     durable.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
+  const quarantine = normalizeSandboxQuarantineFence(durable.quarantine);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -246,6 +251,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    quarantine: _quarantine,
     ...rest
   } = durable as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
@@ -260,5 +266,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...(quarantine ? { quarantine } : {}),
   };
 }

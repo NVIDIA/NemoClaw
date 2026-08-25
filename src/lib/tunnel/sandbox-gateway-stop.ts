@@ -55,7 +55,10 @@ function validateSandboxName(name: string): string {
 }
 
 /** Stop only a proven OpenClaw gateway; supervised agents remain owned by their sandbox. */
-export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewayStopDeps = {}): void {
+export function stopSandboxChannels(
+  sandboxName: string,
+  deps: SandboxGatewayStopDeps = {},
+): boolean | void {
   const info = deps.info ?? defaultInfo;
   const warn = deps.warn ?? defaultWarn;
   const validatedSandboxName = validateSandboxName(sandboxName);
@@ -67,7 +70,7 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       `Could not read the sandbox registry for '${validatedSandboxName}': ` +
         `${(error as Error).message ?? String(error)}. Skipping in-sandbox gateway stop.`,
     );
-    return;
+    return false;
   }
   const agent = (deps.getRegisteredAgent ?? agentRuntime.getRegisteredAgent)(sandbox);
 
@@ -76,12 +79,12 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       `Could not resolve registered agent '${sandbox.agent}' for sandbox ` +
         `'${validatedSandboxName}'; skipping in-sandbox gateway stop.`,
     );
-    return;
+    return false;
   }
   if (!(deps.hasGatewayRuntime ?? agentRuntime.hasGatewayRuntime)(agent)) {
     const agentDisplayName = (deps.getAgentDisplayName ?? agentRuntime.getAgentDisplayName)(agent);
     info(`${agentDisplayName} has no gateway runtime; skipping in-sandbox gateway stop.`);
-    return;
+    return true;
   }
 
   const agentDisplayName = (deps.getAgentDisplayName ?? agentRuntime.getAgentDisplayName)(agent);
@@ -90,7 +93,7 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       `${agentDisplayName} gateway is managed by the sandbox; ` +
         "leaving it running while host forwards stop.",
     );
-    return;
+    return true;
   }
 
   let gatewayName: string;
@@ -101,7 +104,7 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       `Could not resolve the OpenShell gateway for sandbox '${validatedSandboxName}': ` +
         `${(error as Error).message ?? String(error)}. Skipping in-sandbox gateway stop.`,
     );
-    return;
+    return false;
   }
 
   const gatewayLabel = `${agentDisplayName} gateway`;
@@ -114,13 +117,14 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       GATEWAY_STOP_SCRIPT,
       deps.runDocker ?? dockerSpawnSync,
     );
-    if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
+    const outcome = reportStopResult(privilegedResult, gatewayLabel, info, warn);
+    if (outcome !== null) return outcome;
   }
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!openshell) {
     warn(`openshell not found — cannot stop ${gatewayLabel} inside sandbox.`);
-    return;
+    return false;
   }
 
   const fallbackResult = (deps.runProcess ?? spawnSync)(
@@ -133,7 +137,7 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       timeout: 20000,
     },
   );
-  reportStopResult(fallbackResult, gatewayLabel, info, warn);
+  return reportStopResult(fallbackResult, gatewayLabel, info, warn) ?? false;
 }
 
 function isSandboxPodName(line: string, sandboxName: string): boolean {
@@ -192,8 +196,8 @@ function reportStopResult(
   gatewayLabel: string,
   info: Reporter,
   warn: Reporter,
-): boolean {
-  if (!result) return false;
+): boolean | null {
+  if (!result) return null;
 
   if (result.status === 0) {
     info(`${gatewayLabel} stopped inside sandbox.`);
@@ -214,5 +218,5 @@ function reportStopResult(
       " The sandbox may be unreachable or the gateway may still be running." +
       (details ? ` Details: ${details}` : ""),
   );
-  return true;
+  return false;
 }

@@ -945,6 +945,12 @@ export async function runHermesPortableOnboardingTransaction<T>(
     if (authority.kind === "openclaw") fail("will not reinterpret OpenClaw lifecycle authority");
     let snapshot = authority.kind === "hermes" ? authority.snapshot : null;
     const initialRegistryEntry = deps.readRegistry();
+    if (initialRegistryEntry?.quarantine) {
+      fail(
+        `sandbox is quarantined by fence ${initialRegistryEntry.quarantine.fenceId}; ` +
+          "release or destroy it before onboarding",
+      );
+    }
     const routeReservationAuthority: SandboxInferenceRouteReservationAuthority = {
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,

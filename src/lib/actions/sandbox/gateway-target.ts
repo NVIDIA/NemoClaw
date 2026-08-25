@@ -4,10 +4,13 @@
 import { GATEWAY_PORT } from "../../core/ports";
 import {
   resolveGatewayName,
+  resolveGatewayPortFromName,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
+
+export { assertSandboxActivationAllowed } from "./quarantine/guard";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
   return registry.getSandbox(sandboxName);
@@ -25,6 +28,15 @@ export function getSandboxTargetGatewayName(sandboxName = ""): string {
 /** Resolve a gateway directly from the already-authoritative persisted row. */
 export function getPersistedSandboxTargetGatewayName(sandbox: SandboxGatewayBinding): string {
   return resolveSandboxGatewayName(sandbox);
+}
+
+export function getPersistedSandboxTargetGatewayBinding(
+  sandbox: SandboxGatewayBinding,
+): { name: string; port: number } {
+  const name = resolveSandboxGatewayName(sandbox);
+  const port = resolveGatewayPortFromName(name);
+  if (port === null) throw new Error(`Sandbox has an invalid gateway binding '${name}'`);
+  return { name, port };
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {

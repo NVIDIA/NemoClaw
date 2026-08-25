@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redactSensitiveText } from "../../security/redact";
+import { redactSensitiveText } from "../../security/secret-free-text";
 
 export type InferenceRouteProbeAgent = { name: string } | null;
 

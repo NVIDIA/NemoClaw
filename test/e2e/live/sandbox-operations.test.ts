@@ -173,6 +173,141 @@ async function execInSandbox(
   });
 }
 
+function commandJson(result: ShellProbeResult, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`${label} did not return one JSON document: ${resultText(result)}`);
+  }
+  expect(parsed, `${label} returned a null JSON document`).not.toBeNull();
+  expect(typeof parsed, `${label} returned a non-object JSON document`).toBe("object");
+  expect(Array.isArray(parsed), `${label} returned an array JSON document`).toBe(false);
+  return parsed as Record<string, unknown>;
+}
+
+async function assertQuarantineLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  hosted: HostedInferenceConfig,
+): Promise<void> {
+  const idempotencyKey = "tc-sbx-14-quarantine-request";
+  const marker = await execInSandbox(
+    sandbox,
+    sandboxName,
+    "printf quarantine-preserved >/sandbox/quarantine-marker",
+    "tc-sbx-14-write-evidence-marker",
+  );
+  expectExitZero(marker, "write pre-quarantine workspace marker");
+
+  const first = await host.nemoclaw(
+    [
+      sandboxName,
+      "quarantine",
+      "--reason",
+      "unexpected outbound activity",
+      "--idempotency-key",
+      idempotencyKey,
+      "--json",
+    ],
+    {
+      artifactName: "tc-sbx-14-quarantine",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  expectExitZero(first, `nemoclaw ${sandboxName} quarantine`);
+  const firstJson = commandJson(first, "quarantine");
+  expect(firstJson.status).toBe("quarantined");
+  expect(firstJson.fenceId).toEqual(expect.any(String));
+  expect(firstJson.receiptPath).toEqual(expect.any(String));
+  expect((firstJson.receipt as { status?: unknown } | undefined)?.status).toBe("quarantined");
+
+  const receiptPath = String(firstJson.receiptPath);
+  const receiptBytes = fs.readFileSync(receiptPath, "utf8");
+  expect(receiptBytes).not.toContain(idempotencyKey);
+  expect(receiptBytes).not.toContain(hosted.apiKey);
+  expect(fs.statSync(receiptPath).mode & 0o777).toBe(0o600);
+
+  const retry = await host.nemoclaw(
+    [
+      sandboxName,
+      "quarantine",
+      "--reason",
+      "unexpected outbound activity",
+      "--idempotency-key",
+      idempotencyKey,
+      "--json",
+    ],
+    {
+      artifactName: "tc-sbx-14-quarantine-idempotent-retry",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(retry, "idempotent quarantine retry");
+  const retryJson = commandJson(retry, "quarantine retry");
+  expect(retryJson.fenceId).toBe(firstJson.fenceId);
+  expect(retryJson.receiptPath).toBe(firstJson.receiptPath);
+
+  const deniedStart = await host.nemoclaw([sandboxName, "start"], {
+    artifactName: "tc-sbx-14-start-denied",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(deniedStart.exitCode, resultText(deniedStart)).not.toBe(0);
+  expect(resultText(deniedStart)).toContain("quarantined");
+
+  const deniedAccess = await execInSandbox(
+    sandbox,
+    sandboxName,
+    "true",
+    "tc-sbx-14-access-denied",
+  );
+  expect(deniedAccess.exitCode, resultText(deniedAccess)).not.toBe(0);
+  await expectHostPortFree(host, "18789", "tc-sbx-14-dashboard-port-free");
+
+  const status = await host.nemoclaw([sandboxName, "status"], {
+    artifactName: "tc-sbx-14-status-evidence",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(resultText(status)).toContain(`fence ${String(firstJson.fenceId)}`);
+
+  const release = await host.nemoclaw(
+    [sandboxName, "quarantine", "release", "--fence-id", String(firstJson.fenceId)],
+    {
+      artifactName: "tc-sbx-14-release",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(release, "release quarantine fence");
+
+  const stillStopped = await execInSandbox(
+    sandbox,
+    sandboxName,
+    "true",
+    "tc-sbx-14-release-does-not-start",
+  );
+  expect(stillStopped.exitCode, resultText(stillStopped)).not.toBe(0);
+
+  const start = await host.nemoclaw([sandboxName, "start"], {
+    artifactName: "tc-sbx-14-explicit-start",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 5 * 60_000,
+  });
+  expectExitZero(start, "explicit start after quarantine release");
+  const preserved = await execInSandbox(
+    sandbox,
+    sandboxName,
+    "test \"$(cat /sandbox/quarantine-marker)\" = quarantine-preserved",
+    "tc-sbx-14-workspace-preserved",
+  );
+  expectExitZero(preserved, "workspace marker after quarantine release and explicit start");
+}
+
 function findJsonObjectEnd(raw: string, start: number): number | null {
   let depth = 0;
   let inString = false;
@@ -702,7 +837,7 @@ async function assertGatewayRecovery(
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 45 * 60_000,
+    timeout: 55 * 60_000,
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",
@@ -713,6 +848,7 @@ test(
         "onboard the secondary sandbox",
         "verify metadata and cross-sandbox isolation",
         "destroy the secondary sandbox and recover the survivor",
+        "quarantine release and explicitly restart the survivor",
         "destroy the final sandbox and confirm port release",
       ],
     },
@@ -739,6 +875,7 @@ test(
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
         "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port through the macOS default or explicit non-macOS cleanup",
         "TC-SBX-13 bare connect routes to the default sandbox and enforces login and interactive shell resource limits without startup diagnostics (#2173)",
+        "TC-SBX-14 quarantine fences restart, stops execution and access, preserves evidence, retries idempotently, and release does not start (#10140)",
       ],
     });
 
@@ -791,6 +928,9 @@ test(
     const finalDestroyCleanupMode =
       process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
 
+    progress.phase("quarantine release and explicitly restart the survivor");
+    await assertQuarantineLifecycle(host, sandbox, SANDBOX_A, hosted);
+
     progress.phase("destroy the final sandbox and confirm port release");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A, {
       cleanupGateway: finalDestroyCleanupMode === "explicit-non-macos",
@@ -803,6 +943,7 @@ test(
       finalDestroyCleanupMode,
       finalGatewayPortReleased: true,
       gatewayRecovery,
+      quarantineLifecycleValidated: true,
       connectRlimitsValidated: true,
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });

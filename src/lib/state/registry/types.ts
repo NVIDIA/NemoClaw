@@ -54,6 +54,64 @@ export interface BaselineExclusionTransition {
   startedAt: string;
 }
 
+export type SandboxQuarantinePhase =
+  | "fenced"
+  | "stopping"
+  | "verifying"
+  | "quarantined"
+  | "partial";
+
+export type SandboxQuarantineOperation =
+  | "fence-persistence"
+  | "receipt-persistence"
+  | "messaging-stop"
+  | "dashboard-stop"
+  | "service-access-stop"
+  | "workload-stop"
+  | "execution-observation"
+  | "sandbox-access-observation";
+
+export interface SandboxQuarantineAttempt {
+  readonly operation: SandboxQuarantineOperation;
+  readonly attemptedAt: string;
+  readonly outcome: "succeeded" | "failed" | "inconclusive";
+  /** Redacted, bounded diagnostic. Never provider output or sandbox content. */
+  readonly detail?: string;
+}
+
+/** Exact registry and provider identity fenced by one quarantine request. */
+export interface SandboxQuarantineTarget {
+  readonly sandboxName: string;
+  readonly providerId: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly liveIdentityFingerprint: string;
+  readonly providerHandle: string;
+  readonly providerLifecycleGeneration: string;
+  readonly runtime: {
+    readonly kind: string;
+    readonly handle: string;
+  };
+}
+
+/**
+ * Durable fail-closed restart fence and crash-recovery journal. The fence is
+ * written before any stop operation and remains active after partial failure.
+ */
+export interface SandboxQuarantineFence {
+  readonly schemaVersion: 1;
+  readonly fenceId: string;
+  /** SHA-256 of the caller's idempotency key; the key itself is never stored. */
+  readonly requestIdentity: string;
+  readonly reason: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly phase: SandboxQuarantinePhase;
+  readonly target: SandboxQuarantineTarget;
+  readonly attempts: readonly SandboxQuarantineAttempt[];
+}
+
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
 // `status` separates a configured-but-unverified GPU from one whose CUDA
 // usability was actually proven (`verified`) or actively failed a live proof
@@ -188,6 +246,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   lifecycleGeneration?: string;
   /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */
   lifecycleLiveIdentityFingerprint?: string;
+  /** Durable restart fence and crash-recovery journal for operator quarantine. */
+  quarantine?: SandboxQuarantineFence;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a

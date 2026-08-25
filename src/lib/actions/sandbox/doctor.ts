@@ -549,8 +549,9 @@ async function collectDoctorChecks(
   intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
   const host = collectHostChecks(sb);
+  const recoverGateway = !intent.asJson && !sb?.quarantine;
   const gateway: GatewayProbe = gatewayName
-    ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson)
+    ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, recoverGateway)
     : {
         connected: false,
         checks: [

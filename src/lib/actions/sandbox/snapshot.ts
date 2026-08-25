@@ -88,6 +88,7 @@ import {
 import {
   backupSandboxStateWithManagedAuthority,
   assertSandboxSnapshotCommandAvailable,
+  assertSandboxSnapshotRestoreTargetAllowed,
   confirmHostLocalInferenceAuthority,
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
@@ -1309,6 +1310,7 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  assertSandboxSnapshotRestoreTargetAllowed(targetSandbox);
   const lockNames = targetSandbox === sandboxName ? [sandboxName] : [sandboxName, targetSandbox];
   assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:restore");
   if (targetSandbox !== sandboxName) {
@@ -1322,6 +1324,7 @@ async function runSnapshotRestore(
           if (targetSandbox !== sandboxName) {
             assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
           }
+          assertSandboxSnapshotRestoreTargetAllowed(targetSandbox);
           return runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox);
         })
       : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));

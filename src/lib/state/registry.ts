@@ -104,6 +104,11 @@ export type {
   SandboxGpuProofResult,
   SandboxGpuProofStatus,
   SandboxHostMount,
+  SandboxQuarantineAttempt,
+  SandboxQuarantineFence,
+  SandboxQuarantineOperation,
+  SandboxQuarantinePhase,
+  SandboxQuarantineTarget,
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
@@ -145,6 +150,11 @@ export function registerSandbox(
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
+    if (entry.quarantine || data.sandboxes[entry.name]?.quarantine) {
+      throw new Error(
+        `Sandbox '${entry.name}' is quarantined. Release its quarantine before onboarding or replacing it.`,
+      );
+    }
     if (
       routeReservation &&
       (!isCurrentSandboxInferenceRouteReservation(
@@ -265,6 +275,7 @@ export function registerSandbox(
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
+      quarantine: undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
@@ -321,6 +332,7 @@ export function reserveSandboxInferenceRoute(
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
+    if (existing?.quarantine) return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
@@ -398,6 +410,14 @@ const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEnt
   "preferredInferenceApi",
   "provider",
 ]);
+const QUARANTINE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "name",
+  "openshellDriver",
+  "lifecycleGeneration",
+  "lifecycleLiveIdentityFingerprint",
+  "gatewayName",
+  "gatewayPort",
+]);
 
 function changesHostLocalInferenceLifecycleAuthority(
   current: SandboxEntry,
@@ -423,6 +443,17 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     const current = data.sandboxes[name];
     if (!current) return false;
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
+      return false;
+    }
+    if (
+      current.quarantine &&
+      (Object.prototype.hasOwnProperty.call(updates, "quarantine") ||
+        Object.entries(updates).some(
+          ([field, value]) =>
+            QUARANTINE_LIFECYCLE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+            !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),
+        ))
+    ) {
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;

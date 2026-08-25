@@ -187,6 +187,8 @@ export interface SandboxStatusReport {
     operation: registry.BaselineExclusionTransitionOperation;
     key: string;
   } | null;
+  /** Active fail-closed restart fence and its secret-free crash journal. */
+  quarantine: registry.SandboxQuarantineFence | null;
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
@@ -407,12 +409,6 @@ export async function collectSandboxStatusSnapshot(
     deps?: CollectSandboxStatusSnapshotDeps;
   } = {},
 ): Promise<SandboxStatusSnapshot> {
-  const reconcile =
-    opts.deps?.reconcile ??
-    ((name: string) =>
-      getReconciledSandboxGatewayState(name, {
-        getState: getSandboxGatewayStateForStatus,
-      }));
   const getSandbox =
     opts.deps?.getSandbox ??
     ((name: string) => {
@@ -420,6 +416,15 @@ export async function collectSandboxStatusSnapshot(
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
   const sb = getSandbox(sandboxName);
+  const reconcile =
+    opts.deps?.reconcile ??
+    (sb?.quarantine
+      ? (name: string) =>
+          getSandboxGatewayStateForStatus(name, resolveSandboxGatewayName(sb))
+      : (name: string) =>
+          getReconciledSandboxGatewayState(name, {
+            getState: getSandboxGatewayStateForStatus,
+          }));
   let lookup: SandboxGatewayState;
   try {
     lookup = await reconcile(sandboxName);
@@ -434,12 +439,14 @@ export async function collectSandboxStatusSnapshot(
   const managedOpenClawDeliveryMustBeProven =
     lookup.state === "present" &&
     sb?.openshellDriver === "docker" &&
+    !sb.quarantine &&
     (sb.agent ?? "openclaw") === "openclaw" &&
     parseSandboxPhase(lookup.output || "") === "Ready" &&
     !opts.preflight?.failure;
   let recoveredManagedGateway = false;
   if (
     lookup.state === "present" &&
+    !sb?.quarantine &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
   ) {
     let failure: SandboxProcessRecoveryFailure | null;
@@ -481,8 +488,9 @@ export async function collectSandboxStatusSnapshot(
         )
       : undefined;
   const suppressInferenceProbe =
-    (postRecoveryPreflight ?? opts.preflight)?.suppressInferenceProbe ??
-    opts.suppressInferenceProbe === true;
+    Boolean(sb?.quarantine) ||
+    ((postRecoveryPreflight ?? opts.preflight)?.suppressInferenceProbe ??
+      opts.suppressInferenceProbe === true);
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -779,6 +787,7 @@ async function buildSandboxStatusReport(
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,
+    quarantine: sb?.quarantine ?? null,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,

@@ -345,13 +345,15 @@ function checkCommandFile(absPath: string, repoPath: string, violations: Violati
     }
 
     const moduleSpecifier = statement.moduleSpecifier.text;
+    const resolvedImport = resolveInternalImport(absPath, moduleSpecifier);
     const exportedBases =
       moduleSpecifier === "@oclif/core"
         ? new Set(["Command"])
-        : resolveInternalImport(absPath, moduleSpecifier) ===
-            "src/lib/cli/nemoclaw-oclif-command.ts"
+        : resolvedImport === "src/lib/cli/nemoclaw-oclif-command.ts"
           ? new Set(["NemoClawCommand"])
-          : null;
+          : resolvedImport === "src/lib/cli/nemoclaw-sandbox-command.ts"
+            ? new Set(["NemoClawSandboxCommand"])
+            : null;
     if (!exportedBases) continue;
 
     const bindings = statement.importClause.namedBindings;

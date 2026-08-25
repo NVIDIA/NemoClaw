@@ -18,6 +18,7 @@ import {
 } from "../state/portable-uninstall-retirement";
 import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
+import { assertSandboxCommandAllowedByQuarantine } from "../actions/sandbox/quarantine/guard";
 
 export type CommandExitResult = {
   exitCode?: number | null;
@@ -81,6 +82,14 @@ export abstract class NemoClawCommand extends Command {
       !portablePolicy?.helpRequested
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
+    }
+    if (
+      typeof commandId === "string" &&
+      sandboxName &&
+      (commandId === "launch" || commandId.startsWith("sandbox:")) &&
+      !portablePolicy?.helpRequested
+    ) {
+      assertSandboxCommandAllowedByQuarantine(commandId, sandboxName, this.argv);
     }
   }
 

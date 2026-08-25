@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { Args, Flags } from "@oclif/core";
+
+import {
+  quarantineSandbox,
+  type QuarantineSandboxResult,
+} from "../../lib/actions/sandbox/quarantine/index";
+import { NemoClawSandboxCommand } from "../../lib/cli/nemoclaw-sandbox-command";
+
+function latestOutcome(
+  result: QuarantineSandboxResult,
+  operation: "execution-observation" | "sandbox-access-observation" | "service-access-stop",
+): string {
+  const entry = [...(result.receipt?.fence.attempts ?? [])]
+    .reverse()
+    .find((attempt) => attempt.operation === operation);
+  return entry?.outcome ?? "not attempted";
+}
+
+export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
+  static id = "sandbox:quarantine";
+  static strict = true;
+  static enableJsonFlag = true;
+  static summary = "Fence and stop a sandbox without deleting its evidence";
+  static description =
+    "Persist a restart fence before stopping messaging, dashboard access, and the runtime workload. Partial failures leave the fence active and do not roll back completed stops.";
+  static usage = ["<name> --reason <text> [--idempotency-key <key>] [--json]"];
+  static examples = [
+    '<%= config.bin %> alpha quarantine --reason "incident investigation"',
+    '<%= config.bin %> sandbox quarantine alpha --reason "incident investigation" --idempotency-key incident-42',
+  ];
+  static args = {
+    sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
+  };
+  static flags = {
+    reason: Flags.string({
+      description: "Secret-free operator reason recorded in the quarantine receipt",
+      required: true,
+    }),
+    "idempotency-key": Flags.string({
+      description: "Retry identity; the receipt stores only its SHA-256 digest",
+    }),
+  };
+
+  public async run(): Promise<unknown> {
+    const { args, flags } = await this.parse(SandboxQuarantineCommand);
+    const request = {
+      reason: flags.reason,
+      idempotencyKey: flags["idempotency-key"],
+    };
+    const result = this.jsonEnabled()
+      ? quarantineSandbox(args.sandboxName, request, { log: () => {} })
+      : quarantineSandbox(args.sandboxName, request);
+    this.setExitCode(result.exitCode);
+    if (this.jsonEnabled()) return result;
+    console.log(`  ${result.message}`);
+    if (result.receipt) {
+      console.log(`  Execution observation: ${latestOutcome(result, "execution-observation")}`);
+      console.log(
+        `  Sandbox access observation: ${latestOutcome(result, "sandbox-access-observation")}`,
+      );
+      console.log(`  Service access stop: ${latestOutcome(result, "service-access-stop")}`);
+      console.log("  Workspace: preserved");
+    }
+    if (result.fenceId) console.log(`  Fence: ${result.fenceId}`);
+    if (result.idempotencyKey) {
+      console.log(`  Idempotency key: ${result.idempotencyKey}`);
+      console.log("  Save this key to reconcile the same request after an interruption.");
+    }
+    if (result.receiptPath) console.log(`  Receipt: ${result.receiptPath}`);
+  }
+}

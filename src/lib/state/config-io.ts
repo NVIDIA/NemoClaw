@@ -30,6 +30,13 @@ function hostNemoclawDir(): string {
   return path.resolve(nemoclawStateRoot(home, GATEWAY_PORT));
 }
 
+export function resolveHostNemoclawDir(
+  gatewayPort: number,
+  home: string = process.env.HOME ?? os.homedir(),
+): string {
+  return nemoclawStateRoot(home, gatewayPort);
+}
+
 function isHostNemoclawRoot(dirPath: string): boolean {
   return path.resolve(dirPath) === hostNemoclawDir();
 }

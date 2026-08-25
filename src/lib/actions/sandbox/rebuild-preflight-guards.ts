@@ -29,6 +29,7 @@ import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
+import { assertSandboxActivationAllowed } from "./quarantine/guard";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-preflight";
 
@@ -57,6 +58,7 @@ const defaultRouteDependencies: RebuildRouteRegistryDependencies = {
 
 export function assertSandboxRebuildCommandAvailable(sandboxName: string): void {
   assertHermesPortableCommandUnavailable(sandboxName, "sandbox:rebuild");
+  assertSandboxActivationAllowed(sandboxName, "rebuild");
 }
 
 function normalizedRoute(entry: Partial<SandboxEntry>): GatewayInferenceRoute {

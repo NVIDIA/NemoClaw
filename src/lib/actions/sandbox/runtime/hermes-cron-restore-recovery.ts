@@ -9,6 +9,7 @@ import {
   prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
 } from "../rebuild-hermes-post-restore";
+import { assertSandboxActivationAllowed } from "../quarantine/guard";
 
 const RECOVERY_LOCK_TIMEOUT_MS = 30_000;
 
@@ -17,6 +18,7 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
   await withMcpLifecycleLock(
     sandboxName,
     async () => {
+      assertSandboxActivationAllowed(sandboxName, "recover");
       const portable = inspectPortableAgentReceiptDisposition(sandboxName);
       if (portable.kind === "hermes") {
         await connectSandbox(sandboxName, {

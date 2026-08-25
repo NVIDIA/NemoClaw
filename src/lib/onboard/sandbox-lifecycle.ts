@@ -56,6 +56,12 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
 
   function inspectSandboxForCreate(sandboxName: string) {
     const existingEntry = registry.getSandbox(sandboxName);
+    if (existingEntry?.quarantine) {
+      throw new Error(
+        `Sandbox '${sandboxName}' is quarantined by fence ${existingEntry.quarantine.fenceId}. ` +
+          "Release or destroy it before onboarding can reuse or replace that name.",
+      );
+    }
     if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
       throw new Error(
         `Sandbox '${sandboxName}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before recreating it.`,

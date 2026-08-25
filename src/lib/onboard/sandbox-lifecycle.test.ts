@@ -144,6 +144,47 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     },
   );
 
+  it("blocks onboarding reuse before probing a quarantined sandbox (#10140)", () => {
+    const runCaptureOpenshell = vi.fn(() => null);
+    registryState.sandbox = {
+      name: "alpha",
+      quarantine: {
+        schemaVersion: 1,
+        fenceId: "00000000-0000-4000-8000-000000000001",
+        requestIdentity: "a".repeat(64),
+        reason: "incident investigation",
+        createdAt: "2026-08-25T04:00:00.000Z",
+        updatedAt: "2026-08-25T04:00:00.000Z",
+        phase: "quarantined",
+        target: {
+          sandboxName: "alpha",
+          providerId: "docker",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "registry-generation-1",
+          liveIdentityFingerprint: "b".repeat(64),
+          providerHandle: "c".repeat(64),
+          providerLifecycleGeneration: "provider-generation-1",
+          runtime: { kind: "docker-container", handle: "d".repeat(64) },
+        },
+        attempts: [],
+      },
+    };
+    const helpers = createSandboxLifecycleHelpers({
+      runCaptureOpenshell,
+      getGatewayName: () => "nemoclaw",
+      fetchGatewayAuthTokenFromSandbox: () => null,
+      agentProductName: () => "OpenClaw",
+      prompt: async () => "no",
+      isAffirmativeAnswer: () => false,
+    });
+
+    expect(() => helpers.inspectSandboxForCreate("alpha")).toThrow(
+      /quarantined.*before onboarding/u,
+    );
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
   it("keeps the source registry row when OpenShell reports no sandbox (#7736)", () => {
     const rows = new Map<string, SandboxEntry>([
       ["beta", { name: "beta", agent: "openclaw", toolDisclosure: "progressive" }],

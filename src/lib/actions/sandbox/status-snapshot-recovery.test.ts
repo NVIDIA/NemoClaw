@@ -18,6 +18,35 @@ const sandbox: SandboxEntry = {
   dashboardPort: 18789,
 };
 
+const quarantinedSandbox: SandboxEntry = {
+  ...sandbox,
+  lifecycleGeneration: "registry-generation-1",
+  lifecycleLiveIdentityFingerprint: "a".repeat(64),
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  quarantine: {
+    schemaVersion: 1,
+    fenceId: "00000000-0000-4000-8000-000000000001",
+    requestIdentity: "b".repeat(64),
+    reason: "incident investigation",
+    createdAt: "2026-08-25T04:00:00.000Z",
+    updatedAt: "2026-08-25T04:00:01.000Z",
+    phase: "quarantined",
+    target: {
+      sandboxName: "alpha",
+      providerId: "docker",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "registry-generation-1",
+      liveIdentityFingerprint: "a".repeat(64),
+      providerHandle: "c".repeat(64),
+      providerLifecycleGeneration: "provider-generation-1",
+      runtime: { kind: "docker-container", handle: "d".repeat(64) },
+    },
+    attempts: [],
+  },
+};
+
 const stoppedPreflight: SandboxStatusPreflightResult = {
   failure: {
     layer: "sandbox_container_stopped",
@@ -79,6 +108,26 @@ function snapshotDeps(recoveryResult: unknown) {
 }
 
 describe("collectSandboxStatusSnapshot Docker recovery", () => {
+  it("keeps quarantined status observational even when recovery markers are present (#10140)", async () => {
+    const deps = {
+      ...snapshotDeps({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      }),
+      getSandbox: () => quarantinedSandbox,
+      reconcile: recoveredLookup,
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+    expect(snapshot.sb?.quarantine?.phase).toBe("quarantined");
+  });
+
   it("recovers the delivery chain when OpenShell already reports the restarted container (#7824)", async () => {
     const deps = {
       ...snapshotDeps({

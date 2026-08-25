@@ -117,6 +117,7 @@ function hermesPortableStatusReport(
           key: entry.baselineExclusionTransition.exclusion.key,
         }
       : null,
+    quarantine: entry?.quarantine ?? null,
     failureLayer: null,
     terminalRuntimeHealth: null,
     servingProcessHealth: null,
@@ -150,6 +151,17 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   } catch {
     /* non-fatal — status should still show sandbox diagnostics */
   }
+}
+
+function prepareSandboxStatusSideEffects(sb: registry.SandboxEntry | null): void {
+  const quarantine = sb?.quarantine;
+  if (!quarantine) {
+    maybeEnsureHermesToolGatewayBroker(sb);
+    return;
+  }
+  console.log(
+    `  Quarantine: ${quarantine.phase} (fence ${quarantine.fenceId}, since ${quarantine.createdAt})`,
+  );
 }
 
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
@@ -206,7 +218,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   if (effectivePreflight.exitCode !== 0) {
     process.exitCode = effectivePreflight.exitCode;
   }
-  maybeEnsureHermesToolGatewayBroker(sb);
+  prepareSandboxStatusSideEffects(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {
       action: `checking inference status for sandbox '${sandboxName}'`,

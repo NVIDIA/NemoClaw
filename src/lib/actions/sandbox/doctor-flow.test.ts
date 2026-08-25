@@ -922,6 +922,39 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("keeps plain doctor observational while a quarantine fence is active (#10140)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      registryOverrides: {
+        quarantine: {
+          schemaVersion: 1,
+          fenceId: "00000000-0000-4000-8000-000000000001",
+          requestIdentity: "a".repeat(64),
+          reason: "incident investigation",
+          createdAt: "2026-08-25T04:00:00.000Z",
+          updatedAt: "2026-08-25T04:00:00.000Z",
+          phase: "quarantined",
+          target: {
+            sandboxName: "alpha",
+            providerId: "docker",
+            gatewayName: "nemoclaw-19080",
+            gatewayPort: 19080,
+            lifecycleGeneration: "generation-1",
+            liveIdentityFingerprint: "b".repeat(64),
+            providerHandle: "c".repeat(64),
+            providerLifecycleGeneration: "provider-generation-1",
+            runtime: { kind: "docker-container", handle: "d".repeat(64) },
+          },
+          attempts: [],
+        },
+      },
+    });
+
+    await expect(harness.runSandboxDoctor("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(harness.getNamedGatewayLifecycleStateSpy).toHaveBeenCalledWith("nemoclaw-19080");
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
   it("runs live probes only after plain doctor recovers the named gateway", async () => {
     const harness = createDoctorHarness();
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
