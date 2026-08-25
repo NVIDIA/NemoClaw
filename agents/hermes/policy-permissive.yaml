@@ -211,24 +211,41 @@ network_policies:
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-app"
+        rules:
+          - allow: { method: POST, path: "/api/apps.connections.open" }
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: api.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: hooks.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         access: full
       - host: wss-primary.slack.com
         port: 443
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -237,6 +254,8 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
