@@ -85,7 +85,7 @@ export function help(): void {
     `    --delete-models${" ".repeat(19)}Remove all Ollama models and non-credential Hugging Face cache data (authentication files remain)`,
   );
   lines.push(
-    `    --destroy-user-data${" ".repeat(15)}Skip eligible fresh backups; remove preserved user data and managed CLI shims`,
+    `    --destroy-user-data${" ".repeat(15)}Skip eligible fresh backups; remove preserved user data; remove CLI shims only without a confirmed sibling`,
   );
   lines.push(
     `    --all-gateway-ports${" ".repeat(15)}Uninstall every gateway port on this host, not only NEMOCLAW_GATEWAY_PORT`,

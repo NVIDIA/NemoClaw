@@ -162,6 +162,11 @@ export interface UninstallRunDeps {
   stderrHasColors?: boolean;
   stderrIsTty?: boolean;
   withPortableHostFence?: typeof withPortableHostFence;
+  withSandboxMutationLock?: <T>(
+    sandboxName: string,
+    operation: () => Promise<T> | T,
+    options: { stateDir: string },
+  ) => Promise<T>;
 }
 
 export interface UninstallRunOutcome {
@@ -3548,14 +3553,87 @@ function revalidatePreparedUninstallAfterBackup(prepared: PreparedUninstallRun):
   return true;
 }
 
+function failedPreparedUninstall(prepared: PreparedUninstallRun): UninstallRunOutcome {
+  return {
+    exitCode: 1,
+    otherGatewayEnvironmentsRemain: prepared.scopedToSelectedGateway,
+    plan: prepared.plan,
+  };
+}
+
+async function withSelectedSandboxMutationLocks<T>(
+  prepared: PreparedUninstallRun,
+  deps: UninstallRunDeps,
+  operation: () => Promise<T>,
+): Promise<T | UninstallRunOutcome> {
+  const lock = deps.withSandboxMutationLock;
+  const names = [...new Set(prepared.selectedSandboxState.names)].sort();
+  if (!lock) {
+    prepared.runtime.error(
+      "Pre-uninstall sandbox mutation locking is unavailable; uninstall stopped before backup and cleanup.",
+    );
+    return failedPreparedUninstall(prepared);
+  }
+  let operationStarted = false;
+  const acquire = (index: number): Promise<T> =>
+    index === names.length
+      ? Promise.resolve().then(() => {
+          operationStarted = true;
+          return operation();
+        })
+      : lock(names[index]!, () => acquire(index + 1), {
+          stateDir: prepared.paths.nemoclawStateDir,
+        });
+  try {
+    return await acquire(0);
+  } catch (error) {
+    if (operationStarted) throw error;
+    prepared.runtime.error(
+      `Pre-uninstall sandbox mutation lock is unavailable; uninstall stopped before backup and cleanup: ${formatError(error)}`,
+    );
+    return failedPreparedUninstall(prepared);
+  }
+}
+
+async function backUpAndExecutePreparedUninstall(
+  prepared: PreparedUninstallRun,
+  deps: UninstallRunDeps,
+): Promise<UninstallRunOutcome> {
+  prepared.runtime.log("Backing up current sandbox state before uninstall...");
+  const backupAllBeforeUninstall = deps.backupAllBeforeUninstall;
+  if (!backupAllBeforeUninstall) {
+    prepared.runtime.error(
+      "Pre-uninstall backup is unavailable; uninstall stopped before sandbox deletion.",
+    );
+    return failedPreparedUninstall(prepared);
+  }
+  try {
+    await backupAllBeforeUninstall(prepared.selectedSandboxState.backupNames);
+  } catch (error) {
+    prepared.runtime.error(
+      `Pre-uninstall backup failed; uninstall stopped before sandbox deletion: ${formatError(error)}`,
+    );
+    return failedPreparedUninstall(prepared);
+  }
+  if (!revalidatePreparedUninstallAfterBackup(prepared)) {
+    return failedPreparedUninstall(prepared);
+  }
+  return executePreparedUninstall(prepared);
+}
+
 export function runUninstallPlan(
   options: UninstallRunOptions,
   deps: UninstallRunDeps = {},
 ): UninstallRunOutcome {
   const preparation = prepareUninstallRun(options, deps);
-  return preparation.kind === "complete"
-    ? preparation.outcome
-    : executePreparedUninstall(preparation.prepared);
+  if (preparation.kind === "complete") return preparation.outcome;
+  if (shouldBackUpCurrentSandboxState(preparation.prepared)) {
+    preparation.prepared.runtime.error(
+      "Uninstall stopped before cleanup because this entrypoint cannot perform the required pre-uninstall backup.",
+    );
+    return failedPreparedUninstall(preparation.prepared);
+  }
+  return executePreparedUninstall(preparation.prepared);
 }
 
 export async function runUninstallPlanProduction(
@@ -3570,37 +3648,9 @@ export async function runUninstallPlanProduction(
       if (preparation.kind === "complete") return preparation.outcome;
       const { prepared } = preparation;
       if (shouldBackUpCurrentSandboxState(prepared)) {
-        prepared.runtime.log("Backing up current sandbox state before uninstall...");
-        const backupAllBeforeUninstall = deps.backupAllBeforeUninstall;
-        if (!backupAllBeforeUninstall) {
-          prepared.runtime.error(
-            "Pre-uninstall backup is unavailable; uninstall stopped before sandbox deletion.",
-          );
-          return {
-            exitCode: 1,
-            otherGatewayEnvironmentsRemain: prepared.scopedToSelectedGateway,
-            plan: prepared.plan,
-          };
-        }
-        try {
-          await backupAllBeforeUninstall(prepared.selectedSandboxState.backupNames);
-        } catch (error) {
-          prepared.runtime.error(
-            `Pre-uninstall backup failed; uninstall stopped before sandbox deletion: ${formatError(error)}`,
-          );
-          return {
-            exitCode: 1,
-            otherGatewayEnvironmentsRemain: prepared.scopedToSelectedGateway,
-            plan: prepared.plan,
-          };
-        }
-        if (!revalidatePreparedUninstallAfterBackup(prepared)) {
-          return {
-            exitCode: 1,
-            otherGatewayEnvironmentsRemain: prepared.scopedToSelectedGateway,
-            plan: prepared.plan,
-          };
-        }
+        return withSelectedSandboxMutationLocks(prepared, deps, () =>
+          backUpAndExecutePreparedUninstall(prepared, deps),
+        );
       }
       return executePreparedUninstall(prepared);
     });

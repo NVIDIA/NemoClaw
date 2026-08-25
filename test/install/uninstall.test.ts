@@ -30,6 +30,7 @@ describe("uninstall CLI flags", () => {
   function writeFakeTools(fakeBin: string) {
     fs.mkdirSync(fakeBin);
     const sandboxConfigDir = path.join(path.dirname(fakeBin), "sandbox", ".openclaw");
+    const eventLog = path.join(path.dirname(fakeBin), "uninstall-events");
     fs.mkdirSync(path.join(sandboxConfigDir, "workspace"), { recursive: true });
     fs.writeFileSync(path.join(sandboxConfigDir, "workspace", "USER.md"), "preserve me\n");
     for (const cmd of ["npm", "docker", "ollama", "pgrep"]) {
@@ -45,6 +46,7 @@ case "$*" in
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
   "sandbox list") printf 'ordinary-authority Ready\\n' ;;
   "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "sandbox delete "*) printf 'delete\\n' >> ${JSON.stringify(eventLog)} ;;
   "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
 esac
 exit 0
@@ -57,7 +59,12 @@ exit 0
 remote="\${!#}"
 case "$remote" in
   *"-printf"*) exit 0 ;;
-  *"tar --hard-dereference"*) exec /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace ;;
+  *"tar --hard-dereference"*)
+    /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace
+    status=$?
+    case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac
+    exit "$status"
+    ;;
   *"src="*) exit 2 ;;
   *) printf 'workspace\\n' ;;
 esac
@@ -380,12 +387,14 @@ esac
       const backupRoot = path.join(stateDir, "rebuild-backups", "ordinary-authority");
       const snapshot = fs.readdirSync(backupRoot).at(0);
       const backupFile = path.join(backupRoot, String(snapshot), "workspace", "USER.md");
+      const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
 
       expect(result.status, output).toBe(0);
       expect(createHash("sha256").update(fs.readFileSync(backupFile)).digest("hex")).toBe(
         workspaceDigest,
       );
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
+      expect(events).toEqual(["backup-complete", "delete"]);
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
     } finally {
@@ -444,28 +453,34 @@ esac
       },
       label: "hosted-script fallback",
     },
-  ])("removes managed Hermes state volume through $label", ({ environment }) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-volume-"));
-    const fakeBin = path.join(tmp, "bin");
-    writeFakeTools(fakeBin);
-    seedManagedHermesStateVolume(tmp);
-    const volume = writeManagedHermesVolumeDocker(fakeBin, tmp);
-    const entrypointEnv = environment(fakeBin, tmp);
-    try {
-      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
-        NEMOCLAW_AGENT: "hermes",
-        ...entrypointEnv,
-      });
-      const output = `${result.stdout}${result.stderr}`;
+  ])(
+    "removes managed Hermes state volume through $label",
+    ({ environment }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-volume-"));
+      const fakeBin = path.join(tmp, "bin");
+      writeFakeTools(fakeBin);
+      seedManagedHermesStateVolume(tmp);
+      const volume = writeManagedHermesVolumeDocker(fakeBin, tmp);
+      const entrypointEnv = environment(fakeBin, tmp);
+      try {
+        const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
+          NEMOCLAW_AGENT: "hermes",
+          ...entrypointEnv,
+        });
+        const output = `${result.stdout}${result.stderr}`;
 
-      expect(result.status, output).toBe(0);
-      expect(fs.existsSync(volume.volumePath)).toBe(false);
-      expect(fs.readFileSync(volume.callsPath, "utf8")).toContain(`volume rm ${volume.volumeName}`);
-      expect(output).toContain("Removed managed Hermes state volume for 'hermes'.");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  }, 60_000);
+        expect(result.status, output).toBe(0);
+        expect(fs.existsSync(volume.volumePath)).toBe(false);
+        expect(fs.readFileSync(volume.callsPath, "utf8")).toContain(
+          `volume rm ${volume.volumeName}`,
+        );
+        expect(output).toContain("Removed managed Hermes state volume for 'hermes'.");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
 
   it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));

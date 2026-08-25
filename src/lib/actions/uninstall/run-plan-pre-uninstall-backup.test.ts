@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { type RunResult, runUninstallPlanProduction, type UninstallRunDeps } from "./run-plan";
+import {
+  type RunResult,
+  runUninstallPlan,
+  runUninstallPlanProduction,
+  type UninstallRunDeps,
+} from "./run-plan";
 
 const temporaryDirectories: string[] = [];
 
@@ -80,6 +85,7 @@ function createFixture(): {
         return handler?.() ?? ok();
       }),
       runDocker: () => ok(),
+      withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
       withPortableHostFence: async (_home, operation) => operation(),
     },
     errors,
@@ -97,22 +103,70 @@ afterEach(() => {
 });
 
 describe("pre-uninstall sandbox backup", () => {
-  it("backs up current state before deleting a registered sandbox", async () => {
+  it("holds the sandbox mutation lock from backup through deletion", async () => {
     const fixture = createFixture();
     const backup = vi.fn(async () => {
       fixture.events.push("backup");
     });
+    const withSandboxMutationLock: NonNullable<
+      UninstallRunDeps["withSandboxMutationLock"]
+    > = async (sandboxName, operation) => {
+      fixture.events.push(`acquire:${sandboxName}`);
+      try {
+        return await operation();
+      } finally {
+        fixture.events.push(`release:${sandboxName}`);
+      }
+    };
 
     const result = await runUninstallPlanProduction(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      { ...fixture.deps, backupAllBeforeUninstall: backup },
+      { ...fixture.deps, backupAllBeforeUninstall: backup, withSandboxMutationLock },
     );
 
     expect(result.exitCode).toBe(0);
     expect(backup).toHaveBeenCalledOnce();
     expect(backup).toHaveBeenCalledWith(["alpha"]);
-    expect(fixture.events).toEqual(["backup", "delete"]);
+    expect(fixture.events).toEqual(["acquire:alpha", "backup", "delete", "release:alpha"]);
     expect(fixture.logs).toContain("Backing up current sandbox state before uninstall...");
+  });
+
+  it("stops the synchronous entrypoint before protected sandbox deletion", () => {
+    const fixture = createFixture();
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      fixture.deps,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(fixture.events).toEqual([]);
+    expect(fs.existsSync(fixture.registryFile)).toBe(true);
+    expect(fixture.errors).toContain(
+      "Uninstall stopped before cleanup because this entrypoint cannot perform the required pre-uninstall backup.",
+    );
+  });
+
+  it("stops before backup when a sandbox mutation lock is unavailable", async () => {
+    const fixture = createFixture();
+    const backup = vi.fn(async () => undefined);
+    const withSandboxMutationLock: NonNullable<
+      UninstallRunDeps["withSandboxMutationLock"]
+    > = async () => {
+      throw new Error("lock held by another command");
+    };
+
+    const result = await runUninstallPlanProduction(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { ...fixture.deps, backupAllBeforeUninstall: backup, withSandboxMutationLock },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(backup).not.toHaveBeenCalled();
+    expect(fixture.events).toEqual([]);
+    expect(fixture.errors).toContain(
+      "Pre-uninstall sandbox mutation lock is unavailable; uninstall stopped before backup and cleanup: lock held by another command",
+    );
   });
 
   it("stops before deletion when backup fails", async () => {

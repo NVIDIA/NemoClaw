@@ -69,6 +69,14 @@ export interface BackupAllOptions {
   skipUnreachable?: boolean;
 }
 
+export function withMaintenanceSandboxMutationLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+  options: { stateDir: string },
+): Promise<T> {
+  return withSandboxMutationLock(sandboxName, operation, options);
+}
+
 async function withHermesPortableMaintenanceAdmission<T>(
   commandId: "backup-all" | "gc",
   operation: () => Promise<T>,

@@ -6,11 +6,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   buildRunPlan,
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction,
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
@@ -29,8 +31,8 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
+  return {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -42,7 +44,18 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
       requiredCapabilities: [],
     }),
     ...deps,
-  });
+  };
+}
+
+function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+}
+
+function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanProduction(
+    options,
+    withSuccessfulPreUninstallBackup(withManagedGatewayAuthority(deps)),
+  );
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -567,52 +580,52 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped Ollama auth proxy 33333");
   });
 
-  it.each([
-    "ollama-auth-proxy-helper.mjs",
-    "ollama-auth-proxy.mts.backup",
-  ])("never kills the near-named %s process on :11435", (scriptName) => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const stub = psStub("99999", {
-      exited: new Set(),
-      cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
-    });
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign",
-          LOGNAME: "testuser",
-        } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          return true;
+  it.each(["ollama-auth-proxy-helper.mjs", "ollama-auth-proxy.mts.backup"])(
+    "never kills the near-named %s process on :11435",
+    (scriptName) => {
+      const logs: string[] = [];
+      const killed: number[] = [];
+      const stub = psStub("99999", {
+        exited: new Set(),
+        cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
+      });
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: {
+            HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign",
+            LOGNAME: "testuser",
+          } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: (command, args) => {
+            if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+              return ok("99999\n");
+            }
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
+            }
+            if (args[0] === "-c") return ok("/fake/bin/tool\n");
+            if (args[0] === "-f") return ok("");
+            return okWithKnownGatewayList(command, args);
+          },
+          runDocker: () => ok(""),
         },
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
-            return ok("99999\n");
-          }
-          if (command === "ps") {
-            const result = stub(args);
-            if (result) return result;
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          if (args[0] === "-f") return ok("");
-          return okWithKnownGatewayList(command, args);
-        },
-        runDocker: () => ok(""),
-      },
-    );
+      );
 
-    expect(result.exitCode).toBe(0);
-    expect(killed).not.toContain(99999);
-    expect(logs).toContain("No Ollama auth proxy processes found");
-  });
+      expect(result.exitCode).toBe(0);
+      expect(killed).not.toContain(99999);
+      expect(logs).toContain("No Ollama auth proxy processes found");
+    },
+  );
 
   it("kills the model router via onboard-session routerPid (#5169)", () => {
     const logs: string[] = [];
@@ -1050,11 +1063,11 @@ describe("uninstall run plan", () => {
       expect(logs.every((line) => !line.includes("preserved:"))).toBe(true);
     }
 
-    it("preserves rebuild-backups/, backups/, and sandboxes.json by default in non-interactive runs", () => {
+    it("preserves rebuild-backups/, backups/, and sandboxes.json by default in non-interactive runs", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlanWithBackup(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs),
         );
@@ -1235,11 +1248,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("non-interactive hint mentions --destroy-user-data alongside the env var on non-TTY without --yes", () => {
+    it("non-interactive hint mentions --destroy-user-data alongside the env var on non-TTY without --yes", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlanWithBackup(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, { readLine: () => "y" }),
         );
@@ -1273,21 +1286,19 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
-        expect(logs).toContain(
-          "Also remove them and skip eligible fresh sandbox backups? [y/N]",
-        );
+        expect(logs).toContain("Also remove them and skip eligible fresh sandbox backups? [y/N]");
         expect(logs).toContain("Acknowledged; purging user data.");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
     });
 
-    it("keeps user data when interactive prompt is declined", () => {
+    it("keeps user data when interactive prompt is declined", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
         const replies = ["yes", ""];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlanWithBackup(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             isTty: true,
@@ -1303,12 +1314,12 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("preserves entries on a TTY when NEMOCLAW_NON_INTERACTIVE=1 is set instead of --yes", () => {
+    it("preserves entries on a TTY when NEMOCLAW_NON_INTERACTIVE=1 is set instead of --yes", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       const readLine = vi.fn(() => "yes");
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlanWithBackup(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             envOverrides: { NEMOCLAW_NON_INTERACTIVE: "1" },

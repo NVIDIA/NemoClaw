@@ -9,6 +9,7 @@ import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   withProvenManagedGatewayProcess,
+  withSuccessfulPreUninstallBackup,
   writeManagedGatewayRuntimeProof,
 } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
@@ -49,8 +50,8 @@ function sandboxAbsent(name: string): RunResult {
   return { status: 1, stdout: "", stderr: `sandbox ${name} not found` };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
+  return {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -62,7 +63,18 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
       requiredCapabilities: [],
     }),
     ...deps,
-  });
+  };
+}
+
+function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+}
+
+function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanProduction(
+    options,
+    withSuccessfulPreUninstallBackup(withManagedGatewayAuthority(deps)),
+  );
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -1127,7 +1139,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(removed).toEqual([]);
   });
 
-  it("keeps detected portable receipts during a sibling-gateway scoped pass (#9189)", () => {
+  it("keeps detected portable receipts during a sibling-gateway scoped pass (#9189)", async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-sibling-"));
     const stateDir = path.join(homeDir, ".nemoclaw");
     const uninstallPaths = defaultUninstallPaths({ home: homeDir });
@@ -1215,7 +1227,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     }));
     try {
       expect(hasPortableRuntimeCleanup(stateDir)).toBe(true);
-      const result = runUninstallPlan(
+      const result = await runUninstallPlanWithBackup(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         withProvenManagedGatewayProcess({
           commandExists: (command) => ["openshell", "pgrep", "lsof"].includes(command),
