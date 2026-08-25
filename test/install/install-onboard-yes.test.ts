@@ -619,7 +619,7 @@ recover_preexisting_sandboxes_before_onboard() {
 }
 run_onboard() {
   record onboard
-  printf '%s\n' 'onboard' >"$HOME/onboard-args.log"
+  printf '%s\n' "$*" >"$HOME/onboard-args.log"
   if [[ "$ONBOARD_STATUS" == "0" ]]; then
     touch "$HOME/provider-created" "$HOME/sandbox-created" "$HOME/onboarding-complete"
   fi
