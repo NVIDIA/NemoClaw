@@ -303,15 +303,53 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "-a",
       "--no-trunc",
       "--filter",
-      `id=${result.newContainerId}`,
-      "--filter",
       "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      "label=openshell.ai/sandbox-name=restored-name",
       "--format",
       "{{.ID}}",
     ]);
-    expect(dockerRun.mock.calls[0]?.[0]).not.toContain(
-      "label=openshell.ai/sandbox-name=restored-name",
+  });
+
+  it.each([
+    ["a failed query", { status: 1, stderr: "daemon unavailable" }],
+    ["no labeled replacement", { status: 0, stdout: "" }],
+    ["a different replacement", { status: 0, stdout: `${"c".repeat(64)}\n` }],
+    [
+      "multiple labeled replacements",
+      { status: 0, stdout: `${"b".repeat(64)}\n${"c".repeat(64)}\n` },
+    ],
+  ])("rejects retiring Error when the canonical query returns %s (#9531)", (_case, query) => {
+    const result = exactDeferredCreateResult();
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun: vi.fn(() => query),
+        dockerStart,
+        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
+        runOpenshell: vi.fn(() => ({
+          status: 0,
+          stdout: "alpha  2026-08-23 01:40:35  Error\n",
+        })),
+        sleep: vi.fn(),
+      },
     );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: false,
+      replacementRestarted: false,
+    });
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("rolls back to the backup container when supervisor reconnect failed", () => {
