@@ -50,6 +50,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/onboard\/managed-startup\/state-roots[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-gpu-create-(?:flow|run-attempt)(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-workload\/onboard-orchestration(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/onboard\/runtime-provider\/(?:docker-state-mutation|podman-runtime-surfaces|podman-state-mutation)(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-create\/orchestration[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-workload-preparation[.]test[.]ts$/u,
   /^src\/lib\/onboard\/workload\/preparation[.]ts$/u,
