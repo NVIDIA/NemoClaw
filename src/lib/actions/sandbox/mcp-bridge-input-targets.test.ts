@@ -174,6 +174,7 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
 let admittedTarget;
+let providerCreated = false;
 replace(policies, "getPresetContentGatewayState", () => "absent");
 replace(adapters, "assertAgentMcpConfigMutationAllowed", () => {});
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
@@ -184,19 +185,26 @@ replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
 replace(provider, "ensureMcpBridgeProviderProfile", () => {});
-replace(provider, "inspectMcpProvider", () => ({
+replace(provider, "inspectMcpProvider", () => providerCreated ? ({
+  credentialKeys: ["LOCAL_MCP_TOKEN"], exists: true,
+  id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
+}) : ({
   credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
 }));
-replace(provider, "upsertMcpProvider", () => ({
-  action: "created",
-  inspection: {
-    credentialKeys: ["LOCAL_MCP_TOKEN"], exists: true,
-    id: "11111111-2222-4333-8444-555555555555", resourceVersion: "1", type: "nemoclaw-mcp-v1",
-  },
-}));
+replace(provider, "upsertMcpProvider", () => {
+  providerCreated = true;
+  return {
+    action: "created",
+    inspection: {
+      credentialKeys: ["LOCAL_MCP_TOKEN"], exists: true,
+      id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
+    },
+  };
+});
 replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
-replace(provider, "waitForAttachedMcpCredential", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", () => "v1");
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",

@@ -615,4 +615,30 @@ alpha-mcp-slack   generic  1                 0
     );
     expect(exec).toHaveBeenCalledTimes(1);
   });
+
+  it("waits for the exact provider revision after an intermediate revision (#10298)", () => {
+    const entry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v13", stderr: "" });
+
+    expect(
+      waitForAttachedMcpCredential("alpha", entry, {
+        expectedProviderResourceVersion: 13,
+        previousRevision: "v11",
+      }),
+    ).toBe("v13");
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
 });

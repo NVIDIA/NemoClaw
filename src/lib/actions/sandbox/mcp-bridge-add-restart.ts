@@ -435,18 +435,21 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
+    let expectedProviderResourceVersion = providerResult.inspection.resourceVersion;
     if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // OpenShell 0.0.106 can miss a credential update published before the
       // bound policy generation. Republish while that policy is active and
       // before the first readiness exec; the exact provider identity is
       // rechecked before and after this update-only mutation.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
+      const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
+      expectedProviderResourceVersion = republished.inspection.resourceVersion;
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      expectedProviderResourceVersion,
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
@@ -473,7 +476,12 @@ async function addMcpBridgeUnlocked(
           expectedProviderId: entry.providerId,
           requireExisting: true,
         });
-        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+        const synchronized =
+          republished.action === "updated"
+            ? republished.inspection
+            : refreshMcpProviderEnvironment(entry);
+        expectedProviderResourceVersion = synchronized.resourceVersion;
+        return expectedProviderResourceVersion;
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a
@@ -489,6 +497,17 @@ async function addMcpBridgeUnlocked(
       credentialRevision,
     });
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
+    const credentialRevisionAtCommit = observeMcpCredentialRevision(sandboxName, entry);
+    const providerAtCommit = inspectMcpProvider(entry.providerName);
+    if (
+      credentialRevisionAtCommit !== credentialRevision ||
+      !providerMatchesCredential(providerAtCommit, entry.env[0], entry.providerId) ||
+      providerAtCommit.resourceVersion !== expectedProviderResourceVersion
+    ) {
+      throw new McpBridgeError(
+        `OpenShell credential revision changed before MCP add commit for server '${entry.server}'.`,
+      );
+    }
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
   } catch (error) {

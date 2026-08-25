@@ -172,8 +172,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    refreshMcpProviderEnvironment(entry);
+    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      expectedProviderResourceVersion: synchronizedProvider.resourceVersion,
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
@@ -241,8 +242,10 @@ export async function restoreExistingMcpBridgeRuntime(
     });
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
-    refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
+    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      expectedProviderResourceVersion: synchronizedProvider.resourceVersion,
+    });
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     registerAgentAdapter(
       sandboxName,
