@@ -220,6 +220,9 @@ export function createLlamaCppPrivateBridgeRequestHandler(
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
         upstreamResponse.once("error", () => response.destroy());
         upstreamResponse.pipe(response);
+        upstreamResponse.once("end", () => {
+          if (!upstream.writableEnded) upstream.destroy();
+        });
       },
     );
     upstream.once("continue", () => {

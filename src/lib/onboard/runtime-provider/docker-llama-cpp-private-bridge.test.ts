@@ -329,6 +329,7 @@ async function request(
     readonly authorization?: string | readonly string[];
     readonly body?: string;
     readonly expectContinue?: boolean;
+    readonly keepAlive?: boolean;
     readonly method?: string;
     readonly path?: string;
   } = {},
@@ -350,6 +351,7 @@ async function request(
             "Content-Type": "application/json",
           }),
       ...(input.expectContinue ? { Expect: "100-continue" } : {}),
+      ...(input.keepAlive ? { Connection: "keep-alive" } : {}),
     };
     let continued = false;
     const outgoing = http.request(
@@ -468,12 +470,14 @@ describe("llama.cpp private bridge request authentication", () => {
       },
     })}\n`;
     const upstream = http.createServer();
+    const upstreamSocketClosed = new Promise<void>((resolve) => {
+      upstream.once("connection", (socket) => socket.once("close", resolve));
+    });
     upstream.on("checkContinue", (incoming, response) => {
       incoming.on("data", (chunk: Buffer) => {
         receivedBodyBytes += chunk.length;
       });
       response.writeHead(413, {
-        Connection: "close",
         "Content-Length": Buffer.byteLength(rejectionBody),
         "Content-Type": "application/json",
       });
@@ -490,6 +494,7 @@ describe("llama.cpp private bridge request authentication", () => {
         authorization: `Bearer ${API_KEY}`,
         body: "x".repeat(2 * 1024 * 1024),
         expectContinue: true,
+        keepAlive: true,
         method: "POST",
         path: "/v1/chat/completions",
       });
@@ -500,6 +505,7 @@ describe("llama.cpp private bridge request authentication", () => {
         status: 413,
       });
       expect(receivedBodyBytes).toBe(0);
+      await upstreamSocketClosed;
     } finally {
       await close(bridge);
       await close(upstream);
