@@ -5,10 +5,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import catalogSchema from "../../managed-inference/schemas/catalog.schema.json" with { type: "json" };
-import modelSchema from "../../managed-inference/schemas/model.schema.json" with { type: "json" };
-import presetSchema from "../../managed-inference/schemas/preset.schema.json" with { type: "json" };
-import recipeSchema from "../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
+import catalogSchema from "../../../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import modelSchema from "../../../managed-inference/schemas/model.schema.json" with { type: "json" };
+import presetSchema from "../../../managed-inference/schemas/preset.schema.json" with { type: "json" };
+import recipeSchema from "../../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import { getManagedInferenceServingCatalogRegistries } from "../../../src/lib/inference/serving/adapter-registry.js";
 import { compileTrustedServingCatalog } from "../../../src/lib/inference/serving/catalog.js";
 import type { ServingCatalogSource } from "../../../src/lib/inference/serving/types.js";

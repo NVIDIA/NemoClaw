@@ -43,7 +43,6 @@ import { ensureOllamaLoopbackSystemdOverride } from "../../src/lib/onboard/ollam
 import type { InferenceProviderHostState } from "../../src/lib/onboard/provider-host-state.js";
 import { buildInferenceProviderMenu } from "../../src/lib/onboard/provider-menu.js";
 import { resolveRequestedProviderSelection } from "../../src/lib/onboard/provider-selection.js";
-import { reportProviderSelectionFailure } from "../../src/lib/onboard/provider-selection-failure.js";
 import { createSetupNim, type SetupNimFlowDeps } from "../../src/lib/onboard/setup-nim-flow.js";
 import { createSetupNimOllamaHandlers } from "../../src/lib/onboard/setup-nim-ollama.js";
 import {
