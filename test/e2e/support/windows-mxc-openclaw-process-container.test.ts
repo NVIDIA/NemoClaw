@@ -25,6 +25,7 @@ import {
   renderWindowsMxcFilesystemPolicy,
   renderWindowsMxcGatewayConfig,
   renderWindowsMxcOpenClawProbeAgent,
+  removeWindowsMxcRuntimeArtifacts,
   retainedWindowsMxcSandboxName,
   runWindowsMxcForwardCleanup,
   sameWindowsProcessIdentity,
@@ -88,6 +89,32 @@ afterEach(() => {
 });
 
 describe("inactive Windows MXC OpenClaw process_container qualification", () => {
+  it("removes a token-bearing MXC environment file after a runtime failure (#8178)", () => {
+    const { root } = fixture();
+    const runRoot = fs.mkdtempSync(path.join(root, "runtime-failure-"));
+    const shareDirectory = fs.mkdtempSync(path.join(root, "runtime-share-"));
+    const token = "runtime-only-secret";
+    fs.writeFileSync(
+      path.join(shareDirectory, "agent-env.txt"),
+      `NEMOCLAW_MXC_E2E_TOKEN=${token}\n`,
+      "utf8",
+    );
+
+    const result = removeWindowsMxcRuntimeArtifacts({
+      runRoot,
+      sensitivePaths: [],
+      shareDirectory,
+    });
+
+    expect(result).toEqual({
+      failures: [],
+      runDirectoryRemoved: true,
+      sensitiveRuntimeArtifactsRemoved: true,
+    });
+    expect(fs.existsSync(runRoot)).toBe(false);
+    expect(fs.existsSync(shareDirectory)).toBe(false);
+  });
+
   it("removes token-bearing setup state and closes descriptors after a setup failure (#8178)", async () => {
     const { root } = fixture();
     const receiptPath = path.join(root, "setup-failure-receipt.json");

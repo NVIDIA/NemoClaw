@@ -321,6 +321,31 @@ export async function runWindowsMxcForwardCleanup(input: {
   };
 }
 
+export function removeWindowsMxcRuntimeArtifacts(input: {
+  readonly runRoot: string;
+  readonly sensitivePaths: readonly string[];
+  readonly shareDirectory: string;
+}): {
+  readonly failures: readonly unknown[];
+  readonly runDirectoryRemoved: boolean;
+  readonly sensitiveRuntimeArtifactsRemoved: boolean;
+} {
+  const paths = [...new Set([...input.sensitivePaths, input.runRoot, input.shareDirectory])];
+  const failures: unknown[] = [];
+  for (const artifactPath of paths) {
+    try {
+      fs.rmSync(artifactPath, { force: true, recursive: true });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return {
+    failures,
+    runDirectoryRemoved: !fs.existsSync(input.runRoot) && !fs.existsSync(input.shareDirectory),
+    sensitiveRuntimeArtifactsRemoved: paths.every((artifactPath) => !fs.existsSync(artifactPath)),
+  };
+}
+
 function buildWindowsMxcSetupFailureReceipt(
   inputs: WindowsMxcOpenClawQualificationInputs,
   processElevated: boolean,
@@ -2325,29 +2350,26 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         cleanupFailures.push(error);
       }
     }
-    const sensitivePaths = [
-      clientHomeDirectory,
-      homeDirectory,
-      configDirectory,
-      stateDirectory,
-      gatewayLogPath,
-      gatewayErrorPath,
-      forwardLogPath,
-      forwardErrorPath,
-    ];
-    for (const sensitivePath of sensitivePaths) {
-      try {
-        fs.rmSync(sensitivePath, { force: true, recursive: true });
-      } catch (error) {
-        cleanupFailures.push(error);
-      }
-    }
-    sensitiveRuntimeArtifactsRemoved = sensitivePaths.every(
-      (sensitivePath) => !fs.existsSync(sensitivePath),
-    );
+    const runtimeArtifactCleanup = removeWindowsMxcRuntimeArtifacts({
+      runRoot,
+      shareDirectory,
+      sensitivePaths: [
+        clientHomeDirectory,
+        homeDirectory,
+        configDirectory,
+        stateDirectory,
+        gatewayLogPath,
+        gatewayErrorPath,
+        forwardLogPath,
+        forwardErrorPath,
+      ],
+    });
+    cleanupFailures.push(...runtimeArtifactCleanup.failures);
+    runDirectoryRemoved = runtimeArtifactCleanup.runDirectoryRemoved;
+    sensitiveRuntimeArtifactsRemoved = runtimeArtifactCleanup.sensitiveRuntimeArtifactsRemoved;
   }
 
-  const lifecyclePassedBeforeDirectoryRemoval =
+  const lifecyclePassed =
     receiptPasses(checks) &&
     !boundedStopMarkerNeeded &&
     !emergencyProcessTerminationNeeded &&
@@ -2358,24 +2380,15 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     forwardProcessStopped &&
     gatewayStopped &&
     openClawProcessStopped &&
+    runDirectoryRemoved &&
     sensitiveRuntimeArtifactsRemoved &&
     primaryFailure === null &&
     cleanupFailures.length === 0;
-  if (lifecyclePassedBeforeDirectoryRemoval) {
-    try {
-      fs.rmSync(runRoot, { force: true, recursive: true });
-      fs.rmSync(shareDirectory, { force: true, recursive: true });
-      runDirectoryRemoved = !fs.existsSync(runRoot) && !fs.existsSync(shareDirectory);
-      if (runDirectoryRemoved) {
-        localSetup.releaseRoot(runRoot);
-        localSetup.releaseRoot(shareDirectory);
-      }
-      if (!runDirectoryRemoved) {
-        cleanupFailures.push(new Error("qualification run directory remains after cleanup"));
-      }
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
+  if (runDirectoryRemoved) {
+    localSetup.releaseRoot(runRoot);
+    localSetup.releaseRoot(shareDirectory);
+  } else {
+    cleanupFailures.push(new Error("qualification run directory remains after cleanup"));
   }
 
   const retainedSandboxName = retainedWindowsMxcSandboxName({
@@ -2432,10 +2445,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       sandboxDeleteRetried,
       sensitiveRuntimeArtifactsRemoved,
     },
-    verdict:
-      lifecyclePassedBeforeDirectoryRemoval && runDirectoryRemoved && cleanupFailures.length === 0
-        ? "pass"
-        : "fail",
+    verdict: lifecyclePassed && cleanupFailures.length === 0 ? "pass" : "fail",
     deferred: [
       "gateway-mtls",
       "managed-inference",
