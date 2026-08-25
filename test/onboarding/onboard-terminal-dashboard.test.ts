@@ -41,6 +41,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const dockerGpuSandboxCreatePath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
+  const onboardScriptMocksPath = JSON.stringify(
+    path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+  );
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeExecutable(
@@ -94,6 +97,8 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   return normalized.includes("sandbox get") && normalized.includes(sandboxName)
     ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };

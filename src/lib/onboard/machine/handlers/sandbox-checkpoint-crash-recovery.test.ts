@@ -70,6 +70,17 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
 type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
 
 const OK_RESULT: StubbedRunOpenshellResult = { status: 0, stdout: "", stderr: "" };
+const EXACT_MESSAGING_PROFILE: StubbedRunOpenshellResult = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  }),
+  stderr: "",
+};
 
 function fakeGatewayRunOpenshell() {
   const createdProviders = new Map<string, { type: string; credentialEnv: string }>();
@@ -105,6 +116,7 @@ function fakeGatewayRunOpenshell() {
   };
 
   const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
+    profile: () => EXACT_MESSAGING_PROFILE,
     get: handleGet,
     create: handleCreate,
     update: () => OK_RESULT,
