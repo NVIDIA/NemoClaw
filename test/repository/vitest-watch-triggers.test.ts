@@ -20,7 +20,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-workflow-trace.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
-  "test/hosted-runner-recovery-workflow.test.ts",
+  "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
@@ -101,7 +101,7 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
-const WORKFLOW_NAME_TEST = "test/github-actions-workflow-names.test.ts";
+const WORKFLOW_NAME_TEST = "test/repository/github-actions-workflow-names.test.ts";
 
 function triggeredBy(relativePath: string): string[] {
   return resolveVitestWatchTests(path.resolve(relativePath)).filter(
@@ -145,8 +145,8 @@ describe("Vitest opaque-input watch triggers", () => {
 
   it("maps the Launchable host harness to its integration tests (#6409)", () => {
     expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
-      "test/brev-launchable-e2e.test.ts",
-      "test/brev-launchable-gateway-diagnostics.test.ts",
+      "test/e2e-runtime/brev-launchable-e2e.test.ts",
+      "test/e2e-runtime/brev-launchable-gateway-diagnostics.test.ts",
     ]);
   });
 
@@ -170,13 +170,13 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/hermes/hermes-dependency-review.test.ts",
     ]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
-      "test/base-image-resolver-helper.test.ts",
+      "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
     expect(
       triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
     ).toEqual([
-      "test/reviewed-hermes-platform-action.test.ts",
-      "test/protected-managed-image-contract.test.ts",
+      "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
+      "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
@@ -211,7 +211,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
     ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/claude-code.yaml")).toEqual([
-      "test/effective-policy-contracts.test.ts",
+      "test/onboarding/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
@@ -222,20 +222,20 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",
     ]);
-    expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/install/setup-jetson.test.ts"]);
     expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
-      "test/pi-candidate-runtime-artifacts.test.ts",
+      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
-      "test/pi-candidate-runtime-artifacts.test.ts",
+      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
-      "test/pull-public-exact-digest.test.ts",
+      "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
     expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([
       "test/inference/managed/managed-image-publication-workflow.test.ts",
@@ -252,20 +252,20 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
-      "test/perl-critical-cve-remediation.test.ts",
-      "test/pi-candidate-runtime-artifacts.test.ts",
+      "test/install/perl-critical-cve-remediation.test.ts",
+      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
-      "test/validate-managed-base-index.test.ts",
+      "test/inference/managed/validate-managed-base-index.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
-      "test/retry-docker-imagetools-inspect.test.ts",
-      "test/validate-managed-base-index.test.ts",
+      "test/platform/images/retry-docker-imagetools-inspect.test.ts",
+      "test/inference/managed/validate-managed-base-index.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/pull-public-exact-digest.sh")).toEqual([
-      "test/pull-public-exact-digest.test.ts",
+      "test/e2e-runtime/pull-public-exact-digest.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
@@ -299,16 +299,16 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
-      "test/code-scanning-workflow.test.ts",
+      "test/repository/code-scanning-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
-      "test/post-merge-docs.test.ts",
+      "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
-      "test/post-merge-docs.test.ts",
+      "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy("tools/post-merge-docs/artifact.mts")).toEqual([
-      "test/post-merge-docs.test.ts",
+      "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
@@ -318,19 +318,19 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
-      "test/hosted-runner-recovery-workflow.test.ts",
+      "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
-      "test/hosted-runner-recovery-workflow.test.ts",
-      "test/platform-vitest-main-workflow.test.ts",
-      "test/wsl-ci-helper.test.ts",
+      "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/automation/e2e/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy("tools/wsl/ci-helper.ps1")).toEqual([
-      "test/platform-vitest-main-workflow.test.ts",
-      "test/wsl-ci-helper.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/automation/e2e/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
-      "test/platform-vitest-main-workflow.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
     ]);
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
