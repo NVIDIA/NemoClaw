@@ -73,6 +73,7 @@ describe("sandbox inference route health", () => {
 
     const result = await probeSandboxInferenceGatewayHealth("deep-code", {
       captureOpenshellImpl,
+      gatewayName: "recorded-gateway",
       getSessionAgentImpl,
     });
 
@@ -84,6 +85,8 @@ describe("sandbox inference route health", () => {
         "exec",
         "--name",
         "deep-code",
+        "-g",
+        "recorded-gateway",
         "--no-tty",
         "--env",
         "HOME=/usr/local/lib/nemoclaw",
