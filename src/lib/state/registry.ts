@@ -146,18 +146,27 @@ export function registerSandbox(
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
+    const reserved = data.sandboxes[entry.name];
     if (
       routeReservation &&
-      (!isCurrentSandboxInferenceRouteReservation(
-        routeReservation,
-        data.sandboxes[entry.name] ?? null,
-      ) ||
+      (!isCurrentSandboxInferenceRouteReservation(routeReservation, reserved ?? null) ||
         !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
     ) {
       throw new Error("Cannot register a sandbox after its inference route reservation changed");
     }
+    if (
+      !routeReservation &&
+      reserved?.pendingRouteReservation === true &&
+      typeof reserved.reservationSessionId === "string" &&
+      reserved.reservationSessionId.length > 0 &&
+      (options.pending !== true ||
+        typeof options.reservationSessionId !== "string" ||
+        options.reservationSessionId.length === 0 ||
+        options.reservationSessionId !== reserved.reservationSessionId)
+    ) {
+      throw new Error("Cannot stage a sandbox after its inference route reservation changed");
+    }
     if (options.reservationSessionId) {
-      const reserved = data.sandboxes[entry.name];
       if (
         reserved?.pendingRouteReservation !== true ||
         reserved.reservationSessionId !== options.reservationSessionId ||

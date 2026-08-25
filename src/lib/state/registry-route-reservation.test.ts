@@ -496,6 +496,52 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it.each([
+    ["omits reservation authority", undefined],
+    ["supplies an empty reservation owner", { pending: true as const, reservationSessionId: "" }],
+    [
+      "tries to publish through registration",
+      { pending: false as const, reservationSessionId: "session-owner" },
+    ],
+  ])("rejects registration that %s for a session-owned row (#10214)", async (_case, options) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      const entry = {
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      } as const;
+
+      expect(() => registry.registerSandbox(entry, undefined, options)).toThrow(
+        "Cannot stage a sandbox after its inference route reservation changed",
+      );
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("refuses generic pending-registration publication for a session-owned row", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

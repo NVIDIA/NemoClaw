@@ -862,6 +862,10 @@ Before deleting an existing sandbox during recreation, NemoClaw backs up the wor
 This applies whether the existing sandbox is ready or marked not-ready, so cross-version upgrades that pass `NEMOCLAW_RECREATE_SANDBOX=1` no longer drop user files from the selected agent workspace.
 The behaviour matches `$$nemoclaw <name> rebuild --force`.
 NemoClaw aborts the recreate when the backup cannot complete in full, including when individual state directories or files fail mid-backup, so failed entries are not silently dropped on delete.
+If restoration into the replacement does not complete, NemoClaw reports the failed directories, files, and restore reason that are available, preserves the snapshot, leaves the replacement unregistered, and exits nonzero.
+Run the owner-scoped `openshell sandbox delete -g '<gateway>' '<sandbox>'` command that onboarding prints, then rerun the original onboarding command.
+If NemoClaw cannot identify the owning gateway, do not delete a same-name sandbox.
+Preserve the snapshot for manual recovery.
 Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup.
 The destination sandbox starts with a fresh workspace.
 
