@@ -110,14 +110,39 @@ describe("PR managed-image source selection", () => {
     ).resolves.toBe("managed-image");
   });
 
-  it("rejects PR identity drift before selecting a source", async () => {
-    const request = requestFor([{ filename: "Dockerfile" }], {
-      head: { sha: CANDIDATE_SHA, repo: { full_name: "attacker/fork" } },
-    });
-
-    await expect(resolvePrManagedImageSource(selectorInput(), request)).rejects.toThrow(
+  it.each([
+    ["a closed pull request", { state: "closed" }, "pull request state must be open"],
+    [
+      "base commit drift",
+      { base: { sha: "c".repeat(40), repo: { full_name: "NVIDIA/NemoClaw" } } },
+      `pull request base commit must be ${BASE_SHA}`,
+    ],
+    [
+      "candidate commit drift",
+      {
+        head: {
+          sha: "c".repeat(40),
+          repo: { full_name: CANDIDATE_REPOSITORY },
+        },
+      },
+      `pull request source commit must be ${CANDIDATE_SHA}`,
+    ],
+    [
+      "source repository drift",
+      { head: { sha: CANDIDATE_SHA, repo: { full_name: "attacker/fork" } } },
       "pull request source repository must be NVIDIA/NemoClaw",
-    );
+    ],
+  ])("rejects %s before reading changed files", async (_label, pullOverrides, message) => {
+    const metadataPath = `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`;
+    const requests: string[] = [];
+    const responses = new Map<string, unknown>([[metadataPath, pull(1, pullOverrides)]]);
+    const request = async (requestPath: string): Promise<unknown> => {
+      requests.push(requestPath);
+      return responses.get(requestPath) ?? unexpectedRequest(requestPath);
+    };
+
+    await expect(resolvePrManagedImageSource(selectorInput(), request)).rejects.toThrow(message);
+    expect(requests).toEqual([metadataPath]);
   });
 
   it("records PR source reads in the retry inventory", () => {
