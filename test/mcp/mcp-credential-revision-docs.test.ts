@@ -8,6 +8,8 @@ import { expect, it } from "vitest";
 it("documents the revision-scoped managed MCP credential placeholder (#10298)", () => {
   const guide = fs.readFileSync("docs/manage-sandboxes/add-mcp-server.mdx", "utf8");
 
+  expect(guide).toContain("openshell:resolve:env:v<revision>_KEY");
   expect(guide).toContain("openshell:resolve:env:v<revision>_LOCAL_MCP_TOKEN");
-  expect(guide).not.toContain("`openshell:resolve:env:LOCAL_MCP_TOKEN` credential placeholder");
+  expect(guide).not.toContain("openshell:resolve:env:KEY");
+  expect(guide).not.toContain("openshell:resolve:env:LOCAL_MCP_TOKEN");
 });

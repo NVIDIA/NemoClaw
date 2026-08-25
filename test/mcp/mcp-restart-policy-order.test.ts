@@ -172,7 +172,10 @@ operationPromise.then(
     },
   );
 
-  const verifyDelayedProviderRevisionRecovery = (operation: "restart" | "restore") => {
+  const verifyProviderRevisionLifecycle = (
+    operation: "restart" | "restore",
+    driftAfterAdapterRegistration: boolean,
+  ) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-revision-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -187,10 +190,12 @@ const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
 let resourceVersion = 1;
 let registeredProviderGets = 0;
+let adapterRegistrations = 0;
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
 const operation = ${JSON.stringify(operation)};
+const driftAfterAdapterRegistration = ${JSON.stringify(driftAfterAdapterRegistration)};
 const observationPlans = {
   restart: ["v1", "absent", "v4"],
   restore: ["absent", "v3"],
@@ -205,6 +210,7 @@ const entry = {
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-example",
   addedAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
 };
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -259,17 +265,20 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
   proofScripts.push(proof);
   if (proof.includes("printf '%s\\n' absent")) {
-    const observation = observationPlans[operation][observations.length] || "unexpected";
+    const observation = observationPlans[operation][observations.length] || "v" + resourceVersion;
     observations.push(observation);
     return { status: 0, stdout: observation, stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
 };
-processRecovery.executeSandboxCommand = (_sandbox, command) => ({
-  status: 0,
-  stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
-  stderr: "",
-});
+processRecovery.executeSandboxCommand = (_sandbox, command) => {
+  if (command === "command -v mcporter") {
+    return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
+  }
+  adapterRegistrations += 1;
+  if (driftAfterAdapterRegistration && adapterRegistrations === 1) resourceVersion += 1;
+  return { status: 0, stdout: "registered\n", stderr: "" };
+};
 
 registry.registerSandbox({
   name: "alpha",
@@ -293,8 +302,8 @@ const operations = {
   restore: () => restart.restoreExistingMcpBridgeRuntime("alpha", [entry]),
 };
 operations[operation]().then(
-  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
-  (error) => { console.error(error); process.exit(1); },
+  () => process.stdout.write(JSON.stringify({ message: null, observations, proofScripts, providerCalls, registeredProviderGets, updatedAt: registry.getSandbox("alpha").mcp.bridges.example.updatedAt })),
+  (error) => process.stdout.write(JSON.stringify({ message: error instanceof Error ? error.message : String(error), observations, proofScripts, providerCalls, registeredProviderGets, updatedAt: registry.getSandbox("alpha").mcp.bridges.example.updatedAt })),
 );
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
@@ -307,14 +316,17 @@ operations[operation]().then(
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
+      message: string | null;
       observations: string[];
       proofScripts: string[];
       providerCalls: string[];
       registeredProviderGets: number;
+      updatedAt: string;
     };
     const expected = {
       restart: {
-        observations: ["v1", "absent", "v4"],
+        ready: ["v1", "absent", "v4", "v4"],
+        drift: ["v1", "absent", "v4", "v5"],
         providerCalls: [
           "provider update alpha-mcp-example --credential MCP_TOKEN",
           "provider update alpha-mcp-example",
@@ -322,19 +334,34 @@ operations[operation]().then(
         ],
       },
       restore: {
-        observations: ["absent", "v3"],
+        ready: ["absent", "v3", "v3"],
+        drift: ["absent", "v3", "v4"],
         providerCalls: ["provider update alpha-mcp-example", "provider update alpha-mcp-example"],
       },
     }[operation];
-    expect(payload.observations).toEqual(expected.observations);
+    expect(payload.observations).toEqual(
+      driftAfterAdapterRegistration ? expected.drift : expected.ready,
+    );
     expect(payload.providerCalls).toEqual(expected.providerCalls);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(expected.observations.length);
+    expect(payload.proofScripts).toHaveLength(payload.observations.length);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
+    expect(payload.message).toBe(
+      driftAfterAdapterRegistration
+        ? "OpenShell credential revision changed before MCP runtime commit for server 'example'."
+        : null,
+    );
+    expect(payload.updatedAt === "2026-06-01T00:00:00.000Z").toBe(driftAfterAdapterRegistration);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
   };
 
   it.each(["restart", "restore"] as const)(
     "recovers a delayed provider revision during %s (#10298)",
-    verifyDelayedProviderRevisionRecovery,
+    (operation) => verifyProviderRevisionLifecycle(operation, false),
+  );
+
+  it.each(["restart", "restore"] as const)(
+    "rejects provider revision drift after adapter registration during %s (#10298)",
+    (operation) => verifyProviderRevisionLifecycle(operation, true),
   );
 });

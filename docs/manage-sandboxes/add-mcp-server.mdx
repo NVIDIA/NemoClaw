@@ -43,7 +43,7 @@ The assignment is illustrative.
 Load real values from an approved secret manager or masked prompt so the credential is not recorded in shell history.
 
 `--env KEY` reads the value from the host process environment and stores it in OpenShell's provider store.
-NemoClaw persists only the variable name, writes `openshell:resolve:env:KEY` into sandbox-side MCP config, and relies on OpenShell to resolve the placeholder at egress.
+NemoClaw persists only the variable name, writes a revision-scoped placeholder such as `openshell:resolve:env:v<revision>_KEY` into sandbox-side MCP config, and relies on OpenShell to resolve the placeholder at egress.
 
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.

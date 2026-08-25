@@ -16,11 +16,13 @@ import {
   attachProvider,
   detachMissingProviderReference,
   ensureMcpBridgeProviderProfile,
+  inspectMcpProvider,
   refreshMcpProviderEnvironment,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
   observeMcpCredentialRevision,
   preflightMcpEntryTargets,
+  providerMatchesCredential,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -59,6 +61,25 @@ function resolvedTargetPins(
     );
   }
   return target;
+}
+
+function assertMcpCredentialCommitIdentity(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  credentialRevision: McpCredentialRevisionObservation,
+  expectedProviderResourceVersion: number | null,
+): void {
+  const credentialRevisionAtCommit = observeMcpCredentialRevision(sandboxName, entry);
+  const providerAtCommit = inspectMcpProvider(entry.providerName);
+  if (
+    credentialRevisionAtCommit !== credentialRevision ||
+    !providerMatchesCredential(providerAtCommit, entry.env[0], entry.providerId) ||
+    providerAtCommit.resourceVersion !== expectedProviderResourceVersion
+  ) {
+    throw new McpBridgeError(
+      `OpenShell credential revision changed before MCP runtime commit for server '${entry.server}'.`,
+    );
+  }
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
@@ -172,13 +193,16 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    let expectedProviderResourceVersion = refreshMcpProviderEnvironment(entry).resourceVersion;
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      expectedProviderResourceVersion: synchronizedProvider.resourceVersion,
+      expectedProviderResourceVersion,
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
-      refreshAfterObservedAbsence: () => refreshMcpProviderEnvironment(entry).resourceVersion,
+      refreshAfterObservedAbsence: () => {
+        expectedProviderResourceVersion = refreshMcpProviderEnvironment(entry).resourceVersion;
+        return expectedProviderResourceVersion;
+      },
     });
     registerAgentAdapter(
       sandboxName,
@@ -186,6 +210,12 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       entry,
       adapterEnvValues,
       { replaceExisting: true, credentialRevision },
+    );
+    assertMcpCredentialCommitIdentity(
+      sandboxName,
+      entry,
+      credentialRevision,
+      expectedProviderResourceVersion,
     );
     writeBridgeEntry(sandboxName, {
       ...entry,
@@ -243,10 +273,13 @@ export async function restoreExistingMcpBridgeRuntime(
     });
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
-    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    let expectedProviderResourceVersion = refreshMcpProviderEnvironment(entry).resourceVersion;
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      expectedProviderResourceVersion: synchronizedProvider.resourceVersion,
-      refreshAfterObservedAbsence: () => refreshMcpProviderEnvironment(entry).resourceVersion,
+      expectedProviderResourceVersion,
+      refreshAfterObservedAbsence: () => {
+        expectedProviderResourceVersion = refreshMcpProviderEnvironment(entry).resourceVersion;
+        return expectedProviderResourceVersion;
+      },
     });
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     registerAgentAdapter(
@@ -259,6 +292,12 @@ export async function restoreExistingMcpBridgeRuntime(
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
         credentialRevision,
       },
+    );
+    assertMcpCredentialCommitIdentity(
+      sandboxName,
+      entry,
+      credentialRevision,
+      expectedProviderResourceVersion,
     );
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
   }
