@@ -150,6 +150,34 @@ describe("exact PR Deep Agents Code base publication pairing", () => {
     expect(resolvePublication).toHaveBeenCalledWith(BASE_SOURCE_SHA);
   });
 
+  it("accepts the fixed base-resolution key for the producer field order", () => {
+    const expectedResolutionHash =
+      "083e317cc6f3dd2a14a4f2c7a52c3cbd40864b35c8182df2a6546e3b6f4236a1";
+    const resolution = {
+      schema: 1,
+      key: expectedResolutionHash,
+      imageName: BASE_IMAGE,
+      ref: BASE_REFERENCE,
+      digest: BASE_DIGEST,
+      source: "override",
+      sourceRevision: BASE_SOURCE_SHA,
+      imageId: `sha256:${"e".repeat(64)}`,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: "2.39",
+      requireOpenshellSandboxAbi: true,
+      minGlibcVersion: "2.39",
+    };
+
+    expect(
+      readDcodeBaseResolution(
+        inspection(resolution),
+        contract("langchain-deepagents-code", 2),
+        CANDIDATE_SHA,
+      ),
+    ).toEqual({ reference: BASE_REFERENCE, sourceRevision: BASE_SOURCE_SHA });
+  });
+
   it("rejects a base-resolution key that does not bind the recorded fields", () => {
     const resolution = baseResolution();
     resolution.key = "f".repeat(64);
