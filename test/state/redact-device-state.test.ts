@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REDACTOR = path.resolve(HERE, "e2e/lib/redact-device-state.py");
+const REDACTOR = path.resolve(HERE, "..", "e2e/lib/redact-device-state.py");
 const REDACTED = "[REDACTED]";
 
 function runRedactor(input: unknown): { rc: number; stdout: string; stderr: string; doc: unknown } {
