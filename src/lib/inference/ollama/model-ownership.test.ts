@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  decideOllamaModelOwnership,
   exclusivelyHeldOllamaModel,
   type OllamaModelHolder,
   supersededOllamaModel,
@@ -59,6 +60,58 @@ describe("supersededOllamaModel", () => {
 
   it("does nothing when there is no previous entry (#9110)", () => {
     expect(supersededOllamaModel(null, "qwen2.5:7b", [])).toBeNull();
+  });
+});
+
+describe("decideOllamaModelOwnership", () => {
+  it("returns the exclusive model and names stopped matching registry rows (#10074)", () => {
+    const stoppedPeer = holder({ name: "stopped-peer" });
+
+    expect(decideOllamaModelOwnership(holder(), [holder(), stoppedPeer], new Set())).toEqual({
+      kind: "exclusive",
+      model: "llama3",
+      stalePeers: ["stopped-peer"],
+    });
+  });
+
+  it("protects a matching model held by a genuinely active sibling (#10074)", () => {
+    const activePeer = holder({ name: "active-peer", model: "llama3:latest" });
+    const stoppedPeer = holder({ name: "stopped-peer" });
+
+    expect(
+      decideOllamaModelOwnership(
+        holder(),
+        [holder(), stoppedPeer, activePeer],
+        new Set(["active-peer"]),
+      ),
+    ).toEqual({
+      kind: "shared-active",
+      model: "llama3",
+      activePeers: ["active-peer"],
+      stalePeers: ["stopped-peer"],
+    });
+  });
+
+  it.each([[undefined], [""], ["   "]])(
+    "returns missing-model for registry model %j (#10074)",
+    (model) => {
+      expect(decideOllamaModelOwnership(holder({ model }), [holder({ model })], new Set())).toEqual({
+        kind: "missing-model",
+      });
+    },
+  );
+
+  it("does not classify a different model or provider as an owner (#10074)", () => {
+    const differentModel = holder({ name: "different-model", model: "llama3:8b" });
+    const differentProvider = holder({ name: "different-provider", provider: "nvidia-prod" });
+
+    expect(
+      decideOllamaModelOwnership(
+        holder(),
+        [holder(), differentModel, differentProvider],
+        new Set(["different-model", "different-provider"]),
+      ),
+    ).toEqual({ kind: "exclusive", model: "llama3", stalePeers: [] });
   });
 });
 
