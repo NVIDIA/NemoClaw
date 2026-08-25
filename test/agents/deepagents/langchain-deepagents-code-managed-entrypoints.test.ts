@@ -131,6 +131,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(validator).toContain('"worker-broker_worker_task_context"');
     expect(validator).toContain('"output_attestation"');
     expect(validator).toContain('name="hanging"');
+    expect(validator).toContain("openshell:resolve:env:v12_VALIDATION_MCP_TOKEN");
     expect(validator).not.toContain("unittest.mock");
   });
 

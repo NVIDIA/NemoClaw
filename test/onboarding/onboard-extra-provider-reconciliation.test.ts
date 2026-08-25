@@ -61,6 +61,8 @@ registry.addExtraProvider("my-slack-bridge");
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
