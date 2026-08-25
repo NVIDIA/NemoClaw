@@ -4,9 +4,9 @@
 # PR Review Advisor
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs its
-model-backed analysis in an OpenShell sandbox from a trusted GitHub Actions job, inspects PRs as
-read-only data, and posts a sticky comment with blockers, warnings, and suggestions. Artifacts
-retain acceptance coverage, security notes, and other review context.
+model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs and inspects PRs as
+read-only data. It posts a sticky comment that links to the complete specialist reviews in the
+workflow run.
 
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself and by including E2E coverage and target guidance in the same model session:
 
@@ -41,11 +41,8 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-5. Runs one synthesis advisor after every discovered specialist session completes. The synthesis advisor reads the traces as untrusted evidence, verifies retained concerns against the repository, and performs the two-turn review protocol.
-6. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. If the advisor calls every required context tool but omits the analysis receipt, the runner permits one prose-only continuation.
-7. The `challenge-and-record` turn adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The recording tools replace complete in-memory draft sections without updating canonical state. `submit_review` validates and assembles pending state. The session runner commits that state only after it accepts the complete terminal flow. Provider failures, invalid submissions, and rejected terminal flows leave canonical state unchanged.
-8. Trusted code writes the synthesis session transcript, result, and summary artifacts.
-9. One publisher validates the synthesis artifacts for the same pull request commit and posts the sticky comment.
+5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
+6. One publisher posts a sticky comment that links to the workflow run after every specialist completes.
 
 `investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
@@ -55,8 +52,8 @@ cleanup sequence. It uses the shared lifecycle and credential-boundary helpers i
 
 Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
-The workflow is advisory and must not be configured as an E2E-required status check. Its combined
-comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.
+The workflow is advisory and must not be configured as an E2E-required status check. Its comment
+links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
 Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
@@ -145,25 +142,19 @@ Configure this repository secret for review analysis:
 The trusted host uses this secret only to register the OpenAI-compatible
 `https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed analyzer reaches that
 provider through `https://inference.local/v1` and does not receive the secret.
-The discovered specialists and the synthesis advisor use the workflow-configured model and share the same credential boundary.
+The discovered specialists use the workflow-configured model and share the same credential boundary.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
 
 ## Artifacts
 
-- `pr-review-advisor-result.json` — validated advisor result, or execution metadata when analysis is unavailable.
-- `pr-review-advisor-final-result.json` — canonical result used for comments.
-- `pr-review-advisor-summary.md` — markdown summary used in the job summary.
-- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and the single repair continuation when used.
+Each specialist artifact contains a Markdown review and Pi's unchanged native JSONL session. The
+workflow run also displays each Markdown review as a job summary. Review agents can download an
+artifact with `gh run download <run-id> --name pr-review-specialist-<interest>`.
 
-## Specialist synthesis
-
-Each valid Markdown prompt in `tools/pr-review-advisor/specialists` creates a focused, read-only Pi session. Every discovered specialist session is required. Each specialist uploads Pi's unchanged native JSONL session. Specialists have repository read tools but cannot record or submit the canonical review.
-
-The synthesis advisor places every discovered specialist trace beside the read-only repository inside OpenShell. It treats model-authored trace content as untrusted evidence and verifies retained concerns against repository evidence. It uses the atomic submission tools to create the canonical result. An absent, invalid, or oversized specialist trace fails synthesis.
-
-The publisher has the only pull-request write permission. It receives neither the model credential nor the specialist traces. It validates and publishes only the synthesis artifact.
+The publisher has the only pull-request write permission. It receives neither the model credential
+nor the specialist artifacts. It posts only the workflow-run link.
 
 ## Manual run
 

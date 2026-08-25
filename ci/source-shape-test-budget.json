@@ -158,22 +158,12 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires valid sandbox names",
+      "test": "requires valid specialist sandbox names",
       "category": "security"
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires distinct specialist and synthesis sandboxes",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires a synthesis matrix",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires native specialist sessions",
+      "test": "rejects a synthesis job",
       "category": "security"
     },
     {

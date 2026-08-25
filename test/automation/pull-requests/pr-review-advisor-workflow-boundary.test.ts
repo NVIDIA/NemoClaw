@@ -111,42 +111,38 @@ function validateArtifacts(directory: string): void {
 }
 
 describe("PR review advisor workflow boundary", () => {
-  it("accepts the five-specialist synthesis workflow", () => {
+  it("accepts the specialist workflow with linked reviews", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
   it("keeps model jobs read-only and the publisher separate", () => {
     const errors = validateMutation((value) => {
       value.jobs["review-specialists"].permissions["pull-requests"] = "write";
-      value.jobs.review.permissions["pull-requests"] = "write";
       value.jobs.publish.env.PR_REVIEW_ADVISOR_API_KEY = "secret";
       value.jobs.publish.env.ADVISOR_WORKDIR = "/tmp/pr";
     });
     expect(errors).toEqual(
       expect.arrayContaining([
         "review-specialists job permissions.pull-requests must be read",
-        "review job permissions.pull-requests must be read",
         "publish job must not receive the advisor model credential",
         "publish job must not receive the untrusted analysis worktree",
       ]),
     );
   });
 
-  it("requires discovered specialists before synthesis and publication", () => {
+  it("requires discovered specialists before publication", () => {
     const errors = validateMutation((value) => {
       value.jobs["review-specialists"].strategy.matrix.advisor = [];
       value.jobs["review-specialists"].needs = "publish";
       value.jobs["review-specialists"]["continue-on-error"] = true;
-      value.jobs.review.needs = "publish";
-      value.jobs.publish.needs = "review-specialists";
+      value.jobs.publish.needs = "discover-specialists";
     });
     expect(errors).toEqual(
       expect.arrayContaining([
         "specialist matrix must use the discovered specialist prompts",
         "specialist matrix must depend on prompt discovery",
-        "specialist failures must block synthesis",
-        "review synthesis must depend on the specialist matrix",
-        "publisher must depend on review synthesis",
+        "specialist failures must block publication",
+        "publisher must depend on the specialist matrix",
       ]),
     );
   });
@@ -170,22 +166,20 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors).toEqual([expectedError]);
   });
 
-  it("keeps trusted code and same-run artifacts", () => {
+  it("keeps the publisher on trusted workflow code", () => {
     const errors = validateMutation((value) => {
-      const checkout = value.jobs.review.steps.find(
+      const checkout = value.jobs.publish.steps.find(
         (step: Record<string, any>) =>
-          step.name === "Checkout trusted advisor code (workflow revision)",
+          step.name === "Checkout trusted comment publisher (workflow revision)",
       );
       checkout.with.ref = "main";
-      const download = value.jobs.publish.steps.find(
-        (step: Record<string, any>) => step.name === "Download primary advisor artifact",
+      const setup = value.jobs.publish.steps.find(
+        (step: Record<string, any>) => step.name === "Setup Node for trusted publisher",
       );
-      download.uses = "actions/download-artifact@v8";
-      download.with["run-id"] = "other-run";
+      setup.uses = "actions/setup-node@v7";
     });
     expect(errors.some((error) => error.includes("with.ref"))).toBe(true);
     expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
-    expect(errors).toContain("Download primary advisor artifact must not set with.run-id");
   });
 
   it("validates one synthesis result against live PR identity", () => {

@@ -26,50 +26,25 @@ function mutate(run: (workflow: Record<string, any>) => void): string[] {
 
 describe("PR review advisor OpenShell workflow boundary", () => {
   // source-shape-contract: security -- OpenShell sandbox names prevent command and resource identity injection.
-  it("requires valid sandbox names", () => {
+  it("requires valid specialist sandbox names", () => {
     const errors = mutate((workflow) => {
-      workflow.jobs.review.strategy.matrix.advisor[0].sandbox_name = "invalid_name";
+      workflow.jobs["review-specialists"].strategy.matrix.advisor = [
+        { sandbox_name: "invalid_name" },
+      ];
     });
     expect(errors).toContain(
-      "synthesis matrix entry 1 sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)",
+      "specialist matrix entry 1 sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)",
     );
   });
 
-  // source-shape-contract: security -- Distinct sandbox identities isolate every specialist from synthesis state.
-  it("requires distinct specialist and synthesis sandboxes", () => {
+  // source-shape-contract: security -- The workflow publishes specialist reviews without a model-backed synthesis job.
+  it("rejects a synthesis job", () => {
     const errors = mutate((workflow) => {
-      workflow.jobs.review.strategy.matrix.advisor[0].sandbox_name = "pr-adv-sp-beha-08bf";
+      workflow.jobs.review = {
+        permissions: {},
+        strategy: { matrix: { advisor: [{ sandbox_name: "pr-adv-synthesis" }] } },
+      };
     });
-    expect(errors).toContain(
-      "advisor, specialist, and synthesis sandbox_name values must be unique",
-    );
-  });
-
-  // source-shape-contract: security -- A fixed synthesis lane preserves the reviewed read-only model boundary.
-  it("requires a synthesis matrix", () => {
-    const errors = mutate((workflow) => {
-      delete workflow.jobs.review.strategy.matrix.advisor;
-    });
-    expect(errors).toContain("synthesis matrix must declare a non-empty advisor array");
-  });
-
-  // source-shape-contract: security -- Required same-run native sessions prevent incomplete evidence from reaching synthesis.
-  it("requires native specialist sessions", () => {
-    const errors = mutate((workflow) => {
-      const upload = workflow.jobs["review-specialists"].steps.find(
-        (step: Record<string, any>) => step.name === "Upload native specialist session",
-      );
-      upload.with["if-no-files-found"] = "ignore";
-      const download = workflow.jobs.review.steps.find(
-        (step: Record<string, any>) => step.name === "Download specialist session artifacts",
-      );
-      download.with.path = "/tmp/sessions";
-    });
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "step 'Upload native specialist session' expected with.if-no-files-found=error",
-        "step 'Download specialist session artifacts' expected with.path=pr-workdir/.pr-review-advisor-sessions",
-      ]),
-    );
+    expect(errors).toContain("workflow must not declare a synthesis job");
   });
 });
