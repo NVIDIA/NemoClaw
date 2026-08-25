@@ -57,6 +57,7 @@ describe("sandbox quarantine activation guard", () => {
     "sandbox:snapshot:restore",
     "sandbox:channels:add",
     "sandbox:policy:set",
+    "sandbox:shields:down",
   ])("blocks activation or mutation command %s (#10140)", (commandId) => {
     expect(() =>
       assertSandboxCommandAllowedByQuarantine(commandId, "alpha", [], getSandbox),

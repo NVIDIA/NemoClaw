@@ -23,7 +23,6 @@ const QUARANTINE_ALLOWED_COMMANDS = new Set([
   "sandbox:sessions:export",
   "sandbox:sessions:list",
   "sandbox:share:status",
-  "sandbox:shields:down",
   "sandbox:shields:status",
   "sandbox:snapshot:create",
   "sandbox:snapshot:list",
