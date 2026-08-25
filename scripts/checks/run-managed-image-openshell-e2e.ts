@@ -408,13 +408,29 @@ export function assertOpenClawHeartbeatStart(
   }
   const result = runCommand(["docker", "logs", containerId], env, 15_000);
   if (result.status !== 0 || result.error) {
-    throw new Error(`could not read managed OpenClaw startup logs: ${commandDetail(result)}`);
+    throw new Error(
+      `could not read managed OpenClaw startup logs: ${redactProtectedGpuProof(commandDetail(result))}`,
+    );
   }
   const heartbeatStart = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
     .split(/\r?\n/u)
     .find((line) => line.includes("heartbeat: started"));
-  if (!heartbeatStart || !/intervalMs["'\s:=]+120000(?:\D|$)/u.test(heartbeatStart)) {
-    throw new Error("managed OpenClaw did not start with the requested 120000 ms heartbeat");
+  const configuredInterval = /^(\d+)([smh])$/u.exec(
+    MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
+  );
+  const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
+    configuredInterval?.[2] as "s" | "m" | "h"
+  ];
+  const expectedIntervalMs = configuredInterval
+    ? Number(configuredInterval[1]) * intervalUnitMs
+    : Number.NaN;
+  const observedIntervalMs = /intervalMs["'\s:=]+(\d+)(?:\D|$)/u.exec(
+    heartbeatStart ?? "",
+  )?.[1];
+  if (!Number.isSafeInteger(expectedIntervalMs) || observedIntervalMs !== String(expectedIntervalMs)) {
+    throw new Error(
+      `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
+    );
   }
 }
 

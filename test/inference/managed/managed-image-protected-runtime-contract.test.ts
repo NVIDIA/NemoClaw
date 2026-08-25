@@ -110,6 +110,22 @@ describe("protected managed-image runtime contract", () => {
     );
   });
 
+  it("redacts credentials when managed OpenClaw startup logs cannot be read", () => {
+    const containerId = "a".repeat(64);
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "TELEGRAM_BOT_TOKEN=secret-value",
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "TELEGRAM_BOT_TOKEN=<REDACTED>",
+    );
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(
+      "secret-value",
+    );
+  });
+
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
     const journalRoot = path.join(stateRoot, "managed-bootstrap");

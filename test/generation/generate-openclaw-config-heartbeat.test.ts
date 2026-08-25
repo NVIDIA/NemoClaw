@@ -84,14 +84,17 @@ describe("generate OpenClaw heartbeat config", () => {
     });
   });
 
-  it("rejects malformed cadence and preserves the OpenClaw default", () => {
-    const { config, result } = runGenerator({
-      NEMOCLAW_AGENT_HEARTBEAT_EVERY: "5 minutes",
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(config.agents.defaults.heartbeat).toBeUndefined();
-    expect(result.stderr).toMatch(
-      /\[SECURITY\] NEMOCLAW_AGENT_HEARTBEAT_EVERY must match \^\\d\+\(s\|m\|h\)\$, got "5 minutes"/,
-    );
-  });
+  it.each(["5 minutes", "1h30m"])(
+    "rejects unsupported cadence %s and preserves the OpenClaw default",
+    (heartbeatEvery) => {
+      const { config, result } = runGenerator({
+        NEMOCLAW_AGENT_HEARTBEAT_EVERY: heartbeatEvery,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(config.agents.defaults.heartbeat).toBeUndefined();
+      expect(result.stderr).toContain(
+        `[SECURITY] NEMOCLAW_AGENT_HEARTBEAT_EVERY must match ^\\d+(s|m|h)$, got "${heartbeatEvery}"`,
+      );
+    },
+  );
 });
