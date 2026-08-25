@@ -1,0 +1,292 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
+
+import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
+const PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
+const STATION_PREPARATION = path.join(
+  REPO_ROOT,
+  "docs",
+  "get-started",
+  "dgx-station-preparation.mdx",
+);
+const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
+const PLATFORM_SUPPORT = path.join(REPO_ROOT, "docs", "reference", "platform-support.mdx");
+const VLLM_SETUP = path.join(REPO_ROOT, "docs", "inference", "set-up-vllm.mdx");
+const DUAL_STATION_VLLM_SETUP = path.join(
+  REPO_ROOT,
+  "docs",
+  "inference",
+  "set-up-vllm-on-two-dgx-stations.mdx",
+);
+const WINDOWS_PREPARATION = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
+const DOCS_INDEX = path.join(REPO_ROOT, "docs", "index.yml");
+const FERN_DOCS = path.join(REPO_ROOT, "fern", "docs.yml");
+
+describe("DGX Station documentation ownership", () => {
+  it("keeps Station preparation canonical and links to it from prerequisite entry points", () => {
+    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
+    const prerequisites = fs.readFileSync(PREREQUISITES, "utf-8");
+    const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
+    const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
+    const platformSupport = fs.readFileSync(PLATFORM_SUPPORT, "utf-8");
+    const vllmSetup = fs.readFileSync(VLLM_SETUP, "utf-8");
+    const dualStationVllmSetup = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
+    const pinnedValues = [
+      "DRIVER_VERSION",
+      "DOCKER_VERSION",
+      "TOOLKIT_VERSION",
+      "FACTORY_DKMS_VERSION",
+      "TARGET_DKMS_VERSION",
+    ].map((name) => {
+      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
+      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
+      return value as string;
+    });
+
+    for (const version of pinnedValues) {
+      expect(stationPreparation).toContain(version);
+      expect(prerequisites).not.toContain(version);
+      expect(quickstart).not.toContain(version);
+    }
+    for (const version of ["7.2.0", "7.4.0", "7.5.0", "7.6.x"]) {
+      expect(stationPreparation).toContain(version);
+      expect(quickstart).not.toContain(version);
+    }
+    expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain(
+      "OTA-form qualification uses the latest `DGX_OTA_VERSION`",
+    );
+    expect(stationPreparation).toContain("`DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`");
+    expect(stationPreparation).toContain("recognized GB300 hardware");
+    expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
+    expect(stationPreparation).toContain("does not match the date against an exact build");
+    expect(stationPreparation).toContain(
+      "Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending",
+    );
+    expect(stationPreparation).toContain(
+      "A resident `packagekitd` process alone does not block stock DGX OS",
+    );
+    expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain("--force-station-install");
+    expect(stationPreparation).toContain("metadata omits or varies fields");
+    expect(stationPreparation).toContain("Remove the override after");
+    expect(quickstart).not.toContain("--force-station-install");
+    expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(platformSupport).toContain(
+      "Full Station Express end-to-end qualification for the accepted no-OTA DGX OS `7.6.x` profile is pending",
+    );
+    expect(platformSupport).toContain(
+      "Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64",
+    );
+    expect(platformSupport).toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(platformSupport).toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(platformSupport).toContain(
+      "Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS",
+    );
+    expect(platformSupport).toContain("exact read-only BDF directory");
+    expect(platformSupport).toContain("they do not expose `/sys`, the PCI parent subtree");
+    expect(platformSupport).toContain("`/sys/fs/cgroup/cgroup.controllers`");
+    expect(platformSupport).toContain("`/sys/class/net/lo/address`");
+    expect(stationPreparation).not.toContain("DGX Station is Tested with limitations");
+    expect(stationPreparation).not.toContain("Physical validation on one DGX Station GB300");
+    expect(stationPreparation).toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(stationPreparation).toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
+    expect(vllmSetup).toContain("Prepare DGX Station to Install NemoClaw");
+    expect(vllmSetup).toContain("[Platform Support](../../reference/platform-support)");
+    expect(vllmSetup).toContain(
+      "[Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations)",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "[Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation)",
+    );
+    expect(dualStationVllmSetup).toContain("[Platform Support](../../reference/platform-support)");
+    expect(dualStationVllmSetup).toContain("NEMOCLAW_DGX_STATION_PEER");
+    expect(vllmSetup).not.toContain("NEMOCLAW_DGX_STATION_PEER");
+    expect(stationPreparation).toContain("two-Station CX8 fabric playbook");
+    expect(stationPreparation).toContain("exactly two active 400 Gbit/s Ethernet rails");
+    expect(stationPreparation).toContain("passwordless `sudo` for remote preparation");
+    expect(stationPreparation).toContain("## Next Step\n");
+    expect(stationPreparation).not.toContain("## Next Steps\n");
+    expect(stationPreparation).not.toContain(
+      "Station Express selects `nemotron-3-ultra-550b-a55b`",
+    );
+    expect(stationPreparation).not.toContain("owner-only pair state");
+    expect(stationPreparation).not.toContain("Trusted Pair Boundary");
+    expect(stationPreparation).not.toContain("The two-Station path is a Deferred evaluation");
+    expect(dualStationVllmSetup).not.toContain("two-Station CX8 fabric playbook");
+    expect(dualStationVllmSetup).not.toContain(
+      "Configure SSH host-key trust and non-interactive authentication",
+    );
+    expect(dualStationVllmSetup).toContain("Station Express selects `nemotron-3-ultra-550b-a55b`");
+    expect(dualStationVllmSetup).toContain(
+      "preparation binds the preparing non-root account's UID",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "administrator must remove the file on the affected Station",
+    );
+    expect(dualStationVllmSetup).toContain("pair state binds the preparation helper");
+    expect(dualStationVllmSetup).toContain("distributed runtime uses unauthenticated Ray");
+    expect(vllmSetup).toContain("--station-deepseek");
+    expect(vllmSetup).toContain("bash -s -- --station-deepseek");
+    expect(vllmSetup).toContain("For a headless DGX Station setup");
+    expect(vllmSetup).toContain("NEMOCLAW_NON_INTERACTIVE=1");
+    expect(vllmSetup).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+    expect(vllmSetup).not.toContain("Physical validation on one DGX Station GB300");
+    expect(prerequisites).toContain("### DGX Station Express Preparation");
+    expect(prerequisites).toContain("checks Docker before it installs the NemoClaw CLI");
+    expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Tested with limitations \|/);
+    expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
+    expect(prerequisites).not.toContain("DGX Station is Tested with limitations");
+    expect(prerequisites).toContain(
+      "[Additional Setup for DGX Station](additional-setup/dgx-station-preparation)",
+    );
+    expect(prerequisites).toContain(
+      "[Additional Setup for Windows Machines](additional-setup/windows-preparation)",
+    );
+    expect(quickstart).toContain("additional-setup/dgx-station-preparation");
+    expect(quickstart).toContain("additional-setup/windows-preparation");
+    expect(quickstart).toContain("../../inference/local-inference/set-up-vllm");
+    expect(quickstart).toContain("../../reference/platform-support");
+    expect(quickstart).toContain("switches the remaining onboarding to non-interactive mode");
+    expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
+    expect(quickstart).not.toContain("DGX Station is Tested with limitations");
+    expect(quickstart).not.toContain("Physical validation on one DGX Station GB300");
+    expect(quickstart).not.toContain("unmatched no-OTA factory images");
+    expect(quickstart).not.toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(quickstart).not.toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(quickstart).not.toContain("--station-deepseek");
+    expect(quickstart).not.toContain('Accordion title="Installer Behavior and Platform Details"');
+  });
+
+  it("labels platform-specific prerequisite pages as additional setup", () => {
+    const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
+    const windowsPreparation = fs.readFileSync(WINDOWS_PREPARATION, "utf-8");
+    const docsIndex = fs.readFileSync(DOCS_INDEX, "utf-8");
+
+    expect(stationPreparation).toContain('title: "Prepare DGX Station to Install NemoClaw"');
+    expect(stationPreparation).toContain('sidebar-title: "Additional Setup for DGX Station"');
+    expect(windowsPreparation).toContain('title: "Prepare a Windows Machine to Install NemoClaw"');
+    expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows Machines"');
+    expect(docsIndex.match(/page: "Prerequisites"/g)).toHaveLength(3);
+    expect(docsIndex).not.toContain('section: "Prerequisites"');
+    expect(
+      docsIndex.match(/section: "Additional Setup"\n\s+slug: additional-setup\n\s+contents:/g),
+    ).toHaveLength(3);
+    expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
+    expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
+    expect(docsIndex.match(/page: "Set Up vLLM on Two DGX Stations"/g)).toHaveLength(3);
+  });
+
+  it.each(
+    Array.from(
+      [
+        ["openclaw", "openclaw"],
+        ["hermes", "hermes"],
+        ["deepagents", "langchain-deepagents-code"],
+      ] as const,
+      ([variant, agent]) => ({ variant, agent }),
+    ),
+  )("keeps the $variant headless Station installer aware of $agent", ({ variant, agent }) => {
+    const source = fs.readFileSync(VLLM_SETUP, "utf-8");
+
+    const rendered = renderAgentVariantPage(source, variant);
+    const stationDeepseekCommand = [
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
+      `  NEMOCLAW_AGENT=${agent} \\`,
+      "  bash -s -- --station-deepseek",
+    ].join("\n");
+
+    expect(rendered).toContain(stationDeepseekCommand);
+    expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
+    expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
+    expect(rendered).not.toContain("<AgentOnly");
+  });
+
+  it.each(
+    Array.from(
+      [
+        ["openclaw", "openclaw"],
+        ["hermes", "hermes"],
+        ["deepagents", "langchain-deepagents-code"],
+      ] as const,
+      ([variant, agent]) => ({ variant, agent }),
+    ),
+  )(
+    "keeps first-run $variant dual-Station pair qualification in the $agent installer",
+    ({ variant, agent }) => {
+      const source = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
+
+      const rendered = renderAgentVariantPage(source, variant);
+      const pairCommand = [
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
+        `  NEMOCLAW_AGENT=${agent} \\`,
+        "  NEMOCLAW_NON_INTERACTIVE=1 \\",
+        "  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \\",
+        "  NEMOCLAW_PROVIDER=install-vllm \\",
+        '  NEMOCLAW_DGX_STATION_PEER="<peer-host-or-address>" \\',
+        "  NEMOCLAW_SANDBOX_NAME=my-assistant \\",
+        "  bash",
+      ].join("\n");
+
+      expect(rendered).toContain(pairCommand);
+      expect(rendered).toContain("The installer qualifies the pair");
+      expect(rendered).not.toContain("nemoclaw onboard --non-interactive");
+      expect(rendered).not.toContain("<AgentOnly");
+    },
+  );
+
+  it("redirects every retired Prerequisites child route directly to Additional Setup", () => {
+    const redirects = (
+      parse(fs.readFileSync(FERN_DOCS, "utf-8")) as {
+        redirects?: Array<{ source: string; destination: string }>;
+      }
+    ).redirects;
+    const pages = ["dgx-station-preparation", "windows-preparation"];
+    const variantPrefixes = [
+      "/nemoclaw/latest/user-guide/:variant",
+      "/nemoclaw/user-guide/:variant",
+    ];
+
+    for (const prefix of variantPrefixes) {
+      for (const page of pages) {
+        for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
+          const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
+          const source = `${prefix}/get-started/prerequisites/${page}${suffix}`;
+          expect(redirects?.filter((redirect) => redirect.source === source)).toEqual([
+            {
+              source,
+              destination: `${prefix}/get-started/additional-setup/${page}${destinationSuffix}`,
+            },
+          ]);
+        }
+      }
+    }
+
+    for (const [legacyPrefix, destinationPrefix] of [
+      ["/nemoclaw/latest", "/nemoclaw/latest/user-guide/openclaw"],
+      ["/nemoclaw", "/nemoclaw/user-guide/openclaw"],
+    ]) {
+      for (const page of pages) {
+        for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
+          const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
+          const source = `${legacyPrefix}/get-started/prerequisites/${page}${suffix}`;
+          expect(redirects?.filter((redirect) => redirect.source === source)).toEqual([
+            {
+              source,
+              destination: `${destinationPrefix}/get-started/additional-setup/${page}${destinationSuffix}`,
+            },
+          ]);
+        }
+      }
+    }
+  });
+});

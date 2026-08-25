@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { managedActivationOnboardArgs } from "./e2e/live/managed-image-activation-e2e-helpers";
+import { managedActivationOnboardArgs } from "../../e2e/live/managed-image-activation-e2e-helpers";
 
 describe("managed image activation command", () => {
   it("uses an exact stock catalog without enabling candidate activation", () => {

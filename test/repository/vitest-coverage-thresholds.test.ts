@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import rootVitestConfig from "../vitest.config";
 import {
   resolveVitestCoverageThresholds,
   securityCoverageThresholds,

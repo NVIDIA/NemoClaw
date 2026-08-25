@@ -12,7 +12,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../../../scripts/lib/patch-bundled-npm-ip-address.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
-import { requireSingleReviewedDockerfileRunCommand } from "../.././helpers/dockerfile-run-commands";
+import { requireSingleReviewedDockerfileRunCommand } from "../../helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const baseDockerfiles = [

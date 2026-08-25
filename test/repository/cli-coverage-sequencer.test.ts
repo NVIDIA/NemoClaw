@@ -19,7 +19,7 @@ import {
   shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
-} from ".././helpers/cli-coverage-sequencer";
+} from "../helpers/cli-coverage-sequencer";
 
 function assignmentKeys(entries: readonly WeightedShardEntry<string>[]) {
   return assignStableShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));
@@ -118,8 +118,8 @@ describe("stable CLI coverage sharding", () => {
       "cli:src/lib/example.test.ts": 6,
       "e2e-support:test/e2e/support/example.test.ts": 8,
       "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 1,
-      "integration:test/credentials/local-credential-helper-fields.test.ts": 6,
-      "integration:test/regular-0.test.ts": 1,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 7,
+      "integration:test/regular-0.test.ts": 2,
     });
   });
 

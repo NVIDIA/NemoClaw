@@ -20,7 +20,7 @@ describe("PR Review Advisor writing guide", () => {
     try {
       process.chdir(prWorktree);
       const { readTrustedWritingGuide } =
-        await import("../tools/pr-review-advisor/trusted-guidance.mts");
+        await import("../../../tools/pr-review-advisor/trusted-guidance.mts");
       const writingGuide = readTrustedWritingGuide();
 
       expect(writingGuide).toContain("# NemoClaw Writing Guide");
@@ -33,7 +33,7 @@ describe("PR Review Advisor writing guide", () => {
 
   it("stops when the trusted guide is unavailable", async () => {
     const { readTrustedWritingGuide } =
-      await import("../tools/pr-review-advisor/trusted-guidance.mts");
+      await import("../../../tools/pr-review-advisor/trusted-guidance.mts");
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing guide fixture");
     });
@@ -42,8 +42,8 @@ describe("PR Review Advisor writing guide", () => {
   });
 
   it("writes failure artifacts when the trusted security rubric is unavailable", async () => {
-    const { preparePromptArtifacts } = await import("../tools/pr-review-advisor/analyze.mts");
-    const { artifactPaths } = await import("../tools/pr-review-advisor/artifacts.mts");
+    const { preparePromptArtifacts } = await import("../../../tools/pr-review-advisor/analyze.mts");
+    const { artifactPaths } = await import("../../../tools/pr-review-advisor/artifacts.mts");
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-rubric-failure-"));
     const headSha = "b".repeat(40);
     const realReadFileSync = fs.readFileSync.bind(fs);
@@ -111,10 +111,10 @@ describe("PR Review Advisor writing guide", () => {
   });
 
   it("writes failure artifacts when trusted prompt inputs are unavailable", async () => {
-    const { preparePromptArtifacts } = await import("../tools/pr-review-advisor/analyze.mts");
-    const { artifactPaths } = await import("../tools/pr-review-advisor/artifacts.mts");
+    const { preparePromptArtifacts } = await import("../../../tools/pr-review-advisor/analyze.mts");
+    const { artifactPaths } = await import("../../../tools/pr-review-advisor/artifacts.mts");
     const { readTrustedSecurityRubric } =
-      await import("../tools/pr-review-advisor/trusted-guidance.mts");
+      await import("../../../tools/pr-review-advisor/trusted-guidance.mts");
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-prompt-failure-"));
     const headSha = "a".repeat(40);
     const securityRubric = readTrustedSecurityRubric();
