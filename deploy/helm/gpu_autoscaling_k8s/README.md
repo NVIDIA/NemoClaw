@@ -7,7 +7,7 @@
 
 This experimental community recipe demonstrates a cost-efficient architecture that runs a single AI agent securely inside a CPU-only OpenShell sandbox while independently autoscaling GPU-backed inference. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts inference capacity from one to multiple replicas as demand changes—maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
 
-The sandboxed agent is swappable — **OpenClaw** (default), **Hermes**, or **Deep Agents Code** — see [`AGENT-SELECTION.md`](AGENT-SELECTION.md). The inference container is also swappable — **Ollama** (default), **vLLM**, or **NVIDIA NIM** — via `inference.runtime`; see [Inference runtimes](#inference-runtimes). Every combination keeps the same 1 GPU → 1 pod → local OpenAI-compatible `/v1` server pattern, so the rest of the architecture (metrics-proxy, HPA, Envoy) is unaffected by either choice.
+The sandboxed agent is swappable — **OpenClaw** (default), **Hermes**, or **Deep Agents Code** — see [`AGENT-SELECTION.md`](AGENT-SELECTION.md). The inference container is also swappable — **Ollama** (default), **vLLM**, or **NVIDIA NIM** — via `inference.runtime`; see [Inference runtimes](#inference-runtimes). All nine agent × runtime pairings render through the same 1 GPU → 1 pod → local OpenAI-compatible `/v1` server pattern (so metrics-proxy, HPA, and Envoy are unaffected by either choice), but not every pairing is equally documented or exercised upstream — see [Agent and runtime support](#agent-and-runtime-support) before picking a combination.
 
 Kubernetes HPA scales only those GPU inference pods (1 GPU each) using a Pods **`AverageValue`** metric (average across Ready pods). Example HPA metrics: **GPU utilization** (scale out when average per-pod util is **above 40%**) and **LLM latency** (scale out when average per-pod latency is **above 3000 ms**).
 
@@ -21,9 +21,13 @@ Kubernetes HPA scales only those GPU inference pods (1 GPU each) using a Pods **
 **New here?** Start with [Quick start](#quick-start). Teardown: [Uninstall](#uninstall).
 
 **Want to just try it end to end?** `./scripts/try-it.sh` runs the whole Quick start below
-in one script — edit the `AGENT_NAME` / `INFERENCE_RUNTIME` block at its top (or pass them
-as env vars) and go. It defaults to the isolated-eval shortcuts (`ALLOW_INSECURE_HTTP=1`,
-unauthenticated OpenShell) — fine for a dedicated single-user cluster, not for shared/prod.
+in one script, including the synthetic HPA load test (`RUN_LOAD_TEST=1` by default) that
+actually drives GPU scale-up, an Envoy LeastRequest check, and scale-down — edit the
+`AGENT_NAME` / `INFERENCE_RUNTIME` block at its top (or pass them as env vars) and go. It
+does **not** default to an insecure configuration: TLS + OIDC are required unless you
+explicitly export `ALLOW_INSECURE_HTTP=1`, `ALLOW_UNAUTHENTICATED_OPENSHELL=1`, and
+`OPENSHELL_UNAUTHENTICATED_ACK=dedicated-cluster-port-forward-only` to opt into the
+isolated-eval shortcut — fine for a dedicated single-user cluster, never for shared/prod.
 
 Keep the versions in `versions.env` align with NemoClaw blueprint: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. NemoClaw blueprint only accepts a specific OpenShell range, and OpenShell’s K8s path pins Agent Sandbox. When upstream NemoClaw moves on: bump all three together in `versions.env`, rebuild/push a new sandbox image tag, re-apply Agent Sandbox if needed, reinstall/restart OpenShell, recreate the sandbox, then re-run verify + HPA checks to `MAX_REPLICAS` (allocatable GPUs).
 
@@ -106,6 +110,8 @@ export TARGET_PODS=8    # hpa-load-test.sh
 - NVIDIA GPU Operator + DCGM Exporter (MicroK8s: `install-hpa.sh` can `microk8s enable gpu`)
 - Metrics Server (MicroK8s: installer can enable)
 - OpenShell path only: Docker Buildx + a registry nodes can pull (MicroK8s: [local registry](#microk8s-local-registry) on `:32000`); OpenShell CLI matching `versions.env`; Agent Sandbox CRDs (apply the pinned manifest yourself); OIDC **or** the unauthenticated eval exception
+
+Cluster baseline matches the [NemoClaw GPU autoscaling chart](https://github.com/NVIDIA/NemoClaw/tree/main/deploy/helm/gpu_autoscaling_k8s). For host CLI / Docker when working with NemoClaw images locally, see NemoClaw's [Prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/docs/get-started/prerequisites.mdx).
 
 ```bash
 kubectl get nodes \
@@ -318,6 +324,7 @@ When Envoy is enabled:
 - OpenShell HTTPRoute: no Gateway Basic auth so OpenShell can inject `Authorization: Bearer`.
 - TLS required by default. Isolated eval cleartext: `ALLOW_INSECURE_HTTP=1` (ClusterIP only). Preflight checks Kubernetes-reported exposure; it does not prove private-network isolation. Set per script invocation.
 - Auth Secrets (`nemoclaw-gpu-metrics-proxy-inference-api`, `nemoclaw-gpu-metrics-proxy-ingress-auth`) use Helm `keep`. Delete explicitly to rotate; never commit keys. Optional operator Secret: `inference.auth.existingSecret`.
+- The chart creates **no NetworkPolicy** either way — Bearer auth on the inference API is not network isolation; add a NetworkPolicy yourself if the cluster needs one.
 
 When Envoy is disabled (`ENABLE_ENVOY_LB=0`): no Gateway objects; clients use the metrics-proxy Service; protect with network policy and the inference API key.
 
@@ -332,6 +339,20 @@ When Envoy is disabled (`ENABLE_ENVOY_LB=0`): no Gateway objects; clients use th
 | **NIM** | Prebuilt, NVIDIA-optimized inference microservice, no serving flags to tune | `nvidia/nemotron-3-nano` | `nvcr.io/nim/nvidia/nemotron-3-nano` | ~8 GB |
 
 Every default here fits comfortably on a single L40S (48 GB) or H100 (80 GB) with room for a much larger `inference.maxModelLen`/context if you raise `vllm.maxModelLen` or switch models.
+
+#### Agent and runtime support
+
+The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime` pairings identically — every combination technically renders and routes traffic the same way. But "renders" isn't the same as "documented and exercised," and upstream NemoClaw guidance doesn't endorse every pairing equally:
+
+| Agent | Ollama | vLLM | NIM |
+|-------|--------|------|-----|
+| **OpenClaw** | Yes | Yes | Experimental |
+| **Hermes** | Yes | Yes | Experimental |
+| **Deep Agents Code** | Not currently documented | Not currently documented | Not currently documented |
+
+- **NIM is experimental** for OpenClaw and Hermes: functionally wired and covered by this recipe's tests, but newer and less exercised than Ollama/vLLM.
+- **Deep Agents Code has no currently documented local-runtime pairing upstream.** In particular, current NemoClaw guidance advises against pairing Deep Agents Code with local Ollama specifically. This recipe does not block any Deep Agents Code + runtime combination (Deep Agents Code just calls whatever OpenAI-compatible `/v1` endpoint OpenShell hands it), but treat all three as community-tested only, not an officially validated pairing — start from OpenClaw or Hermes if you want the most-exercised path.
+- `./scripts/try-it.sh`, the one-shot shortcut, accepts `INFERENCE_RUNTIME=ollama|vllm|nim` for any `AGENT_NAME`. It does not block `AGENT_NAME=deepagents` with `INFERENCE_RUNTIME=ollama` (this recipe never blocks a Deep Agents Code + runtime combination — see above), but it does print a warning for that specific pairing since it's the one cell upstream NemoClaw guidance doesn't currently document.
 
 #### Switching runtimes
 
@@ -354,10 +375,42 @@ export NIM_NGC_API_KEY=nvapi-...
 
 Notes:
 
-- `install-hpa.sh` / `hpa-reset.sh` / `hpa-load-test.sh` all forward `NIM_NGC_API_KEY` (plaintext, `--set-string nim.ngcApiKey.value=...`) or `NIM_NGC_API_KEY_SECRET` (name of a pre-created `Secret` with key `NGC_API_KEY`, `--set-string nim.ngcApiKey.existingSecret=...`) when set. Prefer `NIM_NGC_API_KEY_SECRET` in a real deployment, since plaintext `--set` values are visible in `helm get values` / shell history.
+- `install-hpa.sh` / `hpa-reset.sh` / `hpa-load-test.sh` all forward `NIM_NGC_API_KEY` (plaintext, `--set-string nim.ngcApiKey.value=...`) or `NIM_NGC_API_KEY_SECRET` (name of a pre-created `Secret` with key `NGC_API_KEY`, `--set-string nim.ngcApiKey.existingSecret=...`) when set. Prefer `NIM_NGC_API_KEY_SECRET` in a real deployment, since plaintext `--set` values are visible in `helm get values` / shell history. See [NVIDIA NIM registry access](#nvidia-nim-registry-access) for the related `imagePullSecret` — a clean node needs both, not just `NGC_API_KEY`.
 - vLLM's default `extraArgs` (`--trust-remote-code --async-scheduling --kv-cache-dtype=fp8`) are specific to the Nemotron-3-Nano-4B-FP8 family — clear or replace `vllm.extraArgs` when switching to a different Hugging Face model.
 - NIM env vars (`NGC_API_KEY`, `NIM_CACHE_PATH`, `NIM_HTTP_API_PORT`) follow NVIDIA's generic NIM container contract; verify against the specific NIM image's own docs if you swap in a different catalog entry, and use `nim.extraEnv` for anything image-specific.
 - The `ollama`/`vllm`/`nim` container security contexts are separate values (`ollamaSecurityContext`, `vllmSecurityContext`, `nimSecurityContext`) in case one runtime's image tolerates stricter settings than another.
+
+#### NVIDIA NIM registry access
+
+NIM needs authentication in **two different places**, and it's easy to wire up only one:
+
+1. **Pulling the NIM image itself** (`nvcr.io/nim/...`) — kubelet needs an `imagePullSecret` on the pod. Without it, a node with no prior `nvcr.io` credentials gets `ImagePullBackOff` before the container ever starts.
+2. **Downloading the model profile at container start** (`NGC_API_KEY` env var) — the already-running NIM container reads this to pull the optimized model profile from NGC.
+
+The same NGC API key authenticates both, and this chart derives both automatically from one value:
+
+```bash
+export NIM_NGC_API_KEY=nvapi-...   # https://ngc.nvidia.com → Setup → API Keys
+./scripts/install-hpa.sh
+```
+
+This sets `nim.ngcApiKey.value`, which the chart uses to render **two** Secrets: an `Opaque` Secret for `NGC_API_KEY` ([`nim-ngc-secret.yaml`](templates/nim-ngc-secret.yaml)) and a `kubernetes.io/dockerconfigjson` Secret referenced as the pod's `imagePullSecrets` ([`nim-ngc-registry-secret.yaml`](templates/nim-ngc-registry-secret.yaml)) — no separate registry login step needed. **Never commit an NGC API key to Git**; only ever pass it as an env var or a pre-created Secret, and this recipe's tests only ever use a throwaway placeholder value.
+
+If you'd rather manage `NGC_API_KEY` as a pre-created `Secret` (`NIM_NGC_API_KEY_SECRET`, → `nim.ngcApiKey.existingSecret`), the chart can't read that Secret's data at template time to also derive the `imagePullSecret` — create one yourself and point the chart at it:
+
+```bash
+kubectl create secret docker-registry ngc-registry \
+  --docker-server=nvcr.io \
+  --docker-username='$oauthtoken' \
+  --docker-password=nvapi-... \
+  -n nemoclaw-gpu
+
+export NIM_NGC_API_KEY_SECRET=nim-ngc-key      # pre-created Opaque Secret, key NGC_API_KEY
+export NIM_IMAGE_PULL_SECRET=ngc-registry      # pre-created kubernetes.io/dockerconfigjson Secret
+./scripts/install-hpa.sh
+```
+
+Helm fields: `nim.imagePullSecret.create` (default `true`), `nim.imagePullSecret.existingSecret`, `nim.imagePullSecret.registry` (default `nvcr.io`). Set `nim.imagePullSecret.create=false` only if every GPU node already has `nvcr.io` pull access configured out of band (e.g. containerd credentials baked into the node image).
 
 #### Ollama model tags
 
@@ -392,6 +445,10 @@ Helm fields: `inference.runtime` (ollama|vllm|nim) and `inference.model` in `val
 #### Persistence
 
 All three runtimes persist their model cache the same way, each via its own `values.yaml` block: `ollama.persistence` (`/var/lib/nemoclaw-gpu/ollama`, the default runtime), `vllm.persistence` (`/var/lib/nemoclaw-gpu/vllm`), `nim.persistence` (`/var/lib/nemoclaw-gpu/nim`). Default persistence for all three is single-node hostPath. Multi-node: clear `hostPath` and use an RWX StorageClass, or disable persistence (`emptyDir` per pod → re-pull/re-download on replace).
+
+### Recovery
+
+Destructive recovery for the selected release only: `./scripts/cluster-recover.sh` (optional `RESTART_MICROK8S=1`). See script comments before use.
 
 ### Kubernetes HPA metrics
 
@@ -463,11 +520,11 @@ health-check step — see [`AGENT-SELECTION.md`](AGENT-SELECTION.md#example-veri
 Plugin inspect OK.
 [verify] GET https://inference.local/v1/models (timeout 120s)...
 models: llama3.2:3b
-[verify] POST https://inference.local/v1/chat/completions
+[verify] openclaw agent exec (headless) — this is the real agent binary, not a curl probe (timeout 120s)
 [verify] Example query: In one sentence, what is an AI agent sandbox?
 [verify] Answer: An AI agent sandbox is a simulated environment where an AI agent
 can interact and learn in a safe, controlled space.
-OK: sandbox nemoclaw-onprem reached https://inference.local for models and a real prompt (llama3.2:3b).
+OK: sandbox nemoclaw-onprem reached https://inference.local for models and answered a real prompt through NemoClaw/OpenClaw (llama3.2:3b).
 Runtime (optional foreground): AGENT_NAME=openclaw ./scripts/run-agent-sandbox.sh
 ```
 
@@ -577,6 +634,16 @@ HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test.sh
 ./scripts/hpa-reset.sh
 ```
 
+Override knobs (all optional — defaults already match install's `MAX_REPLICAS` ceiling):
+
+| Knob | Default | Purpose |
+|------|---------|---------|
+| `SKIP_ENVOY_LB_TEST` | `0` | Skip the Envoy distribution phase |
+| `ENABLE_ENVOY_LB` | `1` | Keep consistent with install |
+| `LB_TEST_REQUESTS` / `LB_TEST_CONCURRENCY` | `48` / `12` | Envoy check load |
+| `TARGET_PODS` / `SCALE_UP_TARGET` | allocatable GPUs | HPA test ceiling |
+| `DURATION_SEC` / `HPA_TARGET_GPU` | `720` / `40` | Load duration / util target |
+
 Example from the validated 4× L40S run — HPA scale-up when average per-pod GPU utilization > 40%
 
 <img width="1480" height="569" alt="HPA scaling to four GPU replicas under load (GPU utilization)" src="https://github.com/user-attachments/assets/6c37e52e-48fa-44a1-8ab6-878d90347bb9" />
@@ -656,19 +723,15 @@ After scale-up you should see multiple pod series. metrics-proxy `/metrics` scra
 
 | Script | Purpose |
 |--------|---------|
-| `try-it.sh` | Runs the whole Quick start end to end, `AGENT_NAME` / `INFERENCE_RUNTIME` at the top |
+| `try-it.sh` | Runs the whole Quick start end to end (incl. `hpa-load-test.sh`), `AGENT_NAME` / `INFERENCE_RUNTIME` at the top; requires explicit opt-in for the insecure-eval shortcut |
 | `install-hpa.sh` | Monitoring + chart + HPA (+ Envoy if enabled) |
 | `hpa-load-test.sh` / `hpa-reset.sh` | Autoscaling (+ Envoy) test / restore idle |
+| `cluster-recover.sh` | Destructive release recovery for the selected release only — see script comments before use |
 | `get-metrics-proxy-pods.sh` / `get-hpa.sh` / `hpa-watch.sh` | Inspect / watch |
 | `install-openshell-k8s.sh` | OpenShell gateway |
+| `build-agent-sandbox-image.sh` / `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Agent sandbox lifecycle — pick the agent (`openclaw`, `hermes`, or `deepagents`, mirroring [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents)) via a single `AGENT_NAME` flag; see [`AGENT-SELECTION.md`](AGENT-SELECTION.md) |
+| `agent-common.sh` | Per-agent config table sourced by the scripts above |
 | `test-*-contract.*` | Static / local contract checks |
-
-Sandbox agent lifecycle scripts — `build-agent-sandbox-image.sh`, `create-agent-sandbox.sh`,
-`verify-agent-sandbox.sh`, `run-agent-sandbox.sh` / `run-agent-prompt.sh` — pick their agent
-(`openclaw`, `hermes`, or `deepagents`, mirroring [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents))
-via a single `AGENT_NAME` flag; see [`AGENT-SELECTION.md`](AGENT-SELECTION.md) for the
-comparison table and per-agent env vars.
-
 
 ### Upgrade from pre-metrics-proxy releases
 
