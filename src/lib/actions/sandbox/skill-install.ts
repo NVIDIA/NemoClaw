@@ -32,6 +32,7 @@ export function printSkillInstallUsage(): void {
   console.log("");
 }
 
+/** Return whether a directory declares an OpenClaw plugin package. */
 export function looksLikeOpenClawPlugin(candidatePath: string): boolean {
   const dir =
     fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
