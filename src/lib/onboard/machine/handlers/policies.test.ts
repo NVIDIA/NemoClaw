@@ -463,6 +463,48 @@ describe("handlePoliciesState", () => {
     expect(result.appliedPolicyPresets).toEqual(["dns", "github"]);
   });
 
+  it("retries inactive Hermes preset removal after synchronization fails", async () => {
+    const removalFailure = new Error("policy removal failed");
+    const session = createSession({ policyPresets: ["npm", "slack"] });
+    const setupPolicies = vi
+      .fn<(_name: string, options: SetupOptions) => Promise<string[]>>()
+      .mockRejectedValueOnce(removalFailure)
+      .mockImplementationOnce(async (_name, options) => {
+        options.onSelection(["npm"]);
+        return ["npm"];
+      });
+    const { deps, calls, getSession, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({ messaging: null, policies: ["npm", "slack"] })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["slack"]),
+      preparePolicyPresetResumeSelection: vi.fn((_sandboxName, options) => ({
+        policyPresets: ["npm"],
+        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes("slack"),
+        disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
+      })),
+      arePolicyPresetsApplied: vi.fn(() => true),
+      setupPoliciesWithSelection: setupPolicies,
+    });
+    setSession(session);
+    const options = {
+      ...baseOptions(deps),
+      resume: true,
+      selectedMessagingChannels: [],
+      agent: { name: "hermes" },
+    };
+
+    await expect(handlePoliciesState(options)).rejects.toBe(removalFailure);
+    expect(getSession().policyPresets).toEqual(["npm", "slack"]);
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+
+    await expect(handlePoliciesState(options)).resolves.toMatchObject({
+      appliedPolicyPresets: ["npm"],
+    });
+    expect(setupPolicies).toHaveBeenCalledTimes(2);
+    expect(getSession().policyPresets).toEqual(["npm"]);
+    expect(calls.persistPolicies).toHaveBeenCalledWith("my-assistant", ["npm"]);
+  });
+
   it("does not finalize the registry on the resume (already-applied) branch (#4621)", async () => {
     // The resume branch only confirms recorded presets are a *subset* of what is
     // applied (arePolicyPresetsApplied), not that the live set matches. An

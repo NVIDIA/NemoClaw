@@ -502,11 +502,11 @@ async function setupPoliciesWithSelectionInner(
   if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
     refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
-    if (onSelection) onSelection(resumeSelection);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     requireSandboxReady(deps, sandboxName, "after");
+    if (onSelection) onSelection(resumeSelection);
     return resumeSelection;
   }
 
@@ -555,7 +555,6 @@ async function setupPoliciesWithSelectionInner(
         retainedPresets.some((name, index) => name !== currentAppliedPresets[index]);
       if (selectionChanged) {
         refuseInPlacePersonalRemoval(personalAlreadyActive, retainedPresets);
-        if (onSelection) onSelection(retainedPresets);
         requireSandboxReady(deps, sandboxName, "before");
         deps.note(
           personalTier
@@ -564,6 +563,7 @@ async function setupPoliciesWithSelectionInner(
         );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         requireSandboxReady(deps, sandboxName, "after");
+        if (onSelection) onSelection(retainedPresets);
         return retainedPresets;
       }
       deps.note("  [non-interactive] Skipping optional policy presets.");
@@ -642,11 +642,11 @@ async function setupPoliciesWithSelectionInner(
     }
 
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
-    if (onSelection) onSelection(chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     requireSandboxReady(deps, sandboxName, "after");
+    if (onSelection) onSelection(chosen);
     return chosen;
   }
 
@@ -685,7 +685,6 @@ async function setupPoliciesWithSelectionInner(
   );
 
   refuseInPlacePersonalRemoval(personalAlreadyActive, interactiveChoice);
-  if (onSelection) onSelection(interactiveChoice);
   requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
@@ -695,5 +694,6 @@ async function setupPoliciesWithSelectionInner(
   }
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
+  if (onSelection) onSelection(interactiveChoice);
   return interactiveChoice;
 }

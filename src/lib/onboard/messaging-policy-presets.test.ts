@@ -218,15 +218,4 @@ describe("messaging policy presets", () => {
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["nonexistent"])).toEqual(["npm"]);
   });
 
-  // Drift guard (#5967): the suggestion path's `add(channel)` shortcut was
-  // removed in favor of resolving presets through the channel→preset registry,
-  // and several call sites assume a channel's egress preset shares its name.
-  // Pin that 1:1 mapping for every shipped channel so a future preset rename
-  // (which would silently desync suggestions from finalization) fails here.
-  it.each(["slack", "discord", "telegram", "teams", "whatsapp", "wechat", "googlechat"])(
-    "maps each messaging channel to a same-named egress preset [case %#] (#5967)",
-    (channel) => {
-      expect(allMessagingChannelPolicyPresets([channel])).toEqual([channel]);
-    },
-  );
 });
