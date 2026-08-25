@@ -309,6 +309,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
       "OPENSHELL_SANDBOX_GID=",
       "PATH=/usr/bin",
       "OPENSHELL_SANDBOX_COMMAND=/usr/local/bin/nemoclaw-start",
+      "NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=0x32",
     ]);
   });
 

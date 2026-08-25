@@ -435,11 +435,14 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
+    let synchronizationPreviousRevision =
+      providerResult.action === "updated" ? previousCredentialRevision : undefined;
     if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // OpenShell 0.0.106 can miss a credential update published before the
       // bound policy generation. Republish while that policy is active and
       // before the first readiness exec; the exact provider identity is
       // rechecked before and after this update-only mutation.
+      synchronizationPreviousRevision = observeMcpCredentialRevision(sandboxName, entry);
       upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
@@ -447,9 +450,9 @@ async function addMcpBridgeUnlocked(
       });
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      ...(providerResult.action === "updated"
+      ...(synchronizationPreviousRevision !== undefined
         ? {
-            previousRevision: previousCredentialRevision,
+            previousRevision: synchronizationPreviousRevision,
           }
         : {}),
       // A no-field provider update advances only the provider resource version.

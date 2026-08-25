@@ -29,6 +29,7 @@ const NON_FALLBACK_DISCLOSURE_CASES = [
   ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[4]],
 ] as const;
 const MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"a".repeat(64)}`;
+const MANAGED_IMAGE_CONTENT_ID = `sha256:${"c".repeat(64)}`;
 const OTHER_MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"b".repeat(64)}`;
 const VALID_MANAGED_AUTHORITY = {
   agent: "hermes",
@@ -169,6 +170,16 @@ describe("Hermes GPU managed-image authority proof", () => {
   it("accepts the running container's exact digest-backed authority (#9362)", () => {
     expect(() =>
       assertHermesContainerImageAuthority(MANAGED_IMAGE_REFERENCE, MANAGED_IMAGE_REFERENCE),
+    ).not.toThrow();
+  });
+
+  it("accepts the provider content ID resolved from the exact digest-backed authority", () => {
+    expect(() =>
+      assertHermesContainerImageAuthority(
+        MANAGED_IMAGE_CONTENT_ID,
+        MANAGED_IMAGE_REFERENCE,
+        MANAGED_IMAGE_CONTENT_ID,
+      ),
     ).not.toThrow();
   });
 

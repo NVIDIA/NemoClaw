@@ -534,7 +534,10 @@ async function assertDeepAgentsConfig(
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
     "assert entry['type'] == 'http'",
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
+    "import os, re",
+    "current = os.environ['FAKE_MCP_SECRET']",
+    "assert re.fullmatch(r'openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', current)",
+    "assert entry['headers']['Authorization'] == 'Bearer ' + current",
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");

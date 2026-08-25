@@ -104,6 +104,18 @@ function samePairingTarget(
   );
 }
 
+function samePairingRuntimeSurface(
+  left: OpenClawPairingSettlementTarget,
+  right: OpenClawPairingSettlementTarget | null,
+): right is OpenClawPairingSettlementTarget {
+  return (
+    right !== null &&
+    left.gatewayName === right.gatewayName &&
+    left.stateDirectory === right.stateDirectory &&
+    left.version === right.version
+  );
+}
+
 type PairingWaitResult =
   | { readonly kind: "observed"; readonly value: OpenClawPairingSettlementObservation }
   | { readonly kind: "target-changed" }
@@ -203,7 +215,7 @@ export async function settleOrdinaryOpenClawPairing(
       try {
         return await deps.withGatewayLock(firstTarget.gatewayName, async () => {
           gatewayBodyEntered = true;
-          const target = deps.getTarget(name);
+          let target = deps.getTarget(name);
           if (!samePairingTarget(firstTarget, target)) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
@@ -245,9 +257,11 @@ export async function settleOrdinaryOpenClawPairing(
             } catch {
               // The bounded observation below remains fail closed.
             }
-            if (!samePairingTarget(target, deps.getTarget(name))) {
+            const refreshedTarget = deps.getTarget(name);
+            if (!samePairingRuntimeSurface(target, refreshedTarget)) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
+            target = refreshedTarget;
             const pairingAppearanceDeadline = Math.min(
               settlementDeadline,
               deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,

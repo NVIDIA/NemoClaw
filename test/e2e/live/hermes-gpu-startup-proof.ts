@@ -49,6 +49,7 @@ interface HermesGpuStartupProofOptions {
 }
 
 const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
+const IMMUTABLE_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
@@ -110,8 +111,13 @@ export function assertHermesManagedWorkloadAuthority(
 export function assertHermesContainerImageAuthority(
   containerImage: unknown,
   authorityReference: string,
+  authorityContentId?: string,
 ): void {
-  expect(containerImage).toBe(authorityReference);
+  expect(
+    containerImage === authorityReference ||
+      (IMMUTABLE_IMAGE_CONTENT_ID.test(authorityContentId ?? "") &&
+        containerImage === authorityContentId),
+  ).toBe(true);
 }
 
 export async function assertHermesGpuStartupProof({
@@ -194,6 +200,20 @@ export async function assertHermesGpuStartupProof({
     registryEntry.imageTag,
     managedAuthority,
   );
+  const managedImageInspection = await runtimeProvider.command(
+    ["image", "inspect", managedImageReference],
+    {
+      artifactName: "phase-4-gpu-startup-managed-image-content-authority",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(managedImageInspection.exitCode, resultText(managedImageInspection)).toBe(0);
+  const managedImageInspectEntry = (
+    JSON.parse(managedImageInspection.stdout) as Array<{ Id?: unknown; ID?: unknown }>
+  )[0];
+  const managedImageContentId = managedImageInspectEntry?.Id ?? managedImageInspectEntry?.ID;
+  expect(managedImageContentId).toMatch(IMMUTABLE_IMAGE_CONTENT_ID);
 
   const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
   const extraPlaceholderEnv = await runtimeProvider.command(
@@ -288,6 +308,8 @@ raise SystemExit(1)`,
   expect(runtimeCommandBoundary.exitCode, resultText(runtimeCommandBoundary)).toBe(0);
   const runtimeInspection = (
     JSON.parse(runtimeCommandBoundary.stdout) as Array<{
+      Image?: unknown;
+      ImageName?: unknown;
       Config?: {
         Cmd?: unknown;
         Entrypoint?: unknown;
@@ -307,7 +329,7 @@ raise SystemExit(1)`,
   const commandBoundary = {
     cmd: runtimeConfig.Cmd,
     entrypoint: runtimeConfig.Entrypoint,
-    image: runtimeConfig.Image,
+    image: runtimeInspection?.Image ?? runtimeInspection?.ImageName ?? runtimeConfig.Image,
     has_openshell_sandbox_command: Boolean(intendedCommand),
     command_is_sleep_infinity:
       intendedTokens.length === 2 &&
@@ -351,7 +373,11 @@ raise SystemExit(1)`,
     ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   ]);
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
-  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
+  assertHermesContainerImageAuthority(
+    commandBoundary.image,
+    managedImageReference,
+    managedImageContentId as string,
+  );
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 

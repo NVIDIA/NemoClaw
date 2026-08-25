@@ -182,7 +182,7 @@ function createContainerStateMutationHarness(
       : "/var/lib/openshell/alpha/hermes",
     mountType: stateMountType,
     sandboxId: SANDBOX_ID,
-    pidMode: "",
+    pidMode: providerId === "podman" ? "private" : "",
     privileged: false,
     overlayProc: false,
     supervisorStopped: false,
@@ -592,6 +592,7 @@ function createContainerStateMutationHarness(
           providerDisplayName: "Podman",
           engineOperation: "state-mutation",
           runtimeIdInspectField: "ID",
+          privatePidMode: "private",
         });
   const sandbox: SandboxEntry = {
     name: "alpha",

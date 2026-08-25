@@ -390,7 +390,7 @@ interface DockerRuntimeObservation {
   readonly providerDisplayName: string;
   readonly runtimeId: string;
   readonly runtimePid: number;
-  readonly pidMode: "";
+  readonly pidMode: string;
   readonly privileged: false;
   readonly sandboxIdentitySha256: string;
   readonly containerMountsSha256: string;
@@ -452,6 +452,8 @@ export interface ContainerStateMutationOwnerOptions {
   readonly lifecycleStore: PersistedEngineLifecycleStore;
   /** Provider-native Go-template field for the full immutable runtime ID. */
   readonly runtimeIdInspectField?: "Id" | "ID";
+  /** Provider-native inspect value proving a private PID namespace. */
+  readonly privatePidMode?: string;
 }
 
 export type DockerStateMutationOwnerOptions = Omit<
@@ -481,6 +483,7 @@ export interface ContainerStateMutationSurfaceOptions {
     input: RuntimeProviderStateMutationContext,
   ) => ContainerStateMutationAuthority;
   readonly runtimeIdInspectField?: "Id" | "ID";
+  readonly privatePidMode?: string;
   readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
   readonly withDirectSandboxExecutionExclusion?: <T>(
     sandboxName: string,
@@ -728,6 +731,7 @@ function parseInspection(
   expectedRuntimeId: string,
   expectedSandboxName: string,
   providerDisplayName: string,
+  expectedPrivatePidMode: string,
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
@@ -780,7 +784,7 @@ function parseInspection(
   if (managedBy !== "openshell" || sandboxName !== expectedSandboxName) {
     fail(`${providerDisplayName} container does not belong to the exact OpenShell sandbox`);
   }
-  if (pidMode !== "" || privileged !== false) {
+  if (pidMode !== expectedPrivatePidMode || privileged !== false) {
     fail(`${providerDisplayName} container does not have one private unprivileged PID namespace`);
   }
   const sandboxId = exactText(sandboxIdInput, "OpenShell sandbox identity", 512);
@@ -815,7 +819,7 @@ function parseInspection(
     providerDisplayName,
     runtimeId,
     runtimePid: runtimePid as number,
-    pidMode: "",
+    pidMode: expectedPrivatePidMode,
     privileged: false,
     sandboxIdentitySha256,
     containerMountsSha256: mountsSha256(mounts),
@@ -1687,6 +1691,7 @@ function inspectDirect(
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1706,6 +1711,7 @@ function inspectAuthorized(
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -2343,7 +2349,11 @@ function releaseAuthorizedFence(
 export function createContainerStateMutationOwner(
   optionsInput: ContainerStateMutationOwnerOptions,
 ): ContainerStateMutationOwner {
-  const options = Object.freeze({ runtimeIdInspectField: "Id" as const, ...optionsInput });
+  const options = Object.freeze({
+    privatePidMode: "",
+    runtimeIdInspectField: "Id" as const,
+    ...optionsInput,
+  });
   boundedString(options.providerId, PROVIDER_ID, "provider identity");
   boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
@@ -2782,6 +2792,7 @@ function createSurfaceOwner(
     ...(options.runtimeIdInspectField
       ? { runtimeIdInspectField: options.runtimeIdInspectField }
       : {}),
+    ...(options.privatePidMode === undefined ? {} : { privatePidMode: options.privatePidMode }),
   });
 }
 

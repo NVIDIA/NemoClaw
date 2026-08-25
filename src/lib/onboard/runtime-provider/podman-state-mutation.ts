@@ -26,6 +26,7 @@ export function createPodmanStateMutationSurface(
     providerDisplayName: "Podman",
     engineOperation: "state-mutation",
     runtimeIdInspectField: "ID",
+    privatePidMode: "private",
     createAuthority: () => ({
       assertAuthority: options.engine.assertAuthority,
       engine: options.engine,

@@ -116,6 +116,7 @@ const OPENSHELL_PROXY_SECRET_PREFIX = "openshell-proxy-auth-";
 const OPENSHELL_WORKSPACE_VOLUME_PREFIX = "openshell-sandbox-";
 const OPENSHELL_WORKSPACE_VOLUME_SUFFIX = "-workspace";
 const OPENSHELL_WORKSPACE_DIRECTORY = "/sandbox";
+const PODMAN_BOOTSTRAP_CAPABILITY_DROP_ENV = "NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=0x32";
 const PERSISTABLE_ENVIRONMENT_KEYS = new Set([
   "HOME",
   "LANG",
@@ -581,12 +582,14 @@ export function renderPodmanReplacementEnvironment(
   const values = stringArray(config.Env ?? [], "Config.Env").filter(
     (entry) =>
       !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=") &&
+      !entry.startsWith("NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=") &&
       (!omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=")),
   );
   if (values.some((entry) => !SAFE_ENV.test(entry))) {
     throw new Error("Managed bootstrap Podman environment contains an invalid assignment.");
   }
   values.push(`OPENSHELL_SANDBOX_COMMAND=${intended}`);
+  values.push(PODMAN_BOOTSTRAP_CAPABILITY_DROP_ENV);
   return Object.freeze(values);
 }
 

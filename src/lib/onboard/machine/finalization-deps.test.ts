@@ -309,40 +309,43 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toBe(failure);
   });
 
-  it("stops before approval when the runtime changes during warm-up (#9844)", async () => {
+  it("reacquires lifecycle authority after its bounded warm-up recovers the same runtime surface", async () => {
     let currentTarget = PAIRING_TARGET;
-    let reportWarmupStarted: () => void = () => {};
-    let releaseWarmup: () => void = () => {};
-    const warmupStarted = new Promise<void>((resolve) => {
-      reportWarmupStarted = resolve;
-    });
-    const warmupPending = new Promise<void>((resolve) => {
-      releaseWarmup = resolve;
-    });
     const scope = ordinaryPairingDeps({
       getTarget: vi.fn(() => currentTarget),
       observePairing: vi
         .fn()
         .mockReturnValueOnce(PAIRING_ONLY)
-        .mockReturnValue(SCOPE_UPGRADE_PENDING),
-      runWarmup: vi.fn(async () => {
-        reportWarmupStarted();
-        await warmupPending;
+        .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
+        .mockReturnValue(SETTLED),
+      runWarmup: vi.fn(() => {
+        currentTarget = { ...PAIRING_TARGET, lifecycleGeneration: "generation-2" };
       }),
     });
 
-    const settlement = settleOrdinaryOpenClawPairing("alpha", scope.deps);
-    await warmupStarted;
-    currentTarget = { ...PAIRING_TARGET, lifecycleGeneration: "generation-2" };
-    releaseWarmup();
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+    expect(currentTarget.lifecycleGeneration).toBe("generation-2");
+  });
 
-    await expect(settlement).resolves.toEqual({
+  it("rejects a different runtime surface after the bounded warm-up", async () => {
+    let currentTarget = PAIRING_TARGET;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => currentTarget),
+      observePairing: vi.fn(() => PAIRING_ONLY),
+      runWarmup: vi.fn(() => {
+        currentTarget = { ...PAIRING_TARGET, stateDirectory: "/sandbox/foreign" };
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
       kind: "incomplete",
       reason: "runtime-identity-invalid",
     });
-    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
-    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
   });
 
   it("does not observe replacement state when the runtime changes during approval (#9844)", async () => {

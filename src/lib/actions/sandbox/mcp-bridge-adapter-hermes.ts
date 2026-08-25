@@ -15,6 +15,10 @@ import {
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
 import { buildHermesMcpStatusCommand, entryHeaders } from "./mcp-bridge-adapter-status";
+import {
+  type McpAttachedCredentialRevision,
+  observeMcpCredentialRevision,
+} from "./mcp-bridge-provider-readiness";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { executeGatewaySupervisorAction } from "./process-recovery";
@@ -281,6 +285,7 @@ export function registerHermesAdapter(
   entry: McpBridgeEntry,
   envValues: Record<string, string> = {},
   replaceExisting = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): void {
   runHermesAdapterCommand(
     sandboxName,
@@ -290,6 +295,22 @@ export function registerHermesAdapter(
     { envValues, requireReload: true },
   );
   verifyHermesAdapterRegistration(sandboxName, entry);
+  if (credentialRevision === undefined) return;
+  const afterReloadRevision = observeMcpCredentialRevision(sandboxName, entry);
+  if (afterReloadRevision === credentialRevision) return;
+  runHermesAdapterCommand(
+    sandboxName,
+    entry,
+    buildHermesMcpRegisterCommand(entry, true),
+    `Hermes MCP config convergence failed for '${entry.server}'.`,
+    { envValues, requireReload: true },
+  );
+  verifyHermesAdapterRegistration(sandboxName, entry);
+  if (observeMcpCredentialRevision(sandboxName, entry) !== afterReloadRevision) {
+    throw new McpBridgeError(
+      `Hermes MCP credential revision did not converge after reloading '${entry.server}'.`,
+    );
+  }
 }
 
 export function unregisterHermesAdapter(
