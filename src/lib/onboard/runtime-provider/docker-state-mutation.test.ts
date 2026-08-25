@@ -60,18 +60,10 @@ describe("Docker runtime-provider state mutation surface", () => {
       import.meta.dirname,
       "../../../../scripts/runtime-state-mutation-control.py",
     );
-    const activationWindowSeconds = Number(
-      execFileSync(
-        "python3",
-        [
-          "-I",
-          "-c",
-          "import importlib.util,sys;spec=importlib.util.spec_from_file_location('control',sys.argv[1]);control=importlib.util.module_from_spec(spec);sys.modules[spec.name]=control;spec.loader.exec_module(control);print(control.ACTIVATION_SECONDS)",
-          controller,
-        ],
-        { encoding: "utf8", timeout: 5_000 },
-      ).trim(),
+    const activationWindow = /^ACTIVATION_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
+      fs.readFileSync(controller, "utf8"),
     );
+    const activationWindowSeconds = Number(activationWindow?.[1] ?? Number.NaN);
     const brokerTimeouts = JSON.parse(
       /^TIMEOUTS = (\{[^\n]+\})$/mu.exec(
         DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
