@@ -124,6 +124,29 @@ assert "workspace" in plan["readOnlyRoots"], plan
 assert "workspace-" in plan["readOnlyPrefixes"], plan
 print("OPENCLAW_STATE_LOCK_PLAN=installed")`;
 
+const CONTAINER_GATEWAY_PROCESS_STATE_SCRIPT = String.raw`from pathlib import Path
+import pwd, sys
+pid=sys.argv[1]
+assert pid.isascii() and pid.isdigit() and int(pid) > 1, pid
+process=Path("/proc") / pid
+stat=(process / "stat").read_text().rsplit(")", 1)[1].split()
+cmdline=(process / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+status=(process / "status").read_text()
+assert cmdline, pid
+parent_pid=stat[1]
+parent_cmdline=(Path("/proc") / parent_pid / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+assert parent_cmdline, parent_pid
+expected_uid=str(pwd.getpwnam("sandbox").pw_uid)
+assert expected_uid != "0", expected_uid
+uid_line=next(line for line in status.splitlines() if line.startswith("Uid:"))
+assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
+gateway_command=cmdline[0].rsplit(b"/", 1)[-1].decode("ascii", "strict")
+parent_command=parent_cmdline[0].rsplit(b"/", 1)[-1]
+if parent_command == b"bash" and len(parent_cmdline) > 1:
+    parent_command=parent_cmdline[1].rsplit(b"/", 1)[-1]
+assert parent_command == b"nemoclaw-start", parent_command
+print(f"GATEWAY_PROCESS={pid}:PPID={parent_pid}:UID={expected_uid}:COMMAND={gateway_command}:PARENT=nemoclaw-start")`;
+
 async function findSandboxContainer(host: HostCliClient, artifactName: string): Promise<string> {
   const result = await host.command(
     "docker",
@@ -185,9 +208,25 @@ async function captureManagedGatewayState(
       timeoutMs: 30_000,
     },
   );
+  const gatewayPid =
+    managedControl.stdout.match(/\r?\nGATEWAY_PID=([1-9][0-9]*)\r?\n?$/)?.[1] ?? "invalid";
   const processState = await host.command(
     "docker",
-    ["top", containerId, "-eo", "pid,ppid,stat,user,comm"],
+    [
+      "exec",
+      "--env",
+      "LD_PRELOAD=",
+      "--env",
+      "PYTHONPATH=",
+      "--user",
+      "root",
+      containerId,
+      "python3",
+      "-I",
+      "-c",
+      CONTAINER_GATEWAY_PROCESS_STATE_SCRIPT,
+      gatewayPid,
+    ],
     {
       artifactName: `${artifactPrefix}-process-state-after-recovery`,
       env: buildAvailabilityProbeEnv(),
@@ -222,22 +261,12 @@ function expectManagedGatewayState(
     false,
   );
   expect(state.processState.exitCode, "process-state probe should exit successfully").toBe(0);
+  expect(state.processState.stderr, "process-state probe should keep stderr empty").toBe("");
   expect(
-    /^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m.test(state.processState.stdout),
-    "process-state probe should return the expected columns",
-  ).toBe(true);
-  const gatewayProcess = state.processState.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .find(
-      (columns) =>
-        columns.length === 5 &&
-        columns[0] === gatewayPid &&
-        /^(?:bash|nemoclaw-start)$/.test(columns[4] ?? ""),
-    );
-  expect(
-    gatewayProcess !== undefined,
-    "process-state probe should include the reported gateway process",
+    new RegExp(
+      `^GATEWAY_PROCESS=${gatewayPid}:PPID=[1-9][0-9]*:UID=[1-9][0-9]*:COMMAND=[A-Za-z0-9._+-]+:PARENT=nemoclaw-start\\r?\\n?$`,
+    ).test(state.processState.stdout),
+    "the container process table should include the controller-reported gateway PID under the managed supervisor",
   ).toBe(true);
 }
 
