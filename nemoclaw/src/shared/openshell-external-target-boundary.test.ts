@@ -20,11 +20,7 @@ vi.mock("node:fs", async (importOriginal) => ({
   ...fsMocks,
 }));
 
-import {
-  buildSanitizedExternalOpenShellTargetPlan,
-  isExternalOpenShellTarget,
-  type ExternalOpenShellTarget,
-} from "./openshell-external-target-boundary.cjs";
+import { buildSanitizedExternalOpenShellTargetPlan } from "./openshell-external-target-boundary.cjs";
 
 const CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
@@ -66,15 +62,12 @@ const descriptorFiles = new Map<
     offset: number;
   }
 >();
-const defaultFileContents = new Map([
-  [CA_FILE, CA_PEM],
-  [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
-]);
+const fileContents = new Map<string, string>();
 const fileSizes = new Map<string, number>();
 const readFilePaths: string[] = [];
 let nextDescriptor = 100;
 
-function externalTarget(): ExternalOpenShellTarget {
+function externalTarget() {
   return {
     endpoint: "https://openshell.example.test:8443",
     workspace: "default",
@@ -83,18 +76,6 @@ function externalTarget(): ExternalOpenShellTarget {
     trust: { ca_file: CA_FILE },
     authentication: { credential_file: AUTHENTICATION_FILE },
   };
-}
-
-function reader(files?: ReadonlyMap<string, string>) {
-  const contents =
-    files ??
-    new Map([
-      [CA_FILE, CA_PEM],
-      [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
-    ]);
-  return vi.fn((filePath: string, _maxBytes: number) => {
-    return contents.get(filePath) ?? missingFile(filePath);
-  });
 }
 
 function missingFile(filePath: string): never {
@@ -107,6 +88,9 @@ describe("external OpenShell target boundary", () => {
     specialFileMetadata.clear();
     openedFileMetadata.clear();
     descriptorFiles.clear();
+    fileContents.clear();
+    fileContents.set(CA_FILE, CA_PEM);
+    fileContents.set(AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS);
     fileSizes.clear();
     readFilePaths.length = 0;
     nextDescriptor = 100;
@@ -114,9 +98,10 @@ describe("external OpenShell target boundary", () => {
       (filePath: string) => specialFileMetadata.get(filePath) ?? REGULAR_FILE_METADATA,
     );
     fsMocks.openSync.mockImplementation((filePath: string) => {
+      const contents = fileContents.get(filePath) ?? missingFile(filePath);
       const descriptor = nextDescriptor++;
       descriptorFiles.set(descriptor, {
-        contents: Buffer.from(defaultFileContents.get(filePath)!),
+        contents: Buffer.from(contents),
         filePath,
         metadata:
           openedFileMetadata.get(filePath) ??
@@ -142,11 +127,7 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("builds the canonical sanitized target-only plan (#9872)", () => {
-    const readFile = reader();
-
-    const plan = buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
-      readFile,
-    });
+    const plan = buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY);
 
     expect(plan).toEqual({
       endpoint: "https://openshell.example.test:8443",
@@ -158,8 +139,9 @@ describe("external OpenShell target boundary", () => {
         .update(new X509Certificate(CA_PEM).raw)
         .digest("hex")}`,
     });
-    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([CA_FILE]);
+    expect(fsMocks.openSync).toHaveBeenCalledWith(CA_FILE, expect.any(Number));
     expect(fsMocks.openSync).toHaveBeenCalledWith(AUTHENTICATION_FILE, expect.any(Number));
+    expect(readFilePaths).toContain(CA_FILE);
     expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
     const rendered = JSON.stringify(plan);
     expect(rendered).not.toContain(CA_FILE);
@@ -184,15 +166,12 @@ describe("external OpenShell target boundary", () => {
     "https://[::]:8443",
     "https://[::ffff:127.0.0.1]:8443",
   ])("rejects a malformed or non-external HTTPS endpoint before reading files [%s]", (endpoint) => {
-    const readFile = reader();
-    const inspectFile = vi.fn();
     const target = { ...externalTarget(), endpoint };
 
-    expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile, inspectFile }),
-    ).toThrow(/endpoint/);
-    expect(readFile).not.toHaveBeenCalled();
-    expect(inspectFile).not.toHaveBeenCalled();
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
+      /endpoint/,
+    );
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -215,22 +194,20 @@ describe("external OpenShell target boundary", () => {
   ] as const)("rejects missing %s before reading files", (_name, corrupt) => {
     const target = { ...externalTarget() } as Record<string, unknown>;
     corrupt(target);
-    const readFile = reader();
 
-    expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
-    ).toThrow(/external OpenShell target/);
-    expect(readFile).not.toHaveBeenCalled();
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
+      /external OpenShell target/,
+    );
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it("rejects mixed local and external lifecycle input before reading files (#9872)", () => {
-    const readFile = reader();
     const target = { ...externalTarget(), local: { mode: "managed" } };
 
-    expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
-    ).toThrow(/must not combine external and local lifecycle/);
-    expect(readFile).not.toHaveBeenCalled();
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
+      /must not combine external and local lifecycle/,
+    );
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -259,22 +236,19 @@ describe("external OpenShell target boundary", () => {
       },
     ],
   ])("rejects an unsupported %s before reading files", (_name, target) => {
-    const readFile = reader();
-
-    expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
-    ).toThrow(/external OpenShell target/);
-    expect(readFile).not.toHaveBeenCalled();
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
+      /external OpenShell target/,
+    );
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it("rejects an incompatible expected release before reading files (#9872)", () => {
-    const readFile = reader();
     const target = { ...externalTarget(), expected_release: "0.0.107" };
 
-    expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
-    ).toThrow(/outside the compatible range/);
-    expect(readFile).not.toHaveBeenCalled();
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
+      /outside the compatible range/,
+    );
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -282,34 +256,23 @@ describe("external OpenShell target boundary", () => {
     ["unsafe", { minVersion: "0.0.106", maxVersion: "9007199254740992.0.0" }],
     ["reversed", { minVersion: "0.0.107", maxVersion: "0.0.106" }],
   ])("rejects a %s compatibility range before reading files", (_name, compatibility) => {
-    const readFile = reader();
-
     expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility),
     ).toThrow(/compatibility range/);
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid CA bundle and empty authentication without exposing private input (#9872)", () => {
     const privateCaContents = "not-a-certificate private-ca-value";
-    const invalidCaReader = reader(
-      new Map([
-        [CA_FILE, privateCaContents],
-        [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
-      ]),
-    );
-    const emptyAuthenticationReader = reader(new Map([[CA_FILE, CA_PEM]]));
-    fileSizes.set(AUTHENTICATION_FILE, 0);
+    fileContents.set(CA_FILE, privateCaContents);
 
     const caError = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
-        readFile: invalidCaReader,
-      }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
+    fileContents.set(CA_FILE, CA_PEM);
+    fileSizes.set(AUTHENTICATION_FILE, 0);
     const authenticationError = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
-        readFile: emptyAuthenticationReader,
-      }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
     const output = `${caError.message}\n${authenticationError.message}`;
 
@@ -320,47 +283,47 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("rejects an oversized CA bundle without returning its path (#9872)", () => {
-    const readFile = reader(new Map([[CA_FILE, "x".repeat(1024 * 1024 + 1)]]));
+    fileSizes.set(CA_FILE, 1024 * 1024 + 1);
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
 
     expect(error.message).toBe(
       "external OpenShell target CA file is empty or exceeds its size limit",
     );
     expect(error.message).not.toContain(CA_FILE);
-    expect(readFile).toHaveBeenCalledWith(CA_FILE, 1024 * 1024);
+    expect(readFilePaths).not.toContain(CA_FILE);
   });
 
   it("rejects an oversized authentication file without returning its path (#9872)", () => {
-    const readFile = reader(new Map([[CA_FILE, CA_PEM]]));
     fileSizes.set(AUTHENTICATION_FILE, 1024 * 1024 + 1);
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
 
     expect(error.message).toBe(
       "external OpenShell target authentication file is empty or exceeds its size limit",
     );
     expect(error.message).not.toContain(AUTHENTICATION_FILE);
-    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([CA_FILE]);
+    expect(readFilePaths).toContain(CA_FILE);
     expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
   });
 
   it("redacts a file-read failure cause (#9872)", () => {
-    const readFile = vi.fn((filePath: string) => {
-      throw new Error(`credential/private-value from ${filePath}`);
+    fsMocks.readSync.mockImplementationOnce(() => {
+      throw new Error(`credential/private-value from ${CA_FILE}`);
     });
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
 
     expect(error.message).toBe("external OpenShell target CA file could not be read");
     expect(error.message).not.toContain(CA_FILE);
     expect(error.message).not.toContain("credential/private-value");
+    expect(fsMocks.closeSync).toHaveBeenCalled();
   });
 
   it.each([
@@ -396,17 +359,6 @@ describe("external OpenShell target boundary", () => {
     expect(error.message).toBe("external OpenShell target CA file could not be read");
     expect(error.message).not.toContain(CA_FILE);
     expect(readFilePaths).not.toContain(CA_FILE);
-  });
-
-  it("recognizes only complete, canonical target shapes", () => {
-    expect(isExternalOpenShellTarget(externalTarget())).toBe(true);
-    expect(
-      isExternalOpenShellTarget({
-        ...externalTarget(),
-        authentication: { kind: "oidc", token_file: AUTHENTICATION_FILE },
-      }),
-    ).toBe(false);
-    expect(isExternalOpenShellTarget({ ...externalTarget(), lifecycle: "managed" })).toBe(false);
   });
 });
 

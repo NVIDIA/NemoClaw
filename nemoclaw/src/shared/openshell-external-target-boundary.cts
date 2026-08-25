@@ -12,11 +12,11 @@ const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandb
 };
 const { isValidName } = sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
-export interface ExternalOpenShellAuthentication {
+interface ExternalOpenShellAuthentication {
   credential_file: string;
 }
 
-export interface ExternalOpenShellTarget {
+interface ExternalOpenShellTarget {
   endpoint: string;
   workspace: string;
   expected_release: string;
@@ -39,11 +39,6 @@ export interface SanitizedExternalOpenShellTargetPlan {
   lifecycle: "external";
   authentication_source: "file";
   ca_fingerprint: string;
-}
-
-export interface ExternalOpenShellTargetPlanDependencies {
-  readFile?: (filePath: string, maxBytes: number) => string | Buffer | Uint8Array;
-  inspectFile?: (filePath: string, maxBytes: number) => number;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -216,15 +211,10 @@ function assertCompatibleRelease(
   }
 }
 
-function readBoundedFile(
-  filePath: string,
-  label: string,
-  maxBytes: number,
-  readFile: NonNullable<ExternalOpenShellTargetPlanDependencies["readFile"]>,
-): Buffer {
+function readBoundedFile(filePath: string, label: string, maxBytes: number): Buffer {
   let contents: Buffer;
   try {
-    contents = Buffer.from(readFile(filePath, maxBytes));
+    contents = readFileAtMost(filePath, maxBytes);
   } catch {
     throw new Error(`external OpenShell target ${label} could not be read`);
   }
@@ -281,15 +271,10 @@ function inspectRegularFileSize(filePath: string, _maxBytes: number): number {
   return withValidatedRegularFile(filePath, (_descriptor, size) => size);
 }
 
-function validateFileReference(
-  filePath: string,
-  label: string,
-  maxBytes: number,
-  inspectFile: NonNullable<ExternalOpenShellTargetPlanDependencies["inspectFile"]>,
-): void {
+function validateFileReference(filePath: string, label: string, maxBytes: number): void {
   let size: number;
   try {
-    size = inspectFile(filePath, maxBytes);
+    size = inspectRegularFileSize(filePath, maxBytes);
   } catch {
     throw new Error(`external OpenShell target ${label} could not be validated`);
   }
@@ -318,15 +303,6 @@ function validateCaBundle(contents: Buffer): readonly Buffer[] {
   }
 }
 
-export function isExternalOpenShellTarget(value: unknown): value is ExternalOpenShellTarget {
-  try {
-    parseTarget(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Validate one explicit external target and return only its non-secret identity.
  * File paths remain inside this boundary, and authentication contents are not read.
@@ -334,25 +310,17 @@ export function isExternalOpenShellTarget(value: unknown): value is ExternalOpen
 export function buildSanitizedExternalOpenShellTargetPlan(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
-  dependencies: ExternalOpenShellTargetPlanDependencies = {},
 ): SanitizedExternalOpenShellTargetPlan {
   const target = parseTarget(value);
   assertCompatibleRelease(target.expected_release, compatibility);
 
-  const readFile = dependencies.readFile ?? readFileAtMost;
-  const caContents = readBoundedFile(
-    target.trust.ca_file,
-    "CA file",
-    MAX_TRUST_FILE_BYTES,
-    readFile,
-  );
+  const caContents = readBoundedFile(target.trust.ca_file, "CA file", MAX_TRUST_FILE_BYTES);
   const caCertificates = validateCaBundle(caContents);
 
   validateFileReference(
     target.authentication.credential_file,
     "authentication file",
     MAX_AUTHENTICATION_FILE_BYTES,
-    dependencies.inspectFile ?? inspectRegularFileSize,
   );
 
   const caFingerprint = createHash("sha256");
