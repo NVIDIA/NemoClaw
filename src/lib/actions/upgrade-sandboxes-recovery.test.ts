@@ -634,6 +634,45 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
+  it("exits nonzero from --check when a live sandbox version is unknown (#10211)", async () => {
+    const harness = createRecoveryHarness(["unknown-box"], {
+      liveOutput: "unknown-box Ready",
+    });
+    harness.checkAgentVersionSpy.mockReturnValue({
+      sandboxVersion: null,
+      expectedVersion: "2026.5.27",
+      isStale: false,
+      verificationFailed: true,
+      detectionMethod: "registry",
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("Unknown version"));
+  });
+
+  it("exits nonzero from --check when backup recovery is blocked (#10211)", async () => {
+    const harness = createRecoveryHarness(["broken-box"], {
+      latestBackup: null,
+      liveOutput: "broken-box Error",
+      staleNames: ["broken-box"],
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("cannot be recovered automatically"),
+    );
+  });
+
   it("also flags a stale own-gateway orphan alongside the generic skip line (#6520)", async () => {
     // The versioned-reinstall repro (v0.0.77 sandbox, v0.0.76 tag): the
     // sandbox is stale+stopped, prints the generic skip line, and must ALSO
