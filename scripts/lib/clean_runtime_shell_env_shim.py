@@ -177,7 +177,7 @@ def main(argv):
         # forces mode 444 (and root ownership when the entrypoint runs as
         # root) before placing the file. The startup sequence validates that
         # invariant via `validate_tmp_permissions` before launching services.
-        # The composed test in test/service-env.test.ts proves the file stays
+        # The composed test in test/runtime/gateway/service-env.test.ts proves the file stays
         # at mode 444 through this skip path. As long as the proxy-env file
         # remains non-user-writable, the leftover shim does not widen the
         # sandbox's trust boundary; crashing the container under errexit

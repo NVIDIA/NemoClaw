@@ -69,6 +69,7 @@ describe("inventory commands", () => {
         recoveredFromGateway: 0,
       },
       lastOnboardedSandbox: "alpha",
+      incompleteOnboarding: null,
       sandboxes: [],
     });
     expect(getLiveInference).not.toHaveBeenCalled();
@@ -112,6 +113,7 @@ describe("inventory commands", () => {
         recoveredFromGateway: 2,
       },
       lastOnboardedSandbox: "alpha",
+      incompleteOnboarding: null,
       sandboxes: [
         {
           name: "alpha",
@@ -237,6 +239,78 @@ describe("inventory commands", () => {
     expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
   });
 
+  it("reports a session-owned inference-route reservation as incomplete onboarding (#10097)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "sandbox-d",
+            provider: "nvidia-prod",
+            model: "nvidia/model",
+            pendingRouteReservation: true,
+            reservationSessionId: "session-d",
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => ({
+        sessionId: "session-d",
+        resumable: true,
+        status: "failed",
+        sandboxName: "sandbox-d",
+        lastStepStarted: "inference",
+        lastCompletedStep: "inference",
+        failure: { step: "inference", interrupted: true },
+      }),
+    });
+
+    expect(inventory.incompleteOnboarding).toEqual({
+      name: "sandbox-d",
+      status: "failed",
+      step: "inference",
+      interrupted: true,
+      resumable: true,
+    });
+    expect(inventory.sandboxes).toEqual([]);
+
+    const lines: string[] = [];
+    renderSandboxInventoryText(inventory, (message = "") => lines.push(message));
+    expect(lines).toContain("  Incomplete onboarding:");
+    expect(lines).toContain("    sandbox-d  interrupted at inference");
+    expect(lines).toContain(
+      "      NemoClaw reserved the inference route but did not register the sandbox.",
+    );
+    expect(lines).toContain("      Resume with `nemoclaw onboard --resume`.");
+    expect(lines).not.toContain("  Sandboxes:");
+  });
+
+  it("keeps an inference-route reservation owned by another session hidden (#10097)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "sandbox-d",
+            pendingRouteReservation: true,
+            reservationSessionId: "older-session",
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => ({
+        sessionId: "current-session",
+        resumable: true,
+        status: "failed",
+        sandboxName: "sandbox-d",
+        failure: { step: "inference", interrupted: true },
+      }),
+    });
+
+    expect(inventory.incompleteOnboarding).toBeNull();
+    expect(inventory.sandboxes).toEqual([]);
+  });
+
   it("hides a created pending sandbox until lifecycle finalization (#9733)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
@@ -303,6 +377,62 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
     expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
+  });
+
+  it("reports incomplete onboarding in global status without sandbox probes (#10097)", () => {
+    const listSandboxes = () => ({
+      sandboxes: [
+        {
+          name: "sandbox-d",
+          pendingRouteReservation: true as const,
+          reservationSessionId: "session-d",
+        },
+      ],
+      defaultSandbox: null,
+    });
+    const loadLastSession = () => ({
+      sessionId: "session-d",
+      resumable: true,
+      status: "failed",
+      sandboxName: "sandbox-d",
+      lastCompletedStep: "inference",
+      failure: { step: "inference", interrupted: true },
+    });
+    const getLiveInference = vi.fn();
+    const getGatewayHealth = vi.fn();
+    const report = getStatusReport({
+      listSandboxes,
+      loadLastSession,
+      getLiveInference,
+      getGatewayHealth,
+      getServiceStatuses: () => [],
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.incompleteOnboarding).toEqual({
+      name: "sandbox-d",
+      status: "failed",
+      step: "inference",
+      interrupted: true,
+      resumable: true,
+    });
+    expect(report.sandboxes).toEqual([]);
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayHealth).not.toHaveBeenCalled();
+
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes,
+      loadLastSession,
+      getLiveInference,
+      getGatewayHealth,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+    expect(lines).toContain("  Incomplete onboarding:");
+    expect(lines).toContain("    sandbox-d  interrupted at inference");
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayHealth).not.toHaveBeenCalled();
   });
 
   it("shows the empty-state hint when only route-only reservations exist (#7609)", async () => {
