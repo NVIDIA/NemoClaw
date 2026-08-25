@@ -124,6 +124,16 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
   });
 }
 
+function localDiscordGatewayProofSource(): string {
+  const remoteHost = 'const host = "host.openshell.internal";';
+  const localHost = 'const host = "127.0.0.1";';
+  const source = DISCORD_GATEWAY_PROOF_SOURCE.replace(remoteHost, localHost);
+  expect(source, "Discord Gateway proof host declaration changed").not.toBe(
+    DISCORD_GATEWAY_PROOF_SOURCE,
+  );
+  return source;
+}
+
 describe("OpenClaw Discord pairing helper contracts", () => {
   it("shell-quotes pairing code and user without command substitution", () => {
     const code = "abc$(touch /tmp/e2e-should-not-run)";
@@ -269,6 +279,61 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain('"\\r\\n"');
     expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it("reports the canonical Discord proof placeholder rejected after credential injection (#10155)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
+    const captureFile = path.join(tmp, "capture.jsonl");
+    const portFile = path.join(tmp, "port");
+    const revisionPlaceholder = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
+    try {
+      child = spawn(
+        process.execPath,
+        [path.join(REPO_ROOT, "test/e2e/lib/fake-discord-gateway.cjs")],
+        {
+          env: {
+            ...process.env,
+            FAKE_DISCORD_GATEWAY_HOST: "127.0.0.1",
+            FAKE_DISCORD_GATEWAY_PORT: "0",
+            FAKE_DISCORD_GATEWAY_PORT_FILE: portFile,
+            FAKE_DISCORD_GATEWAY_CAPTURE_FILE: captureFile,
+            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: revisionPlaceholder,
+          },
+          stdio: "ignore",
+        },
+      );
+      const port = await waitForPort(portFile);
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: localDiscordGatewayProofSource(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCORD_BOT_TOKEN: revisionPlaceholder,
+          FAKE_DISCORD_GATEWAY_PORT: String(port),
+          HTTP_PROXY: "",
+          http_proxy: "",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("IDENTIFY_SENT_PLACEHOLDER");
+      expect(result.stdout).toContain("CLOSE_4004");
+      expect(result.stdout).not.toContain("READY");
+
+      const identify = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\n+/)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((row) => row.event === "identify");
+      expect(identify).not.toHaveProperty("token");
+      expect(identify?.tokenMatchesExpected).toBe(false);
+      expect(identify?.tokenLooksPlaceholder).toBe(true);
+    } finally {
+      child?.kill("SIGTERM");
+      child = undefined;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it.each([
