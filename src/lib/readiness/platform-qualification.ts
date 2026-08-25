@@ -164,7 +164,7 @@ function parseStationRelease(contents: string): StationProfile {
   const noOtaPrettyName = values.get("DGX_PRETTY_NAME")?.[0];
   const noOtaVersion = values.get("DGX_SWBUILD_VERSION")?.[0];
   if (
-    noOtaPrettyName === "NVIDIA DGX GB300WS" &&
+    (noOtaPrettyName === "NVIDIA DGX GB300WS" || noOtaPrettyName === "NVIDIA DGX Server") &&
     /^7\.6\.[0-9]+$/u.test(noOtaVersion ?? "") &&
     values.has("DGX_SWBUILD_DATE")
   ) {

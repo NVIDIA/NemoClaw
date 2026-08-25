@@ -155,8 +155,8 @@ detect_express_platform
     ].join("\n");
   }
 
-  function noOtaDgxOs76Release(version = "7.6.0") {
-    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="NVIDIA DGX GB300WS"
+  function noOtaDgxOs76Release(version = "7.6.0", pretty = "NVIDIA DGX GB300WS") {
+    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="${pretty}"
 DGX_SWBUILD_DATE="2026-07-14-13-59-06"
 DGX_SWBUILD_VERSION="${version}"
 DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
@@ -1223,15 +1223,18 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it("recognizes the no-OTA DGX OS 7.6 family on Station GB300 (#7417)", () => {
-    const result = detectExpressPlatformForStockDgxRelease(
-      "DGX Station GB300",
-      noOtaDgxOs76Release(),
-    );
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
+    "recognizes the no-OTA DGX OS 7.6 family with the %s display name (#9898)",
+    (pretty) => {
+      const result = detectExpressPlatformForStockDgxRelease(
+        "DGX Station GB300",
+        noOtaDgxOs76Release("7.6.0", pretty),
+      );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("DGX Station");
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("DGX Station");
+    },
+  );
 
   it.each(["colossus-baseos", "ai-developer-tools"] as const)(
     "recognizes the exact no-OTA %s Station profile",
@@ -1400,7 +1403,9 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
-    expect(output).toContain("no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile");
+    expect(output).toContain(
+      'no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME="NVIDIA DGX GB300WS" or DGX_PRETTY_NAME="NVIDIA DGX Server"',
+    );
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
