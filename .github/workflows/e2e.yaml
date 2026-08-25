@@ -2698,6 +2698,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_revision }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      # The local path leaves this override empty so the candidate CLI builds
+      # changed base inputs locally and resolves unchanged inputs normally.
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"

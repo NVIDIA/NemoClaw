@@ -770,7 +770,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
     "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
-    errors.push("live DCode must use an immutable base reference only with managed images");
+    errors.push(
+      "live DCode must bind the published base only for managed images and leave local base resolution to the candidate checkout",
+    );
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
