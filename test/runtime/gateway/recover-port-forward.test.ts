@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
-} from "./helpers/launch-readiness-fixture";
-import { nonWslPlatformNodeOptions } from "./helpers/platform-override-node-options";
-import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
+} from "../.././helpers/launch-readiness-fixture";
+import { nonWslPlatformNodeOptions } from "../.././helpers/platform-override-node-options";
+import { execTimeout, testTimeoutOptions } from "../.././helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 const listenerProcesses: ChildProcess[] = [];
@@ -303,7 +303,7 @@ process.exit(0);
 }
 
 function runRecover(fixture: Fixture) {
-  const repoRoot = path.join(import.meta.dirname, "..");
+  const repoRoot = path.join(import.meta.dirname, "../../..");
   return spawnSync(
     process.execPath,
     [path.join(repoRoot, "bin", "nemoclaw.js"), fixture.sandboxName, "recover"],

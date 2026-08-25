@@ -1271,39 +1271,3 @@ describe("service environment", () => {
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          sandboxInitSource,
-          'PROXY_HOST="10.200.0.1"',
-          'PROXY_PORT="3128"',
-          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
-          // NODE_USE_ENV_PROXY intentionally NOT set
-          "_TOOL_REDIRECTS=()",
-          `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
-          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
-          "set +u  # array expansion safe on macOS bash",
-          persistBlock
-            .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
-        ].join("\n");
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-
-        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        // Proxy preloads should NOT be injected when NODE_USE_ENV_PROXY
-        // is not 1. The Nemotron inference fix is
-        // unconditional (always needed regardless of proxy config).
-        expect(envFile).not.toContain("http-proxy-fix");
-        expect(envFile).toContain("nemotron-inference-fix");
-      } finally {
-        try {
-          rmSync(fakeDataDir, { recursive: true, force: true });
-          rmSync(tmpFile, { force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-  });
-});

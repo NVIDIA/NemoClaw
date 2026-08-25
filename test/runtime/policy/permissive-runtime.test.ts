@@ -10,7 +10,7 @@ import YAML from "yaml";
 import {
   buildRuntimePermissivePolicy,
   type ExactManagedMcpPolicy,
-} from "../src/lib/shields/permissive-runtime.js";
+} from "../../../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {

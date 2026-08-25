@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { loadAgent } from "../src/lib/agent/defs";
+import { loadAgent } from "../../../src/lib/agent/defs";
 
 const OPENCLAW_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
@@ -45,7 +45,7 @@ function guardAction(command, helper) {
 }
 
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "../adapters/docker/exec") {
+  if (request === "../../../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const command = commandFromArgs(args);
@@ -127,7 +127,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
       },
     };
   }
-  if (request === "../sandbox/privileged-exec") {
+  if (request === "../../../sandbox/privileged-exec") {
     return {
       privilegedSandboxExecArgv(_sandboxName, cmd) {
         return [...cmd];
@@ -141,7 +141,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
 };
 
 try {
-  const { lockAgentConfig } = require("./src/lib/shields/index.ts");
+  const { lockAgentConfig } = require("../.././src/lib/shields/index.ts");
   lockAgentConfig(
     "sandbox-pod",
     {

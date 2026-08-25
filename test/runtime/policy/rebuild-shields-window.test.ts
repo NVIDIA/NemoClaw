@@ -10,17 +10,17 @@ const shieldsMock = vi.hoisted(() => ({
 }));
 const timerMock = vi.hoisted(() => ({ isShieldsTimerDeadlineExpired: vi.fn() }));
 
-vi.mock("../src/lib/shields", () => shieldsMock);
-vi.mock("../src/lib/state/mcp-lifecycle-lock/shields-timer-authority", () => timerMock);
+vi.mock("../../../src/lib/shields", () => shieldsMock);
+vi.mock("../../../src/lib/state/mcp-lifecycle-lock/shields-timer-authority", () => timerMock);
 
 import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
-} from "../src/lib/actions/sandbox/backup-shields-window";
+} from "../../../src/lib/actions/sandbox/backup-shields-window";
 import {
   openRebuildShieldsWindow,
   relockRebuildShieldsWindow,
-} from "../src/lib/actions/sandbox/rebuild-shields";
+} from "../../../src/lib/actions/sandbox/rebuild-shields";
 
 describe("rebuild Shields window", () => {
   afterEach(() => {

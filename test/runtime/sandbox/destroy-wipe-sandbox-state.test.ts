@@ -16,7 +16,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import * as destroy from "../src/lib/actions/sandbox/destroy.js";
+import * as destroy from "../../../src/lib/actions/sandbox/destroy.js";
 
 type OpenshellResult = { status: number | null };
 
@@ -141,7 +141,7 @@ describe("wipeSandboxState (#5449)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
-        stateDirs: ["workspace", "../etc", "/etc/passwd"],
+        stateDirs: ["workspace", "../../../etc", "/etc/passwd"],
         stateDirPrefixes: [],
         stateFiles: [],
       })),
@@ -154,7 +154,7 @@ describe("wipeSandboxState (#5449)", () => {
       // Legitimate target survives.
       expect(script).toContain("workspace");
       // Path escapes are NOT in the script.
-      expect(script).not.toContain("../etc");
+      expect(script).not.toContain("../../../etc");
       expect(script).not.toContain("/etc/passwd");
       // Warns about each rejected path. The defense-in-depth validator
       // rejects `..` segments and absolute paths up front (before resolve),
@@ -162,7 +162,7 @@ describe("wipeSandboxState (#5449)", () => {
       // contain no '..' segments"), not the post-resolve "resolves outside"
       // boundary check.
       const warningCalls = warn.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(warningCalls).toContain("../etc");
+      expect(warningCalls).toContain("../../../etc");
       expect(warningCalls).toContain("/etc/passwd");
       expect(warningCalls).toMatch(/must be relative|resolves outside/);
     } finally {
@@ -178,7 +178,7 @@ describe("wipeSandboxState (#5449)", () => {
         stateDirPrefixes: [],
         stateFiles: [
           { path: "agents.json" },
-          { path: "../../../etc/shadow" },
+          { path: "../../../../../etc/shadow" },
           { path: "/root/.ssh/authorized_keys" },
         ],
       })),
@@ -189,7 +189,7 @@ describe("wipeSandboxState (#5449)", () => {
       destroy.wipeSandboxState("test-sb", deps as never);
       const { script } = execCommand(runOpenshell);
       expect(script).toContain("agents.json");
-      expect(script).not.toContain("../../../etc/shadow");
+      expect(script).not.toContain("../../../../../etc/shadow");
       expect(script).not.toContain("/root/.ssh/authorized_keys");
     } finally {
       warn.mockRestore();
@@ -202,7 +202,7 @@ describe("wipeSandboxState (#5449)", () => {
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
         stateDirs: [],
-        stateDirPrefixes: ["workspace-", "../escape-", "/tmp/escape-"],
+        stateDirPrefixes: ["workspace-", "../../../escape-", "/tmp/escape-"],
         stateFiles: [],
       })),
       warn: (message: string) => warnings.push(message),
@@ -212,9 +212,9 @@ describe("wipeSandboxState (#5449)", () => {
 
     const { script } = execCommand(runOpenshell);
     expect(script).toContain("'workspace-'*");
-    expect(script).not.toContain("../escape-");
+    expect(script).not.toContain("../../../escape-");
     expect(script).not.toContain("/tmp/escape-");
-    expect(warnings.join("\n")).toContain("../escape-");
+    expect(warnings.join("\n")).toContain("../../../escape-");
     expect(warnings.join("\n")).toContain("/tmp/escape-");
   });
 
@@ -258,7 +258,7 @@ describe("wipeSandboxState (#5449)", () => {
     { dir: "/sandbox", label: "shared sandbox root with no agent subdir" },
     { dir: "/sandbox/", label: "shared sandbox root trailing slash" },
     { dir: ".openclaw", label: "relative config dir" },
-    { dir: "../escape", label: "relative escape" },
+    { dir: "../../../escape", label: "relative escape" },
     { dir: "/sandbox/../etc", label: "absolute path that escapes via `..`" },
     { dir: "/sandbox/./.openclaw", label: "absolute path with `.` segment (not normalized)" },
     { dir: "/sandbox//.openclaw", label: "absolute path with double slash (not normalized)" },

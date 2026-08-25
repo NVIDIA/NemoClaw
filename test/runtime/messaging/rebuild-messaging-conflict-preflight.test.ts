@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const NODE_BIN = path.dirname(process.execPath);
 const tmpFixtures: string[] = [];
 

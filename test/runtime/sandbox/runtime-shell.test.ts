@@ -7,14 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const RUNTIME_SH = path.join(import.meta.dirname, "..", "scripts", "lib", "runtime.sh");
+const RUNTIME_SH = path.join(import.meta.dirname, "../../..", "scripts", "lib", "runtime.sh");
 
 function runShell(
   script: string,
   env: Record<string, string | undefined> = {},
 ): SpawnSyncReturns<string> {
   return spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
-    cwd: path.join(import.meta.dirname, ".."),
+    cwd: path.join(import.meta.dirname, "../../.."),
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });
