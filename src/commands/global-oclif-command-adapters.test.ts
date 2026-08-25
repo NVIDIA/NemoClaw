@@ -146,6 +146,7 @@ describe("global oclif command adapters", () => {
       defaultSandbox: null,
       recovery: { recoveredFromSession: false, recoveredFromGateway: 0 },
       lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
       sandboxes: [],
     };
     mocks.getSandboxInventory.mockImplementationOnce(async () => {
@@ -200,6 +201,7 @@ describe("global oclif command adapters", () => {
       defaultSandbox: "alpha",
       liveInference: null,
       gatewayHealth: null,
+      incompleteOnboarding: null,
       sandboxes: [],
       services: [],
     };

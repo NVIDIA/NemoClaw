@@ -10,6 +10,7 @@ const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
 const {
   getWindowsHostOllamaDockerReachabilityArgs,
+  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   setResolvedOllamaHost,
 } = require("../local");
@@ -126,7 +127,7 @@ function awaitWindowsOllamaReady(): boolean {
     const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
       ignoreError: true,
     });
-    if (probe) {
+    if (isValidOllamaTagsResponseBody(probe)) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
     }
