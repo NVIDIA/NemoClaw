@@ -32,27 +32,6 @@ Official quickstarts: [OpenClaw](https://docs.nvidia.com/nemoclaw/latest/user-gu
 | Default OpenShell provider name | `onprem-ollama` | `onprem-hermes` | `onprem-deepagents` |
 | Upstream policy grants `integrate.api.nvidia.com`? | Yes — removed by `create-agent-sandbox.sh` | Yes — removed by `create-agent-sandbox.sh` | No — nothing to remove |
 
-## Selecting an agent
-
-There is only **one** Quick start to run — [`README.md`](README.md#quick-start).
-This page has no commands of its own to copy-paste; it's reference material for whichever
-`AGENT_NAME` you set in [step 4](README.md#4-agent-sandbox-image-openshell) of that
-Quick start (`openclaw`, `hermes`, or `deepagents` — see [Comparison](#comparison) below).
-The only place the three agents' commands actually diverge is the last line of
-[step 5](README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes start and keep
-`run-agent-sandbox.sh` in the foreground before verification; Deep Agents Code runs one-shot prompts with
-`run-agent-prompt.sh "<prompt>"` instead (there's also `openshell sandbox exec -n
-deepagents-onprem -- dcode` for an interactive session — needs a TTY).
-
-Only run one agent's sandbox at a time unless you deliberately want to compare them side
-by side (each uses its own sandbox/provider name by default, so running more than one
-concurrently is possible but untested by this recipe).
-
-Users do not paste an inference API key; the chart generates it and OpenShell injects
-Bearer auth. `create-agent-sandbox.sh` strips `integrate.api.nvidia.com` from OpenClaw's
-and Hermes's upstream policy (see [Shared policy notes](#shared-policy-notes)); Deep
-Agents Code's policy never grants it, so there's nothing to remove there.
-
 ## Env vars
 
 | Env var | Default | Purpose |
@@ -172,8 +151,3 @@ NemoClaw/Deep Agents Code has no long-running gateway; run one-shot prompts with
   offer local Ollama for that agent. This recipe still permits Deep Agents Code + Ollama
   through the common OpenAI-compatible route and prints a warning in `try-it.sh`; treat
   that specific pairing as recipe-experimental until live-tested.
-
-## Uninstall
-
-See [Uninstall](README.md#uninstall) — it already covers all three agents' default
-sandbox/provider names.
