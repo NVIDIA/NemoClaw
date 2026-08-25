@@ -209,10 +209,19 @@ and exact-staging Launchable job own its product coverage:
 
 The retired nightly caller no longer runs. The explicit
 `E2E / Issue 9880 Staging Reproduction` workflow is a temporary issue-specific
-exception: it deploys the standing staging Launchable, runs five bounded fresh
-OpenClaw CLI sessions against the baked image, uploads redacted evidence, and
-confirms that the workflow-owned workspace is absent. It does not restore source
-copying, source installation, the legacy suite selector, or scheduled Brev coverage.
+exception: its host-side Vitest controller reads the accepted staging image handoff,
+creates a temporary workspace on the configured Launchable, runs five bounded fresh
+OpenClaw CLI sessions against the baked image, deletes the workspace, and uploads
+redacted evidence, and confirms that the workflow-owned workspace is absent. It
+constructs the Brev controller only in the issue target and binds credential-bearing
+execution and deletion to the workspace ID recorded during creation. The live test,
+cleanup, workflow step, and workflow job timeouts each contain their nested operation
+budgets. Each Brev subprocess receives only the temporary workflow `HOME` and its
+command-specific environment. The workflow removes that `HOME` after the scenario.
+Cleanup gives the unique create request a two-minute visibility window. It records the
+first exact-name workspace ID, verifies that ID again, and deletes only that ID.
+It does not restore source copying, source installation, the legacy suite selector,
+or scheduled Brev coverage.
 Each push to `main` selects E2E work from the changed files.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
@@ -1215,17 +1224,15 @@ The job reads these credentials from repository Actions secrets:
   operations in the organization identified by `BREV_ORG_ID`. Candidate code
   does not receive this API key.
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
-  host script. It grants Actions read/write access to `brevdev/nemoclaw-image`,
-  which the script uses to dispatch the image workflow, inspect its run, and
-  download its handoff artifact.
+  host controller. The controller uses it to list successful producer runs in
+  `brevdev/nemoclaw-image` and download the selected staging handoff artifact.
 - `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
   process. Code in the baked candidate checkout can read and use it.
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
 `$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
-and processes in the same job can read that file. The workflow does not delete
-it explicitly; it remains on the ephemeral runner filesystem until runner
-teardown discards that filesystem.
+and processes in the same job can read that file. An always-run workflow step
+removes the temporary credential home and verifies its absence after the scenario.
 These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.

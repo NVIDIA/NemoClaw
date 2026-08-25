@@ -389,7 +389,7 @@ async function assertAgentJsonNonzeroExit(host: HostCliClient, sandboxName: stri
   // The v0.0.69 legacy job did not exercise piped stdin. That experimental
   // migration-only assertion was retired instead of expanding the parity lane.
   // Failed-tool provenance remains covered deterministically by
-  // test/openclaw-agent-json.test.ts; a live prompt cannot require upstream
+  // test/agents/openclaw/openclaw-agent-json.test.ts; a live prompt cannot require upstream
   // OpenClaw to emit failed tool-result metadata. Re-add live stdin coverage if
   // the frozen parity source gains that contract or transport validation is
   // explicitly added to this lane's scope.

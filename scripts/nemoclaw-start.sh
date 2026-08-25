@@ -769,7 +769,7 @@ reclaim_collapsed_mutable_config() {
 # tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
 # 2770/660 group contract. The tightening originates at the OpenClaw command
 # boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
-# Regression proof lives in test/nemoclaw-start-perms.test.ts and the live
+# Regression proof lives in test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts and the live
 # shields-config documented-exec phase. Issue #6047 tracks the boundary and its
 # removal condition: remove this wrapper only when the pinned OpenClaw preserves
 # 2770/660 after every command outcome; do not replace that upstream source fix
@@ -2749,7 +2749,7 @@ SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
 #     gateways, large multi-sandbox deployments) can restore it by
 #     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
 #     environment; the PR body calls this out under "Changes" too.
-#   * Regression test: test/nemoclaw-start.test.ts's late-CLI fixture
+#   * Regression test: test/agents/openclaw/runtime/nemoclaw-start.test.ts's late-CLI fixture
 #     covers the new default deterministically; #5343 Phase 5 covers it
 #     end to end.
 #   * Removal condition: when OpenClaw signals scope-upgrade requests via
@@ -4049,7 +4049,7 @@ openclaw() {
 # which lives in a separate codebase/release cycle, so the denial response
 # cannot be made self-describing from this repo. This proactive breadcrumb is
 # the NemoClaw-owned surface that points at the denial reason in the logs.
-# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# Regression coverage: test/runtime/policy/repro-5978-policy-denial-hint.test.ts. Removal
 # condition: drop this stanza once the OpenShell proxy returns a structured,
 # actionable denial (naming the rule / a logs pointer) at the tunnel-failure
 # site, at which point the breadcrumb is redundant.
