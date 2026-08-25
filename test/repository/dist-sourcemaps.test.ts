@@ -19,7 +19,7 @@ function writeCleanFixtureDist(root: string): string {
   fs.writeFileSync(path.join(srcLib, "present.ts"), "export {};\n");
   fs.writeFileSync(
     path.join(distLib, "present.js.map"),
-    JSON.stringify({ version: 3, sources: ["../../../src/lib/present.ts"], mappings: "" }),
+    JSON.stringify({ version: 3, sources: ["../../src/lib/present.ts"], mappings: "" }),
   );
   return path.join(root, "dist");
 }
@@ -28,7 +28,7 @@ function writeStaleFixtureDist(root: string): string {
   const distDir = writeCleanFixtureDist(root);
   fs.writeFileSync(
     path.join(distDir, "lib", "missing.js.map"),
-    JSON.stringify({ version: 3, sources: ["../../../src/lib/missing.ts"], mappings: "" }),
+    JSON.stringify({ version: 3, sources: ["../../src/lib/missing.ts"], mappings: "" }),
   );
   return distDir;
 }

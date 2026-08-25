@@ -13,7 +13,7 @@ import {
   renderAgentVariantPage,
 } from "../../scripts/sync-agent-variant-docs.mts";
 
-const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 /**
  * Every page that `docs/index.yml` publishes through a generated agent variant,
