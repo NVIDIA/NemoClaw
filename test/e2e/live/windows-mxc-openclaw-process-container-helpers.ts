@@ -178,6 +178,7 @@ export interface WindowsMxcOpenClawQualificationReceipt {
     readonly forwardProcessStopped: boolean;
     readonly gatewayProcessStopped: boolean;
     readonly openClawProcessStopped: boolean;
+    readonly retainedSandboxName: string | null;
     readonly runDirectoryRemoved: boolean;
     readonly sandboxDeleteRetried: boolean;
     readonly sensitiveRuntimeArtifactsRemoved: boolean;
@@ -383,6 +384,7 @@ function buildWindowsMxcSetupFailureReceipt(
       forwardProcessStopped: false,
       gatewayProcessStopped: false,
       openClawProcessStopped: false,
+      retainedSandboxName: null,
       runDirectoryRemoved: localArtifactsRemoved,
       sandboxDeleteRetried: false,
       sensitiveRuntimeArtifactsRemoved: localArtifactsRemoved,
@@ -1645,6 +1647,27 @@ function receiptPasses(checks: QualificationChecks): boolean {
   return Object.values(checks).every(Boolean);
 }
 
+export function retainedWindowsMxcSandboxName(input: {
+  readonly registryRemovedAfterDelete: boolean;
+  readonly sandboxCreateStarted: boolean;
+  readonly sandboxName: string;
+}): string | null {
+  return input.sandboxCreateStarted && !input.registryRemovedAfterDelete ? input.sandboxName : null;
+}
+
+export function createWindowsMxcQualificationFailure(input: {
+  readonly failures: readonly unknown[];
+  readonly openClawProcessStopped: boolean;
+  readonly receiptPath: string;
+  readonly retainedSandboxName: string | null;
+  readonly sandboxDeleteRetried: boolean;
+}): AggregateError {
+  return new AggregateError(
+    input.failures,
+    `Windows MXC OpenClaw qualification failed; retained sandbox=${input.retainedSandboxName ?? "none"}, cleanup sandbox delete retried=${input.sandboxDeleteRetried}, OpenClaw stopped=${input.openClawProcessStopped}; receipt: ${input.receiptPath}`,
+  );
+}
+
 export async function runWindowsMxcOpenClawProcessContainerQualification(
   inputs: WindowsMxcOpenClawQualificationInputs,
   progress: QualificationProgress,
@@ -2341,6 +2364,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     }
   }
 
+  const retainedSandboxName = retainedWindowsMxcSandboxName({
+    registryRemovedAfterDelete: checks.registryRemovedAfterDelete,
+    sandboxCreateStarted,
+    sandboxName,
+  });
   const receipt: WindowsMxcOpenClawQualificationReceipt = {
     schemaVersion: 2,
     classification: "inactive-candidate",
@@ -2385,6 +2413,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       forwardProcessStopped,
       gatewayProcessStopped: gatewayStopped,
       openClawProcessStopped,
+      retainedSandboxName,
       runDirectoryRemoved,
       sandboxDeleteRetried,
       sensitiveRuntimeArtifactsRemoved,
@@ -2413,8 +2442,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const failures = [primaryFailure, ...cleanupFailures].filter(
     (failure): failure is NonNullable<typeof failure> => failure !== null,
   );
-  throw new AggregateError(
+  throw createWindowsMxcQualificationFailure({
     failures,
-    `Windows MXC OpenClaw qualification failed; cleanup sandbox delete retried=${sandboxDeleteRetried}, OpenClaw stopped=${openClawProcessStopped}; receipt: ${receiptPath}`,
-  );
+    openClawProcessStopped,
+    receiptPath,
+    retainedSandboxName,
+    sandboxDeleteRetried,
+  });
 }

@@ -534,6 +534,16 @@ Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation
 remain outside this target.
 
+If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
+not confirm removal of that exact sandbox. Inspect the registry and delete only
+the recorded name:
+
+```powershell
+$receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox list -o json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
+```
+
 The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` in both selector inputs. Reports use the canonical
 `hermes-e2e` name. That lane always enables dashboard coverage while preserving

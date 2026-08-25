@@ -43,6 +43,7 @@ qualificationTest(
       forwardProcessStopped: true,
       gatewayProcessStopped: true,
       openClawProcessStopped: true,
+      retainedSandboxName: null,
       runDirectoryRemoved: true,
       sandboxDeleteRetried: false,
       sensitiveRuntimeArtifactsRemoved: true,

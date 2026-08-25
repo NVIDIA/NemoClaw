@@ -16,6 +16,7 @@ import {
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
   parseWindowsMxcOpenClawQualificationEnvironment,
   parseOpenClawExactChatReply,
@@ -24,6 +25,7 @@ import {
   renderWindowsMxcFilesystemPolicy,
   renderWindowsMxcGatewayConfig,
   renderWindowsMxcOpenClawProbeAgent,
+  retainedWindowsMxcSandboxName,
   runWindowsMxcForwardCleanup,
   sameWindowsProcessIdentity,
   sandboxListContainsExactName,
@@ -158,6 +160,34 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toEqual(new Error("injected process query failure"));
+  });
+
+  it("records the retained sandbox when cleanup cannot confirm deletion (#8178)", () => {
+    const sandboxName = "mxc-oc-retained";
+    const retainedSandboxName = retainedWindowsMxcSandboxName({
+      registryRemovedAfterDelete: false,
+      sandboxCreateStarted: true,
+      sandboxName,
+    });
+    const receipt = { cleanup: { retainedSandboxName }, verdict: "fail" };
+    const failure = createWindowsMxcQualificationFailure({
+      failures: [new Error("injected sandbox delete failure")],
+      openClawProcessStopped: true,
+      receiptPath: "C:\\evidence\\receipt.json",
+      retainedSandboxName,
+      sandboxDeleteRetried: true,
+    });
+
+    expect(receipt.cleanup.retainedSandboxName).toBe(sandboxName);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toContain(`retained sandbox=${sandboxName}`);
+    expect(
+      retainedWindowsMxcSandboxName({
+        registryRemovedAfterDelete: true,
+        sandboxCreateStarted: true,
+        sandboxName,
+      }),
+    ).toBeNull();
   });
 
   it("requires exact identities and keeps the OpenClaw launch files under one artifact root (#8178)", () => {
