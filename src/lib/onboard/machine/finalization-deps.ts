@@ -10,8 +10,6 @@ import {
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
-import type { AutoPairApprovalResult } from "../../actions/sandbox/auto-pair-approval";
-import type { SandboxScopeWarmupResult } from "../../actions/sandbox/auto-pair-warmup";
 
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -38,8 +36,6 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "runtime-identity-invalid"
         | "pairing-lock-unavailable"
         | "pairing-unavailable"
-        | "warmup-failed"
-        | "approval-failed"
         | "scope-upgrade-incomplete";
     };
 
@@ -55,18 +51,8 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
   "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
   "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
   "pairing-unavailable": "its canonical CLI device pairing did not appear",
-  "warmup-failed": "its scope-upgrade warm-up request failed",
-  "approval-failed": "its local pairing approval failed",
   "scope-upgrade-incomplete":
     "its canonical CLI device did not receive the required baseline scopes",
-};
-
-const ORDINARY_OPENCLAW_PAIRING_RECOVERY: Partial<
-  Record<OrdinaryOpenClawPairingIncompleteReason, string>
-> = {
-  "warmup-failed": "Verify the OpenClaw gateway is reachable, then resume or rerun onboarding.",
-  "approval-failed":
-    "Verify the pending local pairing request can be approved, then resume or rerun onboarding.",
 };
 
 interface OrdinaryOpenClawPairingSettlementDeps {
@@ -77,14 +63,8 @@ interface OrdinaryOpenClawPairingSettlementDeps {
     version: string,
     stateDirectory: string,
   ): OpenClawPairingSettlementObservation;
-  runWarmup(
-    name: string,
-    gatewayName: string,
-  ): Promise<SandboxScopeWarmupResult> | SandboxScopeWarmupResult;
-  runApproval(
-    name: string,
-    gatewayName: string,
-  ): Promise<AutoPairApprovalResult> | AutoPairApprovalResult;
+  runWarmup(name: string, gatewayName: string): Promise<void> | void;
+  runApproval(name: string, gatewayName: string): Promise<void> | void;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
   now(): number;
@@ -175,8 +155,10 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
     runWarmup: (name, gatewayName) =>
-      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name, gatewayName),
-    runApproval: (name, gatewayName) =>
+      finalizationHandlerRuntime
+        .loadAutoPairWarmup()
+        .runSandboxScopeWarmupRun(name, gatewayName),
+    runApproval: (name, gatewayName) => {
       finalizationHandlerRuntime.loadAutoPairApproval().runSandboxAutoPairApprovalPass(name, {
         budget: {
           timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
@@ -186,8 +168,8 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         },
         gatewayName,
         localDeviceOnly: true,
-        receipt: true,
-      }),
+      });
+    },
     withSandboxLock: (name, operation, options) =>
       finalizationHandlerRuntime
         .loadSandboxLifecycleLock()
@@ -240,7 +222,7 @@ export async function settleOrdinaryOpenClawPairing(
             );
             sawCanonicalPairing = true;
           } catch {
-            // Pairing may not have appeared yet; the bounded observer handles that path.
+            // Pairing may not have appeared yet; the producer handles that path.
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
@@ -250,56 +232,30 @@ export async function settleOrdinaryOpenClawPairing(
           }
           if (initial?.state === "settled") return { kind: "settled" };
 
-          const pairingAppearanceDeadline = Math.min(
-            settlementDeadline,
-            deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
-          );
-          let baseline: PairingWaitResult = initial
-            ? { kind: "observed", value: initial }
-            : await waitForPairingObservation(
-                name,
-                target,
-                pairingAppearanceDeadline,
-                (value) => {
-                  sawCanonicalPairing = true;
-                  return true;
-                },
-                deps,
-              );
-          if (baseline.kind === "target-changed") {
-            return { kind: "incomplete", reason: "runtime-identity-invalid" };
-          }
-          if (baseline.kind === "timeout") {
-            return { kind: "incomplete", reason: "pairing-unavailable" };
-          }
-          if (baseline.value.state === "settled") return { kind: "settled" };
-
-          if (baseline.value.state === "pairing-only") {
-            // Wait for the startup watcher to publish the canonical CLI
-            // pairing before issuing the one bounded write-scope producer.
-            // Running the producer before that identity exists can create no
-            // upgrade and leaves an otherwise healthy fresh onboard stuck at
-            // pairing-only (#10014).
-            let warmupResult: SandboxScopeWarmupResult = "exec-failed";
+          let baseline: PairingWaitResult;
+          if (initial?.state === "scope-upgrade-pending") {
+            baseline = { kind: "observed", value: initial };
+          } else {
+            // A valid non-interactive path can reach finalization before the
+            // startup watcher publishes its first CLI request. Run the bounded
+            // direct producer once, then require canonical evidence that its
+            // exact write upgrade is pending before the approval pass (#10014).
             try {
-              warmupResult = await deps.runWarmup(name, target.gatewayName);
+              await deps.runWarmup(name, target.gatewayName);
             } catch {
-              // Keep the fixed failure result; producer output is never exposed.
+              // The bounded observation below remains fail closed.
             }
             if (!samePairingTarget(target, deps.getTarget(name))) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
-            if (warmupResult !== "executed") {
-              return { kind: "incomplete", reason: "warmup-failed" };
-            }
-            const scopeUpgradeDeadline = Math.min(
+            const pairingAppearanceDeadline = Math.min(
               settlementDeadline,
               deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
             );
             baseline = await waitForPairingObservation(
               name,
               target,
-              scopeUpgradeDeadline,
+              pairingAppearanceDeadline,
               (value) => {
                 sawCanonicalPairing = true;
                 return value.state !== "pairing-only";
@@ -316,7 +272,10 @@ export async function settleOrdinaryOpenClawPairing(
               reason: sawCanonicalPairing ? "scope-upgrade-incomplete" : "pairing-unavailable",
             };
           }
-          if (initial && baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256) {
+          if (
+            initial &&
+            baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256
+          ) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (baseline.value.state === "settled") return { kind: "settled" };
@@ -327,15 +286,19 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
-          let approvalResult: AutoPairApprovalResult | null = null;
+          let approvalFailed = false;
           try {
-            approvalResult = await deps.runApproval(name, target.gatewayName);
+            await deps.runApproval(name, target.gatewayName);
           } catch {
-            // A missing receipt is the fixed failure classification below.
+            approvalFailed = true;
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
+          if (approvalFailed) {
+            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          }
+
           const finalObservationDeadline = Math.min(
             settlementDeadline,
             deps.now() + OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -352,13 +315,9 @@ export async function settleOrdinaryOpenClawPairing(
           if (final.kind === "target-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (final.kind === "observed") return { kind: "settled" };
-          return {
-            kind: "incomplete",
-            reason: approvalResult?.receipt === "approved-one"
-              ? "scope-upgrade-incomplete"
-              : "approval-failed",
-          };
+          return final.kind === "observed"
+            ? { kind: "settled" }
+            : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
         });
       } catch (error) {
         if (gatewayBodyEntered) throw error;
@@ -376,9 +335,7 @@ export function ordinaryOpenClawPairingIncompleteMessage(
   reason: OrdinaryOpenClawPairingIncompleteReason,
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
-  const recovery =
-    ORDINARY_OPENCLAW_PAIRING_RECOVERY[reason] ?? "Resume or rerun onboarding.";
-  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. ${recovery}`;
+  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
 }
 
 export const finalizationHandlerDeps = {
