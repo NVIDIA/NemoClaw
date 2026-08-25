@@ -254,6 +254,7 @@ describe("credentials oclif adapter source coverage", () => {
         ignoreError: true,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
       },
     );
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
@@ -294,6 +295,22 @@ describe("credentials oclif adapter source coverage", () => {
         "--credential",
         "OPENAI_API_KEY",
       ],
+    ]);
+    expect(
+      mocks.runOpenshellProviderCommand.mock.calls.slice(0, 2).map(([, options]) => options),
+    ).toEqual([
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
     ]);
   });
 });

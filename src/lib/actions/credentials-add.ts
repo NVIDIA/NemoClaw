@@ -128,7 +128,11 @@ function ensureBundledProviderProfile(type: string): CredentialsAddResult | null
       profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
       inferenceCapable: true,
       profilePath,
-      runOpenshell: runOpenshellProviderCommand,
+      runOpenshell: (args, options) =>
+        runOpenshellProviderCommand(args, {
+          ...options,
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        }),
     });
     if (result.ok) return null;
     if (result.reason === "import-failed") {
