@@ -210,8 +210,8 @@
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
         "test/openshell-credential-generation-window.test.ts",
-        "test/mcp-artifact-secret-scan.test.ts",
-        "test/mcp-agent-matrix-artifact-proof.test.ts",
+        "test/mcp/mcp-artifact-secret-scan.test.ts",
+        "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts"
       ]
     },
