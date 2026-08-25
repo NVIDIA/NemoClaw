@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { renameSync, rmSync } from "node:fs";
+import { chmodSync, closeSync, constants, openSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
 export interface CreateTarballOptions {
@@ -26,6 +26,27 @@ export function createTarball(
 ): boolean {
   const { info, warn, error, timeoutMs = 60_000 } = options;
   const partial = `${output}.partial.${process.pid}`;
+  // Claim the predictable staging path ourselves before tar ever touches it.
+  // O_EXCL refuses a path another local user has already planted (file or
+  // symlink); O_NOFOLLOW refuses to write through a symlink even if one wins
+  // the race after this check. Owner-only mode carries through tar's own
+  // open() below, since an existing file's permission bits are unaffected by
+  // O_CREAT (see #10195).
+  try {
+    closeSync(
+      openSync(
+        partial,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      ),
+    );
+  } catch (err) {
+    error(
+      `Failed to stage tarball at ${partial}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exitCode = 1;
+    return false;
+  }
   const result = spawnSync(
     "tar",
     ["czf", partial, "-C", dirname(collectDir), basename(collectDir)],
@@ -48,6 +69,7 @@ export function createTarball(
     return false;
   }
   try {
+    chmodSync(partial, 0o600);
     renameSync(partial, output);
   } catch (err) {
     error(

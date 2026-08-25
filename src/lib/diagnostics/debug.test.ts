@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -129,6 +138,38 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+  });
+
+  it("writes the tarball with owner-only permissions, not world/group readable (#10195)", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "output.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(true);
+    const mode = statSync(output).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("refuses to follow a symlink pre-planted at the predictable staging path (#10195)", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "output.tar.gz");
+    // An attacker with access to the shared output directory can predict
+    // `${output}.partial.${pid}` and plant a symlink there ahead of time.
+    const partial = `${output}.partial.${String(process.pid)}`;
+    const victim = join(outputDir, "victim.txt");
+    const victimContent = "do not overwrite me";
+    writeFileSync(victim, victimContent);
+    symlinkSync(victim, partial);
+    const ok = createTarball(tempDir, output);
+    // Staging refuses to follow the planted symlink, so it fails closed
+    // instead of writing tar content into the victim file.
+    expect(readFileSync(victim, "utf-8")).toBe(victimContent);
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(output)).toBe(false);
   });
 });
 
