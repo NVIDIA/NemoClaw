@@ -632,7 +632,12 @@ export function finalizeCreatedSandbox(
       // - Source-fix constraint: rollback must span sandbox creation and external copies.
       // - Regression: the partial-workspace-restore test validates fresh config before registration.
       // - Removal: drop this fallback when restore failure can roll back sandbox creation atomically.
-      deps.error(`  Warning: partial restore. Manual recovery: ${options.restoreBackupPath}`);
+      deps.error(
+        `  Warning: workspace state restore was incomplete for sandbox '${options.sandboxName}'.`,
+      );
+      deps.error("  NemoClaw will register the sandbox with its current configuration.");
+      deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+      deps.error("  Recover the missing state before you use or rebuild the sandbox.");
     }
   }
 

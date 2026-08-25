@@ -510,7 +510,16 @@ describe("created DCode sandbox finalization", () => {
       );
 
       expect(error).toHaveBeenCalledWith(
-        `  Warning: partial restore. Manual recovery: ${fixture.backupPath}`,
+        "  Warning: workspace state restore was incomplete for sandbox 'dcode'.",
+      );
+      expect(error).toHaveBeenCalledWith(
+        "  NemoClaw will register the sandbox with its current configuration.",
+      );
+      expect(error).toHaveBeenCalledWith(
+        `  Keep the snapshot for manual recovery: ${fixture.backupPath}`,
+      );
+      expect(error).toHaveBeenCalledWith(
+        "  Recover the missing state before you use or rebuild the sandbox.",
       );
       expect(registeredConfigs).toHaveLength(1);
       expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
