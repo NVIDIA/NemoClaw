@@ -1042,15 +1042,11 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(
-      mutations.every(
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ),
-      ),
-    ).toBe(true);
+          ))).toBe(true);
   });
 
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
@@ -1253,15 +1249,11 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(
-      mutations.every(
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ),
-      ),
-    ).toBe(true);
+          ))).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1306,9 +1298,7 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    expect(
-      mutations.every(
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(
               buildLaunchReadinessRegistryProjection(
@@ -1317,9 +1307,7 @@ describe("launch readiness validation", () => {
               ),
             ),
             original,
-          ),
-      ),
-    ).toBe(true);
+          ))).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {
