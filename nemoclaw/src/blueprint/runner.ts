@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -1061,6 +1061,12 @@ function buildPersistedRunPlan(args: {
   return plan;
 }
 
+function persistRunReceipt(planFile: string, plan: unknown): void {
+  const pendingFile = `${planFile}.pending`;
+  writeFileSync(pendingFile, JSON.stringify(plan, null, 2), { encoding: "utf-8", mode: 0o600 });
+  renameSync(pendingFile, planFile);
+}
+
 function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
   if (!isPlainObject(source)) {
     return null;
@@ -1269,25 +1275,21 @@ export async function actionApply(
     assertBlueprintExternalPolicyRequirements(observed, policyAdditions);
   };
   const persistRunPlan = (): void => {
-    writeFileSync(
+    persistRunReceipt(
       join(stateDir, "plan.json"),
-      JSON.stringify(
-        buildPersistedRunPlan({
-          runId: rid,
-          profile,
-          sandboxName,
-          sandboxCreatedByApply,
-          inferenceProviderCreatedByApply,
-          policyAdditions,
-          policyAuthorityReceipt,
-          policyTransition,
-          inferenceCfg,
-          runtimeIdentityReceipt,
-          timestamp: new Date().toISOString(),
-        }),
-        null,
-        2,
-      ),
+      buildPersistedRunPlan({
+        runId: rid,
+        profile,
+        sandboxName,
+        sandboxCreatedByApply,
+        inferenceProviderCreatedByApply,
+        policyAdditions,
+        policyAuthorityReceipt,
+        policyTransition,
+        inferenceCfg,
+        runtimeIdentityReceipt,
+        timestamp: new Date().toISOString(),
+      }),
     );
   };
   const identityDeps = runtimeIdentityDeps(
@@ -1768,8 +1770,22 @@ export function actionStatus(rid?: string): void {
       throw new Error("plan.json must contain a JSON object");
     }
     log(JSON.stringify(safePlan, null, 2));
-  } catch {
-    log(JSON.stringify({ run_id: name, status: "unknown" }));
+  } catch (error) {
+    const detail = boundedCommandError(error instanceof Error ? error.message : String(error));
+    log(
+      JSON.stringify(
+        {
+          run_id: name,
+          status: "unknown",
+          receipt_error: detail,
+          run_directory: runDir,
+          recovery:
+            "Restore a complete plan.json receipt in this run directory before running reconcile or rollback.",
+        },
+        null,
+        2,
+      ),
+    );
   }
 }
 
@@ -1839,17 +1855,10 @@ export async function actionReconcile(rid: string): Promise<void> {
   }
   assertBlueprintPolicyRequirements(observed, additions);
 
-  writeFileSync(
-    planFile,
-    JSON.stringify(
-      {
-        ...plan,
-        policy_transition: { ...transition, status: "complete" },
-      },
-      null,
-      2,
-    ),
-  );
+  persistRunReceipt(planFile, {
+    ...plan,
+    policy_transition: { ...transition, status: "complete" },
+  });
   log(`Policy transition for run ${rid} is complete.`);
 }
 

@@ -42,6 +42,7 @@ vi.mock("node:fs", async (importOriginal) => {
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
     readdirSync: memory.readdirSync,
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
   };
 });
@@ -60,6 +61,8 @@ vi.mock("./ssrf.js", async (importOriginal) => {
 
 const { actionApply, actionReconcile, actionRollback, actionStatus, main } =
   await import("./runner.js");
+const { renameSync } = await import("node:fs");
+const mockedRenameSync = vi.mocked(renameSync);
 
 const BASE_POLICY = `version: 1
 future_policy:
@@ -652,7 +655,12 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     stdoutCapture.reset();
     actionStatus(runId);
-    expect(stdoutCapture.jsonOutput()).toEqual({ run_id: runId, status: "unknown" });
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      status: "unknown",
+      run_directory: stateDir,
+      recovery: expect.stringContaining("Restore a complete plan.json receipt"),
+    });
     await expect(actionReconcile(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
     await expect(actionRollback(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
   });
@@ -710,6 +718,46 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
   it("rejects reconciliation for a missing run (#9833)", async () => {
     await expect(actionReconcile("missing-reconciliation")).rejects.toThrow(/not found/u);
+  });
+
+  it("preserves the previous receipt when reconciliation replacement is interrupted (#9833)", async () => {
+    const runId = "interrupted-reconciliation";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    const planFile = `${stateDir}/plan.json`;
+    store.set(stateDir, { type: "dir" });
+    store.set(planFile, {
+      type: "file",
+      content: JSON.stringify({ ...reconciliationPlan, run_id: runId }),
+    });
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            "nemoclaw-managed",
+            blueprint().components!.policy!.additions!,
+          )
+        : defaultCommandResult(args),
+    );
+    mockedRenameSync.mockImplementationOnce(() => {
+      throw new Error("simulated interrupted receipt replacement");
+    });
+
+    await expect(actionReconcile(runId)).rejects.toThrow(/interrupted receipt replacement/u);
+    expect(JSON.parse(store.get(planFile)?.content ?? "{}")).toMatchObject({
+      policy_transition: { status: "incomplete" },
+    });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      policy_transition: { status: "incomplete", reconciliation_required: true },
+    });
+    await expect(actionRollback(runId)).rejects.toThrow(/is incomplete.*reconcile/u);
+
+    await actionReconcile(runId);
+    expect(JSON.parse(store.get(planFile)?.content ?? "{}")).toMatchObject({
+      policy_transition: { status: "complete" },
+    });
   });
 
   it("treats a complete reconciliation as idempotent and requires a CLI run ID (#9833)", async () => {
