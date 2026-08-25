@@ -40,16 +40,20 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     '    expected_sha="$WORKFLOW_SHA"',
     "    allow_non_head=0",
+    "    publication_branch=main",
+    "    publication_event=push",
     "    select_nearest_successful=0",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
-    '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
-    '      echo "::error::manual PR publication selection requires an exact base SHA" >&2',
+    '    [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '      echo "::error::manual PR publication selection requires an exact candidate SHA" >&2',
     "      exit 1",
     "    }",
-    '    expected_sha="$BASE_SHA"',
-    "    allow_non_head=1",
-    "    select_nearest_successful=1",
+    '    expected_sha="$CHECKOUT_SHA"',
+    "    allow_non_head=0",
+    '    publication_branch="${REF#refs/heads/}"',
+    "    publication_event=workflow_dispatch",
+    "    select_nearest_successful=0",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -58,6 +62,8 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "esac",
     'printf \'allow_non_head=%s\\n\' "${allow_non_head}" >> "${GITHUB_OUTPUT}"',
     'printf \'expected_sha=%s\\n\' "${expected_sha}" >> "${GITHUB_OUTPUT}"',
+    'printf \'publication_branch=%s\\n\' "${publication_branch}" >> "${GITHUB_OUTPUT}"',
+    'printf \'publication_event=%s\\n\' "${publication_event}" >> "${GITHUB_OUTPUT}"',
     'printf \'select_nearest_successful=%s\\n\' "${select_nearest_successful}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
@@ -598,12 +604,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     outputs: {
       dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
       dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
-      managed_image_artifact_provenance:
-        "${{ steps.download_managed_cohort.outputs.provenance }}",
+      managed_image_artifact_provenance: "${{ steps.download_managed_cohort.outputs.provenance }}",
       managed_image_cohort: "${{ steps.validate_managed_cohort.outputs.cohort }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
-      managed_image_revision:
-        "${{ steps.validate_managed_cohort.outputs.revision }}",
+      managed_image_revision: "${{ steps.validate_managed_cohort.outputs.revision }}",
       managed_image_run_attempt: "${{ steps.validate_managed_cohort.outputs.run_attempt }}",
       managed_image_run_id: "${{ steps.validate_managed_cohort.outputs.run_id }}",
     },
@@ -648,6 +652,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_BRANCH: "${{ steps.publication_mode.outputs.publication_branch }}",
+          PUBLICATION_EVENT: "${{ steps.publication_mode.outputs.publication_event }}",
           PUBLICATION_HISTORY_ALLOW_NON_HEAD:
             "${{ steps.publication_mode.outputs.allow_non_head }}",
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
@@ -657,7 +663,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         shell: "bash",
         run: [
           "set -euo pipefail",
-          "export GITHUB_REF=refs/heads/main",
+          'export GITHUB_REF="refs/heads/$PUBLICATION_BRANCH"',
           'export GITHUB_SHA="$EXPECTED_SHA"',
           "wait_seconds=3000",
           'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
@@ -805,9 +811,7 @@ const MANAGED_IMAGE_RECEIPT_EXPRESSION =
   "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 
 /** Require publication success and one exact cohort revision for every stock onboarding job. */
-export function validateStockOnboardingPublicationBoundary(
-  workflow: OperationsWorkflow,
-): string[] {
+export function validateStockOnboardingPublicationBoundary(workflow: OperationsWorkflow): string[] {
   const errors: string[] = [];
   for (const jobName of STOCK_ONBOARDING_JOBS) {
     const job = workflow.jobs[jobName] ?? {};

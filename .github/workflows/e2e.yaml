@@ -127,16 +127,20 @@ jobs:
             NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
               expected_sha="$WORKFLOW_SHA"
               allow_non_head=0
+              publication_branch=main
+              publication_event=push
               select_nearest_successful=0
               ;;
             NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
-              [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-                echo "::error::manual PR publication selection requires an exact base SHA" >&2
+              [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+                echo "::error::manual PR publication selection requires an exact candidate SHA" >&2
                 exit 1
               }
-              expected_sha="$BASE_SHA"
-              allow_non_head=1
-              select_nearest_successful=1
+              expected_sha="$CHECKOUT_SHA"
+              allow_non_head=0
+              publication_branch="${REF#refs/heads/}"
+              publication_event=workflow_dispatch
+              select_nearest_successful=0
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -145,6 +149,8 @@ jobs:
           esac
           printf 'allow_non_head=%s\n' "${allow_non_head}" >> "${GITHUB_OUTPUT}"
           printf 'expected_sha=%s\n' "${expected_sha}" >> "${GITHUB_OUTPUT}"
+          printf 'publication_branch=%s\n' "${publication_branch}" >> "${GITHUB_OUTPUT}"
+          printf 'publication_event=%s\n' "${publication_event}" >> "${GITHUB_OUTPUT}"
           printf 'select_nearest_successful=%s\n' "${select_nearest_successful}" >> "${GITHUB_OUTPUT}"
 
       - name: Check out trusted E2E workflow
@@ -164,13 +170,15 @@ jobs:
         env:
           EXPECTED_SHA: ${{ steps.publication_mode.outputs.expected_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_BRANCH: ${{ steps.publication_mode.outputs.publication_branch }}
+          PUBLICATION_EVENT: ${{ steps.publication_mode.outputs.publication_event }}
           PUBLICATION_HISTORY_ALLOW_NON_HEAD: ${{ steps.publication_mode.outputs.allow_non_head }}
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.publication_mode.outputs.select_nearest_successful }}
         shell: bash
         run: |
           set -euo pipefail
-          export GITHUB_REF=refs/heads/main
+          export GITHUB_REF="refs/heads/$PUBLICATION_BRANCH"
           export GITHUB_SHA="$EXPECTED_SHA"
           wait_seconds=3000
           if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then

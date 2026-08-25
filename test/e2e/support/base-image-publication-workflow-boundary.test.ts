@@ -111,29 +111,53 @@ describe("base-image publication workflow boundary (#7372)", () => {
   });
 
   it.each([
-    ["push to main", "push", "", "refs/heads/main", "0", "c".repeat(40), "0"],
-    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "0"],
+    ["push to main", "push", "", "refs/heads/main", "0", "c".repeat(40), "main", "push", "0"],
     [
-      "controller-selected PR",
+      "manual main",
+      "workflow_dispatch",
+      "",
+      "refs/heads/main",
+      "0",
+      "c".repeat(40),
+      "main",
+      "push",
+      "0",
+    ],
+    [
+      "exact PR branch publication",
       "workflow_dispatch",
       "a".repeat(40),
       "refs/heads/candidate",
-      "1",
-      "b".repeat(40),
-      "1",
+      "0",
+      "a".repeat(40),
+      "candidate",
+      "workflow_dispatch",
+      "0",
     ],
     [
       "pinned a4f9b59 diagnostic",
       "workflow_dispatch",
       "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
       "refs/heads/candidate",
-      "1",
-      "b".repeat(40),
-      "1",
+      "0",
+      "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
+      "candidate",
+      "workflow_dispatch",
+      "0",
     ],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (_case, eventName, checkoutSha, ref, allowNonHead, expectedSha, selectNearest) => {
+    (
+      _case,
+      eventName,
+      checkoutSha,
+      ref,
+      allowNonHead,
+      expectedSha,
+      publicationBranch,
+      publicationEvent,
+      selectNearest,
+    ) => {
       expect(
         runClassifier({
           checkoutSha,
@@ -142,7 +166,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           repository: "NVIDIA/NemoClaw",
         }),
       ).toEqual({
-        output: `allow_non_head=${allowNonHead}\nexpected_sha=${expectedSha}\nselect_nearest_successful=${selectNearest}\n`,
+        output: `allow_non_head=${allowNonHead}\nexpected_sha=${expectedSha}\npublication_branch=${publicationBranch}\npublication_event=${publicationEvent}\nselect_nearest_successful=${selectNearest}\n`,
         status: 0,
       });
     },
@@ -241,10 +265,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    [
-      "matrix publication dependency",
-      (value) => (value.jobs["generate-matrix"].needs = []),
-    ],
+    ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
       "live managed-image revision",
