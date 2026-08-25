@@ -18,6 +18,7 @@ function snapshotDeps(
   gateway: SandboxInferenceRouteHealth | null,
   providerHealth: ProviderHealthStatus | null = null,
   invocation: SandboxInferenceInvocationResult = { ok: true },
+  sandboxOverride: Partial<SandboxEntry> = {},
 ) {
   const sandbox: SandboxEntry = {
     name: "alpha",
@@ -25,6 +26,7 @@ function snapshotDeps(
     policies: [],
     provider: "nvidia",
     model: "nvidia/nemotron",
+    ...sandboxOverride,
   };
   return {
     suppressInferenceProbe: false,
@@ -39,36 +41,6 @@ function snapshotDeps(
         throw new Error("live route lookup not needed for this test");
       },
       probeProviderHealthImpl: () => providerHealth,
-      probeSandboxInferenceGatewayHealthImpl: async () => gateway,
-      probeSandboxInferenceInvocationImpl: () => invocation,
-    },
-  };
-}
-
-// The Deep Agents Code and OpenRouter pair whose models route intentionally
-// answers HTTP 404, so status must weigh the invocation result rather than the
-// route status alone (#9834, #10080).
-function dcodeOpenRouterSnapshotDeps(
-  gateway: SandboxInferenceRouteHealth,
-  invocation: SandboxInferenceInvocationResult,
-) {
-  const sandbox: SandboxEntry = {
-    name: "alpha",
-    agent: "langchain-deepagents-code",
-    policies: [],
-    provider: "openrouter-api",
-    model: "openai/gpt-4o-mini",
-  };
-  return {
-    suppressInferenceProbe: false,
-    deps: {
-      getSandbox: () => sandbox,
-      listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
-      reconcile: async () => ({ state: "present" as const, output: "Phase: Ready" }),
-      captureOpenshellForStatusImpl: async () => {
-        throw new Error("live route lookup not needed for this test");
-      },
-      probeProviderHealthImpl: () => null,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway,
       probeSandboxInferenceInvocationImpl: () => invocation,
     },
@@ -638,11 +610,36 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
     };
 
-    const snapshot = await collectSandboxStatusSnapshot(
-      "alpha",
-      dcodeOpenRouterSnapshotDeps(gateway, { ok: true }),
+    const options = snapshotDeps(
+      gateway,
+      null,
+      { ok: true },
+      {
+        agent: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "openai/gpt-4o-mini",
+      },
     );
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        probeSandboxInferenceInvocationImpl,
+      },
+    });
 
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "openai/gpt-4o-mini",
+        preferredInferenceApi: null,
+      },
+      {},
+      30_000,
+    );
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 
@@ -657,11 +654,20 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
 
     const snapshot = await collectSandboxStatusSnapshot(
       "alpha",
-      dcodeOpenRouterSnapshotDeps(gateway, {
-        ok: false,
-        detail: "provider rejected the request",
-        httpStatus: 401,
-      }),
+      snapshotDeps(
+        gateway,
+        null,
+        {
+          ok: false,
+          detail: "provider rejected the request",
+          httpStatus: 401,
+        },
+        {
+          agent: "langchain-deepagents-code",
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+        },
+      ),
     );
 
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false });

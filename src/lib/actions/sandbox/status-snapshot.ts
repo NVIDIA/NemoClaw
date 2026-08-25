@@ -614,6 +614,9 @@ export async function collectSandboxStatusSnapshot(
               ? runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
+                    ...(sb?.agent === "langchain-deepagents-code"
+                      ? { agentName: sb.agent }
+                      : {}),
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
