@@ -127,6 +127,40 @@ print(json.dumps({
     });
   });
 
+  it("keeps the signal replay inside one activation broker deadline (#10155)", () => {
+    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
+      "\nhelper = sys.argv[1]\n",
+    );
+    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
+      0,
+      definitionsEnd,
+    );
+    const probe = `${definitions}
+import types
+helper = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"
+os.lstat = lambda _path: types.SimpleNamespace(
+    st_mode=stat.S_IFREG | 0o444, st_uid=0, st_gid=0)
+ticks = iter((100.0, 100.0, 325.0))
+time.monotonic = lambda: next(ticks)
+timeouts = []
+def fake_run(*_args, **kwargs):
+    timeouts.append(kwargs["timeout"])
+    return types.SimpleNamespace(returncode=-9 if len(timeouts) == 1 else 0)
+subprocess.run = fake_run
+run_helper("activate", b"{}\\n")
+print(json.dumps(timeouts))
+`;
+
+    expect(
+      JSON.parse(
+        execFileSync("python3", ["-I", "-c", probe], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }),
+      ),
+    ).toEqual([480, 255]);
+  });
+
   it("uses one harness-owned absolute Docker executable", () => {
     const runtime = harness();
     runtime.authority.engine.capture(["version"]);
@@ -382,8 +416,8 @@ describe("Docker state mutation owner", () => {
       ["acquire", 30_000],
       ["assert", 30_000],
       ["rollback", 15 * 60_000],
-      ["activate", 5 * 60_000],
-      ["activate", 5 * 60_000],
+      ["activate", 8 * 60_000],
+      ["activate", 8 * 60_000],
       ["release", 5 * 60_000],
     ]);
     const acquireRequest = JSON.parse(helperCalls[0]?.[3]?.toString("utf8") ?? "null");

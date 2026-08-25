@@ -341,9 +341,11 @@ function createContainerStateMutationHarness(
               const helperTimeout =
                 action === "acquire" || action === "assert"
                   ? 30_000
-                  : action === "activate" || action === "release"
-                    ? 5 * 60_000
-                    : 15 * 60_000;
+                  : action === "activate"
+                    ? 8 * 60_000
+                    : action === "release"
+                      ? 5 * 60_000
+                      : 15 * 60_000;
               let helperResult = capture(
                 "docker",
                 [

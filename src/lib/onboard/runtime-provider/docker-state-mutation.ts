@@ -54,7 +54,11 @@ const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
-const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
+// Retained activation recovery can consume three consecutive 150-second
+// controller windows: retry acknowledgement, startup checkpoint, and live
+// service verification. Keep the broker outside that bound and below the
+// existing 15-minute Shields state-mutation guard.
+const HELPER_ACTIVATION_TIMEOUT_MS = 8 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
@@ -90,7 +94,7 @@ import time
 
 ROOT = "/run/nemoclaw/runtime-state-mutation"
 MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": 300, "release": 300}
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${HELPER_ACTIVATION_TIMEOUT_MS / 1000}, "release": 300}
 IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
 INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
 PUBLICATION_SETTLE_SECONDS = 5
@@ -227,16 +231,15 @@ def run_helper(action, request):
     if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
         stat.S_IMODE(metadata.st_mode) & 0o022):
         fail("helper-file-invalid")
-    completed = None
-    for attempt in range(2):
+    deadline = time.monotonic() + TIMEOUTS[action]
+    for _ in range(2):
         completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=max(0.001, deadline - time.monotonic()), check=False,
             start_new_session=True)
         if completed.returncode >= 0:
             return completed
-        # Every helper action is transaction-bound and idempotent. Replay only
-        # a signal-terminated invocation once; ordinary nonzero exits remain
-        # authoritative and are never retried.
+        # Replay one signal exit inside this action's deadline.
     return completed
 
 helper = sys.argv[1]
