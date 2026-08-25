@@ -654,9 +654,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         shell: "bash",
         run: [
           "set -euo pipefail",
-          'source_path="${RUNNER_TEMP}/pr-managed-image-source"',
-          'node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-source.mts select "$source_path"',
-          'workload_source="$(cat "$source_path")"',
+          'workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-source.mts select)"',
           'case "$workload_source" in',
           "  managed-image|local-dockerfile) ;;",
           '  *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;',
@@ -747,19 +745,26 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
     errors.push("cloud-onboard must wait for matrix generation and base-image publication");
   }
-  if (
-    cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
-      "${{ needs.generate-matrix.outputs.managed_image_revision }}" ||
-    cloudOnboard.env?.E2E_WORKLOAD_SOURCE !== "${{ needs.generate-matrix.outputs.workload_source }}"
-  ) {
-    errors.push("cloud-onboard must use the selected workload source and image revision");
+  const mcpBridge = workflow.jobs["mcp-bridge"] ?? {};
+  if (!sameMembers(needs(mcpBridge), ["base-image-publication", "generate-matrix"])) {
+    errors.push("mcp-bridge must wait for matrix generation and base-image publication");
   }
-  if (
-    live.env?.E2E_MANAGED_IMAGE_REVISION !==
-      "${{ needs.generate-matrix.outputs.managed_image_revision }}" ||
-    live.env?.E2E_WORKLOAD_SOURCE !== "${{ needs.generate-matrix.outputs.workload_source }}"
-  ) {
-    errors.push("live stock onboarding must use the selected workload source and image revision");
+  for (const jobName of [
+    "cloud-onboard",
+    "hermes-gpu-startup",
+    "live",
+    "mcp-bridge",
+    "mcp-bridge-dev",
+    "openshell-credential-generation-window",
+  ]) {
+    const job = workflow.jobs[jobName] ?? {};
+    if (
+      job.env?.E2E_MANAGED_IMAGE_REVISION !==
+        "${{ needs.generate-matrix.outputs.managed_image_revision }}" ||
+      job.env?.E2E_WORKLOAD_SOURCE !== "${{ needs.generate-matrix.outputs.workload_source }}"
+    ) {
+      errors.push(`${jobName} must use the selected workload source and image revision`);
+    }
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==

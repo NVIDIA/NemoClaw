@@ -23,7 +23,6 @@ import {
   managedImageInputsChanged,
   resolvePrManagedImageSource,
   writeManagedImageCatalog,
-  writePrManagedImageSource,
 } from "../../../tools/e2e/pr-managed-image-source.mts";
 
 const BASE_SHA = "b".repeat(40);
@@ -111,6 +110,10 @@ describe("PR managed-image source selection", () => {
     expect(
       managedImageInputsChanged(["src/lib/onboard/managed-startup/profile.ts"], patterns),
     ).toBe(true);
+    expect(managedImageInputsChanged(["test/e2e/fixtures/workload-source-env.ts"], patterns)).toBe(
+      true,
+    );
+    expect(managedImageInputsChanged(["test/e2e/fixtures/progress.ts"], patterns)).toBe(false);
     expect(managedImageInputsChanged(["docs/guide.mdx"], patterns)).toBe(false);
     expect(() => managedImageInputsChanged(["Dockerfile.base\nother"], patterns)).toThrow(
       "changed-file path is invalid",
@@ -127,16 +130,16 @@ describe("PR managed-image source selection", () => {
     );
   });
 
-  it("writes a private source decision file", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-source-test-"));
-    try {
-      const outputPath = path.join(directory, "source");
-      writePrManagedImageSource(outputPath, "local-dockerfile");
-      expect(fs.readFileSync(outputPath, "utf8")).toBe("local-dockerfile\n");
-      expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
+  it("records PR source reads in the retry inventory", () => {
+    const row = fs
+      .readFileSync("test/e2e/RETRY_INVENTORY.md", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("| `github-publication-read` |"));
+
+    expect(row).toContain("tools/e2e/base-image-publication.mts");
+    expect(row).toContain("tools/e2e/pr-managed-image-source.mts");
+    expect(row).toContain("PR metadata reads");
+    expect(row).toContain("workload-source selection");
   });
 });
 

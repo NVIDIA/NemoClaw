@@ -355,9 +355,7 @@ function validateConsumer(
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "mcp-bridge-dev") {
     expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
-  } else if (jobName === "live") {
-    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
-  } else if (jobName === "cloud-onboard") {
+  } else if (["cloud-onboard", "live", "mcp-bridge"].includes(jobName)) {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   }
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {

@@ -282,6 +282,34 @@ describe("base-image publication workflow boundary (#7372)", () => {
         (value.jobs["cloud-onboard"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
     ],
     [
+      "cloud-onboard workload source",
+      (value) => (value.jobs["cloud-onboard"].env!.E2E_WORKLOAD_SOURCE = "managed-image"),
+    ],
+    [
+      "MCP bridge workload source",
+      (value) => (value.jobs["mcp-bridge"].env!.E2E_WORKLOAD_SOURCE = "managed-image"),
+    ],
+    [
+      "MCP bridge publication dependency",
+      (value) => (value.jobs["mcp-bridge"].needs = ["generate-matrix"]),
+    ],
+    [
+      "MCP bridge dev managed-image revision",
+      (value) =>
+        (value.jobs["mcp-bridge-dev"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "credential-window workload source",
+      (value) =>
+        (value.jobs["openshell-credential-generation-window"].env!.E2E_WORKLOAD_SOURCE =
+          "managed-image"),
+    ],
+    [
+      "Hermes GPU managed-image revision",
+      (value) =>
+        (value.jobs["hermes-gpu-startup"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
       "Launchable publication dependency",
       (value) =>
         (value.jobs["staging-brev-launchable"].needs = [

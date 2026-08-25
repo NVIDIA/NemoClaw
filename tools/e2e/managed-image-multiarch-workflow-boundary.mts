@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
+const SELECTOR = `\${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -292,8 +292,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
 
   const bases = requireStep(errors, steps, "Resolve exact platform base images");
   requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
-    DCODE_BASE_CONTRACT:
-      "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
@@ -306,7 +305,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "'.platformReferences[$platform]' <<< \"$DCODE_BASE_CONTRACT\"",
     'docker buildx imagetools inspect "$dcode_reference" --raw',
     '"sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk \'{print $1}\')" == "$dcode_digest"',
-    "printf 'dcode=%s\\n' \"$dcode_reference\" >> \"$GITHUB_OUTPUT\"",
+    'printf \'dcode=%s\\n\' "$dcode_reference" >> "$GITHUB_OUTPUT"',
   ]);
   if (
     text(bases?.run).includes(

@@ -258,7 +258,9 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
       continue;
     }
 
-    if (job.needs !== "generate-matrix") {
+    const expectedNeeds =
+      jobName === "mcp-bridge" ? ["base-image-publication", "generate-matrix"] : "generate-matrix";
+    if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
       errors.push(`${jobName} trusted Hermes swap job must depend on controller validation`);
     }
     if (provisionSteps.length !== 1) {

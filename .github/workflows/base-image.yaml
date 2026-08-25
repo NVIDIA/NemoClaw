@@ -25,6 +25,7 @@ on:
       - ".github/workflows/managed-images.yaml"
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
+      - "test/e2e/fixtures/workload-source-env.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"

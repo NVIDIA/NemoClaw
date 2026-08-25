@@ -237,15 +237,6 @@ export async function resolvePrManagedImageSource(
   return managedImageInputsChanged(changedFiles, patterns) ? "local-dockerfile" : "managed-image";
 }
 
-export function writePrManagedImageSource(outputPath: string, source: PrManagedImageSource): void {
-  fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
-  fs.writeFileSync(outputPath, `${source}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-}
-
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
@@ -260,8 +251,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }
-  if (argv[0] !== "select" || argv.length !== 2) {
-    throw new Error("expected select and one managed-image source output path");
+  if (argv[0] !== "select" || argv.length !== 1) {
+    throw new Error("expected select");
   }
   const source = await resolvePrManagedImageSource({
     baseSha: env.BASE_SHA ?? "",
@@ -271,8 +262,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),
   });
-  writePrManagedImageSource(argv[1], source);
-  console.log(`pr-managed-image-source outcome=${source}`);
+  process.stdout.write(`${source}\n`);
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
