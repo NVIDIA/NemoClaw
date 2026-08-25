@@ -589,7 +589,9 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
   const gatewayBeforeSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-before");
+  await artifacts.writeJson("phase-3-registry-before-second.json", registryEntry(SANDBOX_A));
   const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard");
+  await artifacts.writeJson("phase-3-registry-after-second.json", registryEntry(SANDBOX_A));
   const secondText = resultText(second);
   expect(second.exitCode, secondText).toBe(0);
   const gatewayAfterSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-after");
