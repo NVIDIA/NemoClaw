@@ -48,31 +48,28 @@ describe("stopAgentForwardPortsForStop", () => {
     });
 
     expect(runOpenshell).toHaveBeenCalledTimes(3);
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
+    expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "stop", "18789", "nemohermes", "--gateway", "nemoclaw-18080"],
       {
         ignoreError: true,
         suppressOutput: true,
       },
     );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
+    expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "stop", "8642", "nemohermes", "--gateway", "nemoclaw-18080"],
       {
         ignoreError: true,
         suppressOutput: true,
       },
     );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      3,
+    expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "stop", "18792", "nemohermes", "--gateway", "nemoclaw-18080"],
       {
         ignoreError: true,
         suppressOutput: true,
       },
     );
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["forward", "list", "--gateway", "nemoclaw-18080"],
       expect.any(Object),
@@ -80,6 +77,44 @@ describe("stopAgentForwardPortsForStop", () => {
     expect(info.mock.calls.map((call) => call[0]).join("\n")).toContain(
       "Stopped Hermes Agent host port forward 8642",
     );
+  });
+
+  it("stops per-sandbox host ports without touching a sibling's manifest-default ports (#10140)", () => {
+    const runOpenshell = vi.fn();
+    const runCaptureOpenshell = vi.fn(() =>
+      forwardList([
+        { sandbox: "sibling", port: 18789 },
+        { sandbox: "sibling", port: 8642 },
+        { sandbox: "nemohermes", port: 18792 },
+        { sandbox: "nemohermes", port: 8643 },
+      ]),
+    );
+
+    expect(
+      stopAgentForwardPortsForStop("nemohermes", {
+        getRegisteredAgent: () => ({
+          displayName: "Hermes Agent",
+          forward_ports: [18789, 8642],
+        }),
+        getAgentDisplayName: (agent) => agent?.displayName ?? "OpenClaw",
+        getSandbox: () => ({
+          agent: "hermes",
+          dashboardPort: 18792,
+          hermesApiPort: 8643,
+          gatewayName: "nemoclaw-18080",
+          gatewayPort: 18080,
+        }),
+        resolveOpenshell: () => "/usr/local/bin/openshell",
+        runOpenshell,
+        runCaptureOpenshell,
+        confirmPortReleased: () => true,
+      }),
+    ).toBe(true);
+
+    const stoppedPorts = runOpenshell.mock.calls.map(([args]) => args[2]);
+    expect(stoppedPorts).toEqual(["18792", "8643"]);
+    expect(stoppedPorts).not.toContain("18789");
+    expect(stoppedPorts).not.toContain("8642");
   });
 
   it("skips OpenClaw or agents without declared forwards", () => {
@@ -230,29 +265,28 @@ describe("stopAgentForwardPortsForStop", () => {
     );
   });
 
-  it.each([
-    "../escape",
-    "bad name",
-    "--gateway",
-  ])("rejects malformed sandbox name %j before registry or OpenShell access", (sandboxName) => {
-    const getSandbox = vi.fn();
-    const resolveOpenshell = vi.fn(() => "/usr/local/bin/openshell");
-    const runCaptureOpenshell = vi.fn();
-    const runOpenshell = vi.fn();
-    const warn = vi.fn<(message: string) => void>();
+  it.each(["../escape", "bad name", "--gateway"])(
+    "rejects malformed sandbox name %j before registry or OpenShell access",
+    (sandboxName) => {
+      const getSandbox = vi.fn();
+      const resolveOpenshell = vi.fn(() => "/usr/local/bin/openshell");
+      const runCaptureOpenshell = vi.fn();
+      const runOpenshell = vi.fn();
+      const warn = vi.fn<(message: string) => void>();
 
-    stopAgentForwardPortsForStop(sandboxName, {
-      getSandbox,
-      resolveOpenshell,
-      runCaptureOpenshell,
-      runOpenshell,
-      warn,
-    });
+      stopAgentForwardPortsForStop(sandboxName, {
+        getSandbox,
+        resolveOpenshell,
+        runCaptureOpenshell,
+        runOpenshell,
+        warn,
+      });
 
-    expect(getSandbox).not.toHaveBeenCalled();
-    expect(resolveOpenshell).not.toHaveBeenCalled();
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid sandbox name"));
-  });
+      expect(getSandbox).not.toHaveBeenCalled();
+      expect(resolveOpenshell).not.toHaveBeenCalled();
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid sandbox name"));
+    },
+  );
 });

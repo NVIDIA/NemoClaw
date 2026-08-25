@@ -535,6 +535,52 @@ describe("launch readiness validation", () => {
     ]);
   });
 
+  it("rejects launch recovery when quarantine is published while it waits for the lock (#10140)", async () => {
+    const currentDeps = deps();
+    const mutation = vi.fn();
+    currentDeps.withSandboxLock = async (_name, operation) => {
+      sandbox = {
+        ...sandbox,
+        quarantine: {
+          schemaVersion: 1,
+          fenceId: "00000000-0000-4000-8000-000000000001",
+          requestIdentity: "e".repeat(64),
+          reason: "incident investigation",
+          createdAt: "2026-08-25T04:00:00.000Z",
+          updatedAt: "2026-08-25T04:00:00.000Z",
+          phase: "fenced",
+          target: {
+            sandboxName: SANDBOX,
+            providerId: "docker",
+            gatewayName: GATEWAY_NAME,
+            gatewayPort: GATEWAY_PORT,
+            lifecycleGeneration: "generation-1",
+            liveIdentityFingerprint: FINGERPRINT,
+            providerHandle: "f".repeat(64),
+            providerLifecycleGeneration: "provider-generation-1",
+            runtime: { kind: "docker-container", handle: "1".repeat(64) },
+          },
+          attempts: [],
+        },
+      };
+      return await operation();
+    };
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).rejects.toThrow("quarantined");
+    expect(mutation).not.toHaveBeenCalled();
+  });
+
   it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {
     const currentDeps = deps();
     const checkMutationAuthority = vi.fn(() => "changed" as const);
@@ -1042,11 +1088,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
@@ -1249,11 +1299,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1298,7 +1352,9 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(
               buildLaunchReadinessRegistryProjection(
@@ -1307,7 +1363,9 @@ describe("launch readiness validation", () => {
               ),
             ),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {

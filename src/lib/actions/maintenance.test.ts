@@ -76,7 +76,8 @@ vi.mock("../adapters/docker", () => ({
 vi.mock("../cli/branding", () => ({
   CLI_NAME: "nemoclaw",
 }));
-vi.mock("../credentials/store", () => ({
+vi.mock("../credentials/store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../credentials/store")>()),
   prompt: mocks.prompt,
 }));
 vi.mock("./sandbox/stopped-sandbox-backup", () => ({
@@ -106,6 +107,8 @@ import {
 describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getSandbox.mockReset();
+    mocks.getSandbox.mockReturnValue(null);
     mocks.backupStartedSandboxState.mockReset();
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
@@ -328,6 +331,27 @@ describe("backupAll", () => {
     expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
+  });
+
+  it("does not temporarily start a quarantined sandbox after acquiring the backup lock (#10140)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.getSandbox.mockReturnValue({
+      name: "sb-stopped",
+      quarantine: {
+        fenceId: "00000000-0000-4000-8000-000000000001",
+        phase: "quarantined",
+      },
+    });
+
+    await expect(backupAll()).rejects.toThrow("quarantined");
+
+    expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
+    expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
+    expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
   });
 
   it("does not back up when gateway preflight exits", async () => {

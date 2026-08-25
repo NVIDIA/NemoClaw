@@ -121,6 +121,7 @@ export {
   type SandboxMessagingState,
 } from "./registry-messaging";
 export { hasUnsafeHostMountTerminalText, normalizeCustomPolicyEntries };
+export { assertSandboxActivationAllowed } from "./registry/quarantine-operations";
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 

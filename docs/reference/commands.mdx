@@ -5,7 +5,7 @@ title: "NemoClaw CLI Commands Reference"
 sidebar-title: "Commands"
 description: "Full CLI reference for standalone NemoClaw commands and agent-specific in-sandbox commands."
 description-agent: "Includes the full CLI reference for standalone NemoClaw commands and agent-specific in-sandbox commands. Use when looking up a specific `$$nemoclaw`, `nemohermes`, `nemo-deepagents`, `dcode`, or `/nemoclaw` subcommand, flag, argument, or exit code."
-keywords: ["nemoclaw cli commands", "nemoclaw command reference", "nemo-deepagents commands", "dcode commands"]
+keywords: ["nemoclaw cli commands", "nemoclaw command reference", "nemoclaw quarantine", "nemo-deepagents commands", "dcode commands"]
 content:
   type: "reference"
 ---
@@ -1955,6 +1955,71 @@ The command is available only when NemoClaw holds local-container authority.
 Portable profiles use receipt-owned Podman authority; non-Portable local-container paths use the default Docker driver or the vm driver.
 Remote drivers such as kubernetes are unavailable, and an unreachable selected runtime produces an outage report instead of a guessed container state.
 
+### `$$nemoclaw <name> quarantine`
+
+Fence and stop one qualified sandbox without deleting its evidence.
+Use quarantine when you must prevent restart and preserve state for investigation.
+Use [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) for a routine, reversible resource stop.
+
+```bash
+$$nemoclaw my-assistant quarantine --reason "unexpected outbound activity" [--idempotency-key <key>] [--json]
+```
+
+The command requires `--reason <text>`.
+The reason is stored in the receipt, so it must not contain credentials, prompts, messages, or workspace content.
+
+Use `--idempotency-key <key>` to give retries a stable request identity.
+The receipt stores only the SHA-256 digest of this value.
+The key must be 1 to 256 bytes and must not contain control characters.
+If you omit the flag, the command generates and prints a key.
+
+This release qualifies the default OpenClaw, Hermes, and LangChain Deep Agents Code manifests with the Docker runtime provider.
+An unqualified agent or runtime provider fails before fence persistence and stop operations.
+
+Before mutation, NemoClaw validates the exact runtime-provider authority, OpenShell gateway, lifecycle generation, and live sandbox identity.
+It derives required access surfaces from the loaded agent manifest and sandbox registry.
+Gateway agents stop their configured messaging channels, declared dashboard or API forwards, other declared forwards, and exact workload.
+Terminal agents stop their declared forwards and exact workload.
+
+NemoClaw synchronizes the durable restart fence and its parent directory before it attempts any stop.
+The runtime provider consumes the exact prepared authority for one stop attempt.
+NemoClaw then observes workload execution and OpenShell sandbox access independently from that stop result.
+The command preserves the registry entry, workspace, snapshots, logs, credentials, and other evidence.
+
+A complete quarantine exits `0`, prints the fence ID and receipt path, and leaves the fence active.
+A partial quarantine exits `2`, leaves the fence active, and does not roll back completed stops.
+Use the same reason and idempotency key to reconcile the same request.
+A different idempotency key conflicts with the active fence.
+
+While the fence is active, commands that can reactivate, replace, restore, or upgrade the sandbox fail closed after they acquire the lifecycle lock.
+Status, doctor without `--fix`, and evidence collection remain available when they do not weaken the fence.
+The existing `destroy` confirmation and exact-target cleanup contract remains available.
+
+Pass `--json` to return the result, fence, operation journal, and receipt metadata as JSON.
+The receipt path is under the selected gateway's NemoClaw state directory.
+Receipts use private host permissions and reject symbolic links.
+Receipt fields and diagnostics are bounded and redacted, but you must still keep the reason and idempotency key secret-free.
+
+For the operator workflow, refer to [Quarantine a Sandbox](../manage-sandboxes/operate-sandboxes/run-sandboxes#quarantine-a-sandbox).
+
+### `$$nemoclaw <name> quarantine release`
+
+Release one exact quarantine fence without starting the sandbox.
+
+```bash
+$$nemoclaw my-assistant quarantine release --fence-id <fence-id> [--json]
+```
+
+The required `--fence-id <id>` value must match the active fence.
+NemoClaw validates that the runtime-provider authority still matches the fenced target.
+It preserves the quarantine receipt before it clears the fence.
+A failure to preserve the pre-release receipt or changed target authority stops release and leaves the fence active.
+
+A successful release exits `0` and leaves the sandbox stopped.
+Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
+If the final receipt update fails after fence clearance, release exits `2`, and the sandbox remains stopped.
+Pass `--json` to return the release result and receipt metadata as JSON.
+
 ### `$$nemoclaw <name> start`
 
 Restart a sandbox container that was stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
@@ -2008,11 +2073,13 @@ For a `compatible-endpoint` route that uses `openai-completions`, the text outpu
 The line is omitted for another provider or API family.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `quarantine`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
 `baselineExclusionStates` reports each recorded key with its current verification state.
 The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
 Other states identify agent drift, changed or removed baseline content, an unreadable baseline or live policy, or a live policy that contains the excluded key.
+The `quarantine` value is `null` when no fence is active.
+An active value contains the phase, exact fence target, bounded operation journal, and secret-free reason.
 `baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.

@@ -133,6 +133,7 @@ async function backupSandboxWithinShieldsWindow(
   try {
     return await withSandboxMutationLock(sandboxName, async () => {
       enteredTransactionLock = true;
+      registry.assertSandboxActivationAllowed(sandboxName, "backup-all", registry.getSandbox);
       const startedForBackup = shouldStartStoppedContainer
         ? startStoppedSandboxContainerForBackup(sandboxName)
         : null;

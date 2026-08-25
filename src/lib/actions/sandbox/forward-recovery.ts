@@ -154,17 +154,14 @@ export function teardownSandboxDashboardForward(
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
     const port = resolvePort(sandboxName, { getSandbox: () => sandbox });
     const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
+    const isReachable = deps.isLocalForwardReachable ?? isLocalForwardReachable;
     const result = run(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
       ignoreError: true,
       stdio: "ignore",
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
-    if (result.status !== 0) return false;
-    const isReachable = deps.isLocalForwardReachable ?? isLocalForwardReachable;
-    return waitForStoppedForwardPortRelease(
-      port,
-      isReachable,
-    );
+    if (result.status !== 0) return !isReachable(port);
+    return waitForStoppedForwardPortRelease(port, isReachable);
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
     return false;
@@ -323,18 +320,15 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    waitForForwardRecoveryState(
-      () => {
-        stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
-        stopState.portReleased = !isLocalForwardReachable(port);
-        return (
-          (!forceRestart && stopState.health === true) ||
-          stopState.health === "occupied" ||
-          stopState.portReleased
-        );
-      },
-      waitMs,
-    );
+    waitForForwardRecoveryState(() => {
+      stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+      stopState.portReleased = !isLocalForwardReachable(port);
+      return (
+        (!forceRestart && stopState.health === true) ||
+        stopState.health === "occupied" ||
+        stopState.portReleased
+      );
+    }, waitMs);
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
     if (stopState.health === "occupied") return false;
     if (!stopState.portReleased && (forceRestart || stopState.health === null)) {
@@ -372,17 +366,14 @@ export function ensureSandboxPortForwardForPort(
   if (waitMs === 0) return false;
 
   let occupied = false;
-  const settled = waitForForwardRecoveryState(
-    () => {
-      health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
-      if (health === "occupied") {
-        occupied = true;
-        return true;
-      }
-      return health === true;
-    },
-    waitMs,
-  );
+  const settled = waitForForwardRecoveryState(() => {
+    health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+    if (health === "occupied") {
+      occupied = true;
+      return true;
+    }
+    return health === true;
+  }, waitMs);
   return settled && !occupied && acceptSuccessfulForward();
 }
 

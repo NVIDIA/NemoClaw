@@ -13,6 +13,10 @@ import type {
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import {
+  fingerprintSandboxLiveIdentity,
+  type SandboxRecreateObservation,
+} from "./runtime-provider/sandbox-live-identity";
+import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
@@ -205,17 +209,8 @@ export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
   return fingerprintSandboxRecreateValue(durable);
 }
 
-export function fingerprintSandboxLiveIdentity(getOutput: string): string | null {
-  const clean = String(getOutput).replace(/\x1b\[[0-9;]*m/g, "");
-  const match = clean.match(/^\s*Id:\s+(\S+)\s*$/im);
-  if (!match?.[1] || match[1].length > 512) return null;
-  return fingerprintSandboxRecreateValue(match[1]);
-}
-
-export interface SandboxRecreateObservation {
-  readonly state: "missing" | "not_ready" | "ready";
-  readonly liveIdentityFingerprint: string | null;
-}
+export { fingerprintSandboxLiveIdentity };
+export type { SandboxRecreateObservation };
 
 export type CreatedSandboxLifecycleRegistration = Required<
   Pick<SandboxEntry, "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint">
@@ -356,11 +351,7 @@ export function createCreatedSandboxLifecycle(
         observe,
       ),
     revalidate: (registration) => {
-      const verified = revalidateCreatedSandboxLifecycleRegistration(
-        target,
-        registration,
-        observe,
-      );
+      const verified = revalidateCreatedSandboxLifecycleRegistration(target, registration, observe);
       runtime.recordCreated({
         state: "ready",
         liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,

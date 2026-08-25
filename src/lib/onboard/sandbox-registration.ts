@@ -377,3 +377,4 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     : writeRegistry(entry);
   return registered ?? entry;
 }
+export { assertSandboxActivationAllowed } from "../state/registry/quarantine-operations";

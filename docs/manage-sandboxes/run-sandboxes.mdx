@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Run Sandboxes"
 sidebar-title: "Run Sandboxes"
-description: "Run multiple sandboxes and stop or start containers, with dashboard and tunnel guidance where supported."
-description-agent: "Explains multiple-sandbox naming and stop or start operations, plus dashboard and Cloudflare tunnel controls where the selected agent supports them. Use when operating one or more existing sandboxes."
-keywords: ["nemoclaw multiple sandboxes", "nemoclaw stop", "nemoclaw start", "sandbox operation"]
+description: "Run multiple sandboxes and stop, start, or quarantine them, with dashboard and tunnel guidance where supported."
+description-agent: "Explains multiple-sandbox naming, stop or start operations, and fail-closed quarantine, plus dashboard and Cloudflare tunnel controls where supported. Use when operating one or more existing sandboxes."
+keywords: ["nemoclaw multiple sandboxes", "nemoclaw stop", "nemoclaw start", "nemoclaw quarantine", "sandbox operation"]
 content:
   type: "how_to"
 skill:
@@ -144,6 +144,70 @@ After Docker reports the existing container as running, NemoClaw waits for OpenS
 </AgentOnly>
 Refer to [`$$nemoclaw <name> stop`](../../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../../reference/commands#$$nemoclaw-name-start) for details.
 Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.
+
+## Quarantine a Sandbox
+
+Use quarantine when suspicious activity requires a restart fence and evidence preservation.
+This release qualifies OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes that use Docker through OpenShell.
+
+<Warning>
+Quarantine stops each access surface declared by the selected agent and stops the sandbox workload.
+It does not revoke credentials at external providers.
+A partial result keeps the restart fence active and does not restore anything that already stopped.
+</Warning>
+
+Choose a secret-free reason and idempotency key, then run the following command.
+
+```bash
+$$nemoclaw my-assistant quarantine \
+  --reason "unexpected outbound activity" \
+  --idempotency-key incident-2026-08-25-01
+```
+
+NemoClaw validates the qualified agent manifest, recorded OpenShell gateway, lifecycle generation, live sandbox identity, and exact Docker runtime before mutation.
+It rejects an unqualified agent, unsupported runtime provider, or changed target before it writes a fence or stops a service.
+
+After validation, the command performs these actions:
+
+- Persists and synchronizes the restart fence before any stop operation.
+- Stops the messaging, dashboard, API, and other forward surfaces declared by the agent manifest and registry state.
+- Stops the exact Docker workload through the runtime-provider quarantine contract.
+- Observes workload execution and OpenShell sandbox access independently from the stop result.
+- Preserves the registry entry, workspace, snapshots, logs, credentials, and other evidence.
+- Writes a private, bounded, secret-free receipt and prints its path.
+
+The command exits `0` only when every required stop and observation succeeds.
+It exits `2` for a partial quarantine, keeps the fence active, and does not roll back completed stops.
+Commands that can reactivate, replace, restore, or upgrade the sandbox fail while the fence is active.
+Read-only status and evidence commands remain available, and `destroy` keeps its existing confirmation contract.
+
+The receipt stores the SHA-256 digest of the idempotency key, not the key itself.
+Use the same reason and idempotency key to reconcile an interrupted or partial request.
+A different key conflicts with the active fence.
+If you omit `--idempotency-key`, the command generates one and prints it after the operation.
+
+Run status to confirm the quarantine phase and fence ID.
+
+```bash
+$$nemoclaw my-assistant status
+```
+
+The stopped workload can make other health checks report a non-zero status.
+The `Quarantine` line must report `quarantined` or `partial` with the expected fence ID.
+
+Release the exact fence when the investigation is complete.
+
+```bash
+$$nemoclaw my-assistant quarantine release --fence-id <fence-id>
+```
+
+Release validates the unchanged target authority and preserves the receipt before it clears the fence.
+It never starts or recovers the sandbox.
+Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
+If release cannot validate the target or preserve the pre-release receipt, it returns a non-zero result and keeps the fence active.
+If the final receipt update fails after fence clearance, release exits `2`, and the sandbox remains stopped.
+
+Refer to [`$$nemoclaw <name> quarantine`](../../reference/commands#$$nemoclaw-name-quarantine) for flags and receipt details.
 
 <AgentOnly variant="openclaw">
 

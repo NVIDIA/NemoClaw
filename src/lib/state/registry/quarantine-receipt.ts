@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveHostNemoclawDir, writeConfigFile } from "../config-io";
+import { resolveHostNemoclawDir, writeConfigFileDurable } from "../config-io";
 import { normalizeSandboxQuarantineFence } from "./quarantine";
 import type { SandboxQuarantineFence } from "./types";
 
@@ -83,18 +83,19 @@ function normalizeReceipt(value: unknown): SandboxQuarantineReceipt {
 }
 
 export function readSandboxQuarantineReceipt(filePath: string): SandboxQuarantineReceipt | null {
-  let stat: fs.Stats;
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number" || noFollow === 0) {
+    throw new Error("Refusing sandbox quarantine receipt without no-follow file support");
+  }
+  let fd: number;
   try {
-    stat = fs.lstatSync(filePath);
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    if (code === "ELOOP") throw new Error("Refusing unsafe sandbox quarantine receipt");
     throw error;
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RECEIPT_BYTES) {
-    throw new Error("Refusing unsafe sandbox quarantine receipt");
-  }
-  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
   try {
     const opened = fs.fstatSync(fd);
     if (!opened.isFile() || opened.size > MAX_RECEIPT_BYTES) {
@@ -112,18 +113,5 @@ export function writeSandboxQuarantineReceipt(
   value: SandboxQuarantineReceipt,
 ): void {
   const receipt = normalizeReceipt(value);
-  writeConfigFile(filePath, receipt);
-  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  const directoryFd = fs.openSync(path.dirname(filePath), fs.constants.O_RDONLY);
-  try {
-    fs.fsyncSync(directoryFd);
-  } finally {
-    fs.closeSync(directoryFd);
-  }
+  writeConfigFileDurable(filePath, receipt);
 }

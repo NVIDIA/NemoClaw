@@ -3,12 +3,19 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
+import type { AgentDefinition } from "../../../agent/definition-types";
+import { resolveSelectableAgentDefinition } from "../../../agent/list-command";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../../onboard/runtime-provider/access";
-import { observeSandboxOnGateway } from "../../../onboard/sandbox-recreate-probe";
+import type {
+  RuntimeProviderQuarantineAuthority,
+  RuntimeProviderQuarantineInput,
+  RuntimeProviderQuarantineStepResult,
+} from "../../../onboard/runtime-provider/contract";
 import { boundedSecretFreeText } from "../../../security/secret-free-text";
+import { getConfiguredMessagingChannelsFromEntry } from "../../../state/registry-messaging";
 import {
   readSandboxQuarantineReceipt,
   sandboxQuarantineReceiptPath,
@@ -57,14 +64,19 @@ export interface QuarantineSandboxResult {
   readonly idempotencyKey?: string;
   readonly receiptPath?: string;
   readonly receipt?: SandboxQuarantineReceipt;
+  readonly outcomes?: {
+    readonly executionObservation: SandboxQuarantineAttempt["outcome"] | "not attempted";
+    readonly sandboxAccessObservation: SandboxQuarantineAttempt["outcome"] | "not attempted";
+    readonly serviceAccessStop: SandboxQuarantineAttempt["outcome"] | "not attempted";
+  };
 }
 
 export interface QuarantineSandboxDeps {
   readonly beginFence?: typeof beginSandboxQuarantine;
   readonly clearFence?: typeof clearSandboxQuarantine;
   readonly getSandbox?: typeof getSandboxForQuarantine;
+  readonly getAgent?: (name: string, environment: NodeJS.ProcessEnv) => AgentDefinition | null;
   readonly now?: () => Date;
-  readonly observeSandbox?: typeof observeSandboxOnGateway;
   readonly randomId?: () => string;
   readonly readReceipt?: typeof readSandboxQuarantineReceipt;
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -75,6 +87,35 @@ export interface QuarantineSandboxDeps {
   readonly withLifecycleLock?: typeof withSandboxLifecycleLockSync;
   readonly writeReceipt?: typeof writeSandboxQuarantineReceipt;
   readonly log?: (message: string) => void;
+}
+
+interface QuarantineIsolationPlan {
+  readonly stopMessaging: boolean;
+  readonly stopDashboard: boolean;
+  readonly stopServiceAccess: boolean;
+}
+
+function resolveQualifiedAgent(
+  sandbox: { readonly agent?: string | null },
+  deps: QuarantineSandboxDeps,
+): AgentDefinition | null {
+  const environment = process.env;
+  const agentName = sandbox.agent ?? "openclaw";
+  if (deps.getAgent) return deps.getAgent(agentName, environment);
+  return resolveSelectableAgentDefinition(agentName, environment);
+}
+
+function buildIsolationPlan(
+  sandbox: Parameters<typeof getConfiguredMessagingChannelsFromEntry>[0],
+  agent: AgentDefinition,
+): QuarantineIsolationPlan {
+  const gatewayRuntime = agent.runtime?.kind !== "terminal";
+  const declaredForwardPorts = agent.forward_ports ?? [];
+  return {
+    stopMessaging: getConfiguredMessagingChannelsFromEntry(sandbox).length > 0,
+    stopDashboard: gatewayRuntime && agent.hasDashboard === true && declaredForwardPorts.length > 0,
+    stopServiceAccess: declaredForwardPorts.length > 0,
+  };
 }
 
 function sha256(value: string): string {
@@ -131,6 +172,26 @@ function latestOperationSucceeded(
   );
 }
 
+function latestOperationOutcome(
+  attempts: readonly SandboxQuarantineAttempt[],
+  operation: SandboxQuarantineOperation,
+): SandboxQuarantineAttempt["outcome"] | "not attempted" {
+  return (
+    [...attempts].reverse().find((entry) => entry.operation === operation)?.outcome ??
+    "not attempted"
+  );
+}
+
+function outcomeSummary(
+  attempts: readonly SandboxQuarantineAttempt[],
+): NonNullable<QuarantineSandboxResult["outcomes"]> {
+  return {
+    executionObservation: latestOperationOutcome(attempts, "execution-observation"),
+    sandboxAccessObservation: latestOperationOutcome(attempts, "sandbox-access-observation"),
+    serviceAccessStop: latestOperationOutcome(attempts, "service-access-stop"),
+  };
+}
+
 function receiptFor(
   fence: SandboxQuarantineFence,
   status: SandboxQuarantineReceipt["status"],
@@ -171,6 +232,7 @@ function resultFromPriorReceipt(
     fenceId: receipt.fence.fenceId,
     receiptPath,
     receipt,
+    outcomes: outcomeSummary(receipt.fence.attempts),
   };
 }
 
@@ -189,6 +251,40 @@ function sameQuarantineTarget(
     left.providerLifecycleGeneration === right.providerLifecycleGeneration &&
     left.runtime.kind === right.runtime.kind &&
     left.runtime.handle === right.runtime.handle
+  );
+}
+
+function authorityFromTarget(
+  target: SandboxQuarantineFence["target"],
+): RuntimeProviderQuarantineAuthority {
+  return {
+    schemaVersion: 1,
+    providerId: target.providerId,
+    sandboxName: target.sandboxName,
+    gatewayName: target.gatewayName,
+    gatewayPort: target.gatewayPort,
+    lifecycleGeneration: target.lifecycleGeneration,
+    liveIdentityFingerprint: target.liveIdentityFingerprint,
+    providerHandle: target.providerHandle,
+    providerLifecycleGeneration: target.providerLifecycleGeneration,
+    runtime: { ...target.runtime },
+  };
+}
+
+/** Compare identity that is stable across the quarantine stop itself. */
+function sameReleasedTargetAuthority(
+  target: SandboxQuarantineFence["target"],
+  current: RuntimeProviderQuarantineAuthority,
+): boolean {
+  return (
+    target.sandboxName === current.sandboxName &&
+    target.providerId === current.providerId &&
+    target.gatewayName === current.gatewayName &&
+    target.gatewayPort === current.gatewayPort &&
+    target.lifecycleGeneration === current.lifecycleGeneration &&
+    target.liveIdentityFingerprint === current.liveIdentityFingerprint &&
+    target.runtime.kind === current.runtime.kind &&
+    target.runtime.handle === current.runtime.handle
   );
 }
 
@@ -212,9 +308,14 @@ function quarantineWithinLifecycleLock(
   const getSandbox = deps.getSandbox ?? getSandboxForQuarantine;
   const now = deps.now ?? (() => new Date());
   const generatedKey = options.idempotencyKey === undefined;
-  const idempotencyKey = validateIdempotencyKey(
-    options.idempotencyKey ?? (deps.randomId ?? randomUUID)(),
-  );
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = validateIdempotencyKey(
+      options.idempotencyKey ?? (deps.randomId ?? randomUUID)(),
+    );
+  } catch (error) {
+    return failed(boundedSafeText(error, 512, "Quarantine idempotency key is invalid."));
+  }
   const requestIdentity = sha256(idempotencyKey);
   const reason = boundedSafeText(options.reason, 240, "operator-requested quarantine");
   const sandbox = getSandbox(sandboxName);
@@ -238,6 +339,19 @@ function quarantineWithinLifecycleLock(
     };
   }
 
+  let agent: AgentDefinition | null;
+  try {
+    agent = resolveQualifiedAgent(sandbox, deps);
+  } catch (error) {
+    return failed(boundedSafeText(error, 512, "Sandbox agent manifest is invalid."));
+  }
+  if (!agent?.quarantineQualification) {
+    return failed(
+      `Sandbox agent '${sandbox.agent ?? "openclaw"}' is not qualified for quarantine; refusing before mutation.`,
+    );
+  }
+  const isolationPlan = buildIsolationPlan(sandbox, agent);
+
   const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
     sandbox,
@@ -245,13 +359,21 @@ function quarantineWithinLifecycleLock(
     deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
   if (!resolved.ok)
-    return failed(resolved.result.message ?? "Runtime provider cannot quarantine this sandbox.");
-  const snapshot = resolved.bundle.snapshot;
-  if (snapshot.supported !== true || snapshot.capabilities.backup !== true) {
-    const detail =
-      snapshot.supported === false ? snapshot.reason : "exact runtime inspection is unavailable";
     return failed(
-      `Runtime provider '${resolved.bundle.identity.id}' does not support quarantine: ${detail}`,
+      boundedSafeText(
+        resolved.result.message,
+        512,
+        "Runtime provider cannot quarantine this sandbox.",
+      ),
+    );
+  const providerQuarantine = resolved.bundle.quarantine;
+  if (providerQuarantine.supported !== true) {
+    return failed(
+      boundedSafeText(
+        `Runtime provider '${resolved.bundle.identity.id}' does not support quarantine: ${providerQuarantine.reason}`,
+        512,
+        "Runtime provider does not support quarantine.",
+      ),
     );
   }
   const lifecycleInput = {
@@ -265,7 +387,13 @@ function quarantineWithinLifecycleLock(
     lifecycleInput,
   );
   if (providerPreflight) {
-    return failed(providerPreflight.message ?? "Runtime provider quarantine preflight failed.");
+    return failed(
+      boundedSafeText(
+        providerPreflight.message,
+        512,
+        "Runtime provider quarantine preflight failed.",
+      ),
+    );
   }
   if (!sandbox.lifecycleGeneration || !sandbox.lifecycleLiveIdentityFingerprint) {
     return failed(
@@ -315,39 +443,39 @@ function quarantineWithinLifecycleLock(
     }
   }
 
-  let accessBefore;
-  let providerBefore;
-  let runtimeBefore;
-  try {
-    accessBefore = (deps.observeSandbox ?? observeSandboxOnGateway)({
-      sandboxName,
-      gatewayName,
-      gatewayPort,
-    });
-    if (
-      accessBefore.state === "missing" ||
-      accessBefore.liveIdentityFingerprint !== sandbox.lifecycleLiveIdentityFingerprint
-    ) {
-      return failed(
-        `Sandbox '${sandboxName}' live OpenShell identity is missing, stale, or replaced; refusing quarantine before mutation.`,
-      );
-    }
-    providerBefore = snapshot.preflight("backup", sandbox);
-    runtimeBefore = snapshot.capture(sandbox, providerBefore);
-  } catch (error) {
-    return failed(boundedSafeText(error, 512, "Exact runtime identity could not be inspected."));
-  }
-
-  const target: SandboxQuarantineFence["target"] = {
-    sandboxName,
-    providerId: resolved.bundle.identity.id,
+  const quarantineInput: RuntimeProviderQuarantineInput = {
+    ...lifecycleInput,
     gatewayName,
     gatewayPort,
     lifecycleGeneration: sandbox.lifecycleGeneration,
     liveIdentityFingerprint: sandbox.lifecycleLiveIdentityFingerprint,
-    providerHandle: providerBefore.providerHandle,
-    providerLifecycleGeneration: providerBefore.lifecycleGeneration,
-    runtime: { ...runtimeBefore.runtime },
+  };
+  const durableFence =
+    sandbox.quarantine ??
+    (priorReceipt && priorReceipt.status !== "released" ? priorReceipt.fence : null);
+  let authority: RuntimeProviderQuarantineAuthority;
+  if (durableFence) {
+    authority = authorityFromTarget(durableFence.target);
+  } else {
+    try {
+      authority = providerQuarantine.prepare(quarantineInput);
+    } catch (error) {
+      return failed(
+        boundedSafeText(error, 512, "Exact quarantine authority could not be prepared."),
+      );
+    }
+  }
+
+  const target: SandboxQuarantineFence["target"] = {
+    sandboxName: authority.sandboxName,
+    providerId: authority.providerId,
+    gatewayName: authority.gatewayName,
+    gatewayPort: authority.gatewayPort,
+    lifecycleGeneration: authority.lifecycleGeneration,
+    liveIdentityFingerprint: authority.liveIdentityFingerprint,
+    providerHandle: authority.providerHandle,
+    providerLifecycleGeneration: authority.providerLifecycleGeneration,
+    runtime: { ...authority.runtime },
   };
   if (sandbox.quarantine && !sameQuarantineTarget(sandbox.quarantine.target, target)) {
     return {
@@ -448,35 +576,41 @@ function quarantineWithinLifecycleLock(
   runBooleanOperation(
     "messaging-stop",
     () =>
+      !isolationPlan.stopMessaging ||
       (deps.stopMessaging ?? stopSandboxChannels)(sandboxName, {
         channelStopTransport: resolved.lifecycle.channelStopTransport,
-        info: (message) => lifecycleInput.log(`  ${message}`),
-        warn: (message) => lifecycleInput.log(`  Warning: ${message}`),
+        info: (message) =>
+          lifecycleInput.log(`  ${boundedSafeText(message, 512, "Messaging stop update.")}`),
+        warn: (message) =>
+          lifecycleInput.log(
+            `  Warning: ${boundedSafeText(message, 512, "Messaging stop warning.")}`,
+          ),
       }) === true,
   );
-  runBooleanOperation("dashboard-stop", () =>
-    (deps.teardownDashboard ?? teardownSandboxDashboardForward)(sandboxName),
+  runBooleanOperation(
+    "dashboard-stop",
+    () =>
+      !isolationPlan.stopDashboard ||
+      (deps.teardownDashboard ?? teardownSandboxDashboardForward)(sandboxName),
   );
   runBooleanOperation(
     "service-access-stop",
     () =>
+      !isolationPlan.stopServiceAccess ||
       (deps.stopServiceAccess ?? stopAgentForwardPortsForStop)(sandboxName, {
-        info: (message) => lifecycleInput.log(`  ${message}`),
-        warn: (message) => lifecycleInput.log(`  Warning: ${message}`),
+        info: (message) =>
+          lifecycleInput.log(`  ${boundedSafeText(message, 512, "Access stop update.")}`),
+        warn: (message) =>
+          lifecycleInput.log(`  Warning: ${boundedSafeText(message, 512, "Access stop warning.")}`),
       }) === true,
   );
 
   const workloadAt = now().toISOString();
   try {
-    const outcome = resolved.lifecycle.stop(lifecycleInput, { beforeStop() {} });
+    const outcome = providerQuarantine.stop(quarantineInput, authority);
     fence = withAttempt(
       fence,
-      attempt(
-        "workload-stop",
-        outcome.exitCode === 0 ? "succeeded" : "failed",
-        workloadAt,
-        outcome.exitCode === 0 ? undefined : (outcome.message ?? "provider stop failed"),
-      ),
+      attempt("workload-stop", outcome.outcome, workloadAt, outcome.detail),
       "stopping",
     );
   } catch (error) {
@@ -486,69 +620,45 @@ function quarantineWithinLifecycleLock(
 
   fence = { ...fence, phase: "verifying", updatedAt: now().toISOString() };
   journalHealthy = persistJournal(sandboxName, fence, update) && journalHealthy;
-  const executionAt = now().toISOString();
+  let observation: {
+    execution: RuntimeProviderQuarantineStepResult;
+    sandboxAccess: RuntimeProviderQuarantineStepResult;
+  };
   try {
-    const postflight = snapshot.preflight("backup", sandbox);
-    const runtimeAfter = snapshot.capture(sandbox, postflight);
-    const unchanged =
-      runtimeAfter.runtime.kind === fence.target.runtime.kind &&
-      runtimeAfter.runtime.handle === fence.target.runtime.handle;
-    const stopped = postflight.lifecycleState === "stopped";
-    fence = withAttempt(
-      fence,
-      attempt(
-        "execution-observation",
-        unchanged && stopped ? "succeeded" : "failed",
-        executionAt,
-        unchanged && stopped
-          ? undefined
-          : unchanged
-            ? `provider observed lifecycle state '${postflight.lifecycleState}'`
-            : "provider runtime identity changed during quarantine",
-      ),
-      "verifying",
-    );
-  } catch (error) {
-    fence = withAttempt(
-      fence,
-      attempt("execution-observation", "inconclusive", executionAt, error),
-      "verifying",
-    );
+    observation = providerQuarantine.observe(quarantineInput, authority);
+  } catch {
+    observation = {
+      execution: {
+        outcome: "inconclusive",
+        detail: "The exact runtime state could not be independently observed.",
+      },
+      sandboxAccess: {
+        outcome: "inconclusive",
+        detail: "Sandbox access could not be independently observed.",
+      },
+    };
   }
+  fence = withAttempt(
+    fence,
+    attempt(
+      "execution-observation",
+      observation.execution.outcome,
+      now().toISOString(),
+      observation.execution.detail,
+    ),
+    "verifying",
+  );
   journalHealthy = persistJournal(sandboxName, fence, update) && journalHealthy;
-
-  const accessAt = now().toISOString();
-  try {
-    const observed = (deps.observeSandbox ?? observeSandboxOnGateway)({
-      sandboxName,
-      gatewayName,
-      gatewayPort,
-    });
-    const exact = observed.liveIdentityFingerprint === fence.target.liveIdentityFingerprint;
-    const stopped = observed.state === "not_ready";
-    fence = withAttempt(
-      fence,
-      attempt(
-        "sandbox-access-observation",
-        exact && stopped ? "succeeded" : observed.state === "missing" ? "inconclusive" : "failed",
-        accessAt,
-        exact && stopped
-          ? undefined
-          : observed.state === "missing"
-            ? "owner gateway no longer reported the exact sandbox identity"
-            : exact
-              ? "owner gateway still reported sandbox access as ready"
-              : "owner gateway reported a replaced sandbox identity",
-      ),
-      "verifying",
-    );
-  } catch (error) {
-    fence = withAttempt(
-      fence,
-      attempt("sandbox-access-observation", "inconclusive", accessAt, error),
-      "verifying",
-    );
-  }
+  fence = withAttempt(
+    fence,
+    attempt(
+      "sandbox-access-observation",
+      observation.sandboxAccess.outcome,
+      now().toISOString(),
+      observation.sandboxAccess.detail,
+    ),
+    "verifying",
+  );
 
   const enforced = REQUIRED_FINAL_OPERATIONS.every((operation) =>
     latestOperationSucceeded(fence.attempts, operation),
@@ -594,6 +704,7 @@ function quarantineWithinLifecycleLock(
     ...(generatedKey ? { idempotencyKey } : {}),
     receiptPath,
     receipt,
+    outcomes: outcomeSummary(fence.attempts),
   };
 }
 
@@ -620,6 +731,54 @@ export function releaseSandboxQuarantine(
     if (!fence) return failed(`Sandbox '${sandboxName}' is not quarantined.`);
     if (fence.fenceId !== fenceId) {
       return failed(`Fence '${fenceId}' does not match sandbox '${sandboxName}'.`);
+    }
+    const resolved = resolveSandboxLifecycleProvider(
+      sandboxName,
+      sandbox,
+      "stop",
+      deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+    );
+    if (!resolved.ok) {
+      return failed(
+        boundedSafeText(
+          resolved.result.message,
+          512,
+          "Runtime provider cannot validate this quarantine release.",
+        ),
+      );
+    }
+    const providerQuarantine = resolved.bundle.quarantine;
+    if (providerQuarantine.supported !== true) {
+      return failed(
+        boundedSafeText(
+          `Runtime provider '${resolved.bundle.identity.id}' cannot validate quarantine release: ${providerQuarantine.reason}`,
+          512,
+          "Runtime provider cannot validate quarantine release.",
+        ),
+      );
+    }
+    const releaseInput: RuntimeProviderQuarantineInput = {
+      environment: process.env,
+      log: deps.log ?? console.log,
+      sandbox: resolved.sandbox,
+      sandboxName,
+      gatewayName: fence.target.gatewayName,
+      gatewayPort: fence.target.gatewayPort,
+      lifecycleGeneration: fence.target.lifecycleGeneration,
+      liveIdentityFingerprint: fence.target.liveIdentityFingerprint,
+    };
+    let currentAuthority: RuntimeProviderQuarantineAuthority;
+    try {
+      currentAuthority = providerQuarantine.prepare(releaseInput);
+    } catch (error) {
+      return failed(
+        boundedSafeText(error, 512, "Cannot validate the quarantined runtime before release."),
+      );
+    }
+    if (!sameReleasedTargetAuthority(fence.target, currentAuthority)) {
+      return failed(
+        "Sandbox quarantine target authority changed before release; the fence remains active.",
+      );
     }
     const receiptPath = sandboxQuarantineReceiptPath(
       sandboxName,

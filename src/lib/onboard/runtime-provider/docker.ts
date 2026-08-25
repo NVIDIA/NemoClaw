@@ -41,6 +41,7 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
+import { createDockerRuntimeProviderQuarantineSurface } from "./quarantine";
 import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
@@ -469,6 +470,11 @@ export function createDockerRuntimeProviderBundle(
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),
     },
+    quarantine: createDockerRuntimeProviderQuarantineSurface(providerId, {
+      captureHostCommand: deps.captureHostCommand,
+      queryRuntimeSnapshot: deps.queryRuntimeSnapshot,
+      stopContainer: deps.stopContainer,
+    }),
     mutationAuthority: {
       providerId,
       supported: true,
@@ -569,6 +575,10 @@ export function createKubernetesRuntimeProviderBundle(
     lifecycle: unsupported(
       providerId,
       "Direct local lifecycle control is unavailable for the Kubernetes provider.",
+    ),
+    quarantine: unsupported(
+      providerId,
+      "Kubernetes quarantine has not passed exact-target stop and observation qualification.",
     ),
     mutationAuthority: {
       providerId,

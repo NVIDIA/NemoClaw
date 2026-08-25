@@ -5,8 +5,10 @@ import {
   assertHermesPortableCommandUnavailable,
   NemoClawCommand,
 } from "../../../lib/cli/nemoclaw-oclif-command";
+import { assertSandboxActivationAllowed } from "../../../lib/actions/sandbox/quarantine/guard";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 import * as shields from "../../../lib/shields/index";
+import { getSandboxForQuarantine } from "../../../lib/state/registry/quarantine-operations";
 
 export default class ShieldsStatusCommand extends NemoClawCommand {
   static id = "sandbox:shields:status";
@@ -20,9 +22,14 @@ export default class ShieldsStatusCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsStatusCommand);
-    shields.shieldsStatus(args.sandboxName, true, {
-      assertCommandAvailable: () =>
-        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:status"),
+    const quarantineObserved = Boolean(getSandboxForQuarantine(args.sandboxName)?.quarantine);
+    shields.shieldsStatus(args.sandboxName, !quarantineObserved, {
+      assertCommandAvailable: () => {
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:status");
+        if (!quarantineObserved) {
+          assertSandboxActivationAllowed(args.sandboxName, "sandbox:shields:status recovery");
+        }
+      },
     });
   }
 }

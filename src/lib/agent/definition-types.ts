@@ -113,6 +113,11 @@ export interface AgentInference {
   default_model?: string;
 }
 
+export interface AgentQuarantineQualification {
+  contractVersion: 1;
+  liveE2eTarget: string;
+}
+
 export type AgentMcpSupport = "bridge" | "disabled";
 export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 
@@ -148,6 +153,7 @@ export interface AgentDefinition {
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
   inference?: AgentInference;
+  quarantine?: ManifestRecord;
   mcp?: AgentMcpCapability;
   state_lock_plan_in_image?: boolean;
   state_files?: AgentStateFile[];
@@ -159,10 +165,13 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe | null;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  /** True only when the manifest declares a dashboard or optional dashboard UI surface. */
+  readonly hasDashboard?: boolean;
   readonly webAuth: AgentWebAuth;
   readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
+  readonly quarantineQualification?: AgentQuarantineQualification | null;
   readonly mcpCapability: AgentMcpCapability;
   readonly stateDirectories: AgentStateDirectory[];
   readonly stateDirs: string[];

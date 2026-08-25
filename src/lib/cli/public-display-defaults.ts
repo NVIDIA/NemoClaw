@@ -430,6 +430,20 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 3.7,
     },
   ],
+  "sandbox:quarantine": [
+    {
+      group: "Sandbox Management",
+      order: 3.8,
+      flags: "--reason <text> [--idempotency-key <key>] [--json]",
+    },
+  ],
+  "sandbox:quarantine:release": [
+    {
+      group: "Sandbox Management",
+      order: 3.9,
+      flags: "--fence-id <id> [--json]",
+    },
+  ],
   "sandbox:share:mount": [
     {
       group: "Sandbox Management",

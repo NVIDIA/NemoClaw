@@ -5,7 +5,7 @@ import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
-import { readConfigFile, writeConfigFile } from "../config-io";
+import { readConfigFile, writeConfigFile, writeConfigFileDurable } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
 import { normalizeSandboxMcpState, serializeSandboxMcpStateForDisk } from "../registry-mcp";
 import {
@@ -98,6 +98,11 @@ export function load(): SandboxRegistry {
 
 export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
+}
+
+/** Persist registry authority through a file and parent-directory fsync boundary. */
+export function saveDurable(data: SandboxRegistry): void {
+  writeConfigFileDurable(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
 function normalizeRegistry(value: unknown): SandboxRegistry {

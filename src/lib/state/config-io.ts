@@ -34,7 +34,7 @@ export function resolveHostNemoclawDir(
   gatewayPort: number,
   home: string = process.env.HOME ?? os.homedir(),
 ): string {
-  return nemoclawStateRoot(home, gatewayPort);
+  return path.resolve(nemoclawStateRoot(home, gatewayPort));
 }
 
 function isHostNemoclawRoot(dirPath: string): boolean {
@@ -370,14 +370,35 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
   return content;
 }
 
-export function writeConfigFile(filePath: string, data: SerializableConfig): void {
+function writeConfigFileWithDurability(
+  filePath: string,
+  data: SerializableConfig,
+  durable: boolean,
+): void {
   const dirPath = path.dirname(filePath);
   ensureConfigDir(dirPath);
 
   const tmpFile = `${filePath}.tmp.${String(process.pid)}`;
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), { mode: 0o600 });
+    if (durable) {
+      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+      const fileFd = fs.openSync(tmpFile, fs.constants.O_RDONLY | noFollow);
+      try {
+        fs.fsyncSync(fileFd);
+      } finally {
+        fs.closeSync(fileFd);
+      }
+    }
     fs.renameSync(tmpFile, filePath);
+    if (durable) {
+      const directoryFd = fs.openSync(dirPath, fs.constants.O_RDONLY);
+      try {
+        fs.fsyncSync(directoryFd);
+      } finally {
+        fs.closeSync(directoryFd);
+      }
+    }
   } catch (error) {
     cleanupTempFile(tmpFile);
     const errnoError = error instanceof Error ? error : null;
@@ -390,4 +411,13 @@ export function writeConfigFile(filePath: string, data: SerializableConfig): voi
     }
     throw error;
   }
+}
+
+export function writeConfigFile(filePath: string, data: SerializableConfig): void {
+  writeConfigFileWithDurability(filePath, data, false);
+}
+
+/** Atomically publish a config and make its renamed directory entry crash-durable. */
+export function writeConfigFileDurable(filePath: string, data: SerializableConfig): void {
+  writeConfigFileWithDurability(filePath, data, true);
 }

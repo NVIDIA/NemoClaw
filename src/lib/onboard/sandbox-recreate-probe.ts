@@ -13,7 +13,7 @@ import { parseSandboxPhase } from "../state/gateway";
 import {
   fingerprintSandboxLiveIdentity,
   type SandboxRecreateObservation,
-} from "./sandbox-recreate-transaction";
+} from "./runtime-provider/sandbox-live-identity";
 
 export const SANDBOX_RECREATE_PROBE_TIMEOUT_MS = OPENSHELL_PROBE_TIMEOUT_MS;
 

@@ -3,21 +3,8 @@
 
 import { Args, Flags } from "@oclif/core";
 
-import {
-  quarantineSandbox,
-  type QuarantineSandboxResult,
-} from "../../lib/actions/sandbox/quarantine/index";
+import { quarantineSandbox } from "../../lib/actions/sandbox/quarantine/index";
 import { NemoClawSandboxCommand } from "../../lib/cli/nemoclaw-sandbox-command";
-
-function latestOutcome(
-  result: QuarantineSandboxResult,
-  operation: "execution-observation" | "sandbox-access-observation" | "service-access-stop",
-): string {
-  const entry = [...(result.receipt?.fence.attempts ?? [])]
-    .reverse()
-    .find((attempt) => attempt.operation === operation);
-  return entry?.outcome ?? "not attempted";
-}
 
 export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
   static id = "sandbox:quarantine";
@@ -56,12 +43,10 @@ export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
     this.setExitCode(result.exitCode);
     if (this.jsonEnabled()) return result;
     console.log(`  ${result.message}`);
-    if (result.receipt) {
-      console.log(`  Execution observation: ${latestOutcome(result, "execution-observation")}`);
-      console.log(
-        `  Sandbox access observation: ${latestOutcome(result, "sandbox-access-observation")}`,
-      );
-      console.log(`  Service access stop: ${latestOutcome(result, "service-access-stop")}`);
+    if (result.outcomes) {
+      console.log(`  Execution observation: ${result.outcomes.executionObservation}`);
+      console.log(`  Sandbox access observation: ${result.outcomes.sandboxAccessObservation}`);
+      console.log(`  Service access stop: ${result.outcomes.serviceAccessStop}`);
       console.log("  Workspace: preserved");
     }
     if (result.fenceId) console.log(`  Fence: ${result.fenceId}`);

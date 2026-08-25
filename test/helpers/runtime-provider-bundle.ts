@@ -189,6 +189,7 @@ export function createInMemoryRuntimeProviderBundle({
     },
     stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
+    quarantine: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),
     cleanup: {

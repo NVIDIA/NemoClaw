@@ -140,6 +140,9 @@ export function createMxcRuntimeProviderBundle({
     bootstrap: unsupported(
       "The OpenShell MXC driver does not expose a per-sandbox native artifact launch contract.",
     ),
+    quarantine: unsupported(
+      "OpenShell MXC quarantine has not passed exact-runtime lifecycle qualification.",
+    ),
     snapshot: unsupported("OpenShell MXC snapshot and restore are unavailable."),
     recovery: unsupported(
       "OpenShell MXC gateway-restart reconciliation and orphan recovery are unavailable.",

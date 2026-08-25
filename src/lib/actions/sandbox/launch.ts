@@ -31,6 +31,7 @@ import {
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
+import { assertSandboxActivationAllowed } from "./quarantine/guard";
 
 const LAUNCH_READINESS_FENCE_REPAIR =
   "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
@@ -97,6 +98,7 @@ async function launchAgentWithPortableAuthority(
   };
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   await lockSandbox(sandboxName, async () => {
+    assertSandboxActivationAllowed(sandboxName, "launch", deps.getSandbox ?? getKnownSandboxTarget);
     const current = inspectPortableAgentReceiptDisposition(sandboxName);
     if ((current.kind === "hermes") !== hermesPortableSnapshot) {
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");

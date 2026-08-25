@@ -945,8 +945,7 @@ function resolveOpenClawPairingSettlementTarget(
   // command shape, so its caller may preserve that unknown value as the empty
   // string while retaining the exact registry and live-lifecycle checks.
   const customDockerfile = normalizedString(entry.fromDockerfile);
-  const version =
-    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
+  const version = recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
@@ -1014,12 +1013,7 @@ async function waitForPortablePairingObservation(
     const remaining = deadline - now();
     if (remaining <= 0) return { kind: "timeout" };
     try {
-      const value = observe(
-        sandboxName,
-        target.gatewayName,
-        target.version,
-        target.stateDirectory,
-      );
+      const value = observe(sandboxName, target.gatewayName, target.version, target.stateDirectory);
       if (deadline - now() <= 0) return { kind: "timeout" };
       const decision = decide(value);
       if (deadline - now() <= 0) return { kind: "timeout" };
@@ -1056,9 +1050,11 @@ export async function settlePortableOpenClawPairing(
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
   const now = deps.now ?? (() => performance.now());
   const sleep =
-    deps.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    deps.sleep ??
+    ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
   return withSandboxLock(sandboxName, async () => {
+    registry.assertSandboxActivationAllowed(sandboxName, "portable pairing recovery", getSandbox);
     let firstEntry = getSandbox(sandboxName);
     if (
       firstEntry?.agent !== "openclaw" &&
@@ -1315,6 +1311,11 @@ export async function withLaunchReadinessMutationGate<T>(
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   return withSandboxLock(sandboxName, async () => {
     const entry = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+    registry.assertSandboxActivationAllowed(
+      sandboxName,
+      "launch readiness recovery",
+      deps.getSandbox ?? registry.getSandbox,
+    );
     if (entry?.gatewayPort !== gatewayPort || entry.gatewayName !== gatewayName) {
       return { kind: "changed" };
     }

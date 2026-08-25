@@ -259,12 +259,7 @@ async function assertQuarantineLifecycle(
   expect(deniedStart.exitCode, resultText(deniedStart)).not.toBe(0);
   expect(resultText(deniedStart)).toContain("quarantined");
 
-  const deniedAccess = await execInSandbox(
-    sandbox,
-    sandboxName,
-    "true",
-    "tc-sbx-14-access-denied",
-  );
+  const deniedAccess = await execInSandbox(sandbox, sandboxName, "true", "tc-sbx-14-access-denied");
   expect(deniedAccess.exitCode, resultText(deniedAccess)).not.toBe(0);
   await expectHostPortFree(host, "18789", "tc-sbx-14-dashboard-port-free");
 
@@ -273,6 +268,7 @@ async function assertQuarantineLifecycle(
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 60_000,
   });
+  expectExitZero(status, "status quarantined sandbox");
   expect(resultText(status)).toContain(`fence ${String(firstJson.fenceId)}`);
 
   const release = await host.nemoclaw(
@@ -302,7 +298,7 @@ async function assertQuarantineLifecycle(
   const preserved = await execInSandbox(
     sandbox,
     sandboxName,
-    "test \"$(cat /sandbox/quarantine-marker)\" = quarantine-preserved",
+    'test "$(cat /sandbox/quarantine-marker)" = quarantine-preserved',
     "tc-sbx-14-workspace-preserved",
   );
   expectExitZero(preserved, "workspace marker after quarantine release and explicit start");

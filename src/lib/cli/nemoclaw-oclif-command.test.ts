@@ -11,6 +11,48 @@ import * as receiptAuthority from "../onboard/experimental/hermes-portable-recei
 import * as portableHostAuthority from "../state/portable-uninstall-retirement";
 import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+
+const quarantineMocks = vi.hoisted(() => ({
+  guard: vi.fn<(commandId: string, sandboxName: string, argv: readonly string[]) => void>(),
+}));
+const lifecycleMocks = vi.hoisted(() => ({
+  deferNext: false,
+  entered: vi.fn<(sandboxName: string) => void>(),
+  release: null as (() => void) | null,
+}));
+
+vi.mock("../actions/sandbox/quarantine/guard", () => ({
+  assertSandboxCommandAllowedByQuarantine: quarantineMocks.guard,
+}));
+
+vi.mock("../state/mcp-lifecycle-lock-acquisition", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/mcp-lifecycle-lock-acquisition")>();
+  return {
+    ...actual,
+    withMcpLifecycleLock: (
+      sandboxName: string,
+      operation: () => unknown,
+      options?: Parameters<typeof actual.withMcpLifecycleLock>[2],
+    ) => {
+      if (!lifecycleMocks.deferNext) {
+        return actual.withMcpLifecycleLock(sandboxName, operation, options);
+      }
+      lifecycleMocks.deferNext = false;
+      return new Promise<unknown>((resolve, reject) => {
+        lifecycleMocks.release = () => {
+          try {
+            Promise.resolve(operation()).then(resolve, reject);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        lifecycleMocks.entered(sandboxName);
+      });
+    },
+  };
+});
+
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
 class TestCommand extends NemoClawCommand {
@@ -120,6 +162,19 @@ class ParsedSupportedSandboxCommand extends NemoClawCommand {
   }
 }
 
+class RawQuarantineRaceCommand extends NemoClawCommand {
+  static id = "sandbox:agent";
+  static ran = false;
+
+  public async run(): Promise<void> {
+    RawQuarantineRaceCommand.ran = true;
+  }
+
+  public executeLifecycle(): Promise<unknown> {
+    return this._run();
+  }
+}
+
 class GlobalUnsupportedMutationCommand extends NemoClawCommand {
   static id = "tunnel:start";
   static flags = { ...NemoClawCommand.baseFlags };
@@ -154,12 +209,25 @@ function makeCommand(): TestCommand {
   return Object.create(TestCommand.prototype) as TestCommand;
 }
 
+function makeRawQuarantineRaceCommand(): RawQuarantineRaceCommand {
+  const command = Object.create(RawQuarantineRaceCommand.prototype) as RawQuarantineRaceCommand;
+  Object.defineProperties(command, {
+    argv: { value: ["alpha"], configurable: true },
+    id: { value: "sandbox:agent", configurable: true },
+  });
+  return command;
+}
+
 describe("NemoClawCommand", () => {
   let stateDir: string;
 
   beforeEach(() => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oclif-command-"));
     vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+    quarantineMocks.guard.mockReset();
+    lifecycleMocks.deferNext = false;
+    lifecycleMocks.entered.mockReset();
+    lifecycleMocks.release = null;
   });
 
   afterEach(() => {
@@ -172,6 +240,7 @@ describe("NemoClawCommand", () => {
     RawSandboxDoctorCommand.ran = false;
     ParsedUnsupportedSandboxCommand.ran = false;
     ParsedSupportedSandboxCommand.operation = async () => undefined;
+    RawQuarantineRaceCommand.ran = false;
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
   });
@@ -331,6 +400,31 @@ describe("NemoClawCommand", () => {
     );
     expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
   });
+
+  it(
+    "rejects a queued mutation when quarantine is published before lock acquisition (#10140)",
+    testTimeoutOptions(30_000),
+    async () => {
+      let quarantined = false;
+      quarantineMocks.guard.mockImplementation(() => {
+        if (quarantined) throw new Error("quarantined after lifecycle lock wait");
+      });
+      lifecycleMocks.deferNext = true;
+      const command = makeRawQuarantineRaceCommand().executeLifecycle();
+      await vi.waitFor(() => expect(lifecycleMocks.entered).toHaveBeenCalledWith("alpha"), {
+        timeout: 5_000,
+      });
+      expect(quarantineMocks.guard).not.toHaveBeenCalled();
+      expect(RawQuarantineRaceCommand.ran).toBe(false);
+
+      quarantined = true;
+      expect(lifecycleMocks.release).not.toBeNull();
+      lifecycleMocks.release?.();
+      await expect(command).rejects.toThrow("quarantined after lifecycle lock wait");
+      expect(quarantineMocks.guard).toHaveBeenCalledOnce();
+      expect(RawQuarantineRaceCommand.ran).toBe(false);
+    },
+  );
 
   it("rejects schema-5 unsupported raw-argv commands before the action body (#9203)", async () => {
     useHermesPortableAuthority();

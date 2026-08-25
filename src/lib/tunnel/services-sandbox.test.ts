@@ -122,24 +122,24 @@ describe("stopAll with sandbox channels", () => {
     }
   });
 
-  it.each([
-    "bad name",
-    "../../etc/passwd",
-  ])("rejects malformed env sandbox name %j before in-sandbox shutdown", (invalidName) => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    process.env.NEMOCLAW_SANDBOX_NAME = invalidName;
+  it.each(["bad name", "../../etc/passwd"])(
+    "rejects malformed env sandbox name %j before in-sandbox shutdown",
+    (invalidName) => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      process.env.NEMOCLAW_SANDBOX_NAME = invalidName;
 
-    stopAll({ pidDir });
+      stopAll({ pidDir });
 
-    expect(stopSandboxChannels).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("Invalid sandbox name");
-  });
+      expect(stopSandboxChannels).not.toHaveBeenCalled();
+      expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("Invalid sandbox name");
+    },
+  );
 
   it("keeps host cleanup running for a malformed explicit sandbox name", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
+      .mockImplementation(() => true);
     const releaseGateway = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");

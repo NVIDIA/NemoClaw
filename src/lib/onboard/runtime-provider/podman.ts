@@ -229,6 +229,10 @@ export function createPodmanRuntimeProviderBundle(
             ...(stateMutationOptions ?? {}),
           }),
     bootstrap: unsupported(providerId, deferred),
+    quarantine: unsupported(
+      providerId,
+      "Podman quarantine has not passed exact-runtime lifecycle qualification.",
+    ),
     snapshot: unsupported(providerId, deferred),
     recovery: unsupported(providerId, deferred),
     cleanup: unsupported(providerId, deferred),

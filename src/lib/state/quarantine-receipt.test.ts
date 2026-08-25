@@ -69,8 +69,13 @@ describe("sandbox quarantine receipt persistence", () => {
     writeSandboxQuarantineReceipt(filePath, receipt());
 
     expect(readSandboxQuarantineReceipt(filePath)).toEqual(receipt());
-    expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(filePath, "utf8")).not.toContain("raw-idempotency-key");
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    try {
+      expect(fs.fstatSync(fd).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(fd, "utf8")).not.toContain("raw-idempotency-key");
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 
   it("rejects a symlink receipt instead of following it (#10140)", () => {

@@ -118,6 +118,9 @@ export abstract class NemoClawCommand extends Command {
       if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
       }
+      if (typeof commandId === "string") {
+        assertSandboxCommandAllowedByQuarantine(commandId, sandboxName, this.argv);
+      }
       return super._run<T>();
     });
   }

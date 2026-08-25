@@ -29,6 +29,11 @@ gateway_command: "hermes gateway run"
 runtime:
   interactive_command: "hermes"
 
+# Qualified quarantine contract and its live validation lane.
+quarantine:
+  contract_version: 1
+  live_e2e_target: sandbox-quarantine-hermes
+
 # ── Health probe ────────────────────────────────────────────────
 # The API server adapter listens on 8642 by default and exposes
 # GET /health -> {"status": "ok", "platform": "hermes-agent"}

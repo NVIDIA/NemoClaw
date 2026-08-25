@@ -830,10 +830,9 @@ function reconcilePendingSnapshotClone(
     return "removed";
   }
 
-  const get = captureOpenshell(
-    ["sandbox", "get", "-g", sourceGatewayName, targetSandbox],
-    { ignoreError: true },
-  );
+  const get = captureOpenshell(["sandbox", "get", "-g", sourceGatewayName, targetSandbox], {
+    ignoreError: true,
+  });
   if (get.status !== 0) {
     throw new SnapshotCommandError(
       `Cannot reconcile pending clone '${targetSandbox}' because its live identity could not be read.`,
@@ -1310,6 +1309,7 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  assertSandboxSnapshotRestoreTargetAllowed(sandboxName);
   assertSandboxSnapshotRestoreTargetAllowed(targetSandbox);
   const lockNames = targetSandbox === sandboxName ? [sandboxName] : [sandboxName, targetSandbox];
   assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:restore");
@@ -1324,6 +1324,7 @@ async function runSnapshotRestore(
           if (targetSandbox !== sandboxName) {
             assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
           }
+          assertSandboxSnapshotRestoreTargetAllowed(sandboxName);
           assertSandboxSnapshotRestoreTargetAllowed(targetSandbox);
           return runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox);
         })

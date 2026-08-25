@@ -3,27 +3,44 @@
 
 import assert from "node:assert/strict";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import type { SandboxQuarantineReceipt } from "../../state/registry/quarantine-receipt";
-import type { SandboxEntry, SandboxQuarantineFence } from "../../state/registry/types";
+import type {
+  SandboxEntry,
+  SandboxQuarantineAttempt,
+  SandboxQuarantineFence,
+  SandboxQuarantinePhase,
+} from "../../state/registry/types";
 import {
   quarantineSandbox,
   releaseSandboxQuarantine,
   type QuarantineSandboxDeps,
 } from "./quarantine/index";
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 
 const LIVE_ID = "a".repeat(64);
 const PROVIDER_HANDLE = "b".repeat(64);
 const RUNTIME_HANDLE = "c".repeat(64);
 const FENCE_ID = "00000000-0000-4000-8000-000000000001";
+const REQUEST_IDENTITY = "183735306a2ca5b4b9561a94a3139906211125523c8a7ef8c4311022991fd714";
+const REQUIRED_RECONCILED_OPERATIONS = [
+  "receipt-persistence",
+  "messaging-stop",
+  "dashboard-stop",
+  "service-access-stop",
+  "workload-stop",
+  "execution-observation",
+  "sandbox-access-observation",
+] as const satisfies readonly SandboxQuarantineAttempt["operation"][];
 
 function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
+    agent: "openclaw",
     openshellDriver: "docker",
     lifecycleGeneration: "registry-generation-1",
     lifecycleLiveIdentityFingerprint: LIVE_ID,
@@ -33,8 +50,45 @@ function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   };
 }
 
+function crashBoundaryFence(
+  phase: SandboxQuarantinePhase,
+  operations: readonly SandboxQuarantineAttempt["operation"][],
+): SandboxQuarantineFence {
+  return {
+    schemaVersion: 1,
+    fenceId: FENCE_ID,
+    requestIdentity: REQUEST_IDENTITY,
+    reason: "incident investigation",
+    createdAt: "2026-08-25T04:00:00.000Z",
+    updatedAt: "2026-08-25T04:00:00.000Z",
+    phase,
+    target: {
+      sandboxName: "alpha",
+      providerId: "docker",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "registry-generation-1",
+      liveIdentityFingerprint: LIVE_ID,
+      providerHandle: PROVIDER_HANDLE,
+      providerLifecycleGeneration: "provider-running",
+      runtime: { kind: "docker-container", handle: RUNTIME_HANDLE },
+    },
+    attempts: operations.map((operation) => ({
+      operation,
+      attemptedAt: "2026-08-25T04:00:00.000Z",
+      outcome: "succeeded",
+    })),
+  };
+}
+
 function harness(
-  options: { serviceAccessFails?: boolean; workloadFails?: boolean; initial?: SandboxEntry } = {},
+  options: {
+    serviceAccessFails?: boolean;
+    workloadFails?: boolean;
+    prepareFails?: boolean;
+    observationInconclusive?: boolean;
+    initial?: SandboxEntry;
+  } = {},
 ) {
   const order: string[] = [];
   let current = options.initial ?? sandbox();
@@ -43,14 +97,30 @@ function harness(
   let receipt: SandboxQuarantineReceipt | null = null;
   const providerBase = createDockerRuntimeProviderBundle();
   assert.equal(providerBase.lifecycle.supported, true);
-  assert.equal(providerBase.snapshot.supported, true);
+  assert.equal(providerBase.quarantine.supported, true);
+  const start = vi.fn(providerBase.lifecycle.start);
+  const prepare = vi.fn(() => {
+    if (options.prepareFails) throw new Error("replaced OpenShell identity");
+    return {
+      schemaVersion: 1 as const,
+      providerId: "docker",
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "registry-generation-1",
+      liveIdentityFingerprint: LIVE_ID,
+      providerHandle: PROVIDER_HANDLE,
+      providerLifecycleGeneration: "provider-running",
+      runtime: { kind: "docker-container", handle: RUNTIME_HANDLE },
+    };
+  });
   const stop = vi.fn(() => {
     order.push("workload-stop");
     runtimeState = "stopped";
     accessState = "not_ready";
     return options.workloadFails
-      ? { exitCode: 1, message: "provider timed out after token=secret-value" }
-      : { exitCode: 0, state: "stopped" as const };
+      ? { outcome: "failed" as const, detail: "provider timed out after token=secret-value" }
+      : { outcome: "succeeded" as const };
   });
   const provider: RuntimeProviderBundle = {
     ...providerBase,
@@ -60,25 +130,29 @@ function harness(
     },
     lifecycle: {
       ...providerBase.lifecycle,
-      stop,
+      start,
     },
-    snapshot: {
-      ...providerBase.snapshot,
-      preflight: (operation, entry) => ({
-        schemaVersion: 1,
-        providerId: "docker",
-        operation,
-        sandboxName: entry.name,
-        providerHandle: PROVIDER_HANDLE,
-        lifecycleState: runtimeState,
-        lifecycleGeneration: `provider-${runtimeState}`,
-      }),
-      capture: () => ({
-        schemaVersion: 1,
-        providerId: "docker",
-        runtime: { kind: "docker-container", handle: RUNTIME_HANDLE },
-        acceleration: { kind: "none" },
-      }),
+    quarantine: {
+      ...providerBase.quarantine,
+      prepare,
+      stop,
+      observe: () =>
+        options.observationInconclusive
+          ? {
+              execution: { outcome: "succeeded" as const },
+              sandboxAccess: {
+                outcome: "inconclusive" as const,
+                detail: "gateway observation timed out",
+              },
+            }
+          : {
+              execution: {
+                outcome: runtimeState === "stopped" ? ("succeeded" as const) : ("failed" as const),
+              },
+              sandboxAccess: {
+                outcome: accessState === "not_ready" ? ("succeeded" as const) : ("failed" as const),
+              },
+            },
     },
   };
   const runtimeProviders = createRuntimeProviderBundleRegistry([["docker", provider]]);
@@ -95,26 +169,28 @@ function harness(
     order.push("receipt-written");
     receipt = value;
   });
+  const stopMessaging = vi.fn(() => {
+    order.push("messaging-stop");
+    return true;
+  });
+  const stopServiceAccess = vi.fn(() => {
+    order.push("service-access-stop");
+    return !options.serviceAccessFails;
+  });
+  const teardownDashboard = vi.fn(() => {
+    order.push("dashboard-stop");
+    return true;
+  });
   const deps: QuarantineSandboxDeps = {
     beginFence,
     getSandbox: () => current,
     now: () => new Date("2026-08-25T04:00:00.000Z"),
-    observeSandbox: () => ({ state: accessState, liveIdentityFingerprint: LIVE_ID }),
     randomId: () => FENCE_ID,
     readReceipt: () => receipt,
     runtimeProviders,
-    stopMessaging: () => {
-      order.push("messaging-stop");
-      return true;
-    },
-    stopServiceAccess: () => {
-      order.push("service-access-stop");
-      return !options.serviceAccessFails;
-    },
-    teardownDashboard: () => {
-      order.push("dashboard-stop");
-      return true;
-    },
+    stopMessaging,
+    stopServiceAccess,
+    teardownDashboard,
     updateFence,
     withLifecycleLock: (_name, operation) => operation(),
     writeReceipt,
@@ -125,7 +201,12 @@ function harness(
     current: () => current,
     deps,
     order,
+    prepare,
+    start,
     stop,
+    stopMessaging,
+    stopServiceAccess,
+    teardownDashboard,
     updateFence,
     writeReceipt,
   };
@@ -134,6 +215,10 @@ function harness(
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("sandbox quarantine", () => {
@@ -149,16 +234,10 @@ describe("sandbox quarantine", () => {
     expect(result.status).toBe("quarantined");
     expect(result.exitCode).toBe(0);
     expect(test.order.indexOf("fence-persisted")).toBeLessThan(
-      test.order.indexOf("messaging-stop"),
+      test.order.indexOf("service-access-stop"),
     );
     expect(test.order).toEqual(
-      expect.arrayContaining([
-        "fence-persisted",
-        "messaging-stop",
-        "dashboard-stop",
-        "service-access-stop",
-        "workload-stop",
-      ]),
+      expect.arrayContaining(["fence-persisted", "service-access-stop", "workload-stop"]),
     );
     expect(test.current().quarantine?.phase).toBe("quarantined");
     expect(JSON.stringify(result.receipt)).not.toContain("incident-42");
@@ -252,17 +331,78 @@ describe("sandbox quarantine", () => {
     expect(JSON.stringify(test.current().quarantine)).not.toContain("receipt-secret");
   });
 
-  it("rejects a replaced OpenShell identity before publishing the fence (#10140)", () => {
-    const test = harness();
-    const deps: QuarantineSandboxDeps = {
-      ...test.deps,
-      observeSandbox: () => ({ state: "ready", liveIdentityFingerprint: "e".repeat(64) }),
+  it.each([
+    "initial receipt",
+    "messaging stop",
+    "dashboard stop",
+    "service-access stop",
+    "workload stop",
+    "final receipt",
+  ])("keeps the durable fence across the %s crash boundary (#10140)", (boundary) => {
+    const test = harness({
+      initial: sandbox({
+        agent: "hermes",
+        messaging: {
+          schemaVersion: 1,
+          plan: makeMessagingPlan({ sandboxName: "alpha", channels: ["telegram"] }),
+        },
+      }),
+    });
+    const assertFencePublished = (): void => {
+      expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
     };
+    if (boundary === "initial receipt") {
+      test.writeReceipt.mockImplementation(() => {
+        assertFencePublished();
+        throw new Error("simulated interruption after initial receipt write began");
+      });
+    } else if (boundary === "messaging stop") {
+      test.stopMessaging.mockImplementationOnce(() => {
+        assertFencePublished();
+        throw new Error("simulated interruption after messaging stop");
+      });
+    } else if (boundary === "dashboard stop") {
+      test.teardownDashboard.mockImplementationOnce(() => {
+        assertFencePublished();
+        throw new Error("simulated interruption after dashboard stop");
+      });
+    } else if (boundary === "service-access stop") {
+      test.stopServiceAccess.mockImplementationOnce(() => {
+        assertFencePublished();
+        throw new Error("simulated interruption after service-access stop");
+      });
+    } else if (boundary === "workload stop") {
+      test.stop.mockImplementationOnce(() => {
+        assertFencePublished();
+        throw new Error("simulated interruption after workload stop");
+      });
+    } else {
+      test.writeReceipt
+        .mockImplementationOnce(() => undefined)
+        .mockImplementationOnce(() => {
+          assertFencePublished();
+          throw new Error("simulated interruption after final receipt write began");
+        });
+    }
 
     const result = quarantineSandbox(
       "alpha",
       { reason: "incident investigation", idempotencyKey: "incident-42" },
-      deps,
+      test.deps,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replaced OpenShell identity before publishing the fence (#10140)", () => {
+    const test = harness({ prepareFails: true });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
     );
 
     expect(result.status).toBe("failed");
@@ -271,22 +411,12 @@ describe("sandbox quarantine", () => {
   });
 
   it("keeps the fence active when post-stop access observation is inconclusive (#10140)", () => {
-    const test = harness();
-    const observeSandbox = vi
-      .fn()
-      .mockReturnValueOnce({ state: "ready", liveIdentityFingerprint: LIVE_ID })
-      .mockImplementationOnce(() => {
-        throw new Error("gateway observation timed out");
-      });
-    const deps: QuarantineSandboxDeps = {
-      ...test.deps,
-      observeSandbox,
-    };
+    const test = harness({ observationInconclusive: true });
 
     const result = quarantineSandbox(
       "alpha",
       { reason: "incident investigation", idempotencyKey: "incident-42" },
-      deps,
+      test.deps,
     );
 
     expect(result.status).toBe("partial");
@@ -320,6 +450,124 @@ describe("sandbox quarantine", () => {
     expect(test.stop).not.toHaveBeenCalled();
   });
 
+  it("rejects an unqualified agent before provider preparation or fence publication (#10140)", () => {
+    const test = harness();
+    const deps: QuarantineSandboxDeps = {
+      ...test.deps,
+      getAgent: () => ({ quarantineQualification: null }) as never,
+    };
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      deps,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(test.prepare).not.toHaveBeenCalled();
+    expect(test.beginFence).not.toHaveBeenCalled();
+  });
+
+  it("rejects the feature-gated NemoCUA manifest before any mutation until it is qualified (#10140)", () => {
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    const test = harness({ initial: sandbox({ agent: "nemocua" }) });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("not qualified");
+    expect(test.prepare).not.toHaveBeenCalled();
+    expect(test.beginFence).not.toHaveBeenCalled();
+    expect(test.stop).not.toHaveBeenCalled();
+  });
+
+  it("records manifest-omitted terminal surfaces as successful no-ops (#10140)", () => {
+    const test = harness({ initial: sandbox({ agent: "langchain-deepagents-code" }) });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("quarantined");
+    expect(test.stopMessaging).not.toHaveBeenCalled();
+    expect(test.teardownDashboard).not.toHaveBeenCalled();
+    expect(test.stopServiceAccess).not.toHaveBeenCalled();
+    expect(result.receipt?.fence.attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: "messaging-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "dashboard-stop", outcome: "succeeded" }),
+        expect.objectContaining({ operation: "service-access-stop", outcome: "succeeded" }),
+      ]),
+    );
+  });
+
+  it("stops every declared forward surface for a multi-forward gateway agent (#10140)", () => {
+    const test = harness({ initial: sandbox({ agent: "hermes" }) });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("quarantined");
+    expect(test.teardownDashboard).toHaveBeenCalledOnce();
+    expect(test.stopServiceAccess).toHaveBeenCalledOnce();
+  });
+
+  it("does not invent a dashboard surface for a gateway manifest that omits one (#10140)", () => {
+    const test = harness();
+    const deps: QuarantineSandboxDeps = {
+      ...test.deps,
+      getAgent: () =>
+        ({
+          quarantineQualification: {
+            contractVersion: 1,
+            liveE2eTarget: "sandbox-quarantine-gateway-without-dashboard",
+          },
+          runtime: { kind: "gateway", interactiveCommand: "agent" },
+          forward_ports: [8081],
+          hasDashboard: false,
+        }) as never,
+    };
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      deps,
+    );
+
+    expect(result.status).toBe("quarantined");
+    expect(test.teardownDashboard).not.toHaveBeenCalled();
+    expect(test.stopServiceAccess).toHaveBeenCalledOnce();
+  });
+
+  it("stops messaging only when the registry has configured channels (#10140)", () => {
+    const test = harness({
+      initial: sandbox({
+        messaging: {
+          schemaVersion: 1,
+          plan: makeMessagingPlan({ sandboxName: "alpha", channels: ["telegram"] }),
+        },
+      }),
+    });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("quarantined");
+    expect(test.stopMessaging).toHaveBeenCalledOnce();
+  });
+
   it("redacts and bounds the operator reason before persistence (#10140)", () => {
     const test = harness();
 
@@ -337,6 +585,76 @@ describe("sandbox quarantine", () => {
     expect(Buffer.byteLength(persistedReason, "utf8")).toBeLessThanOrEqual(240);
   });
 
+  it("keeps a secret canary out of state, receipts, output, errors, and logs (#10140)", () => {
+    const canary = "quarantine-secret-canary";
+    const test = harness({
+      initial: sandbox({
+        messaging: {
+          schemaVersion: 1,
+          plan: makeMessagingPlan({ sandboxName: "alpha", channels: ["telegram"] }),
+        },
+      }),
+    });
+    const log = vi.fn();
+    const stopMessaging: NonNullable<QuarantineSandboxDeps["stopMessaging"]> = vi.fn(
+      (_name, options) => {
+        options?.info?.(`channel stopped api_key=${canary}`);
+        return true;
+      },
+    );
+
+    const result = quarantineSandbox(
+      "alpha",
+      {
+        reason: `incident api_key=${canary}`,
+        idempotencyKey: "incident-42",
+      },
+      { ...test.deps, log, stopMessaging },
+    );
+    const rendered = [
+      result.message,
+      JSON.stringify(result),
+      JSON.stringify(result.receipt),
+      JSON.stringify(test.current()),
+      JSON.stringify(log.mock.calls),
+    ].join("\n");
+
+    expect(result.status).toBe("quarantined");
+    expect(rendered).not.toContain(canary);
+  });
+
+  it("redacts provider errors before returning them to human or JSON output (#10140)", () => {
+    const canary = "quarantine-provider-secret";
+    const test = harness();
+    test.prepare.mockImplementationOnce(() => {
+      throw new Error(`provider failed token=${canary}`);
+    });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it("returns a failed result for an invalid idempotency key (#10140)", () => {
+    const test = harness();
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "invalid\nkey" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toMatch(/idempotency key/u);
+    expect(test.beginFence).not.toHaveBeenCalled();
+  });
+
   it("reconciles the same idempotency key against the same fence (#10140)", () => {
     const test = harness();
     const request = { reason: "incident investigation", idempotencyKey: "incident-42" };
@@ -348,7 +666,108 @@ describe("sandbox quarantine", () => {
     expect(second.fenceId).toBe(FENCE_ID);
     expect(second.status).toBe("quarantined");
     expect(test.beginFence).toHaveBeenCalledTimes(1);
+    expect(test.prepare).toHaveBeenCalledTimes(1);
     expect(test.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      boundary: "durable fence publication",
+      phase: "fenced" as const,
+      operations: ["fence-persistence"] as const,
+    },
+    {
+      boundary: "initial receipt publication",
+      phase: "fenced" as const,
+      operations: ["fence-persistence", "receipt-persistence"] as const,
+    },
+    {
+      boundary: "messaging stop",
+      phase: "stopping" as const,
+      operations: ["fence-persistence", "receipt-persistence", "messaging-stop"] as const,
+    },
+    {
+      boundary: "dashboard stop",
+      phase: "stopping" as const,
+      operations: [
+        "fence-persistence",
+        "receipt-persistence",
+        "messaging-stop",
+        "dashboard-stop",
+      ] as const,
+    },
+    {
+      boundary: "service access stop",
+      phase: "stopping" as const,
+      operations: [
+        "fence-persistence",
+        "receipt-persistence",
+        "messaging-stop",
+        "dashboard-stop",
+        "service-access-stop",
+      ] as const,
+    },
+    {
+      boundary: "workload stop",
+      phase: "stopping" as const,
+      operations: [
+        "fence-persistence",
+        "receipt-persistence",
+        "messaging-stop",
+        "dashboard-stop",
+        "service-access-stop",
+        "workload-stop",
+      ] as const,
+    },
+    {
+      boundary: "execution observation",
+      phase: "verifying" as const,
+      operations: [
+        "fence-persistence",
+        "receipt-persistence",
+        "messaging-stop",
+        "dashboard-stop",
+        "service-access-stop",
+        "workload-stop",
+        "execution-observation",
+      ] as const,
+    },
+    {
+      boundary: "sandbox access observation",
+      phase: "verifying" as const,
+      operations: [
+        "fence-persistence",
+        "receipt-persistence",
+        "messaging-stop",
+        "dashboard-stop",
+        "service-access-stop",
+        "workload-stop",
+        "execution-observation",
+        "sandbox-access-observation",
+      ] as const,
+    },
+  ])("reconciles a persisted crash boundary after $boundary (#10140)", ({ phase, operations }) => {
+    const priorFence = crashBoundaryFence(phase, operations);
+    const test = harness({ initial: sandbox({ quarantine: priorFence }) });
+
+    const result = quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+
+    expect(result.status).toBe("quarantined");
+    expect(result.fenceId).toBe(FENCE_ID);
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+    expect(test.prepare).not.toHaveBeenCalled();
+    expect(test.beginFence).not.toHaveBeenCalled();
+    expect(test.current().quarantine?.attempts).toEqual(
+      expect.arrayContaining(
+        REQUIRED_RECONCILED_OPERATIONS.map((operation) =>
+          expect.objectContaining({ operation, outcome: "succeeded" }),
+        ),
+      ),
+    );
   });
 
   it("rejects a different request while preserving the active fence (#10140)", () => {
@@ -443,5 +862,39 @@ describe("sandbox quarantine", () => {
     expect(result.status).toBe("released");
     expect(releaseOrder.slice(0, 2)).toEqual(["receipt", "release"]);
     expect(test.stop).toHaveBeenCalledTimes(1);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it("keeps the fence when the exact runtime authority changed before release (#10140)", () => {
+    const test = harness();
+    quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+    test.prepare.mockReturnValueOnce({
+      schemaVersion: 1,
+      providerId: "docker",
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "registry-generation-1",
+      liveIdentityFingerprint: LIVE_ID,
+      providerHandle: "d".repeat(64),
+      providerLifecycleGeneration: "provider-replaced",
+      runtime: { kind: "docker-container", handle: "e".repeat(64) },
+    });
+    const clearFence = vi.fn(() => true);
+
+    const result = releaseSandboxQuarantine("alpha", FENCE_ID, {
+      ...test.deps,
+      clearFence,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("authority changed");
+    expect(clearFence).not.toHaveBeenCalled();
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+    expect(test.start).not.toHaveBeenCalled();
   });
 });

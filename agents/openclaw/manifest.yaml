@@ -28,6 +28,11 @@ gateway_command: "openclaw gateway run"
 runtime:
   interactive_command: "openclaw tui"
 
+# Qualified quarantine contract and its live validation lane.
+quarantine:
+  contract_version: 1
+  live_e2e_target: sandbox-quarantine-openclaw
+
 # ── Health probe ────────────────────────────────────────────────
 health_probe:
   url: "http://localhost:18789/"
@@ -35,6 +40,12 @@ health_probe:
   timeout_seconds: 30
 
 # ── Dashboard / UI ──────────────────────────────────────────────
+dashboard:
+  kind: ui
+  label: "UI"
+  path: "/"
+  health_path: "/health"
+  auth: url_token
 forward_ports:
   - 18789
 

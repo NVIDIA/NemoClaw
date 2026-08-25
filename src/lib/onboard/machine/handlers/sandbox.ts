@@ -97,6 +97,7 @@ import {
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
+  assertSandboxActivationAllowed,
   assertBaselineExclusionsMatchCreateIntent,
   baselineExclusionsForCreate,
 } from "../../sandbox-registration";
@@ -1128,56 +1129,67 @@ class SandboxStateFlow<
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
-    return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
-      this.assertCheckpointBindingsStillLive(state);
-      this.assertGatewayRouteCompatible(state.sandboxName);
-      if (state.webSearchConfig) {
-        const provider = webSearchProviderForConfig(
-          state.webSearchConfig as unknown as SharedWebSearchConfig,
+    const sandboxName = state.sandboxName;
+    if (!sandboxName) throw new Error("Cannot reuse a sandbox without an exact name");
+    const reuseWithinLifecycleFence = () =>
+      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
+        assertSandboxActivationAllowed(
+          sandboxName,
+          "onboard reuse",
+          this.deps.getSandboxRegistryEntry,
         );
-        this.deps.note(
-          `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
+        this.assertCheckpointBindingsStillLive(state);
+        this.assertGatewayRouteCompatible(state.sandboxName);
+        if (state.webSearchConfig) {
+          const provider = webSearchProviderForConfig(
+            state.webSearchConfig as unknown as SharedWebSearchConfig,
+          );
+          this.deps.note(
+            `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
+          );
+        }
+        const messagingAuthority = this.resolveSandboxMessagingAuthority(
+          state.sandboxName,
+          state.session,
         );
-      }
-      const messagingAuthority = this.resolveSandboxMessagingAuthority(
-        state.sandboxName,
-        state.session,
-      );
-      const messaging = reconcileReusedSandboxMessaging(
-        messagingAuthority.plan,
-        this.options.agent,
-        this.deps,
-        state.session?.messagingPlan ?? null,
-      );
-      if (messaging.changed) {
-        this.deps.updateSession((current) => {
-          current.messagingPlan = messaging.plan;
-          recordCheckpointMessaging(current, messaging.plan);
-          return current;
+        const messaging = reconcileReusedSandboxMessaging(
+          messagingAuthority.plan,
+          this.options.agent,
+          this.deps,
+          state.session?.messagingPlan ?? null,
+        );
+        if (messaging.changed) {
+          this.deps.updateSession((current) => {
+            current.messagingPlan = messaging.plan;
+            recordCheckpointMessaging(current, messaging.plan);
+            return current;
+          });
+        }
+        this.backfillReusedSandboxFidelity(state);
+        if (state.sandboxName) {
+          this.deps.updateSandboxRegistry(state.sandboxName, {
+            pendingRouteReservation: undefined,
+            reservationSessionId: undefined,
+          });
+        }
+        this.deps.skippedStepMessage("sandbox", state.sandboxName);
+        const skippedSession = await this.deps.recordStateSkipped("sandbox", {
+          reason: "resume",
+          sandboxName: state.sandboxName,
         });
-      }
-      this.backfillReusedSandboxFidelity(state);
-      if (state.sandboxName) {
-        this.deps.updateSandboxRegistry(state.sandboxName, {
-          pendingRouteReservation: undefined,
-          reservationSessionId: undefined,
-        });
-      }
-      this.deps.skippedStepMessage("sandbox", state.sandboxName);
-      const skippedSession = await this.deps.recordStateSkipped("sandbox", {
-        reason: "resume",
-        sandboxName: state.sandboxName,
+        const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
+          skippedSession,
+          state.sandboxName,
+        );
+        return {
+          ...state,
+          session: recordedSession,
+          selectedMessagingChannels: messaging.selectedChannels,
+        };
       });
-      const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
-        skippedSession,
-        state.sandboxName,
-      );
-      return {
-        ...state,
-        session: recordedSession,
-        selectedMessagingChannels: messaging.selectedChannels,
-      };
-    });
+    return this.deps.withSandboxMutationLock
+      ? this.deps.withSandboxMutationLock(sandboxName, reuseWithinLifecycleFence)
+      : reuseWithinLifecycleFence();
   }
 
   private backfillReusedSandboxCheckpointReceipts(
@@ -1531,6 +1543,11 @@ class SandboxStateFlow<
   ): Promise<void> {
     if (state.selectedMessagingChannels.length === 0) return;
     const stage = async () => {
+      assertSandboxActivationAllowed(
+        sandboxName,
+        "onboard messaging provider staging",
+        this.deps.getSandboxRegistryEntry,
+      );
       this.assertRegistryMessagingPlanUnchanged(sandboxName, registryAuthoritySnapshot);
       await this.registerCompletedCredentialProviders(
         sandboxName,
@@ -1890,6 +1907,11 @@ class SandboxStateFlow<
     );
     const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
+      assertSandboxActivationAllowed(
+        requestedSandboxName,
+        "onboard create or recreate",
+        this.deps.getSandboxRegistryEntry,
+      );
       this.assertRegistryMessagingPlanUnchanged(
         requestedSandboxName,
         registryMessagingAuthoritySnapshot,
@@ -2280,7 +2302,16 @@ export async function handleSandboxState<
     ResourceProfile
   >,
 ): Promise<SandboxStateResult<WebSearchConfig>> {
-  const run = () => new SandboxStateFlow(options).run();
+  const run = () => {
+    if (options.sandboxName) {
+      assertSandboxActivationAllowed(
+        options.sandboxName,
+        "onboard reuse or recreate",
+        options.deps.getSandboxRegistryEntry,
+      );
+    }
+    return new SandboxStateFlow(options).run();
+  };
   return options.sandboxName && options.deps.withSandboxMutationLock
     ? options.deps.withSandboxMutationLock(options.sandboxName, run)
     : run();

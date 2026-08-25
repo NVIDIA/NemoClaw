@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_QUARANTINE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
@@ -35,6 +36,7 @@ const BUNDLE_SURFACES = [
   "workload",
   "hostLocalInference",
   "lifecycle",
+  "quarantine",
   "mutationAuthority",
   "stateMutation",
   "bootstrap",
@@ -444,6 +446,18 @@ function validateMutationAuthoritySurface(
   }
 }
 
+function validateQuarantineSurface(providerId: string, surface: Record<string, unknown>): void {
+  if (surface.supported !== true) return;
+  if (surface.contractVersion !== RUNTIME_PROVIDER_QUARANTINE_CONTRACT_VERSION) {
+    throw new RuntimeProviderRegistrationError(
+      `quarantine for '${providerId}' has an unsupported contract version`,
+    );
+  }
+  for (const operation of ["prepare", "stop", "observe"] as const) {
+    requireFunction(surface, operation, "quarantine");
+  }
+}
+
 function validateStateMutationSurface(providerId: string, surface: Record<string, unknown>): void {
   if (surface.supported !== true) return;
   if (surface.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION) {
@@ -559,6 +573,7 @@ function validateSupportedSurfaceSchemas(
   validateWorkloadSurface(providerId, surfaces.workload);
   validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
+  validateQuarantineSurface(providerId, surfaces.quarantine);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
   validateStateMutationSurface(providerId, surfaces.stateMutation);
   validateBootstrapSurface(surfaces.bootstrap);

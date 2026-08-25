@@ -18,6 +18,7 @@ import type {
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_QUARANTINE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
 
@@ -214,6 +215,41 @@ export interface RuntimeProviderRuntimeReceipt {
 
 export type RuntimeProviderSnapshotOperation = "backup" | "restore";
 export type RuntimeProviderSnapshotLifecycleState = "running" | "paused" | "stopped";
+
+export interface RuntimeProviderQuarantineInput extends RuntimeProviderLifecycleInput {
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly liveIdentityFingerprint: string;
+}
+
+/** Immutable provider and OpenShell authority captured before the durable fence is published. */
+export interface RuntimeProviderQuarantineAuthority {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly liveIdentityFingerprint: string;
+  readonly providerHandle: string;
+  readonly providerLifecycleGeneration: string;
+  readonly runtime: {
+    readonly kind: string;
+    readonly handle: string;
+  };
+}
+
+export interface RuntimeProviderQuarantineStepResult {
+  readonly outcome: "succeeded" | "failed" | "inconclusive";
+  /** Provider-authored, secret-free bounded diagnostic. Never raw command output. */
+  readonly detail?: string;
+}
+
+export interface RuntimeProviderQuarantineObservation {
+  readonly execution: RuntimeProviderQuarantineStepResult;
+  readonly sandboxAccess: RuntimeProviderQuarantineStepResult;
+}
 
 export interface RuntimeProviderSnapshotPreflightReceipt {
   readonly schemaVersion: typeof RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION;
@@ -484,6 +520,23 @@ export type RuntimeProviderSnapshotSurface =
     }>
   | RuntimeProviderUnsupportedSurface;
 
+export type RuntimeProviderQuarantineSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly contractVersion: typeof RUNTIME_PROVIDER_QUARANTINE_CONTRACT_VERSION;
+      prepare(input: RuntimeProviderQuarantineInput): RuntimeProviderQuarantineAuthority;
+      /** Stop only the immutable runtime in `authority`; never rediscover a target by name. */
+      stop(
+        input: RuntimeProviderQuarantineInput,
+        authority: RuntimeProviderQuarantineAuthority,
+      ): RuntimeProviderQuarantineStepResult;
+      /** Independently observe both provider execution and OpenShell access after a stop attempt. */
+      observe(
+        input: RuntimeProviderQuarantineInput,
+        authority: RuntimeProviderQuarantineAuthority,
+      ): RuntimeProviderQuarantineObservation;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
 export type RuntimeProviderRecoverySurface =
   | RuntimeProviderSupportedSurface<{
       recover(sandbox: SandboxEntry): RuntimeProviderLifecycleResult;
@@ -532,6 +585,7 @@ export interface RuntimeProviderBundle {
   readonly workload: RuntimeProviderWorkloadSurface;
   readonly hostLocalInference: RuntimeProviderHostLocalInferenceSurface;
   readonly lifecycle: RuntimeProviderLifecycleSurface;
+  readonly quarantine: RuntimeProviderQuarantineSurface;
   readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
   readonly stateMutation: RuntimeProviderStateMutationSurface;
   readonly bootstrap: RuntimeProviderBootstrapSurface;

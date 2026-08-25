@@ -15,7 +15,7 @@ const state = vi.hoisted(() => ({
 vi.mock("./registry/lock", () => ({ withLock: <T>(operation: () => T): T => operation() }));
 vi.mock("./registry/persistence", () => ({
   load: () => state.registry,
-  save: (value: SandboxRegistry) => {
+  saveDurable: (value: SandboxRegistry) => {
     state.registry = structuredClone(value);
   },
 }));
@@ -113,6 +113,16 @@ describe("sandbox quarantine registry transaction", () => {
     expect(state.registry.sandboxes.alpha?.quarantine).toBeUndefined();
   });
 
+  it("rejects a changed gateway name even when its port is unchanged (#10140)", () => {
+    state.registry.sandboxes.alpha = {
+      ...state.registry.sandboxes.alpha!,
+      gatewayName: "replacement-gateway",
+    };
+
+    expect(beginSandboxQuarantine("alpha", fence()).status).toBe("stale");
+    expect(state.registry.sandboxes.alpha?.quarantine).toBeUndefined();
+  });
+
   it("updates and releases only the exact active fence (#10140)", () => {
     const active = fence();
     expect(beginSandboxQuarantine("alpha", active).status).toBe("started");
@@ -133,6 +143,19 @@ describe("sandbox quarantine registry transaction", () => {
       gatewayPort: 8081,
     };
 
+    expect(releaseSandboxQuarantine("alpha", active.fenceId)).toBe(false);
+    expect(state.registry.sandboxes.alpha?.quarantine).toEqual(active);
+  });
+
+  it("refuses journal updates and release after same-port gateway replacement (#10140)", () => {
+    const active = fence();
+    expect(beginSandboxQuarantine("alpha", active).status).toBe("started");
+    state.registry.sandboxes.alpha = {
+      ...state.registry.sandboxes.alpha!,
+      gatewayName: "replacement-gateway",
+    };
+
+    expect(updateSandboxQuarantine("alpha", { ...active, phase: "partial" })).toBe(false);
     expect(releaseSandboxQuarantine("alpha", active.fenceId)).toBe(false);
     expect(state.registry.sandboxes.alpha?.quarantine).toEqual(active);
   });

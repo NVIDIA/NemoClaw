@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { withLock } from "./lock";
-import { load, save } from "./persistence";
+import { load, saveDurable } from "./persistence";
 import { normalizeSandboxQuarantineFence } from "./quarantine";
 import type { SandboxEntry, SandboxQuarantineFence, SandboxQuarantineTarget } from "./types";
 
@@ -22,9 +22,10 @@ function persistedGatewayBindingMatches(
   entry: SandboxEntry,
   target: SandboxQuarantineTarget,
 ): boolean {
-  if (typeof entry.gatewayPort === "number") return entry.gatewayPort === target.gatewayPort;
-  if (typeof entry.gatewayName === "string") return entry.gatewayName === target.gatewayName;
-  return true;
+  return (
+    (typeof entry.gatewayPort !== "number" || entry.gatewayPort === target.gatewayPort) &&
+    (typeof entry.gatewayName !== "string" || entry.gatewayName === target.gatewayName)
+  );
 }
 
 function registryAuthorityMatches(entry: SandboxEntry, fence: SandboxQuarantineFence): boolean {
@@ -40,6 +41,33 @@ function registryAuthorityMatches(entry: SandboxEntry, fence: SandboxQuarantineF
 
 export function getSandboxForQuarantine(name: string): SandboxEntry | null {
   return load().sandboxes[name] ?? null;
+}
+
+export class SandboxQuarantineError extends Error {
+  constructor(
+    readonly sandboxName: string,
+    readonly fenceId: string,
+    readonly phase: string,
+    action: string,
+  ) {
+    super(
+      `Sandbox '${sandboxName}' is quarantined (${phase}, fence ${fenceId}); ` +
+        `'${action}' cannot reactivate or mutate it. Inspect status or evidence, destroy it, ` +
+        `or run 'quarantine release --fence-id ${fenceId}' for sandbox '${sandboxName}'.`,
+    );
+    this.name = "SandboxQuarantineError";
+  }
+}
+
+/** Recheck the durable restart fence at the lifecycle mutation boundary. */
+export function assertSandboxActivationAllowed(
+  sandboxName: string,
+  action: string,
+  getSandbox: (name: string) => SandboxEntry | null = getSandboxForQuarantine,
+): void {
+  const fence = getSandbox(sandboxName)?.quarantine;
+  if (!fence) return;
+  throw new SandboxQuarantineError(sandboxName, fence.fenceId, fence.phase, action);
 }
 
 /** Persist a new restart fence only while the exact registry authority is current. */
@@ -66,7 +94,7 @@ export function beginSandboxQuarantine(
     }
     if (!registryAuthorityMatches(current, fence)) return { status: "stale" };
     current.quarantine = fence;
-    save(data);
+    saveDurable(data);
     return { status: "started", fence };
   });
 }
@@ -92,7 +120,7 @@ export function updateSandboxQuarantine(
       return false;
     }
     current.quarantine = fence;
-    save(data);
+    saveDurable(data);
     return true;
   });
 }
@@ -106,7 +134,7 @@ export function releaseSandboxQuarantine(sandboxName: string, fenceId: string): 
     if (!current || !fence || fence.fenceId !== fenceId) return false;
     if (!registryAuthorityMatches(current, fence)) return false;
     current.quarantine = undefined;
-    save(data);
+    saveDurable(data);
     return true;
   });
 }

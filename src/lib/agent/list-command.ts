@@ -1,9 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type AgentChoice, getAgentChoices } from "./defs";
+import {
+  type AgentChoice,
+  type AgentDefinition,
+  getAgentChoices,
+  listAgents,
+  loadAgent,
+} from "./defs";
 
 export type AgentRuntimeListEntry = Pick<AgentChoice, "name" | "description">;
+
+/** Resolve an exact selectable agent, including OpenClaw, from the trusted manifest inventory. */
+export function resolveSelectableAgentDefinition(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentDefinition | null {
+  try {
+    if (!listAgents(env).includes(name)) return null;
+    return loadAgent(name, env);
+  } catch {
+    return null;
+  }
+}
 
 export function listAgentRuntimeEntries(): AgentRuntimeListEntry[] {
   return getAgentChoices().map(({ name, description }) => ({ name, description }));

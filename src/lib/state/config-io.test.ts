@@ -11,7 +11,9 @@ import {
   ConfigPermissionError,
   ensureConfigDir,
   readConfigFile,
+  resolveHostNemoclawDir,
   writeConfigFile,
+  writeConfigFileDurable,
 } from "./config-io";
 
 const tmpDirs: string[] = [];
@@ -34,6 +36,15 @@ afterEach(() => {
 });
 
 describe("config-io", () => {
+  it("resolves host state to an absolute path", () => {
+    expect(resolveHostNemoclawDir(8080, "relative-home")).toBe(
+      path.resolve("relative-home", ".nemoclaw"),
+    );
+    expect(resolveHostNemoclawDir(18080, "relative-home")).toBe(
+      path.resolve("relative-home", ".nemoclaw", "gateways", "18080"),
+    );
+  });
+
   it("creates config directories recursively with mode 0o700", () => {
     const dir = path.join(makeTempDir(), "a", "b", "c");
     ensureConfigDir(dir);
@@ -219,6 +230,30 @@ describe("config-io", () => {
     expect(readConfigFile(file, null)).toEqual(data);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("fsyncs the file before rename and the parent after durable publication (#10140)", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const events: string[] = [];
+    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      events.push("fsync");
+    });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      events.push("rename");
+      return originalRename(from, to);
+    });
+
+    try {
+      writeConfigFileDurable(file, { fenced: true });
+    } finally {
+      fsync.mockRestore();
+      rename.mockRestore();
+    }
+
+    expect(events).toEqual(["fsync", "rename", "fsync"]);
+    expect(readConfigFile(file, null)).toEqual({ fenced: true });
   });
 
   it("cleans up temp files when rename fails", () => {

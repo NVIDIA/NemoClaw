@@ -7,6 +7,7 @@ import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import * as agentRuntime from "../agent/runtime";
 import { waitUntil } from "../core/wait";
+import { getOccupiedPorts } from "../onboard/dashboard-port";
 import {
   bestEffortForwardStopForSandbox,
   type ForwardListRunner,
@@ -26,6 +27,8 @@ type AgentWithForwards = {
 type SandboxWithDashboardPort = {
   agent?: string | null;
   dashboardPort?: unknown;
+  hermesApiPort?: unknown;
+  hermesDashboardPort?: unknown;
   gatewayName?: string | null;
   gatewayPort?: number | null;
 };
@@ -58,23 +61,52 @@ function confirmForwardPortReleased(port: number): boolean {
   });
 }
 
-function getAgentForwardPorts(agent: AgentWithForwards, dashboardPort: unknown): number[] {
+function validForwardPort(rawPort: unknown): number | null {
+  const port =
+    typeof rawPort === "number"
+      ? rawPort
+      : typeof rawPort === "string" && /^\d+$/.test(rawPort.trim())
+        ? Number(rawPort.trim())
+        : NaN;
+  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : null;
+}
+
+function registeredForwardPorts(sandbox: SandboxWithDashboardPort): Set<number> {
   const ports = new Set<number>();
-  // The gateway establishes dashboardPort at runtime even when it is not manifest-declared.
-  const candidates = [
-    ...(Array.isArray(agent.forward_ports) ? agent.forward_ports : []),
-    dashboardPort,
-  ];
-  for (const rawPort of candidates) {
-    const port =
-      typeof rawPort === "number"
-        ? rawPort
-        : typeof rawPort === "string" && /^\d+$/.test(rawPort.trim())
-          ? Number(rawPort.trim())
-          : NaN;
-    if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
-      ports.add(port);
-    }
+  for (const rawPort of [
+    sandbox.dashboardPort,
+    sandbox.hermesApiPort,
+    sandbox.hermesDashboardPort,
+  ]) {
+    const port = validForwardPort(rawPort);
+    if (port !== null) ports.add(port);
+  }
+  return ports;
+}
+
+function getAgentForwardPorts(
+  agent: AgentWithForwards,
+  sandbox: SandboxWithDashboardPort,
+  sandboxName: string,
+  occupied: ReadonlyMap<string, string>,
+): number[] {
+  const registered = registeredForwardPorts(sandbox);
+  const hasRegisteredPorts = registered.size > 0;
+  const ports = new Set(registered);
+  for (const [rawPort, owner] of occupied) {
+    if (owner !== sandboxName) continue;
+    const port = validForwardPort(rawPort);
+    if (port !== null) ports.add(port);
+  }
+
+  const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
+  for (const rawPort of declared) {
+    const port = validForwardPort(rawPort);
+    if (port === null) continue;
+    // A persisted host port supersedes manifest defaults for sandboxes whose
+    // forward was dynamically allocated. Still include a manifest port when
+    // OpenShell proves this exact sandbox owns it.
+    if (!hasRegisteredPorts || occupied.get(String(port)) === sandboxName) ports.add(port);
   }
   return [...ports];
 }
@@ -110,7 +142,7 @@ function makeRunCaptureOpenshell(openshell: string): ForwardListRunner {
 export function stopAgentForwardPortsForStop(
   sandboxName: string | undefined,
   deps: StopAgentForwardPortsDeps = {},
-): boolean | void {
+): boolean {
   if (!sandboxName) return false;
 
   const warn = deps.warn ?? (() => {});
@@ -167,8 +199,10 @@ export function stopAgentForwardPortsForStop(
     return false;
   }
 
-  const ports = getAgentForwardPorts(agent, sandbox.dashboardPort);
-  if (ports.length === 0) return true;
+  const hasDeclaredForwards =
+    Array.isArray(agent.forward_ports) &&
+    agent.forward_ports.some((port) => validForwardPort(port));
+  if (!hasDeclaredForwards && registeredForwardPorts(sandbox).size === 0) return true;
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!openshell) {
@@ -183,6 +217,19 @@ export function stopAgentForwardPortsForStop(
   const scopedRunCaptureOpenshell: ForwardListRunner = (args, opts) =>
     runCaptureOpenshell([...args, "--gateway", gatewayName], opts);
   const confirmPortReleased = deps.confirmPortReleased ?? confirmForwardPortReleased;
+  let occupied: ReadonlyMap<string, string>;
+  try {
+    const listed = scopedRunCaptureOpenshell(["forward", "list"], {
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+    if (listed === null) throw new Error("forward list returned no ownership result");
+    occupied = getOccupiedPorts(listed);
+  } catch {
+    warn(`Could not enumerate OpenShell forwards; skipping ${displayName} host forward cleanup.`);
+    return false;
+  }
+  const ports = getAgentForwardPorts(agent, sandbox, sandboxName, occupied);
+  if (ports.length === 0) return true;
   let stopped = true;
 
   for (const port of ports) {

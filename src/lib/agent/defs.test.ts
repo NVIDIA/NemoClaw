@@ -177,6 +177,41 @@ describe("agent definitions", () => {
     expect(choices.map((choice) => choice.name)).toContain("hermes");
   });
 
+  it("qualifies every default selectable agent for a distinct live quarantine lane (#10140)", () => {
+    const qualifications = Object.fromEntries(
+      listAgents({}).map((name) => [name, loadAgent(name, {}).quarantineQualification]),
+    );
+
+    expect(qualifications).toEqual({
+      hermes: {
+        contractVersion: 1,
+        liveE2eTarget: "sandbox-quarantine-hermes",
+      },
+      "langchain-deepagents-code": {
+        contractVersion: 1,
+        liveE2eTarget: "sandbox-quarantine-langchain-deepagents-code",
+      },
+      openclaw: {
+        contractVersion: 1,
+        liveE2eTarget: "sandbox-quarantine-openclaw",
+      },
+    });
+  });
+
+  it.each([
+    [
+      "unknown field",
+      ["quarantine:", "  contract_version: 1", "  live_e2e_target: valid", "  extra: true"],
+    ],
+    ["wrong contract", ["quarantine:", "  contract_version: 2", "  live_e2e_target: valid"]],
+    ["unsafe target", ["quarantine:", "  contract_version: 1", '  live_e2e_target: "bad target"']],
+  ])("rejects a quarantine qualification with %s (#10140)", (_case, declaration) => {
+    const agentName = `invalid-quarantine-${String(Date.now())}-${_case.replaceAll(" ", "-")}`;
+    writeTempAgentManifest(agentName, [`name: ${agentName}`, ...declaration].join("\n"));
+
+    expect(() => loadAgent(agentName)).toThrow(/quarantine/u);
+  });
+
   it("requires a readable regular policy-additions file for non-OpenClaw baselines (#7194)", () => {
     const agentName = `missing-baseline-${String(Date.now())}`;
     writeTempAgentManifest(agentName, `name: ${agentName}\ndisplay_name: Missing Baseline\n`);

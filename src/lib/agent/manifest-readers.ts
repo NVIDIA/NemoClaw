@@ -10,6 +10,7 @@ import type {
   AgentHealthProbe,
   AgentInference,
   AgentMcpCapability,
+  AgentQuarantineQualification,
   AgentStateFile,
   AgentVersionScheme,
   ManifestRecord,
@@ -325,6 +326,33 @@ export function readInference(record: ManifestRecord): AgentInference | undefine
     provider_options: providerOptionList,
     default_model: typeof defaultModel === "string" ? defaultModel.trim() : undefined,
   };
+}
+
+export function readQuarantineQualification(
+  record: ManifestRecord,
+): AgentQuarantineQualification | null {
+  const quarantine = readObject(record, "quarantine");
+  if (!quarantine) return null;
+  const keys = Object.keys(quarantine);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("contract_version") ||
+    !keys.includes("live_e2e_target")
+  ) {
+    throw new Error(
+      "Agent manifest field 'quarantine' must contain only contract_version and live_e2e_target",
+    );
+  }
+  if (quarantine.contract_version !== 1) {
+    throw new Error("Agent manifest field 'quarantine.contract_version' must be 1");
+  }
+  const liveE2eTarget = readString(quarantine, "live_e2e_target")?.trim();
+  if (!liveE2eTarget || !/^[a-z][a-z0-9-]{0,127}$/u.test(liveE2eTarget)) {
+    throw new Error(
+      "Agent manifest field 'quarantine.live_e2e_target' must be a safe E2E target ID",
+    );
+  }
+  return { contractVersion: 1, liveE2eTarget };
 }
 
 export function readMcpCapability(record: ManifestRecord): AgentMcpCapability {

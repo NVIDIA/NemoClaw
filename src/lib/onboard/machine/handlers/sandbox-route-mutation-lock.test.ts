@@ -6,6 +6,51 @@ import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("sandbox registration route transaction", () => {
+  it("rechecks quarantine after a queued onboard acquires the sandbox lock (#10140)", async () => {
+    const events: string[] = [];
+    const { calls, deps } = createDeps({
+      withSandboxMutationLock: async (_sandboxName, operation) => {
+        events.push("lock-acquired");
+        return await operation();
+      },
+      getSandboxRegistryEntry: () => {
+        events.push("fence-read");
+        return {
+          name: "my-assistant",
+          quarantine: {
+            schemaVersion: 1,
+            fenceId: "00000000-0000-4000-8000-000000000001",
+            requestIdentity: "a".repeat(64),
+            reason: "incident investigation",
+            createdAt: "2026-08-25T04:00:00.000Z",
+            updatedAt: "2026-08-25T04:00:00.000Z",
+            phase: "fenced",
+            target: {
+              sandboxName: "my-assistant",
+              providerId: "docker",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+              lifecycleGeneration: "registry-generation-1",
+              liveIdentityFingerprint: "b".repeat(64),
+              providerHandle: "c".repeat(64),
+              providerLifecycleGeneration: "provider-generation-1",
+              runtime: { kind: "docker-container", handle: "d".repeat(64) },
+            },
+            attempts: [],
+          },
+        };
+      },
+    });
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps), sandboxName: "my-assistant" }),
+    ).rejects.toThrow("quarantined");
+
+    expect(events.slice(0, 2)).toEqual(["lock-acquired", "fence-read"]);
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("allows valid peer-route drift after waiting for the gateway lock", async () => {
     let releaseGateway!: () => void;
     const gatewayReleased = new Promise<void>((resolve) => {

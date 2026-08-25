@@ -115,6 +115,50 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
+  it("rechecks quarantine after a queued start acquires the lifecycle lock (#10140)", async () => {
+    let current = sandbox({
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "registry-generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    });
+    const h = harness({
+      getSandbox: () => current,
+      withLifecycleLock: async (_sandboxName, operation) => {
+        current = {
+          ...current,
+          quarantine: {
+            schemaVersion: 1,
+            fenceId: "00000000-0000-4000-8000-000000000001",
+            requestIdentity: "b".repeat(64),
+            reason: "incident investigation",
+            createdAt: "2026-08-25T04:00:00.000Z",
+            updatedAt: "2026-08-25T04:00:00.000Z",
+            phase: "fenced",
+            target: {
+              sandboxName: "my-sandbox",
+              providerId: "docker",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+              lifecycleGeneration: "registry-generation-1",
+              liveIdentityFingerprint: "a".repeat(64),
+              providerHandle: "c".repeat(64),
+              providerLifecycleGeneration: "provider-generation-1",
+              runtime: { kind: "docker-container", handle: "d".repeat(64) },
+            },
+            attempts: [],
+          },
+        };
+        return await operation();
+      },
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(/quarantined/u);
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+  });
+
   it("restores sealed access before recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
     const recovery = SUCCESSFUL_RECOVERY;
@@ -443,17 +487,20 @@ describe("startSandbox", () => {
       },
       /did not become ready in OpenShell/iu,
     ],
-  ] as const)("propagates an actionable %s %s failure (#8662)", async (agent, _layer, recovery, expected) => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ agent }));
-    h.restoreStartupState.mockReturnValue(recovery);
+  ] as const)(
+    "propagates an actionable %s %s failure (#8662)",
+    async (agent, _layer, recovery, expected) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ agent }));
+      h.restoreStartupState.mockReturnValue(recovery);
 
-    const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
-    expect(failure).toMatch(expected);
-    expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
-    expect(failure).not.toContain(REDACTED_TOKEN);
-    expect(h.verifyGateway).not.toHaveBeenCalled();
-  });
+      const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
+      expect(failure).toMatch(expected);
+      expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
+      expect(failure).not.toContain(REDACTED_TOKEN);
+      expect(h.verifyGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
     const h = harness();
@@ -676,24 +723,24 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "unknown-runtime",
-    "mxc-not-installed",
-  ])("fails closed for unregistered provider %s without lifecycle side effects", async (providerId) => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+  it.each(["unknown-runtime", "mxc-not-installed"])(
+    "fails closed for unregistered provider %s without lifecycle side effects",
+    async (providerId) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
 
-    const result = await startSandbox("my-sandbox", h.deps);
+      const result = await startSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toContain(providerId);
-    expect(result.message).toContain("has no registered lifecycle provider");
-    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
-    expect(h.dockerUnpause).not.toHaveBeenCalled();
-    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
-    expect(h.restoreStartupState).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.message).toContain(providerId);
+      expect(result.message).toContain("has no registered lifecycle provider");
+      expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+      expect(h.dockerUnpause).not.toHaveBeenCalled();
+      expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+      expect(h.restoreStartupState).not.toHaveBeenCalled();
+      expect(h.verifyGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["null driver", sandbox({ openshellDriver: null })],

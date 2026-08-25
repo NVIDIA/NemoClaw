@@ -29,6 +29,7 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
+  AgentQuarantineQualification,
   AgentStateDirectory,
   AgentStateFile,
   AgentStateLockPlan,
@@ -44,6 +45,7 @@ import {
   readMcpCapability,
   readObject,
   readPortArray,
+  readQuarantineQualification,
   readStateFiles,
   readStateLockPlanInImage,
   readString,
@@ -127,7 +129,9 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
+        .filter(
+          (entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env),
+        )
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -182,6 +186,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const config = readObject(raw, "config");
   const configShieldsFiles = readConfigShieldsFiles(config);
   const inference = readInference(raw);
+  const quarantineQualification = readQuarantineQualification(raw);
   const mcp = readMcpCapability(raw);
   if (raw.runtime_auth_state_dirs !== undefined) {
     throw new Error(
@@ -202,6 +207,11 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
+  const hasDashboard =
+    (typeof raw.dashboard === "object" &&
+      raw.dashboard !== null &&
+      !Array.isArray(raw.dashboard)) ||
+    dashboardUi !== null;
 
   const agent: AgentDefinition = {
     ...raw,
@@ -220,6 +230,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     health_probe: healthProbe,
     config,
     inference,
+    quarantine: readObject(raw, "quarantine"),
     mcp,
     state_lock_plan_in_image: stateLockPlanInImage,
     state_files: stateFiles,
@@ -255,6 +266,9 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     get dashboard(): AgentDashboard {
       return dashboard;
     },
+    get hasDashboard(): boolean {
+      return hasDashboard;
+    },
 
     get webAuth(): AgentWebAuth {
       return webAuth;
@@ -276,6 +290,10 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get inferenceProviderOptions(): string[] {
       return inference?.provider_options ?? [];
+    },
+
+    get quarantineQualification(): AgentQuarantineQualification | null {
+      return quarantineQualification;
     },
 
     get mcpCapability(): AgentMcpCapability {
