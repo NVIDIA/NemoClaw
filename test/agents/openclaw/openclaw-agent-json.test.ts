@@ -6,8 +6,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const HELPER = path.join(import.meta.dirname, "e2e", "lib", "openclaw-agent-json.py");
-const SHELL_HELPER = path.join(import.meta.dirname, "e2e", "lib", "openclaw-json.sh");
+const HELPER = path.join(import.meta.dirname, "..", "..", "e2e", "lib", "openclaw-agent-json.py");
+const SHELL_HELPER = path.join(import.meta.dirname, "..", "..", "e2e", "lib", "openclaw-json.sh");
 
 function runHelper(input: string): SpawnSyncReturns<string> {
   return spawnSync("python3", [HELPER], {

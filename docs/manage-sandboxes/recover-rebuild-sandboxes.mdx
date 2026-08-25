@@ -278,6 +278,11 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable.
+NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration.
+An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry.
+If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
+
 <AgentOnly variant="openclaw">
 
 After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
