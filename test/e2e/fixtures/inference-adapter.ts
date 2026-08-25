@@ -208,6 +208,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
 
   env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     const sanitizedExtra = { ...extra };
+    delete sanitizedExtra[PUBLIC_NVIDIA_SECRET];
     delete sanitizedExtra[HOSTED_INFERENCE_SECRET];
     delete sanitizedExtra.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
     return {

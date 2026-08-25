@@ -145,6 +145,7 @@ describe("E2E inference adapter", () => {
     const env = adapter.env({
       NEMOCLAW_AGENT: "hermes",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NVIDIA_API_KEY: "ambient-public-source-key",
       NVIDIA_INFERENCE_API_KEY: "ambient-source-key",
     });
 
@@ -160,6 +161,7 @@ describe("E2E inference adapter", () => {
       COMPATIBLE_API_KEY: expect.stringMatching(/^mock-[0-9a-f]{64}$/),
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(env.NVIDIA_API_KEY).toBeUndefined();
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
     expect(env.COMPATIBLE_API_KEY).not.toBe(ambientCompatibleKey);
     expect(await adapter.probeModels("mock-models")).toMatchObject({
@@ -238,7 +240,10 @@ describe("E2E inference adapter", () => {
       provider: provider((request) => requests.push(request)),
       secrets: { NVIDIA_INFERENCE_API_KEY: apiKey },
     });
-    const env = adapter.env({ NVIDIA_INFERENCE_API_KEY: "ambient-source-key" });
+    const env = adapter.env({
+      NVIDIA_API_KEY: "ambient-public-source-key",
+      NVIDIA_INFERENCE_API_KEY: "ambient-source-key",
+    });
 
     expect(adapter.mode).toBe("internal-nvidia");
     expect(adapter.requestSummaries()).toBeUndefined();
@@ -254,6 +259,7 @@ describe("E2E inference adapter", () => {
       COMPATIBLE_API_KEY: "sk-compatible-hosted-key",
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(env.NVIDIA_API_KEY).toBeUndefined();
 
     await adapter.probeModels("internal-models");
     await adapter.directChat("internal prompt", { artifactName: "internal-chat", maxTokens: 42 });
