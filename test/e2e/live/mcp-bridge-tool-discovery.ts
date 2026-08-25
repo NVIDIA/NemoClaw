@@ -319,6 +319,24 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
       attempts,
       finalOutcome,
     });
+  const throwTerminalFailure = async (
+    finalOutcome: McpDiscoveryRestartFinalOutcome,
+    terminalError: unknown,
+  ): Promise<never> => {
+    try {
+      await writeEvidence(finalOutcome);
+    } catch (evidenceError) {
+      throw Object.assign(
+        new AggregateError(
+          [terminalError, evidenceError],
+          `Hermes initial MCP discovery result is ${finalOutcome}; retry evidence write failed`,
+          { cause: terminalError },
+        ),
+        { evidenceStatus: "write-failed" as const, finalOutcome },
+      );
+    }
+    throw terminalError;
+  };
   const firstAttempt = await deps.assertDiscovery(fakeMcp, options).then(
     () => ({ ok: true }) as const,
     (error: unknown) => ({ ok: false, error }) as const,
@@ -343,8 +361,7 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
       restartDecision: "no-restart",
       outcome: "failed",
     });
-    await writeEvidence("failed-no-restart");
-    throw firstAttempt.error;
+    return throwTerminalFailure("failed-no-restart", firstAttempt.error);
   }
   attempts.push({
     attempt: 1,
@@ -363,8 +380,7 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
       restartDecision: "no-restart",
       outcome: "failed",
     });
-    await writeEvidence("restart-failed");
-    throw restartError;
+    return throwTerminalFailure("restart-failed", restartError);
   }
   const retryAttempt = await deps
     .assertDiscovery(fakeMcp, {
@@ -393,8 +409,7 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
     restartDecision: "no-restart",
     outcome: "failed",
   });
-  await writeEvidence("failed-after-restart");
-  throw retryAttempt.error;
+  return throwTerminalFailure("failed-after-restart", retryAttempt.error);
 }
 
 export async function runHermesInitialMcpReadiness(operations: {

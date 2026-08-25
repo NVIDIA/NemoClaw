@@ -1137,7 +1137,7 @@ mcpBridgeShardTest("hermes")(
           artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
           restart: async () => {
             progress.event(
-              "Hermes initial MCP discovery classified no-request-observed after the post-tunnel offset; restarting once",
+              "Hermes initial MCP discovery classified no-request-observed after the initial-discovery offset; restarting once",
             );
             await restartBridgeWithoutHostSecret(
               host,

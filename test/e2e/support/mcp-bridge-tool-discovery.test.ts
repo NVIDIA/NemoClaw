@@ -667,34 +667,101 @@ describe("authenticated MCP discovery restart retry", () => {
       finalOutcome: "restart-failed",
     });
   });
+
+  it("retains a discovery failure when retry evidence cannot be written (#10155)", async () => {
+    const fakeMcp = fakeDiscoveryServer([request("initialize")]);
+    const discoveryFailure = new Error("fixture-visible discovery failed");
+    const evidenceFailure = new Error("retry evidence write failed");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(discoveryFailure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
+    artifacts.writeJson.mockRejectedValueOnce(evidenceFailure);
+
+    const failure = await assertAuthenticatedMcpDiscoveryWithOneRestart(
+      fakeMcp,
+      discoveryRestartOptions(restart, artifacts),
+      { assertDiscovery },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure).toMatchObject({
+      cause: discoveryFailure,
+      errors: [discoveryFailure, evidenceFailure],
+      evidenceStatus: "write-failed",
+      finalOutcome: "failed-no-restart",
+    });
+    expect(String(failure)).toContain("retry evidence write failed");
+    expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("retains a restart failure when retry evidence cannot be written (#10155)", async () => {
+    const fakeMcp = fakeDiscoveryServer();
+    const restartFailure = new Error("bridge restart failed");
+    const evidenceFailure = new Error("retry evidence write failed");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(new Error("first discovery failed"));
+    const restart = vi.fn().mockRejectedValueOnce(restartFailure);
+    const artifacts = discoveryArtifacts();
+    artifacts.writeJson.mockRejectedValueOnce(evidenceFailure);
+
+    const failure = await assertAuthenticatedMcpDiscoveryWithOneRestart(
+      fakeMcp,
+      discoveryRestartOptions(restart, artifacts),
+      { assertDiscovery },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure).toMatchObject({
+      cause: restartFailure,
+      errors: [restartFailure, evidenceFailure],
+      evidenceStatus: "write-failed",
+      finalOutcome: "restart-failed",
+    });
+    expect(String(failure)).toContain("retry evidence write failed");
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Hermes initial MCP readiness", () => {
-  it("finishes discovery and tool status before the first model turn (#10155)", async () => {
-    const events: string[] = [];
-    const operation = (name: string) => async () => {
-      events.push(`${name}:started`);
-      await Promise.resolve();
-      events.push(`${name}:finished`);
-    };
+  it("does not start a model turn before discovery and tool status finish (#10155)", async () => {
+    let finishDiscovery!: () => void;
+    let finishToolStatus!: () => void;
+    const discover = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishDiscovery = resolve;
+        }),
+    );
+    const inspectToolStatus = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishToolStatus = resolve;
+        }),
+    );
+    const prepareModelTurn = vi.fn().mockResolvedValue(undefined);
+    const runModelTurn = vi.fn().mockResolvedValue(undefined);
 
-    await runHermesInitialMcpReadiness({
-      discover: operation("discovery"),
-      inspectToolStatus: operation("tool-status"),
-      prepareModelTurn: operation("model-preparation"),
-      runModelTurn: operation("model-turn"),
+    const readiness = runHermesInitialMcpReadiness({
+      discover,
+      inspectToolStatus,
+      prepareModelTurn,
+      runModelTurn,
     });
 
-    expect(events).toEqual([
-      "discovery:started",
-      "discovery:finished",
-      "tool-status:started",
-      "tool-status:finished",
-      "model-preparation:started",
-      "model-preparation:finished",
-      "model-turn:started",
-      "model-turn:finished",
-    ]);
+    expect(discover).toHaveBeenCalledOnce();
+    expect(inspectToolStatus).not.toHaveBeenCalled();
+    expect(prepareModelTurn).not.toHaveBeenCalled();
+    expect(runModelTurn).not.toHaveBeenCalled();
+
+    finishDiscovery();
+    await vi.waitFor(() => expect(inspectToolStatus).toHaveBeenCalledOnce());
+    expect(prepareModelTurn).not.toHaveBeenCalled();
+    expect(runModelTurn).not.toHaveBeenCalled();
+
+    finishToolStatus();
+    await readiness;
+    expect(prepareModelTurn).toHaveBeenCalledOnce();
+    expect(runModelTurn).toHaveBeenCalledOnce();
   });
 });
 
