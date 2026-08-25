@@ -67,8 +67,19 @@ const STARTUP_TIMEOUT_MS = 90_000;
 const GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS = 1_000;
 const GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS = 2_000;
 const GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS = 100;
-const GATEWAY_STARTUP_TIMING_READ_COMMAND =
-  'if [ ! -e "$1" ]; then exit "$3"; fi\nexec head -c "$2" "$1"';
+const GATEWAY_STARTUP_TIMING_READ_PROGRAM = [
+  'const fs=require("node:fs");',
+  "let descriptor;",
+  'try{descriptor=fs.openSync(process.argv[1],"r");}',
+  'catch(error){process.exit(error?.code==="ENOENT"?Number(process.argv[3]):1);}',
+  "try{",
+  "const limit=Number(process.argv[2]);",
+  "const buffer=Buffer.alloc(limit);",
+  "const bytes=fs.readSync(descriptor,buffer,0,limit,0);",
+  "process.stdout.write(buffer.subarray(0,bytes));",
+  "}catch{process.exitCode=1;}",
+  "finally{try{fs.closeSync(descriptor);}catch{process.exitCode=1;}}",
+].join("");
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
 const PORTABLE_OLLAMA_REENROLL_ENV = "NEMOCLAW_PORTABLE_OLLAMA_REENROLL";
 const MANAGED_EXECUTABLE_CHILD_FD = 3;
@@ -1479,10 +1490,9 @@ export function recoverPortableDemoSandboxLifecycle(
         () =>
           capture(
             openshellExecArgs(gatewayName, sandboxName, [
-              "sh",
-              "-c",
-              GATEWAY_STARTUP_TIMING_READ_COMMAND,
-              "nemoclaw-gateway-startup-timing-read",
+              "node",
+              "-e",
+              GATEWAY_STARTUP_TIMING_READ_PROGRAM,
               PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
               String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES + 1),
               String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS),

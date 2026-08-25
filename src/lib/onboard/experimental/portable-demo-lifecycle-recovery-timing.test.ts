@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,7 @@ import {
 } from "./portable-demo-lifecycle";
 import {
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX,
 } from "./portable-demo-lifecycle-timing";
 
@@ -201,7 +203,10 @@ describe("portable lifecycle recovery timing output", () => {
     const podman = createPodman(false);
     const launchOpenshell = vi.fn();
     const log = vi.fn();
+    const readTimeouts: number[] = [];
+    const sleeps: number[] = [];
     let deadlineNow = 0;
+    let diagnosticNow = 0;
     let epochNow = EPOCH_BASE_MS;
     let timingReadAttempts = 0;
     installReceipt(stateDir, podman);
@@ -209,8 +214,8 @@ describe("portable lifecycle recovery timing output", () => {
     expect(
       recover(stateDir, {
         podman,
-        captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
+        captureOpenshell: (args, timeoutMs) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -221,8 +226,10 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow = launched ? EPOCH_BASE_MS + 2_110 : epochNow;
               return { status: 0, stdout: launched ? "200" : "000" };
             }
-            case "sh":
+            case "node":
               timingReadAttempts += 1;
+              readTimeouts.push(timeoutMs);
+              diagnosticNow += 5;
               return timingReadAttempts === 1
                 ? { status: PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS }
                 : { status: 0, stdout: startupTimingRecord() };
@@ -233,20 +240,24 @@ describe("portable lifecycle recovery timing output", () => {
         launchOpenshell,
         log,
         now: () => deadlineNow,
-        timingNow: () => 0,
+        timingNow: () => diagnosticNow,
         gatewayStartupEpochNow: () => epochNow,
         sleep: (milliseconds) => {
+          sleeps.push(milliseconds);
           deadlineNow += milliseconds;
+          diagnosticNow += milliseconds;
         },
       }),
     ).toEqual({ kind: "recovered" });
     expect(timingReadAttempts).toBe(2);
+    expect(readTimeouts).toEqual([1_000, 1_000]);
+    expect(sleeps).toEqual([100]);
     expect(timingLines(log)).toEqual([
-      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=started gatewayAction=started ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=2 gatewayNotReady=1 gatewayTimeouts=0 gatewayErrors=0 result=recovered",
+      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=110ms containerAction=started gatewayAction=started ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=2 gatewayNotReady=1 gatewayTimeouts=0 gatewayErrors=0 result=recovered",
     ]);
     const gatewayLine = gatewayTimingLines(log)[0];
     expect(gatewayLine).toBe(
-      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms configIntegrity=15ms providerModelCors=11ms tokenPlaceholderHash=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=0ms sleep=0ms firstReadyAttempt=1 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=recorded",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms configIntegrity=15ms providerModelCors=11ms tokenPlaceholderHash=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=0ms sleep=0ms firstReadyAttempt=1 lastFailure=none diagnosticRead=10ms diagnosticReadOutcome=recorded",
     );
   });
 
@@ -286,7 +297,7 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -297,7 +308,7 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow += launched ? 1_000 : 0;
               return { status: 0, stdout: launched ? "200" : "000" };
             }
-            case "sh":
+            case "node":
               throw new Error("credential-bearing diagnostic failure");
             default:
               throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
@@ -313,6 +324,68 @@ describe("portable lifecycle recovery timing output", () => {
     expect(timingLines(log)[0]).toContain("result=recovered");
     expect(gatewayTimingLines(log)[0]).toContain("diagnosticReadOutcome=error");
     expect(gatewayTimingLines(log)[0]).not.toContain("credential-bearing");
+  });
+
+  it.each([
+    ["absent", "missing"],
+    ["a directory", "error"],
+  ] as const)("classifies an actual %s timing-record read as %s (#9200)", (kind, outcome) => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(false);
+    const launchOpenshell = vi.fn();
+    const log = vi.fn();
+    const sleep = vi.fn();
+    const testRecordPath = kind === "absent" ? path.join(stateDir, "absent-record") : stateDir;
+    let deadlineNow = 0;
+    let epochNow = EPOCH_BASE_MS;
+    installReceipt(stateDir, podman);
+
+    expect(
+      recover(stateDir, {
+        podman,
+        captureOpenshell: (args, timeoutMs) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
+          switch (command) {
+            case "true":
+              return { status: 0 };
+            case "pgrep":
+              return { status: 1 };
+            case "curl": {
+              const launched = launchOpenshell.mock.calls.length > 0;
+              epochNow = launched ? EPOCH_BASE_MS + 2_110 : epochNow;
+              return { status: 0, stdout: launched ? "200" : "000" };
+            }
+            case "node": {
+              const separator = args.lastIndexOf("--");
+              const readCommand = args.slice(separator + 1);
+              const recordPathIndex = readCommand.indexOf(
+                PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
+              );
+              expect(recordPathIndex).toBeGreaterThan(0);
+              expect(readCommand[0]).toBe("node");
+              readCommand[recordPathIndex] = testRecordPath;
+              const result = spawnSync("node", readCommand.slice(1), {
+                encoding: "utf8",
+                timeout: timeoutMs,
+              });
+              deadlineNow = 2_000;
+              return result;
+            }
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
+        },
+        launchOpenshell,
+        log,
+        now: () => deadlineNow,
+        timingNow: () => 0,
+        gatewayStartupEpochNow: () => epochNow,
+        sleep,
+      }),
+    ).toEqual({ kind: "recovered" });
+
+    expect(sleep).not.toHaveBeenCalled();
+    expect(gatewayTimingLines(log)[0]).toContain(`diagnosticReadOutcome=${outcome}`);
   });
 
   it("measures launched gateway probes and sleeps without changing polling (#9200)", () => {
@@ -331,7 +404,7 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -344,7 +417,7 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow = ready ? EPOCH_BASE_MS + 2_110 : epochNow;
               return { status: 0, stdout: ready ? "200" : "000" };
             }
-            case "sh":
+            case "node":
               diagnosticNow += 20;
               return { status: 0, stdout: startupTimingRecord() };
             default:
