@@ -204,9 +204,10 @@ if (a[0] === "sandbox" && a[1] === "exec") {
   }
   if (command.includes("https://inference.local/")) {
     const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
-    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + probeStatus + "\\n");
+    const isManagedDcodeProbe = command.includes("/usr/local/lib/nemoclaw/dcode-managed-exec");
+    process.stdout.write((isManagedDcodeProbe ? "" : "__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n") + probeStatus + "\\n");
     if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
-    process.stderr.write("upstream rejected stored provider credential\\n");
+    if (!isManagedDcodeProbe) process.stderr.write("upstream rejected stored provider credential\\n");
     process.exit(1);
   }
   process.exit(0);

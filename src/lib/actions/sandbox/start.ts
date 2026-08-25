@@ -15,6 +15,7 @@ import {
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
 import { withSandboxLifecycleLock } from "./gateway-state";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -151,10 +152,13 @@ function checkStartedSandboxInference(
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
+  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
   return (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
     {
       sandboxName,
+      gatewayName,
+      ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
       provider,
       model,
       preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
