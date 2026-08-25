@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
+  inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
   registerAgentAdapter: vi.fn(),
   unregisterAgentAdapter: vi.fn(),
@@ -18,6 +19,10 @@ vi.mock("./mcp-bridge-adapters", () => ({
 
 vi.mock("./mcp-bridge-provider-readiness", () => ({
   observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
+}));
+
+vi.mock("./mcp-bridge-provider", () => ({
+  inspectMcpProvider: mocks.inspectMcpProvider,
 }));
 
 import {
@@ -39,6 +44,7 @@ const entry: McpBridgeEntry = {
 
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
+    mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
     mocks.registerAgentAdapter.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
@@ -47,6 +53,10 @@ describe("MCP adapter teardown rollback", () => {
   it.each(["rebuild", "destroy"])(
     "restores the revision observed before a later %s step fails (#10155)",
     () => {
+      mocks.observeMcpCredentialRevision
+        .mockReset()
+        .mockReturnValueOnce("v12")
+        .mockReturnValueOnce("absent");
       const rollbackState = scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry);
 
       expect(rollbackState).toMatchObject({ ...entry, credentialRevision: "v12" });
@@ -57,7 +67,7 @@ describe("MCP adapter teardown rollback", () => {
       expect(mocks.registerAgentAdapter).toHaveBeenCalledWith(
         "alpha",
         "hermes-config",
-        entry,
+        rollbackState,
         {},
         {
           credentialRevision: "v12",
@@ -72,8 +82,9 @@ describe("MCP adapter teardown rollback", () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("absent");
 
     expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toThrow(
-      "Could not prove an attached credential revision before changing Hermes MCP adapter 'github'.",
+      "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
+    expect(mocks.inspectMcpProvider).toHaveBeenCalledWith("alpha-mcp-github");
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.registerAgentAdapter).not.toHaveBeenCalled();
   });
