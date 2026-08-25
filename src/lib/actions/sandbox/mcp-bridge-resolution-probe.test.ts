@@ -7,10 +7,15 @@ import type { McpBridgeEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
+  observeMcpCredentialRevision: vi.fn(),
 }));
 
 vi.mock("./process-recovery", () => ({
   executeSandboxCommand: mocks.executeSandboxCommand,
+}));
+
+vi.mock("./mcp-bridge-provider", () => ({
+  observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
 }));
 
 import {
@@ -69,6 +74,8 @@ function probeStdout(
 
 beforeEach(() => {
   mocks.executeSandboxCommand.mockReset();
+  mocks.observeMcpCredentialRevision.mockReset();
+  mocks.observeMcpCredentialRevision.mockReturnValue("v11");
 });
 
 describe("MCP credential-resolution probe classification", () => {
@@ -338,8 +345,47 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
     const [, command] = mocks.executeSandboxCommand.mock.calls[0];
-    expect(command).toContain("openshell:resolve:env:GITHUB_TOKEN");
+    expect(command).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(command).not.toContain("authorization: Bearer openshell:resolve:env:GITHUB_TOKEN");
     expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
+  });
+
+  it("reuses a status observation instead of starting a second revision check (#10079)", () => {
+    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+      const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+      return {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      };
+    });
+
+    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe, "v12");
+
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
+    expect(mocks.observeMcpCredentialRevision).not.toHaveBeenCalled();
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+  });
+
+  it("does not probe with an identityless canonical placeholder (#10079)", () => {
+    mocks.observeMcpCredentialRevision.mockReturnValue("canonical");
+
+    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe);
+
+    expect(probe).toEqual({
+      ok: null,
+      detail:
+        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder",
+    });
+    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 });
 
@@ -350,7 +396,7 @@ describe("MCP credential-resolution warning", () => {
       httpStatus: 403,
       controlHttpStatus: 403,
     });
-    expect(warning).toContain("openshell:resolve:env:GITHUB_TOKEN");
+    expect(warning).toContain("openshell:resolve:env:vN_GITHUB_TOKEN");
     expect(warning).toContain("identically (HTTP 403)");
     expect(warning).toContain("If the stored credential is confirmed valid");
     expect(warning).toContain("OpenShell issue 2161");

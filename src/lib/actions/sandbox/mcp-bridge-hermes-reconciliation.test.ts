@@ -104,6 +104,19 @@ describe("Hermes MCP host reconciliation", () => {
     expect(options).toMatchObject({ ignoreError: true, timeout: 60_000 });
   });
 
+  it("requires the observed credential revision during status reconciliation (#10079)", () => {
+    expect(
+      inspectHermesMcpRuntimeIntent("alpha", {
+        credentialRevisions: new Map([["github", "v12"]]),
+      }),
+    ).toEqual({ ok: true, state: "matched" });
+
+    const payload = JSON.parse(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0]?.[11]);
+    expect(payload.present.github.headers).toEqual({
+      Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    });
+  });
+
   it("can inspect a removal intent while retaining the removed name as a tombstone", () => {
     expect(
       inspectHermesMcpRuntimeIntent("alpha", {
