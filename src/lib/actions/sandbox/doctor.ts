@@ -330,11 +330,12 @@ function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
   openshellBin: ReturnType<typeof resolveOpenshell>,
   openshellConnected: boolean,
+  gatewayName: string | null,
 ): DoctorInferenceRoute {
   const live =
-    openshellBin && openshellConnected
+    openshellBin && openshellConnected && gatewayName
       ? parseGatewayInference(
-          captureOpenshell(["inference", "get"], {
+          captureOpenshell(["inference", "get", "-g", gatewayName], {
             ignoreError: true,
             timeout: OPENSHELL_PROBE_TIMEOUT_MS,
           }).output,
@@ -564,7 +565,7 @@ async function collectDoctorChecks(
         ],
       };
   const sandbox = collectSandboxReadinessChecks(sandboxName, host.openshellBin, gateway.connected);
-  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected);
+  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
   return [
     ...host.checks,
     ...gateway.checks,
