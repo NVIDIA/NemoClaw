@@ -376,11 +376,7 @@ export interface SandboxStateOptions<
     ): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
-    skippedStepMessage(
-      stepName: string,
-      detail?: string | null,
-      reason?: "resume" | "reuse",
-    ): void;
+    skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
     recordStateSkipped(
       state: "sandbox",
       metadata?: Record<string, unknown> | null,
@@ -1146,10 +1142,7 @@ class SandboxStateFlow<
     sandboxName: string,
   ): void {
     const sessionId = state.session?.sessionId;
-    if (
-      sessionId &&
-      this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)
-    ) {
+    if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) {
       return;
     }
     this.deps.error(
@@ -1198,6 +1191,15 @@ class SandboxStateFlow<
         this.deps,
         state.session?.messagingPlan ?? null,
       );
+      if (state.sandboxName) {
+        this.revalidatePolicyRequirements(
+          state.sandboxName,
+          messaging.selectedChannels,
+          state.webSearchConfig,
+          state.session,
+          `record reused sandbox state for '${state.sandboxName}'`,
+        );
+      }
       if (messaging.changed) {
         this.deps.updateSession((current) => {
           current.messagingPlan = messaging.plan;
@@ -1207,10 +1209,28 @@ class SandboxStateFlow<
       }
       this.backfillReusedSandboxFidelity(state);
       this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
+      if (state.sandboxName) {
+        this.revalidatePolicyRequirements(
+          state.sandboxName,
+          messaging.selectedChannels,
+          state.webSearchConfig,
+          state.session,
+          `record reused sandbox completion for '${state.sandboxName}'`,
+        );
+      }
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
         sandboxName: state.sandboxName,
       });
+      if (state.sandboxName) {
+        this.revalidatePolicyRequirements(
+          state.sandboxName,
+          messaging.selectedChannels,
+          state.webSearchConfig,
+          state.session,
+          `record reused sandbox receipts for '${state.sandboxName}'`,
+        );
+      }
       const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
         skippedSession,
         state.sandboxName,
@@ -2029,6 +2049,7 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
+        revalidatePolicyRequirements(`create sandbox '${requestedSandboxName}'`);
         if (this.options.fresh) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,

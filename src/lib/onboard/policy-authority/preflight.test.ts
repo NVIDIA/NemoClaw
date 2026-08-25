@@ -151,6 +151,30 @@ describe("sandbox policy authority preflight", () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
+  it("preserves the authority refusal when temporary-policy cleanup also fails (#9833)", () => {
+    const cleanup = vi.fn(() => false);
+
+    expect(() =>
+      qualifySandboxPolicyAuthority(
+        {
+          sandboxName: "demo",
+          gatewayName: "nemoclaw",
+          liveExists: false,
+          recordedAuthorities: [],
+          prepareRequiredPolicy: () => ({ ...requiredPolicy, cleanup }),
+          operation: "create sandbox 'demo'",
+        },
+        {
+          inspectGlobalPolicyAuthority: () => ({
+            authority: "externally-managed",
+            effectivePolicy: { network_policies: {} },
+          }),
+        },
+      ),
+    ).toThrow(/external policy authority to supply/u);
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it("rejects live and create-time authority drift before materializing requirements (#9833)", () => {
     const prepareRequiredPolicy = vi.fn(() => requiredPolicy);
 

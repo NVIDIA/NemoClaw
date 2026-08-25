@@ -68,6 +68,23 @@ function createSetupDeps(): SetupInferenceDeps {
 }
 
 describe("onboard inference policy authority mutation edges", () => {
+  it("rejects sandbox-bound setup without an authority revalidation callback (#9833)", async () => {
+    const deps = createSetupDeps();
+
+    await expect(
+      createSetupInference(deps)(
+        "sandbox-a",
+        "model-a",
+        "compatible-endpoint",
+        "https://endpoint.example/v1",
+        "COMPATIBLE_API_KEY",
+      ),
+    ).rejects.toThrow("Sandbox inference setup requires policy authority revalidation.");
+
+    expect(deps.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    expect(deps.upsertProvider).not.toHaveBeenCalled();
+  });
+
   it("withholds success when authority changes after inference smoke (#9833)", async () => {
     const deps = createSetupDeps();
 
@@ -91,6 +108,43 @@ describe("onboard inference policy authority mutation edges", () => {
     ).rejects.toThrow("authority changed");
 
     expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(deps.log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
+  });
+
+  it("withholds success when authority changes before superseded Ollama cleanup (#9833)", async () => {
+    const deps = createSetupDeps();
+    deps.getSandbox = vi.fn(() => ({
+      name: "sandbox-a",
+      provider: "ollama-local",
+      model: "old-model",
+    })) as SetupInferenceDeps["getSandbox"];
+    deps.listSandboxes = vi.fn(() => ({
+      defaultSandbox: "sandbox-a",
+      sandboxes: [{ name: "sandbox-a", provider: "ollama-local", model: "old-model" }],
+    })) as unknown as SetupInferenceDeps["listSandboxes"];
+    deps.withOllamaModelOwnershipLock = (operation) => operation();
+    deps.unloadOllamaModels = vi.fn();
+
+    await expect(
+      createSetupInference(deps)(
+        "sandbox-a",
+        "new-model",
+        "compatible-endpoint",
+        "https://endpoint.example/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        {
+          endpointPinnedAddresses: ["93.184.216.34"],
+          revalidatePolicyRequirements: (operation) =>
+            operation === "release the superseded Ollama model"
+              ? refuseAuthorityChange()
+              : undefined,
+        },
+      ),
+    ).rejects.toThrow("authority changed");
+
+    expect(deps.unloadOllamaModels).not.toHaveBeenCalled();
     expect(deps.log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
   });
 });

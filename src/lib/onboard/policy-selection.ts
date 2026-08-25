@@ -704,6 +704,7 @@ async function setupPoliciesWithSelectionInner(
   for (const preset of resolvedPresets) {
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
+  options.revalidatePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
   if (onSelection) onSelection(interactiveChoice);

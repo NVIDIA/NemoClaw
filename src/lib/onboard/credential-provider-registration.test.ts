@@ -826,7 +826,10 @@ describe("credential provider registration", () => {
         },
         async () => ({ messagingTokenDefs: tokenDefs }),
       ),
-    ).rejects.toThrow("authority changed");
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/authority changed.*alpha-first.*inspect.*before retrying/isu),
+      mutatedProviderNames: ["alpha-first"],
+    });
 
     expect(
       runOpenshell.mock.calls

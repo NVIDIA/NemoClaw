@@ -251,15 +251,13 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       `verify the externally managed policy for sandbox '${sandboxName}'`,
     );
     verifySandboxInferenceRoute();
-    revalidatePolicyRequirements?.(
-      `record verified external policy for sandbox '${sandboxName}'`,
-    );
+    revalidatePolicyRequirements?.(`record verified external policy for sandbox '${sandboxName}'`);
     deps.skippedStepMessage("policies", "externally managed");
     await deps.recordStateSkipped("policies", {
       reason: "externally_managed",
     });
     revalidatePolicyRequirements?.(
-      `record verified external policy for sandbox '${sandboxName}'`,
+      `complete externally managed policy setup for sandbox '${sandboxName}'`,
     );
     const session = await deps.recordStepComplete(
       "policies",

@@ -591,6 +591,9 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    if (sandboxName && !options.revalidatePolicyRequirements) {
+      throw new Error("Sandbox inference setup requires policy authority revalidation.");
+    }
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const revalidatePolicyRequirements = options.revalidatePolicyRequirements ?? (() => {});
     const endpointSource =
@@ -1105,7 +1108,6 @@ export function createSetupInference(
             }
           }
           revalidatePolicyRequirements("report successful inference provider setup");
-          deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
           return { ok: true as const };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) throw error;
@@ -1164,6 +1166,7 @@ export function createSetupInference(
         deps,
         revalidatePolicyRequirements,
       );
+      if ("ok" in result) deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
       return result;
     };
     return sandboxName

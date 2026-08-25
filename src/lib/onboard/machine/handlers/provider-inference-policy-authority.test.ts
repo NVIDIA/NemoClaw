@@ -57,17 +57,38 @@ describe("provider inference policy authority", () => {
   });
 
   it("rechecks before local inference provider preparation (#9833)", async () => {
-    const setupNim = vi.fn(async () => ({
-      ...baseSelection,
-      provider: "ollama-local",
-      model: "llama3.1",
-      endpointUrl: "http://127.0.0.1:11434/v1",
-      credentialEnv: null,
-    }));
+    const setupNim = vi.fn(async (...args: unknown[]) => {
+      const revalidatePolicyRequirements = args[8] as (
+        route: {
+          provider: string;
+          model: string;
+          endpointUrl: string | null;
+          credentialEnv: string | null;
+          preferredInferenceApi: string | null;
+        },
+        operation: string,
+      ) => void;
+      revalidatePolicyRequirements(
+        {
+          provider: "ollama-local",
+          model: "llama3.1",
+          endpointUrl: "http://127.0.0.1:11434/v1",
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+        },
+        "install managed local runtime",
+      );
+      return {
+        ...baseSelection,
+        provider: "ollama-local",
+        model: "llama3.1",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        credentialEnv: null,
+      };
+    });
+    const policyChecks = new Map([["install managed local runtime", refuseExternalPolicy]]);
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
-      requirements.operation.startsWith("prepare local inference provider")
-        ? refuseExternalPolicy()
-        : undefined,
+      policyChecks.get(requirements.operation)?.(),
     );
     const { deps, calls } = createDeps({ setupNim, preflightPolicyRequirements });
 
@@ -75,6 +96,7 @@ describe("provider inference policy authority", () => {
       /external policy authority must supply/u,
     );
 
+    expect(setupNim).toHaveBeenCalledOnce();
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(calls.updateSandbox).not.toHaveBeenCalled();

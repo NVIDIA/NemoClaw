@@ -119,6 +119,33 @@ describe("host-local route-only policy selection", () => {
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });
 
+  it("refuses interactive preset mutation when authority changes during the prompt (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.selectTierPresetsAndAccess.mockResolvedValue([{ name: "npm", access: "read" }]);
+    const refusePresetMutation = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([
+      ["apply policy presets to sandbox 'alpha'", refusePresetMutation],
+    ]);
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      policyChecks.get(operation)?.(),
+    );
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(deps.selectTierPresetsAndAccess).toHaveBeenCalledOnce();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
   it("does not attribute presets when the policy mutation is refused (#9833)", async () => {
     const { deps, syncPresetSelection } = createHarness();
     const onSelection = vi.fn();

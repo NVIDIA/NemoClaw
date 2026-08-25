@@ -113,6 +113,7 @@ export function qualifySandboxPolicyAuthority(
   if (inspection.authority !== "externally-managed") return inspection;
 
   const requiredPolicy = input.prepareRequiredPolicy();
+  let primaryError: unknown;
   try {
     const parsedPolicy = parseRequiredPolicy(
       readInitialPolicy(requiredPolicy, input.operation),
@@ -128,9 +129,15 @@ export function qualifySandboxPolicyAuthority(
         sandboxName: input.sandboxName,
       });
     }
-  } finally {
-    cleanupRequirement(requiredPolicy, input.operation);
+  } catch (error) {
+    primaryError = error;
   }
+  try {
+    cleanupRequirement(requiredPolicy, input.operation);
+  } catch (cleanupError) {
+    if (primaryError === undefined) throw cleanupError;
+  }
+  if (primaryError !== undefined) throw primaryError;
   return inspection;
 }
 
