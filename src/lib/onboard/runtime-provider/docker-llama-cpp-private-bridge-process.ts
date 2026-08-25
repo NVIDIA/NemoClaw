@@ -180,6 +180,16 @@ function writeUpstreamUnavailable(
   response.end(body);
 }
 
+function closeIncompleteRequestAfterResponse(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+): void {
+  request.pause();
+  const destroyRequest = () => request.destroy();
+  response.once("finish", destroyRequest);
+  response.once("close", destroyRequest);
+}
+
 function createLlamaCppPrivateBridgeRequestHandler(
   authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
   apiKey: string,
@@ -229,9 +239,16 @@ function createLlamaCppPrivateBridgeRequestHandler(
       (upstreamResponse) => {
         clearContinueTimer();
         upstreamResponded = true;
+        const closeConnection = expectsContinue && !forwardingRequestBody;
         request.unpipe(upstream);
-        request.resume();
-        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+        if (closeConnection) closeIncompleteRequestAfterResponse(request, response);
+        else request.resume();
+        response.writeHead(
+          upstreamResponse.statusCode ?? 502,
+          closeConnection
+            ? { ...upstreamResponse.headers, connection: "close" }
+            : upstreamResponse.headers,
+        );
         upstreamResponse.once("error", () => response.destroy());
         upstreamResponse.pipe(response);
         upstreamResponse.once("end", () => {
@@ -275,9 +292,8 @@ function createLlamaCppPrivateBridgeRequestHandler(
       continueTimer = setTimeout(() => {
         continueTimer = undefined;
         request.unpipe(upstream);
-        request.pause();
         upstream.destroy();
-        response.once("finish", () => request.destroy());
+        closeIncompleteRequestAfterResponse(request, response);
         writeUpstreamUnavailable(response, { closeConnection: true });
       }, UPSTREAM_CONTINUE_TIMEOUT_MS);
       continueTimer.unref();
