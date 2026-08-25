@@ -106,11 +106,27 @@ describe("Hermes MCP config adapter", () => {
     );
 
     const inspect = (credentialRevision?: "v11" | "v12") => {
-      const command = buildHermesMcpStatusCommand(baseEntry, credentialRevision)
-        .replace("/opt/hermes/.venv/bin/python", "python3")
-        .replaceAll(HERMES_MCP_TRANSACTION_HELPER, helperPath)
-        .replaceAll("/sandbox/.hermes/config.yaml", configPath);
-      return spawnSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+      const command = buildHermesMcpStatusCommand(baseEntry, credentialRevision);
+      const scriptStart = command.indexOf("\n") + 1;
+      const scriptEnd = command.lastIndexOf("\nPY");
+      expect(scriptStart, "Hermes status command Python start").toBeGreaterThan(0);
+      expect(scriptEnd, "Hermes status command Python end").toBeGreaterThanOrEqual(scriptStart);
+      const script = command
+        .slice(scriptStart, scriptEnd)
+        .replace(
+          `module_path = ${JSON.stringify(HERMES_MCP_TRANSACTION_HELPER)}`,
+          "module_path = sys.argv[2]",
+        )
+        .replace(
+          'config_path = pathlib.Path("/sandbox/.hermes/config.yaml")',
+          "config_path = pathlib.Path(sys.argv[1])",
+        );
+      return spawnSync("python3", ["-", configPath, helperPath], {
+        encoding: "utf8",
+        input: script,
+        killSignal: "SIGKILL",
+        timeout: 10_000,
+      });
     };
 
     try {
