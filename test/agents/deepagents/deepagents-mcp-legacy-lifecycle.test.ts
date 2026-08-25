@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { managedProviderProfileResult } from "../../helpers/provider-profile-test-runner";
+
 const mocks = vi.hoisted(() => ({
   applyPresetContent: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
@@ -116,8 +118,9 @@ beforeEach(() => {
     switch (true) {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
-      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
-        return { status: 0, stdout: "Imported provider profile", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile":
+        return managedProviderProfileResult(args) ??
+          { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {

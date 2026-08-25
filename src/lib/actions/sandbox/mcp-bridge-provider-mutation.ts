@@ -78,9 +78,7 @@ function ensureOpenAiGatewayProviderProfile(): void {
   });
   if (result.ok) return;
   if (result.reason === "import-failed") {
-    throw new McpBridgeError(
-      result.diagnostic || "Could not import the OpenShell OpenAI gateway provider profile.",
-    );
+    throw new McpBridgeError("Could not import the OpenShell OpenAI gateway provider profile.");
   }
   if (result.reason === "export-failed") {
     throw new McpBridgeError(
@@ -105,8 +103,7 @@ export function ensureMcpBridgeProviderProfile(): void {
   if (result.ok) return;
   if (result.reason === "import-failed") {
     throw new McpBridgeError(
-      result.diagnostic ||
-        `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
+      `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
     );
   }
   if (result.reason === "export-failed") {

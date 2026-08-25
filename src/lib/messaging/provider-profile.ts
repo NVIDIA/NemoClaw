@@ -14,6 +14,7 @@ export type EndpointlessProviderProfileRunner = (
   },
 ) => {
   readonly status?: number | null;
+  readonly output?: unknown;
   readonly stdout?: unknown;
   readonly stderr?: unknown;
 };
@@ -23,8 +24,41 @@ function outputText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function commandOutput(result: { readonly stdout?: unknown; readonly stderr?: unknown }): string {
-  return `${outputText(result.stderr)}\n${outputText(result.stdout)}`;
+function commandOutput(result: {
+  readonly output?: unknown;
+  readonly stdout?: unknown;
+  readonly stderr?: unknown;
+}): string {
+  const streams = [outputText(result.stderr), outputText(result.stdout)].filter(Boolean);
+  if (streams.length > 0) return streams.join("\n");
+  if (Array.isArray(result.output)) {
+    return [outputText(result.output[2]), outputText(result.output[1])].filter(Boolean).join("\n");
+  }
+  return outputText(result.output);
+}
+
+function commandStdout(result: { readonly output?: unknown; readonly stdout?: unknown }): string {
+  const stdout = outputText(result.stdout);
+  if (stdout) return stdout;
+  return Array.isArray(result.output) ? outputText(result.output[1]) : outputText(result.output);
+}
+
+function isMissingProviderProfile(output: string, profileId: string): boolean {
+  const normalized = output
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
+    .replace(/\r/g, "")
+    .trim();
+  const escapedProfileId = profileId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const missingMessage = new RegExp(
+    `^(?:provider )?profile(?: ['\"]${escapedProfileId}['\"])? not found$`,
+    "iu",
+  );
+  if (missingMessage.test(normalized)) return true;
+
+  const structuredStatus =
+    /(?:status:\s*['"]?NotFound['"]?|code:\s*['"]Some requested entity was not found['"])/iu;
+  const message = normalized.match(/message:\s*['"]([^'"\r\n]+)['"]/iu)?.[1]?.trim() ?? "";
+  return structuredStatus.test(normalized) && missingMessage.test(message);
 }
 
 function profileHasExpectedCredentialBoundary(
@@ -61,7 +95,6 @@ export type EndpointlessProviderProfileResult =
   | {
       readonly ok: false;
       readonly reason: "export-failed" | "import-failed" | "incompatible";
-      readonly diagnostic: string;
     };
 
 /** Import one endpointless profile or validate the exact existing contract. */
@@ -79,17 +112,17 @@ export function ensureEndpointlessProviderProfile(input: {
 
   const exported = exportProfile();
   if (exported.status === 0) {
-    return profileHasExpectedCredentialBoundary(outputText(exported.stdout), {
+    return profileHasExpectedCredentialBoundary(commandStdout(exported), {
       id: input.profileId,
       inferenceCapable: input.inferenceCapable,
     })
       ? { ok: true }
-      : { ok: false, reason: "incompatible", diagnostic: "" };
+      : { ok: false, reason: "incompatible" };
   }
 
   const exportOutput = commandOutput(exported);
-  if (!/\b(?:custom\s+)?provider profile\b[^\r\n]*\bnot found\b/iu.test(exportOutput)) {
-    return { ok: false, reason: "export-failed", diagnostic: "" };
+  if (!isMissingProviderProfile(exportOutput, input.profileId)) {
+    return { ok: false, reason: "export-failed" };
   }
 
   const imported = input.runOpenshell(
@@ -100,20 +133,20 @@ export function ensureEndpointlessProviderProfile(input: {
 
   const importOutput = commandOutput(imported);
   if (!/already exists/iu.test(importOutput)) {
-    return { ok: false, reason: "import-failed", diagnostic: importOutput.trim() };
+    return { ok: false, reason: "import-failed" };
   }
 
   const racedExport = exportProfile();
   if (racedExport.status !== 0) {
-    return { ok: false, reason: "export-failed", diagnostic: "" };
+    return { ok: false, reason: "export-failed" };
   }
   if (
-    !profileHasExpectedCredentialBoundary(outputText(racedExport.stdout), {
+    !profileHasExpectedCredentialBoundary(commandStdout(racedExport), {
       id: input.profileId,
       inferenceCapable: input.inferenceCapable,
     })
   ) {
-    return { ok: false, reason: "incompatible", diagnostic: "" };
+    return { ok: false, reason: "incompatible" };
   }
   return { ok: true };
 }

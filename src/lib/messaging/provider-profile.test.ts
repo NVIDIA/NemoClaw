@@ -55,6 +55,41 @@ describe("messaging credential provider profile", () => {
     );
   });
 
+  it("imports after the supported structured missing-profile response (#10155)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: [
+          null,
+          Buffer.from(""),
+          Buffer.from("Error: × status: 'NotFound', message: \"provider profile not found\"\n"),
+        ],
+      })
+      .mockReturnValueOnce({ status: 0 });
+
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell }),
+    ).not.toThrow();
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not import after an unrelated structured not-found response (#10155)", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({
+      status: 1,
+      output: [
+        null,
+        Buffer.from(""),
+        Buffer.from("Error: × status: 'NotFound', message: \"gateway not found\"\n"),
+      ],
+    });
+
+    expect(() => ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell })).toThrow(
+      /could not be exported for validation/,
+    );
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
   it("reuses an exact existing profile without importing it (#10155)", () => {
     const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
 

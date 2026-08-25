@@ -22,6 +22,13 @@ const OPENAI_PROFILE_OUTPUT = JSON.stringify({
   binaries: [],
   inference_capable: true,
 });
+const ANTHROPIC_PROFILE_OUTPUT = JSON.stringify({
+  id: "anthropic",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
 
 function mockAdapter() {
   return vi.fn(async (_options: EnsureHttpsPinRuntimeAdapterOptions) => ({
@@ -50,13 +57,16 @@ function providerCapture(options: {
     ].join("\n");
   return vi.fn((args: string[]) => {
     switch (`${args[0]}:${args[1]}`) {
-      case "provider:profile":
+      case "provider:profile": {
+        const profile =
+          options.providerType === "anthropic" ? ANTHROPIC_PROFILE_OUTPUT : OPENAI_PROFILE_OUTPUT;
         return {
           status: 0,
-          output: OPENAI_PROFILE_OUTPUT,
-          stdout: OPENAI_PROFILE_OUTPUT,
+          output: profile,
+          stdout: profile,
           stderr: "",
         };
+      }
       case "provider:get": {
         const text = output();
         return { status: 0, stdout: text, stderr: "", output: text };

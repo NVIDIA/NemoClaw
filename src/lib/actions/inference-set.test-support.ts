@@ -38,6 +38,14 @@ export const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
   inference_capable: true,
 });
 
+export const ANTHROPIC_ENDPOINTLESS_PROFILE = JSON.stringify({
+  id: "anthropic",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+
 function defaultCaptureOpenshell(
   args: string[],
   status: number,
@@ -103,13 +111,18 @@ export function createCompatibleProviderCapture(options: {
   let providerVersion = providerPresent ? 1 : 0;
   return vi.fn((args: string[]) => {
     switch (`${args[0]}:${args[1]}`) {
-      case "provider:profile":
+      case "provider:profile": {
+        const profile =
+          options.type === "anthropic"
+            ? ANTHROPIC_ENDPOINTLESS_PROFILE
+            : OPENAI_ENDPOINTLESS_PROFILE;
         return {
           status: 0,
-          output: OPENAI_ENDPOINTLESS_PROFILE,
-          stdout: OPENAI_ENDPOINTLESS_PROFILE,
+          output: profile,
+          stdout: profile,
           stderr: "",
         };
+      }
       case "provider:get": {
         if (!providerPresent) {
           const output =
