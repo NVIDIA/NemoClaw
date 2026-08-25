@@ -45,7 +45,11 @@ import {
   createRebuildHermesCronRestoreFixture,
   hermesRuntimeExecArgs,
 } from "./rebuild-hermes-cron-restore.ts";
-import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
+import {
+  buildRebuildHermesChildEnv,
+  buildRebuildHermesRecreateEnv,
+  planRebuildHermesBaseReuse,
+} from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   cleanupTrackedRebuildHermesImage,
@@ -1107,10 +1111,11 @@ test(STALE_BASE_REBUILD
   );
   await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
   progress.phase("rebuild the Hermes sandbox");
-  const rebuildEnv = testEnv(undefined, {
-    NEMOCLAW_REBUILD_VERBOSE: "1",
-    ...baseReusePlan?.childEnv,
-  });
+  const rebuildEnv = testEnv(
+    undefined,
+    buildRebuildHermesRecreateEnv(DISCORD_FAKE_TOKEN, baseReusePlan?.childEnv),
+  );
+  expect(rebuildEnv.DISCORD_BOT_TOKEN).toBe(DISCORD_FAKE_TOKEN);
   expect(rebuildEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   expect(rebuildEnv).not.toHaveProperty("COMPATIBLE_API_KEY");
   expect(rebuildEnv).not.toHaveProperty("NVIDIA_API_KEY");
