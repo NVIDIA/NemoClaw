@@ -140,6 +140,41 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
+  it("reports a failed warm-up without attempting pairing approval", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => PAIRING_ONLY),
+      runWarmup: vi.fn(() => {
+        throw new Error("secret runtime detail");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "warmup-failed",
+    });
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+    expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "warmup-failed")).toBe(
+      "OpenClaw onboarding for 'alpha' is incomplete because its scope-upgrade warm-up request failed. Verify the OpenClaw gateway is reachable, then resume or rerun onboarding.",
+    );
+  });
+
+  it("reports a failed local pairing approval", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => SCOPE_UPGRADE_PENDING),
+      runApproval: vi.fn(() => {
+        throw new Error("secret runtime detail");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "approval-failed",
+    });
+    expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "approval-failed")).toBe(
+      "OpenClaw onboarding for 'alpha' is incomplete because its local pairing approval failed. Verify the pending local pairing request can be approved, then resume or rerun onboarding.",
+    );
+  });
+
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
     const events: string[] = [];
     const scope = ordinaryPairingDeps({

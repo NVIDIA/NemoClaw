@@ -36,6 +36,8 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "runtime-identity-invalid"
         | "pairing-lock-unavailable"
         | "pairing-unavailable"
+        | "warmup-failed"
+        | "approval-failed"
         | "scope-upgrade-incomplete";
     };
 
@@ -51,8 +53,18 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
   "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
   "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
   "pairing-unavailable": "its canonical CLI device pairing did not appear",
+  "warmup-failed": "its scope-upgrade warm-up request failed",
+  "approval-failed": "its local pairing approval failed",
   "scope-upgrade-incomplete":
     "its canonical CLI device did not receive the required baseline scopes",
+};
+
+const ORDINARY_OPENCLAW_PAIRING_RECOVERY: Partial<
+  Record<OrdinaryOpenClawPairingIncompleteReason, string>
+> = {
+  "warmup-failed": "Verify the OpenClaw gateway is reachable, then resume or rerun onboarding.",
+  "approval-failed":
+    "Verify the pending local pairing request can be approved, then resume or rerun onboarding.",
 };
 
 interface OrdinaryOpenClawPairingSettlementDeps {
@@ -260,13 +272,17 @@ export async function settleOrdinaryOpenClawPairing(
             // Running the producer before that identity exists can create no
             // upgrade and leaves an otherwise healthy fresh onboard stuck at
             // pairing-only (#10014).
+            let warmupFailed = false;
             try {
               await deps.runWarmup(name, target.gatewayName);
             } catch {
-              // The bounded observation below remains fail closed.
+              warmupFailed = true;
             }
             if (!samePairingTarget(target, deps.getTarget(name))) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
+            }
+            if (warmupFailed) {
+              return { kind: "incomplete", reason: "warmup-failed" };
             }
             const scopeUpgradeDeadline = Math.min(
               settlementDeadline,
@@ -313,7 +329,7 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (approvalFailed) {
-            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+            return { kind: "incomplete", reason: "approval-failed" };
           }
 
           const finalObservationDeadline = Math.min(
@@ -352,7 +368,9 @@ export function ordinaryOpenClawPairingIncompleteMessage(
   reason: OrdinaryOpenClawPairingIncompleteReason,
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
-  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
+  const recovery =
+    ORDINARY_OPENCLAW_PAIRING_RECOVERY[reason] ?? "Resume or rerun onboarding.";
+  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. ${recovery}`;
 }
 
 export const finalizationHandlerDeps = {
