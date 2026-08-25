@@ -2578,7 +2578,13 @@ If deletion fails after hardening, the command keeps the surviving sandbox's loc
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
-If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
+If the pre-delete workspace wipe completes with a nonzero status, `destroy` continues, but the retained volume may still contain old files.
+Use a different sandbox name to avoid reusing that retained volume.
+If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result.
+NemoClaw stops before provider cleanup and sandbox deletion, attempts to restore any prepared MCP state, and preserves the local registry entry.
+Run `$$nemoclaw <name> status` to check or start the recorded OpenShell gateway.
+If a shields auto-restore timer remains active, run `$$nemoclaw <name> shields status` to verify bounded recovery or follow its durable-containment guidance, then retry `destroy` only after shields recovery permits it.
+If no timer remains active, retry after the recorded gateway is available.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
 If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a Broken pipe error and lists their process IDs.
 This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
@@ -2593,9 +2599,14 @@ If the recorded PID is live, its command line must match the exact gateway name 
 If the recorded process has exited, `destroy` continues only after it verifies that the gateway port is free.
 If a live PID does not prove gateway ownership or the port remains occupied, `destroy` exits non-zero and preserves the runtime evidence for inspection.
 For any other service stop failure, `destroy` exits non-zero after sandbox and registry deletion, prints the status command for the service, and skips gateway and volume removal.
-If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
+If the OpenShell command completes with a gateway transport error and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
+If the OpenShell sandbox deletion command reaches its 60-second timeout, NemoClaw cannot confirm whether OpenShell deleted the sandbox.
+NemoClaw preserves the local registry entry under both `--yes` and `--force`.
+Run `$$nemoclaw <name> status` to check or start the recorded OpenShell gateway.
+If the preceding output also reports a failed pre-delete re-lock, run `$$nemoclaw <name> shields status` to verify recovery or follow its durable-containment guidance, then retry `destroy` only after shields recovery permits it.
+Otherwise, retry after the recorded gateway is available.
 Managed MCP ownership disables the local-only fallback because exact provider cleanup requires the retained ownership state, and other delete failures remain fatal.
 A failed pre-delete re-lock also disables the local-only fallback, because the auto-restore timer is then the only authority that can lock the configuration again after the gateway returns.
 
