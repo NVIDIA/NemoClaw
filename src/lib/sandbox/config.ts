@@ -20,6 +20,9 @@ const {
   DEFAULT_AGENT_CONFIG,
   resolveAgentConfig: resolveAgentConfigTarget,
 }: typeof import("./agent-config") = require("./agent-config");
+const {
+  stripAnsi,
+}: typeof import("../adapters/openshell/client") = require("../adapters/openshell/client");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -64,6 +67,11 @@ const {
   OPENSHELL_OPERATION_TIMEOUT_MS,
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
 const { redactFull }: typeof import("../security/redact") = require("../security/redact");
+const {
+  loadRotateTokenSession,
+  readStdin,
+  rotateSandboxToken,
+}: typeof import("./config-rotate-token") = require("./config-rotate-token");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -443,6 +451,26 @@ function parseCliConfigValue(rawValue: string): ConfigValue {
 }
 
 /**
+ * True when an OpenShell `sandbox exec` failure detail reports the sandbox
+ * itself is not ready (for example, stopped), rather than an unrelated exec
+ * failure. Normalizes ANSI codes, the CLI's box-drawing error marker, and
+ * line-wrapping whitespace so a wrapped multi-line rendering of the same
+ * message still matches (#10251).
+ */
+function isSandboxNotReadyExecDetail(detail: string): boolean {
+  const normalized = stripAnsi(detail)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return (
+    /sandbox '[^']*' is not ready \(phase: \w+\)/i.test(normalized) ||
+    /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i.test(
+      normalized,
+    )
+  );
+}
+
+/**
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
@@ -468,7 +496,12 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
       const detail = result.error?.message || result.stderr?.trim();
       // Preserve a failed exec's detail. `configFail` throws, so it must not be
       // caught and replaced with the generic stopped-sandbox message below.
-      if (detail) {
+      // Exception: a "sandbox is not ready" detail IS the stopped-sandbox case
+      // (#10251, a regression of #6997) — fall through to the generic message
+      // below instead, so the actionable "Is the sandbox running?" / "Start
+      // the sandbox and retry." guidance survives instead of a raw OpenShell
+      // error.
+      if (detail && !isSandboxNotReadyExecDetail(detail)) {
         configFail(`  Cannot read ${target.agentName} config (${target.configPath}): ${detail}`);
       }
       raw = "";
@@ -1409,137 +1442,21 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 // config rotate-token
 // ---------------------------------------------------------------------------
 
-interface RotateTokenOpts {
-  fromEnv?: string | null;
-  fromStdin?: boolean;
-}
+type RotateTokenOpts = import("./config-rotate-token").RotateTokenOpts;
 
 async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}): Promise<void> {
-  validateName(sandboxName, "sandbox name");
-
-  // 1. Determine which provider and credentialEnv the sandbox uses.
-  //    Load the onboard session and verify it matches this sandbox.
-  const { loadSession } = require("../state/onboard-session");
-  const session = loadSession();
-
-  if (!session || !session.credentialEnv) {
-    configFail([
-      `  Cannot determine credential for sandbox '${sandboxName}'.`,
-      "  No onboard session found with a credentialEnv.",
-      "  Re-run: nemoclaw onboard --recreate-sandbox",
-    ]);
-  }
-
-  if (session.sandboxName && session.sandboxName !== sandboxName) {
-    configFail(`  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`);
-  }
-
-  const target = resolveAgentConfig(sandboxName);
-  const credentialEnv: string = session.credentialEnv;
-  const providerName: string = session.provider || "inference";
-
-  console.log(`  Agent:          ${target.agentName}`);
-  console.log(`  Provider:       ${providerName}`);
-  console.log(`  Credential env: ${credentialEnv}`);
-
-  // 2. Read new token
-  let newToken: string | null = null;
-
-  if (opts.fromEnv) {
-    newToken = process.env[opts.fromEnv] || null;
-    if (!newToken) {
-      configFail(`  Environment variable "${opts.fromEnv}" is not set or empty.`);
-    }
-  } else if (opts.fromStdin) {
-    newToken = await readStdin();
-  } else {
-    const { promptSecret } = require("../credentials/store");
-    newToken = await promptSecret(`  New ${credentialEnv} value: `);
-  }
-
-  if (!newToken || !newToken.trim()) {
-    configFail("  Token cannot be empty.");
-  }
-
-  newToken = newToken.trim();
-
-  // 3. Validate — no whitespace in token
-  if (/\s/.test(newToken)) {
-    configFail("  Token contains whitespace. This is likely a paste error.");
-  }
-
-  // 4. Stage the new value in the current process so the openshell update
-  //    that follows can read it via --credential <ENV>. The OpenShell
-  //    gateway becomes the system of record once the update succeeds.
-  const { saveCredential } = require("../credentials/store");
-  saveCredential(credentialEnv, newToken);
-
-  // 5. Update the openshell provider
-  console.log("  Updating openshell provider...");
-  const binary = getOpenshellBinary();
-  const result = runOpenshellCommand(
-    binary,
-    ["provider", "update", providerName, "--credential", credentialEnv],
-    {
-      env: { [credentialEnv]: newToken },
-      ignoreError: true,
-      errorLine: console.error,
-      exit: (code: number) => process.exit(code),
-    },
-  );
-
-  if (result.status !== 0) {
-    const providerType = session.providerType || "generic";
-    const createResult = runOpenshellCommand(
-      binary,
-      [
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        providerType,
-        "--credential",
-        credentialEnv,
-      ],
-      {
-        env: { [credentialEnv]: newToken },
-        ignoreError: true,
-        errorLine: console.error,
-        exit: (code: number) => process.exit(code),
-      },
-    );
-
-    if (createResult.status !== 0) {
-      configFail("  Failed to update provider. You may need to re-onboard.");
-    }
-  }
-
-  // 6. Audit log
-  appendAuditEntry({
-    action: "rotate_token",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `rotate-token ${target.agentName}:${credentialEnv}`,
-  });
-
-  // 7. Output (redacted)
-  const lastFour = newToken.length > 4 ? newToken.slice(-4) : "****";
-  console.log(`  Token rotated: ****${lastFour}`);
-  console.log("");
-  console.log("  The new credential is active immediately for new sandbox requests.");
-}
-
-/**
- * Read all data from stdin until EOF.
- */
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8").trim()));
-    process.stdin.on("error", reject);
-    process.stdin.resume();
+  const { promptSecret, saveCredential } =
+    require("../credentials/store") as typeof import("../credentials/store");
+  return rotateSandboxToken(sandboxName, opts, {
+    appendAuditEntry,
+    captureOpenshellCommand,
+    fail: configFail,
+    loadSession: loadRotateTokenSession,
+    promptSecret,
+    resolveAgentConfig,
+    runOpenshellCommand,
+    saveCredential,
+    validateName,
   });
 }
 

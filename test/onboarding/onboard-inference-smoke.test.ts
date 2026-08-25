@@ -30,6 +30,9 @@ describe("onboard inference smoke guard (#3253)", () => {
       const registryPath = JSON.stringify(
         path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
       );
+      const onboardScriptMocksPath = JSON.stringify(
+        path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -67,6 +70,8 @@ const normalize = (command) => (Array.isArray(command) ? command.join(" ") : Str
 runner.run = (command) => {
   const text = normalize(command);
   calls.push(["run", text]);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (text.includes("provider") && text.includes("upsert")) {
     return { status: 0, stdout: "Created provider compatible-endpoint\n", stderr: "" };
   }
