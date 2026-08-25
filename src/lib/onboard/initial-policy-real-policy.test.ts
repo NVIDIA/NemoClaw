@@ -238,12 +238,12 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
-  it("limits NemoCUA managed inference to the prepared image clients (#9649)", () => {
+  it("limits NemoCUA to inference and selected services despite generic preset inputs (#10289)", () => {
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(
         repoPath("agents", "nemocua", "policy-additions.yaml"),
-        [],
-        { agentName: "nemocua" },
+        ["telegram"],
+        { agentName: "nemocua", additionalPresets: ["npm"] },
       ),
     );
 

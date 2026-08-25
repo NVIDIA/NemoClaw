@@ -466,6 +466,7 @@ function resolveInitialSandboxCreatePolicy(
         materializeCuaServicePolicy(basePolicy, requireCuaServiceEndpoints()),
         "nemoclaw-cua-policy",
       );
+      return result([]);
     }
     // Fail closed: the OpenClaw OTEL preset is added at create time only when the
     // selected policy tier is known and is not Restricted. When the tier is null
