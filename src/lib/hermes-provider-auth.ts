@@ -12,6 +12,7 @@
 import type { StdioOptions } from "node:child_process";
 
 import * as oauth from "./oauth-device-code";
+import { checkOpenAiInferenceProviderProfile } from "./onboard/inference-providers/provider-profile";
 
 const onboardProviders = require("./onboard/providers") as {
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
@@ -58,6 +59,7 @@ export type RunOpenshell = (
     env?: NodeJS.ProcessEnv;
     stdio?: StdioOptions;
     ignoreError?: boolean;
+    suppressOutput?: boolean;
     timeout?: number;
   },
 ) => RunOpenshellResult;
@@ -121,6 +123,10 @@ export function registerHermesInferenceProvider(
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) {
     throw new Error("Hermes Provider credential is empty");
+  }
+  const profile = checkOpenAiInferenceProviderProfile({ runOpenshell });
+  if (!profile.ok) {
+    throw new Error(profile.messages.join("\n"));
   }
   const result = onboardProviders.upsertProvider(
     HERMES_PROVIDER_NAME,
