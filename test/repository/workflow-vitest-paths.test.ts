@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const WORKFLOW_ROOTS = [".github/actions", ".github/workflows"];
 const TEST_PATH_PATTERN =
-  /\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.test\.(?:[cm]?js|[cm]?ts)\b/gu;
+  /\b(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.test\.(?:[cm]?js|[cm]?ts)\b/gu;
 
 function yamlFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -35,8 +35,9 @@ describe("GitHub workflow Vitest paths", () => {
   });
 
   it("discovers co-located source test references", () => {
-    const source = "npx vitest run src/lib/onboard/preflight.test.ts";
+    const source = "npx vitest run smoke.test.ts src/lib/onboard/preflight.test.ts";
     expect(Array.from(source.matchAll(TEST_PATH_PATTERN), (match) => match[0])).toEqual([
+      "smoke.test.ts",
       "src/lib/onboard/preflight.test.ts",
     ]);
   });
