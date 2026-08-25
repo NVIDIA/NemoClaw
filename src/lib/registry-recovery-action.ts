@@ -240,7 +240,8 @@ function seedRecoveryMetadata(
       provider: session.provider || null,
       nimContainer: session.nimContainer || null,
       policyPresets: session.policyPresets || null,
-      policyAuthority: session.policyAuthority ?? undefined,
+      policyAuthority:
+        session.policyAuthority === "externally-managed" ? "externally-managed" : undefined,
       agent: session.agent || null,
       endpointUrl: session.endpointUrl ?? null,
       credentialEnv: session.credentialEnv ?? null,

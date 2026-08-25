@@ -168,6 +168,26 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(mockRegistryState.sandboxes.external).not.toHaveProperty("policyPresetsFinalized");
   });
 
+  it("keeps recovered managed policy authority unknown without a creation receipt (#9833)", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "managed-without-receipt",
+      provider: "nvidia",
+      model: "nemotron",
+      policyPresets: ["npm"],
+      policyAuthority: "nemoclaw-managed",
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(
+      result.sandboxes.find((sandbox) => sandbox.name === "managed-without-receipt"),
+    ).not.toHaveProperty("policyAuthority");
+  });
+
   it("preserves recorded policy authority and attribution during session recovery (#9833)", async () => {
     mockRegistryState.sandboxes.alpha = {
       name: "alpha",
