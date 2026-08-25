@@ -3902,7 +3902,7 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 | Flag | Description |
 |------|-------------|
-| `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
+| `--check` | Inspect sandbox state without rebuilding. Exits nonzero when it reports stale state, an unknown version, a backup recovery condition, or a sandbox missing from its recorded gateway. Inspect each diagnostic before you select a remediation. |
 | `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
 | `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
