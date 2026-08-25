@@ -87,21 +87,17 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // body for any request (validation in selectAndValidateOllamaModel requires
   // a successful tool-call response). The /api/tags response is shaped like
   // ollama's daemon and is consulted by validation helpers in inference/local.
-  // The runner stub below returns a valid empty inventory for the "stopped"
-  // case so model discovery can distinguish no models from a failed probe.
+  // The fake curl and runner stub below return the same scenario inventory.
+  // This keeps direct spawn and injected capture paths aligned.
   const toolCallBody =
     '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
   // /api/generate body — validateOllamaModel parses this and looks for an
   // `error` key. A healthy default; #4365 scenarios override with a runner-
   // crash payload to drive the daemonFailure path.
   const generateBody = opts.ollamaGenerateBody ?? '{"response":"hello"}';
-  // /api/tags body. local.ts destructures `runCapture` at module load time,
-  // BEFORE the test mutates runner.runCapture — so `getOllamaModelOptions`
-  // (in local.ts) still calls through to the real spawnSync and lands on
-  // this fake curl. Returning a tag matching the bootstrap fallback
-  // (smallest registry entry) keeps the menu deterministic with gpu=null
-  // and ensures the picked model is already-installed (no pull prompt).
-  const tagsBody = '{"models":[{"name":"qwen3.5:9b"}]}';
+  const tagsBody = opts.ollamaRunning
+    ? '{"models":[{"name":"qwen3.5:9b"}]}'
+    : '{"models":[]}';
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
