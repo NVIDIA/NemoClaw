@@ -432,6 +432,31 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
+export function finalizeSandboxRouteReservation(
+  name: string,
+  sessionId: string,
+): boolean {
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (!current) return false;
+    if (
+      current.pendingRouteReservation !== true &&
+      current.reservationSessionId === undefined
+    ) {
+      return true;
+    }
+    if (!sessionId || current.reservationSessionId !== sessionId) return false;
+    data.sandboxes[name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+      reservationSessionId: undefined,
+    };
+    save(data);
+    return true;
+  });
+}
+
 /** Atomically publish a pending registration and preserve its initial-default claim. */
 export function finalizePendingSandboxRegistration(name: string): boolean {
   return withLock(() => {

@@ -316,6 +316,76 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("publishes a reused registered sandbox only for the owning onboarding session", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+
+      expect(
+        registry.finalizeSandboxRouteReservation("alpha", "session-other"),
+      ).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+
+      expect(
+        registry.finalizeSandboxRouteReservation("alpha", "session-owner"),
+      ).toBe(true);
+      expect(registry.getSandbox("alpha")).toEqual(
+        expect.not.objectContaining({
+          pendingRouteReservation: expect.anything(),
+          reservationSessionId: expect.anything(),
+        }),
+      );
+      expect(registry.getDefault()).toBe("alpha");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an already-published sandbox registration", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+
+      expect(
+        registry.finalizeSandboxRouteReservation("alpha", "session-owner"),
+      ).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(registry.getSandbox("alpha")!)).toBe(true);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("atomically consumes only the exact qualified route reservation (#9203)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

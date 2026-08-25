@@ -3308,10 +3308,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
-
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+            finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>

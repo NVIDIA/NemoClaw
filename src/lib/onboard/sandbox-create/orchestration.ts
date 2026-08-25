@@ -454,6 +454,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hermesDashboardForwarding,
         updateReusedSandboxMetadata,
       }));
+      note(`  [reuse] Skipping sandbox (${sandboxName})`);
     };
     if (recreateRuntime.acceptedTarget) {
       await restoreReusedSandboxDashboard(true);
@@ -724,9 +725,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   "  [non-interactive] Set NEMOCLAW_RECREATE_SANDBOX=1 (or --recreate-sandbox) to force recreation.",
                 );
               } else {
-                note(
-                  `  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`,
-                );
                 note(
                   "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
                 );
