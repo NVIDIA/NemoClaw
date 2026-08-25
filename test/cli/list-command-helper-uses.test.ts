@@ -59,7 +59,7 @@ describe("list-command-helper-uses", () => {
   it("finds default-import runner helpers", () => {
     const rootDir = makeFixture("nemoclaw-cmd-helper-", {
       "src/runner.ts": "export default function run(cmd: readonly string[]) { return cmd; }\n",
-      "src/app.ts": 'import run from "../runner";\nrun(["podman", "ps"]);\n',
+      "src/app.ts": 'import run from "./runner";\nrun(["podman", "ps"]);\n',
     });
 
     const matches = parseJsonOutput<HelperMatch[]>(

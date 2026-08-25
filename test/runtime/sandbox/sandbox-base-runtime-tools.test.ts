@@ -9,7 +9,7 @@ import { BASE_APT_SECURITY_FUNCTIONS } from "../../helpers/base-apt-security-fun
 import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
 import { stageFixedParser, useRealPatchedParser } from "../../helpers/python-parser-security-fixture";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const MANAGED_BASE_DOCKERFILES = [
   DOCKERFILE_BASE,
