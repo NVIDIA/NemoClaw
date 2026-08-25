@@ -300,6 +300,14 @@ if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
   exit 0
 fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export openai --output json" ]; then
+  printf '%s\n' '{"id":"openai","credentials":[],"endpoints":[],"binaries":[],"inference_capable":true}'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export nemoclaw-mcp-v1 --output json" ]; then
+  printf '%s\n' '{"id":"nemoclaw-mcp-v1","credentials":[],"endpoints":[],"binaries":[],"inference_capable":false}'
+  exit 0
+fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
   printf '%s\n' 'No providers attached to sandbox alpha.'
   exit 0
@@ -391,6 +399,14 @@ if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
   exit 0
 fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export openai --output json" ]; then
+  printf '%s\n' '{"id":"openai","credentials":[],"endpoints":[],"binaries":[],"inference_capable":true}'
+  exit 0
+fi
+if [ "$1 $2 $3 $4 $5 $6" = "provider profile export nemoclaw-mcp-v1 --output json" ]; then
+  printf '%s\n' '{"id":"nemoclaw-mcp-v1","credentials":[],"endpoints":[],"binaries":[],"inference_capable":false}'
+  exit 0
+fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
   printf '%s\n' 'No providers attached to sandbox alpha.'
   exit 0
@@ -477,6 +493,7 @@ bridge.addMcpBridge("alpha", {
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -490,6 +507,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
