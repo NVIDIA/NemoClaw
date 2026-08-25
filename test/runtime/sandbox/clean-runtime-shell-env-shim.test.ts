@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const CLEAN_SCRIPT = path.join(
   import.meta.dirname,
   "..",
+  "..",
+  "..",
   "scripts",
   "lib",
   "clean_runtime_shell_env_shim.py",

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
-  path.join(import.meta.dirname, "../..", "src", "lib", "policy", "index.ts"),
+  path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
 ) as typeof import("../../../src/lib/policy");
 const policyAuthority = requireForTest(
   path.join(

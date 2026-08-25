@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "nemoclaw-start.sh");
 const NEMOTRON_FIX_SOURCE = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "nemoclaw-blueprint",
   "scripts",
   "nemotron-inference-fix.js",

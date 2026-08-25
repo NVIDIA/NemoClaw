@@ -35,7 +35,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../src/lib/name-validation.js";
 
-const START_SCRIPT = path.resolve(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const START_SCRIPT = path.resolve(import.meta.dirname, "..", "../scripts/nemoclaw-start.sh");
 
 function runtimeShellEnvBlock(source: string): string {
   const start = source.indexOf("write_runtime_shell_env() {");
