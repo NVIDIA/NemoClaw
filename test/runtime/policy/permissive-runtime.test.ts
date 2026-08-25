@@ -61,6 +61,63 @@ const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
   "utf8",
 );
 
+type SlackEndpoint = {
+  access?: string;
+  credential_binding?: { provider?: string };
+  host?: string;
+  rules?: Array<{ allow?: { method?: string; path?: string } }>;
+};
+
+function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): void {
+  expect(
+    endpoints.map((endpoint) => ({
+      access: endpoint.access,
+      host: endpoint.host,
+      provider: endpoint.credential_binding?.provider,
+      routes:
+        endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
+        [],
+    })),
+  ).toEqual([
+    {
+      access: undefined,
+      host: "slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["POST /api/apps.connections.open"],
+    },
+    {
+      access: "full",
+      host: "slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: "full",
+      host: "api.slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: "full",
+      host: "hooks.slack.com",
+      provider: "hermes-box-slack-bridge",
+      routes: [],
+    },
+    {
+      access: undefined,
+      host: "wss-primary.slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["GET /**", "WEBSOCKET_TEXT /**"],
+    },
+    {
+      access: undefined,
+      host: "wss-backup.slack.com",
+      provider: "hermes-box-slack-app",
+      routes: ["GET /**", "WEBSOCKET_TEXT /**"],
+    },
+  ]);
+}
+
 const tempFilesToClean: string[] = [];
 
 function trackTempForCleanup(out: string, basePath: string): void {
@@ -182,12 +239,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const policy = YAML.parse(stagedPolicy);
-    const endpoints = policy.network_policies.slack.endpoints as Array<{
-      credential_binding?: { provider?: string };
-    }>;
-    expect(
-      [...new Set(endpoints.map((endpoint) => endpoint.credential_binding?.provider))].sort(),
-    ).toEqual(["hermes-box-slack-app", "hermes-box-slack-bridge"]);
+    expectExactHermesSlackCredentialRoutes(policy.network_policies.slack.endpoints);
     expect(policy.network_policies.discord).toBeUndefined();
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
@@ -227,6 +279,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     const policies = YAML.parse(stagedPolicy).network_policies;
     expect(policies.discord).toBeDefined();
     expect(policies.slack).toBeDefined();
+    expectExactHermesSlackCredentialRoutes(policies.slack.endpoints);
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
