@@ -40,6 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
     existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
