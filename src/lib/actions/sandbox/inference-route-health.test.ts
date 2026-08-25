@@ -137,7 +137,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
 
     expect(result.ok).toBe(false);
     expect(result.failureLabel).toBe("unreachable");
-    expect(result.detail).toContain("only accepted for Deep Agents Code with OpenRouter");
+    expect(result.detail).toContain("never validated against a model catalog");
   });
 
   it("fails closed for a non-DCode agent when the route 404s and invocation was never attempted", () => {
@@ -203,6 +203,34 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
 
     expect(result.ok).toBe(false);
   });
+
+  it.each([401, 403])(
+    "keeps a credential-gated HTTP %s route healthy when the invocation succeeds (#6192)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: true },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it.each([401, 403])(
+    "fails a credential-gated HTTP %s route when the invocation fails (#6192)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: false, detail: "provider rejected the request", httpStatus },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(false);
+    },
+  );
 
   it("leaves a strictly healthy 2xx route unaffected for any agent", () => {
     const result = buildSandboxInferenceRouteHealth(

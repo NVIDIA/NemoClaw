@@ -227,11 +227,15 @@ export function isDcodeOpenRouterModelsRoute404(
   );
 }
 
-// A route status outside 200-299 only counts toward health for the Deep Agents
-// Code and OpenRouter exception above, and only when a bounded inference
-// request proves the route serves the selected model. Every other agent and
-// provider must fail closed on a non-2xx route status, even when an invocation
-// happens to succeed against it, so `status` cannot report Ready for a route
+// A models route that answers but is credential-gated (401/403) stays
+// authoritative through one successful inference request, because the request
+// is the evidence that matters and the route itself did answer (#6192).
+//
+// HTTP 404 is the one status that request cannot vouch for: it means the model
+// catalog is absent, so nothing validated the selected model against the
+// provider. Only Deep Agents Code on OpenRouter is expected to answer 404
+// (#9834), and even there the invocation must succeed. Every other agent and
+// provider fails closed on 404, so `status` cannot report Ready for a route
 // that genuine model-list validation would reject (#10080).
 function routeStatusAccepted(
   gateway: SandboxInferenceRouteHealth,
@@ -239,7 +243,10 @@ function routeStatusAccepted(
   context: SandboxInferenceRouteHealthContext,
 ): boolean {
   if (gateway.httpStatus >= 200 && gateway.httpStatus < 300) return true;
-  return isDcodeOpenRouterModelsRoute404(context, gateway.httpStatus) && invocation?.ok === true;
+  if (gateway.httpStatus === 404) {
+    return isDcodeOpenRouterModelsRoute404(context, gateway.httpStatus) && invocation?.ok === true;
+  }
+  return invocation?.ok === true;
 }
 
 export function buildSandboxInferenceRouteHealth(
@@ -261,8 +268,10 @@ export function buildSandboxInferenceRouteHealth(
             ...invoked,
             ok: false,
             detail:
-              `Inference gateway served a request, but HTTP ${gateway.httpStatus} on ${endpoint} ` +
-              `is only accepted for Deep Agents Code with OpenRouter; treating this route as not ready.`,
+              `Inference gateway served a request, but ${endpoint} returned HTTP ` +
+              `${gateway.httpStatus}, so the selected model was never validated against a model ` +
+              `catalog. Only Deep Agents Code with OpenRouter is expected to answer that; ` +
+              `treating this route as not ready.`,
             failureLabel: "unreachable" as const,
           }
         : invoked;
