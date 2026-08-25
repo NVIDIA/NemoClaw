@@ -308,12 +308,12 @@ describe("platform helpers", () => {
           platform: "darwin",
           home,
           existsSync: (candidate) => sockets.has(candidate),
-          probeDockerHost: (dockerHost) => {
-            if (!dockerHost) return { reachable: false, identity: "unknown" };
-            return dockerHost === `unix://${dockerDesktopSocket}`
-              ? { reachable: true, identity: "docker" }
-              : { reachable: true, identity: "unknown" };
-          },
+          probeDockerHost: (dockerHost) =>
+            !dockerHost
+              ? { reachable: false, identity: "unknown" }
+              : dockerHost === `unix://${dockerDesktopSocket}`
+                ? { reachable: true, identity: "docker" }
+                : { reachable: true, identity: "unknown" },
         }),
       ).toEqual({
         dockerHost: `unix://${dockerDesktopSocket}`,
