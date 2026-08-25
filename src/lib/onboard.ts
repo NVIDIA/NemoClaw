@@ -209,10 +209,10 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
+const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
 const {
   checkOllamaPortsOrWarn,
   assertOllamaUpgradeApplied,
@@ -1714,17 +1714,17 @@ async function selectAndValidateOllamaModel(
     promptYesNoOrDefault(question, null, defaultIsYes);
   const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
-    const installedModels = getOllamaModelOptions();
+    const installedModels = localInference.getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (lockedModel) {
       model = lockedModel;
     } else if (isNonInteractive()) {
-      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
+      model = resolveNonInteractiveModel(requestedModel, recoveredModel, gpu, installedModels);
     } else {
       model = await promptOllamaModel(gpu, {
-        defaultModel:
-          promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null,
+        defaultModel: isSafeModelId(promptDefaultModel ?? "") ? promptDefaultModel : null,
         excludeModels: probeFailures.excludedModels(),
+        installedModels,
       });
     }
     if (isBackToSelection(model)) {
