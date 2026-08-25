@@ -10,6 +10,10 @@ import type { SandboxEntry } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
+import type {
+  ManagedHermesStateVolumeCleanupResult,
+  ManagedHermesStateVolumeContext,
+} from "../managed-workload/hermes-state-volume";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
@@ -36,6 +40,66 @@ type SandboxRecreateReasonInput = {
   credentialRotationChanged: boolean;
   existingSandboxState: string;
 };
+
+type RecreatedSourceHermesStateVolumeCleanupInput = {
+  readonly sandboxName: string;
+  readonly sourceEntry: SandboxEntry | null;
+  readonly targetKeepsManagedHermesStateVolume: boolean;
+};
+
+type RecreatedSourceHermesStateVolumeCleanupDeps = {
+  readonly normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string;
+  readonly removeManagedHermesStateVolume: (
+    context: ManagedHermesStateVolumeContext,
+  ) => ManagedHermesStateVolumeCleanupResult;
+  readonly note: (message: string) => void;
+  readonly warn: (message: string) => void;
+  readonly redact: (message: string) => string;
+};
+
+type RecreatedSourceHermesStateVolumeFinalizationInput =
+  RecreatedSourceHermesStateVolumeCleanupInput & {
+    readonly sourceConfirmedAbsent: boolean;
+  };
+
+type RecreatedSourceHermesStateVolumeFinalizationDeps =
+  RecreatedSourceHermesStateVolumeCleanupDeps & {
+    readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
+  };
+
+export function cleanupRecreatedSourceHermesStateVolume(
+  input: RecreatedSourceHermesStateVolumeCleanupInput,
+  deps: RecreatedSourceHermesStateVolumeCleanupDeps,
+): void {
+  if (!input.sourceEntry || input.targetKeepsManagedHermesStateVolume) return;
+
+  const cleanup = deps.removeManagedHermesStateVolume({
+    agentName: input.sourceEntry.agent,
+    runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
+    sandboxName: input.sandboxName,
+    workloadKind: input.sourceEntry.workload?.kind ?? "",
+  });
+  if (cleanup.status === "failed") {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is gone, but its managed Hermes state volume '${cleanup.volumeName}' could not be removed: ${deps.redact(cleanup.detail)}. The sandbox registry entry was preserved so exact cleanup can be retried.`,
+    );
+  }
+  if (cleanup.status === "not-owned") {
+    deps.warn(`  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`);
+  } else if (cleanup.status === "removed") {
+    deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
+  }
+}
+
+export function finalizeRecreatedSourceHermesStateVolume(
+  input: RecreatedSourceHermesStateVolumeFinalizationInput,
+  deps: RecreatedSourceHermesStateVolumeFinalizationDeps,
+): void {
+  if (!input.sourceConfirmedAbsent || !input.sourceEntry) return;
+
+  cleanupRecreatedSourceHermesStateVolume(input, deps);
+  deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
+}
 
 export function readManagedDcodeCreateSelectionDrift(
   input: {
@@ -117,9 +181,7 @@ export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
-  return Boolean(
-    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
-  );
+  return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
 }
 
 function shouldRefuseManagedMcpRecreate(
@@ -544,6 +606,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         workloadKind: workload.source.kind,
       });
+    const finalizeRecreatedSourceHermesVolume = (
+      sourceConfirmedAbsent: boolean,
+      sourceEntry: SandboxEntry | null,
+      targetKeepsManagedHermesStateVolume: boolean,
+    ) =>
+      finalizeRecreatedSourceHermesStateVolume(
+        {
+          sandboxName,
+          sourceConfirmedAbsent,
+          sourceEntry,
+          targetKeepsManagedHermesStateVolume,
+        },
+        {
+          normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
+          removeManagedHermesStateVolume: managedWorkloadOnboard.removeManagedHermesStateVolume,
+          removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
+          note,
+          warn: (message) => console.warn(message),
+          redact,
+        },
+      );
     // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
     const sandboxWasLiveDefault =
       liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
@@ -894,7 +977,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
-      sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
+      finalizeRecreatedSourceHermesVolume(true, previousEntry, hermesStateVolumeLifecycle !== null);
       await hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(
         hermesApiPortReservationInput,
       );
@@ -905,6 +988,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      finalizeRecreatedSourceHermesVolume(
+        !liveExists,
+        existingEntry,
+        hermesStateVolumeLifecycle !== null,
+      );
     }
     sandboxCreatePlanMaterialization.applyOrdinaryExtraProviderReconciliation(
       agentCreateInput.hermesPortableLifecycle,

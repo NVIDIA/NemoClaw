@@ -20,10 +20,7 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import {
-  isShippedManagedImageAgent,
-  managedImageRuntimeIdentity,
-} from "../managed-image/contract";
+import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -35,6 +32,7 @@ import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
@@ -69,6 +67,7 @@ import {
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
   prepareManagedHermesStateVolume,
+  removeManagedHermesStateVolume,
   type ManagedHermesStateVolumeContext,
   type ManagedHermesStateVolumeDeps,
 } from "./hermes-state-volume";
@@ -81,6 +80,8 @@ type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
 type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+
+export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
