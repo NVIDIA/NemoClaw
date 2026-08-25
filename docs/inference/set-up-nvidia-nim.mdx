@@ -63,7 +63,9 @@ When `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw p
 ## Understand Model Detection
 
 If the NIM container exits before its health endpoint becomes ready, onboarding stops and prints the last container log lines.
-When onboarding detects this warning in recent NIM logs, it ends the health wait before the 1,200-second timeout and selects NVIDIA Endpoints.
+If recent NIM logs report that estimated memory exceeds usable GPU memory, onboarding ends the health wait before the 1,200-second timeout and removes the NIM container.
+After confirmed removal, onboarding selects NVIDIA Endpoints.
+If removal cannot be confirmed, onboarding stops without changing providers.
 After NIM becomes healthy, NemoClaw reads `/v1/models` and uses the served model ID for validation when it differs from the catalog name.
 NemoClaw rejects unsafe served IDs instead of writing them into sandbox configuration.
 

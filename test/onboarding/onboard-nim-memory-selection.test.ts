@@ -7,10 +7,10 @@ import { describe, it } from "vitest";
 import {
   createOnboardProcessWorkspace,
   type OnboardProcessWorkspace,
-} from "./helpers/onboard-child-process-harness.js";
-import { onboardChildRuntimeSource } from "./helpers/onboard-child-runtime.js";
+} from "../helpers/onboard-child-process-harness.js";
+import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 const credentialsPath = JSON.stringify(
   path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
 );
