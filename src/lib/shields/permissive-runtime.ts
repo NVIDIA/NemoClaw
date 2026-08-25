@@ -16,12 +16,8 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
-import {
-  listMessagingPolicyPresetMetadata,
-  listMessagingProviderNamesForChannel,
-} from "../messaging/channels/metadata.js";
 import type { MessagingAgentId } from "../messaging/manifest";
-import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
+import { composeCredentialBoundMessagingPolicies } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
 export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
@@ -113,23 +109,6 @@ export function buildRuntimePermissivePolicy(
   if (deps.sandboxName !== undefined && deps.messagingAgent === undefined) {
     throw new Error("Cannot compose messaging bindings without an agent identity");
   }
-  const messagingPolicies =
-    deps.sandboxName && deps.messagingAgent
-      ? listCredentialBoundMessagingPolicies(deps.sandboxName, deps.messagingAgent)
-      : [];
-  const preservedMessagingPolicyKeys = new Set(
-    messagingPolicies
-      .filter((policy) =>
-        networkPoliciesUseExactCredentialProviders(
-          live,
-          policy.livePolicyKeys,
-          policy.providerNames,
-        ),
-      )
-      .map((policy) => policy.permissivePolicyKey),
-  );
-  const preserveCredentialBinding = preservedMessagingPolicyKeys.size > 0;
-
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
   // MCP entries must survive the complete-policy replacement.
@@ -169,25 +148,13 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined) {
-    const networkPolicies = base.network_policies;
-    if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
-      const policies = networkPolicies as Record<string, unknown>;
-      for (const policy of messagingPolicies) {
-        if (!preservedMessagingPolicyKeys.has(policy.permissivePolicyKey)) {
-          delete policies[policy.permissivePolicyKey];
-        }
-      }
-    }
-  }
-  if (deps.sandboxName !== undefined && preserveCredentialBinding) {
-    const materialized = materializeMessagingPolicySandboxName(
+  if (deps.sandboxName !== undefined && deps.messagingAgent !== undefined) {
+    const materialized = composeCredentialBoundMessagingPolicies(
       YAML.stringify(base),
+      deps.livePolicyYaml,
       deps.sandboxName,
+      deps.messagingAgent,
     );
-    if (materialized === null) {
-      throw new Error("Cannot materialize the Shields-down credential provider binding");
-    }
     base = safeYamlObject(materialized);
     if (!base) {
       throw new Error("Cannot parse the materialized Shields-down credential provider binding");
@@ -381,62 +348,6 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
-}
-
-interface CredentialBoundMessagingPolicy {
-  livePolicyKeys: readonly string[];
-  permissivePolicyKey: string;
-  providerNames: readonly string[];
-}
-
-function listCredentialBoundMessagingPolicies(
-  sandboxName: string,
-  agent: MessagingAgentId,
-): CredentialBoundMessagingPolicy[] {
-  return listMessagingPolicyPresetMetadata({ agent }).flatMap((policy) => {
-    const providerNames = listMessagingProviderNamesForChannel(sandboxName, policy.channelId, {
-      agent,
-    });
-    if (providerNames.length === 0) return [];
-    return [
-      {
-        livePolicyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
-        permissivePolicyKey: policy.presetName,
-        providerNames,
-      },
-    ];
-  });
-}
-
-function networkPoliciesUseExactCredentialProviders(
-  policy: Record<string, unknown> | null,
-  policyNames: readonly string[],
-  providerNames: readonly string[],
-): boolean {
-  const networkPolicies = policy?.network_policies;
-  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
-    return false;
-  }
-  const liveProviders = new Set<string>();
-  for (const policyName of policyNames) {
-    const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
-    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
-      continue;
-    }
-    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
-    if (!Array.isArray(endpoints)) continue;
-    for (const endpoint of endpoints) {
-      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
-      const binding = (endpoint as Record<string, unknown>).credential_binding;
-      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
-      const provider = (binding as Record<string, unknown>).provider;
-      if (typeof provider === "string") liveProviders.add(provider);
-    }
-  }
-  return (
-    liveProviders.size === providerNames.length &&
-    providerNames.every((providerName) => liveProviders.has(providerName))
-  );
 }
 
 function readStringList(

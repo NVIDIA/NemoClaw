@@ -8,7 +8,10 @@ import YAML from "yaml";
 import { isValidName } from "../../sandbox-name-contract";
 import { ROOT } from "../../state/paths";
 import type { MessagingAgentId } from "../manifest";
-import { listMessagingPolicyPresetMetadata } from "./metadata";
+import {
+  listMessagingPolicyPresetMetadata,
+  listMessagingProviderNamesForChannel,
+} from "./metadata";
 
 type PolicyPresetLocator = {
   readonly channelId: string;
@@ -65,6 +68,111 @@ export function materializeMessagingPolicySandboxName(
   if (!content.includes("{sandboxName}")) return content;
   if (sandboxName === undefined || sandboxName === null || !isValidName(sandboxName)) return null;
   return content.replaceAll("{sandboxName}", sandboxName);
+}
+
+interface CredentialBoundMessagingPolicy {
+  readonly livePolicyKeys: readonly string[];
+  readonly permissivePolicyKey: string;
+  readonly providerNames: readonly string[];
+}
+
+function parsePolicyMapping(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = YAML.parse(content);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function listCredentialBoundMessagingPolicies(
+  sandboxName: string,
+  agent: MessagingAgentId,
+): CredentialBoundMessagingPolicy[] {
+  return listMessagingPolicyPresetMetadata({ agent }).flatMap((policy) => {
+    const providerNames = listMessagingProviderNamesForChannel(sandboxName, policy.channelId, {
+      agent,
+    });
+    if (providerNames.length === 0) return [];
+    return [
+      {
+        livePolicyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
+        permissivePolicyKey: policy.presetName,
+        providerNames,
+      },
+    ];
+  });
+}
+
+function networkPoliciesUseExactCredentialProviders(
+  policy: Record<string, unknown> | null,
+  policyNames: readonly string[],
+  providerNames: readonly string[],
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  const liveProviders = new Set<string>();
+  for (const policyName of policyNames) {
+    const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
+    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+      continue;
+    }
+    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const endpoint of endpoints) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const binding = (endpoint as Record<string, unknown>).credential_binding;
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      const provider = (binding as Record<string, unknown>).provider;
+      if (typeof provider === "string") liveProviders.add(provider);
+    }
+  }
+  return (
+    liveProviders.size === providerNames.length &&
+    providerNames.every((providerName) => liveProviders.has(providerName))
+  );
+}
+
+/**
+ * Keep credential-bound messaging routes only when the live policy proves the
+ * complete provider set for that channel. Missing, partial, or mismatched
+ * provider state omits the route instead of submitting unresolved bindings.
+ */
+export function composeCredentialBoundMessagingPolicies(
+  targetPolicyYaml: string,
+  livePolicyYaml: string,
+  sandboxName: string,
+  agent: MessagingAgentId,
+): string {
+  const target = parsePolicyMapping(targetPolicyYaml);
+  if (!target) throw new Error("Credential-bound messaging target policy must be a YAML mapping");
+  const live = parsePolicyMapping(livePolicyYaml);
+  const messagingPolicies = listCredentialBoundMessagingPolicies(sandboxName, agent);
+  const targetPolicies = target.network_policies;
+  if (targetPolicies && typeof targetPolicies === "object" && !Array.isArray(targetPolicies)) {
+    const networkPolicies = targetPolicies as Record<string, unknown>;
+    for (const policy of messagingPolicies) {
+      if (
+        !networkPoliciesUseExactCredentialProviders(
+          live,
+          policy.livePolicyKeys,
+          policy.providerNames,
+        )
+      ) {
+        delete networkPolicies[policy.permissivePolicyKey];
+      }
+    }
+  }
+  const materialized = materializeMessagingPolicySandboxName(YAML.stringify(target), sandboxName);
+  if (materialized === null) {
+    throw new Error("Cannot materialize the Shields-down credential provider binding");
+  }
+  return materialized;
 }
 
 function normalizeAgent(

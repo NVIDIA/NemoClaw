@@ -23,8 +23,9 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
-  materializeMessagingPolicySandboxName,
+  composeCredentialBoundMessagingPolicies,
 } from "../messaging/channels";
+import type { MessagingAgentId } from "../messaging/manifest";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
@@ -2921,18 +2922,22 @@ function applyPermissivePolicy(sandboxName: string): void {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
   const policyDocument = fs.readFileSync(policyPath, "utf-8");
-  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
-  if (materializedPolicy === null) {
-    throw new Error("Cannot materialize the permissive policy credential provider binding");
-  }
-
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
-  if (materializedPolicy === policyDocument) {
-    run(buildPolicySetCommand(policyPath, sandboxName));
-  } else {
-    setPolicyDocument(sandboxName, materializedPolicy);
+  let messagingAgent: MessagingAgentId = "openclaw";
+  try {
+    if (registry.getSandbox(sandboxName)?.agent === "hermes") messagingAgent = "hermes";
+  } catch {
+    // Unregistered or unreadable legacy state uses the OpenClaw fallback.
   }
+  const livePolicy = readCurrentSandboxPolicy(sandboxName) ?? "";
+  const composedPolicy = composeCredentialBoundMessagingPolicies(
+    policyDocument,
+    livePolicy,
+    sandboxName,
+    messagingAgent,
+  );
+  setPolicyDocument(sandboxName, composedPolicy);
   console.log("  Applied permissive policy.");
 }
 

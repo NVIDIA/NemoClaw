@@ -23,6 +23,7 @@ function parseResultPayload(stdout: string): { error: string } {
 
 function runPermissivePolicy(options: {
   agent?: "hermes" | "openclaw";
+  livePolicy?: string;
   policySetStatus: number;
   sandboxName: string;
 }): {
@@ -35,7 +36,12 @@ function runPermissivePolicy(options: {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-permissive-"));
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const policyOut = path.join(tmpDir, "policy.yaml");
+  const livePolicyPath = path.join(tmpDir, "live-policy.yaml");
   const stagedRecord = path.join(tmpDir, "staged.txt");
+  fs.writeFileSync(
+    livePolicyPath,
+    options.livePolicy ?? YAML.stringify({ version: 1, network_policies: {} }),
+  );
   const registration = options.agent
     ? `registry.registerSandbox(${JSON.stringify({
         name: options.sandboxName,
@@ -53,6 +59,10 @@ policies.applyPermissivePolicy(${JSON.stringify(options.sandboxName)});
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  cat ${JSON.stringify(livePolicyPath)}
+  exit 0
+fi
 if [ "$1 $2" = "policy set" ]; then
   policy_file=""
   while [ "$#" -gt 0 ]; do
@@ -105,6 +115,15 @@ describe("applyPermissivePolicy", () => {
     (_case, policySetStatus) => {
       const observed = runPermissivePolicy({
         agent: "hermes",
+        livePolicy: YAML.stringify({
+          network_policies: {
+            discord: {
+              endpoints: [
+                { credential_binding: { provider: "hermes-sandbox-discord-bridge" } },
+              ],
+            },
+          },
+        }),
         policySetStatus,
         sandboxName: "hermes-sandbox",
       });
@@ -139,7 +158,7 @@ describe("applyPermissivePolicy", () => {
     },
   );
 
-  it("binds Telegram and Slack credentials in the unregistered OpenClaw fallback policy", () => {
+  it("omits credential-bound routes from an unregistered OpenClaw fallback (#10153)", () => {
     const sandboxName = "fallback-openclaw";
     const observed = runPermissivePolicy({ policySetStatus: 0, sandboxName });
     try {
@@ -147,12 +166,47 @@ describe("applyPermissivePolicy", () => {
       expect(observed.stagedMode).toBe("600");
       expect(fs.existsSync(observed.stagedPath)).toBe(false);
       const policy = YAML.parse(observed.policy);
-      const telegramProviders = policy.network_policies.telegram.endpoints.map(
-        (endpoint: { credential_binding?: { provider?: string } }) =>
-          endpoint.credential_binding?.provider,
-      );
-      expect(new Set(telegramProviders)).toEqual(new Set([`${sandboxName}-telegram-bridge`]));
+      expect(policy.network_policies.telegram).toBeUndefined();
+      expect(policy.network_policies.slack).toBeUndefined();
+      expect(observed.policy).not.toContain("{sandboxName}");
+    } finally {
+      observed.cleanup();
+    }
+  });
 
+  it("retains OpenClaw routes when the live policy has each exact provider set (#10153)", () => {
+    const sandboxName = "configured-openclaw";
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      livePolicy: YAML.stringify({
+        network_policies: {
+          telegram_bot: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-telegram-bridge` } },
+            ],
+          },
+          slack: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-slack-app` } },
+              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
+            ],
+          },
+        },
+      }),
+      policySetStatus: 0,
+      sandboxName,
+    });
+    try {
+      expect(observed.result.status).toBe(0);
+      const policy = YAML.parse(observed.policy);
+      expect(
+        new Set(
+          policy.network_policies.telegram.endpoints.map(
+            (endpoint: { credential_binding?: { provider?: string } }) =>
+              endpoint.credential_binding?.provider,
+          ),
+        ),
+      ).toEqual(new Set([`${sandboxName}-telegram-bridge`]));
       const slackEndpoints = policy.network_policies.slack.endpoints as Array<{
         credential_binding?: { provider?: string };
         host?: string;
