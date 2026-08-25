@@ -273,6 +273,53 @@ export async function withWindowsMxcLocalSetupOwnership<T, R extends object>(inp
   }
 }
 
+export async function runWindowsMxcForwardCleanup(input: {
+  readonly childWasRunning: boolean;
+  readonly sandboxDeleteAccepted: boolean;
+  readonly stopChild: () => Promise<void>;
+  readonly terminateTrustedProcessIfAlive: () => Promise<boolean>;
+  readonly waitForListenerClosed: () => Promise<boolean>;
+  readonly waitForProcessExit: () => Promise<boolean>;
+}): Promise<{
+  readonly emergencyTerminationNeeded: boolean;
+  readonly failures: readonly unknown[];
+  readonly listenerStopped: boolean;
+  readonly processStopped: boolean;
+}> {
+  const failures: unknown[] = [];
+  let emergencyTerminationNeeded = input.childWasRunning && input.sandboxDeleteAccepted;
+  let listenerStopped = false;
+  let processStopped = false;
+
+  try {
+    await input.stopChild();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    if (await input.terminateTrustedProcessIfAlive()) emergencyTerminationNeeded = true;
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    processStopped = await input.waitForProcessExit();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    listenerStopped = await input.waitForListenerClosed();
+  } catch (error) {
+    failures.push(error);
+  }
+
+  return {
+    emergencyTerminationNeeded,
+    failures,
+    listenerStopped,
+    processStopped,
+  };
+}
+
 function buildWindowsMxcSetupFailureReceipt(
   inputs: WindowsMxcOpenClawQualificationInputs,
   processElevated: boolean,
@@ -2067,35 +2114,29 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         cleanupFailures.push(error);
       }
     }
-    try {
-      const forwardAlive =
-        trustedForwardProcess !== null &&
-        (await trustedProcessIsAlive(
-          trustedForwardProcess,
-          powershellPath,
-          controlEnvironment,
-          progress,
-        ));
-      if (forwardAlive && checks.sandboxDeleteAccepted) {
-        emergencyForwardTerminationNeeded = true;
-      }
-      if (forward && forward.exitCode === null) {
+    const forwardCleanup = await runWindowsMxcForwardCleanup({
+      childWasRunning: forward !== null && forward.exitCode === null,
+      sandboxDeleteAccepted: checks.sandboxDeleteAccepted,
+      stopChild: async () => {
+        if (forward === null || forward.exitCode !== null) return;
         forward.kill();
         await Promise.race([
           new Promise((resolve) => forward?.once("exit", resolve)),
           new Promise((resolve) => setTimeout(resolve, 5000)),
         ]);
-      }
-      if (
-        trustedForwardProcess !== null &&
-        (await trustedProcessIsAlive(
-          trustedForwardProcess,
-          powershellPath,
-          controlEnvironment,
-          progress,
-        ))
-      ) {
-        emergencyForwardTerminationNeeded = true;
+      },
+      terminateTrustedProcessIfAlive: async () => {
+        if (
+          trustedForwardProcess === null ||
+          !(await trustedProcessIsAlive(
+            trustedForwardProcess,
+            powershellPath,
+            controlEnvironment,
+            progress,
+          ))
+        ) {
+          return false;
+        }
         const terminateForward = await runCommand(
           taskkillPath,
           ["/PID", String(trustedForwardProcess.processId), "/T", "/F"],
@@ -2112,14 +2153,13 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
             progress,
           ))
         ) {
-          cleanupFailures.push(
-            new Error(
-              `OpenShell forward emergency termination failed: ${commandDetail(terminateForward)}`,
-            ),
+          throw new Error(
+            `OpenShell forward emergency termination failed: ${commandDetail(terminateForward)}`,
           );
         }
-      }
-      forwardProcessStopped =
+        return true;
+      },
+      waitForProcessExit: async () =>
         trustedForwardProcess === null
           ? forward === null || forward.exitCode !== null
           : await waitForTrustedProcessExit(
@@ -2127,16 +2167,19 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
               powershellPath,
               controlEnvironment,
               progress,
-            );
-      forwardListenerStopped = await waitForLoopbackListenerClosed({
-        environment: controlEnvironment,
-        port: forwardPort,
-        powershellPath,
-        progress,
-      });
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
+            ),
+      waitForListenerClosed: async () =>
+        await waitForLoopbackListenerClosed({
+          environment: controlEnvironment,
+          port: forwardPort,
+          powershellPath,
+          progress,
+        }),
+    });
+    emergencyForwardTerminationNeeded = forwardCleanup.emergencyTerminationNeeded;
+    forwardProcessStopped = forwardCleanup.processStopped;
+    forwardListenerStopped = forwardCleanup.listenerStopped;
+    cleanupFailures.push(...forwardCleanup.failures);
     try {
       writeStopMarkerOnce(stopPath);
       await heartbeatStopped(heartbeatPath);

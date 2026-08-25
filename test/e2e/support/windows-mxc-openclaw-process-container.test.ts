@@ -24,6 +24,7 @@ import {
   renderWindowsMxcFilesystemPolicy,
   renderWindowsMxcGatewayConfig,
   renderWindowsMxcOpenClawProbeAgent,
+  runWindowsMxcForwardCleanup,
   sameWindowsProcessIdentity,
   sandboxListContainsExactName,
   sha256File,
@@ -120,6 +121,43 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       cleanup: { localArtifactsRemoved: true },
       verdict: "fail",
     });
+  });
+
+  it("continues forward cleanup after a trusted process query fails (#8178)", async () => {
+    const events: string[] = [];
+    const result = await runWindowsMxcForwardCleanup({
+      childWasRunning: true,
+      sandboxDeleteAccepted: true,
+      stopChild: async () => {
+        events.push("stop-child");
+      },
+      terminateTrustedProcessIfAlive: async () => {
+        events.push("query-trusted-process");
+        throw new Error("injected process query failure");
+      },
+      waitForProcessExit: async () => {
+        events.push("wait-for-process-exit");
+        return true;
+      },
+      waitForListenerClosed: async () => {
+        events.push("wait-for-listener-close");
+        return true;
+      },
+    });
+
+    expect(events).toEqual([
+      "stop-child",
+      "query-trusted-process",
+      "wait-for-process-exit",
+      "wait-for-listener-close",
+    ]);
+    expect(result).toMatchObject({
+      emergencyTerminationNeeded: true,
+      listenerStopped: true,
+      processStopped: true,
+    });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toEqual(new Error("injected process query failure"));
   });
 
   it("requires exact identities and keeps the OpenClaw launch files under one artifact root (#8178)", () => {
