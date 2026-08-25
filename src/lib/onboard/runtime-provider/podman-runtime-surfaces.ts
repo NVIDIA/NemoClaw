@@ -47,7 +47,8 @@ export const NATIVE_PODMAN_RESOURCE_LABEL = "openshell.managed";
 export const NATIVE_PODMAN_RESOURCE_LABEL_VALUE = "true";
 
 type PodmanMount = Readonly<Record<string, unknown>>;
-const PODMAN_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
+const PODMAN_CONTAINER_ID = /^[a-f0-9]{64}$/u;
+const PODMAN_IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$/u;
 const PODMAN_STORAGE_PROBE_TIMEOUT_MS = 5_000;
 
 function mountRecord(value: unknown): PodmanMount | null {
@@ -59,6 +60,7 @@ function mountRecord(value: unknown): PodmanMount | null {
 function isMaterializedPodmanImageBind(
   value: PodmanMount | null,
   storageGraphRoot: string,
+  containerId: string,
 ): boolean {
   if (value?.Type !== "bind" || value.RW !== false) return false;
   const source = String(value.Source ?? "");
@@ -68,10 +70,13 @@ function isMaterializedPodmanImageBind(
   return (
     relative.length > 0 &&
     !path.isAbsolute(relative) &&
-    segments.length === 3 &&
-    segments[0] === "overlay" &&
-    Boolean(segments[1]) &&
-    segments[2] === "merged"
+    segments.length === 6 &&
+    segments[0] === "overlay-containers" &&
+    segments[1] === containerId &&
+    segments[2] === "userdata" &&
+    segments[3] === "overlay" &&
+    Boolean(segments[4]) &&
+    segments[5] === "merge"
   );
 }
 
@@ -94,8 +99,12 @@ export function resolvePodmanStorageGraphRoot(engine: PodmanBoundContainerEngine
 export function normalizePodmanLogicalMounts(
   mounts: readonly unknown[],
   storageGraphRoot: string,
+  containerId: string,
 ): readonly unknown[] {
   const normalizedGraphRoot = normalizedAbsolutePath(storageGraphRoot, "storage graphroot");
+  if (!PODMAN_CONTAINER_ID.test(containerId)) {
+    throw new Error("Native Podman container identity must be one full content ID.");
+  }
   const groups = new Map<string | number, unknown[]>();
   mounts.forEach((value, index) => {
     const destination = mountRecord(value)?.Destination;
@@ -119,8 +128,8 @@ export function normalizePodmanLogicalMounts(
       materializedBinds.length === 1 &&
       observed.length === 2 &&
       imageMounts[0]?.RW === false &&
-      PODMAN_IMAGE_CONTENT_ID.test(String(imageMounts[0]?.Source ?? "")) &&
-      isMaterializedPodmanImageBind(materializedBinds[0] ?? null, normalizedGraphRoot)
+      PODMAN_IMAGE_REFERENCE.test(String(imageMounts[0]?.Source ?? "")) &&
+      isMaterializedPodmanImageBind(materializedBinds[0] ?? null, normalizedGraphRoot, containerId)
     ) {
       normalized.push(imageMounts[0] as PodmanMount);
     } else {

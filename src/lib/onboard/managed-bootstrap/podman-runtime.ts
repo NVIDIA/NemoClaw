@@ -618,6 +618,7 @@ export function renderPodmanReplacementMountArgs(
   const mounts = normalizePodmanLogicalMounts(
     inspect.Mounts.map((value) => record(value, "mount")),
     storageGraphRoot,
+    String(inspect.Id ?? ""),
   ) as readonly JsonRecord[];
   const destinations = new Set<string>();
   for (const mount of mounts) {

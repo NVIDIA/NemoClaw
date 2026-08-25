@@ -264,7 +264,7 @@ function createContainerStateMutationHarness(
           false,
           false,
           state.runtimePid,
-          "openshell",
+          providerId === "podman" ? "true" : "openshell",
           "alpha",
           state.sandboxId,
           state.pidMode,
@@ -292,7 +292,7 @@ function createContainerStateMutationHarness(
               ? [
                   {
                     Type: "image",
-                    Source: `sha256:${"9".repeat(64)}`,
+                    Source: "ghcr.io/nvidia/openshell/supervisor:0.0.106",
                     Destination: "/opt/openshell/bin",
                     Mode: "",
                     RW: false,
@@ -300,7 +300,9 @@ function createContainerStateMutationHarness(
                   },
                   {
                     Type: "bind",
-                    Source: "/run/user/1000/containers/storage/overlay/example/merged",
+                    Source:
+                      "/run/user/1000/containers/storage/overlay-containers/" +
+                      `${DOCKER_STATE_MUTATION_RUNTIME_ID}/userdata/overlay/example/merge`,
                     Destination: "/opt/openshell/bin",
                     Mode: "",
                     RW: false,
@@ -644,6 +646,8 @@ function createContainerStateMutationHarness(
           engineOperation: "state-mutation",
           runtimeIdInspectField: "ID",
           privatePidMode: "private",
+          managedLabelKey: "openshell.managed",
+          managedLabelValue: "true",
         });
   const sandbox: SandboxEntry = {
     name: "alpha",

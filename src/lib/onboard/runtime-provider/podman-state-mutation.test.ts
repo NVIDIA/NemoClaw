@@ -67,6 +67,11 @@ describe("Podman runtime-provider state mutation", () => {
       providerId: "podman",
       phase: "fenced",
     });
+    expect(
+      runtime.capture.mock.calls.some(([, args]) =>
+        (args as readonly string[]).includes("label=openshell.managed=true"),
+      ),
+    ).toBe(true);
   });
 
   it("rejects unrelated Podman mounts with the same destination", () => {

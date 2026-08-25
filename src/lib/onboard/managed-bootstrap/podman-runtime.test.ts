@@ -58,6 +58,7 @@ const IDENTITY = "1".repeat(64);
 const MANIFEST_DIGEST = `sha256:${"2".repeat(64)}` as const;
 const ORIGINAL_RUNTIME_ID = "2".repeat(64);
 const REPLACEMENT_RUNTIME_ID = "3".repeat(64);
+const SUPERVISOR_IMAGE = "ghcr.io/nvidia/openshell/supervisor:0.0.106";
 const LEASE_ID = "123e4567-e89b-42d3-a456-426614174000";
 const ENGINE_AUTHORITY_ID = `podman-sha256:${"4".repeat(64)}`;
 const STORAGE_GRAPH_ROOT = "/run/user/1000/containers/storage";
@@ -318,10 +319,11 @@ describe("Podman managed-bootstrap runtime surface", () => {
     expect(
       renderPodmanReplacementMountArgs(
         {
+          Id: ORIGINAL_RUNTIME_ID,
           Mounts: [
             {
               Type: "image",
-              Source: `sha256:${"9".repeat(64)}`,
+              Source: SUPERVISOR_IMAGE,
               Destination: "/opt/openshell/bin",
               RW: false,
             },
@@ -331,15 +333,16 @@ describe("Podman managed-bootstrap runtime surface", () => {
       ),
     ).toEqual([
       "--mount",
-      `type=image,source=sha256:${"9".repeat(64)},destination=/opt/openshell/bin,rw=false`,
+      `type=image,source=${SUPERVISOR_IMAGE},destination=/opt/openshell/bin,rw=false`,
     ]);
   });
 
   it("collapses Podman's materialized supervisor bind into its image-mount identity", () => {
-    const image = `sha256:${"9".repeat(64)}`;
+    const image = SUPERVISOR_IMAGE;
     expect(
       renderPodmanReplacementMountArgs(
         {
+          Id: ORIGINAL_RUNTIME_ID,
           Mounts: [
             {
               Type: "image",
@@ -349,7 +352,9 @@ describe("Podman managed-bootstrap runtime surface", () => {
             },
             {
               Type: "bind",
-              Source: `${STORAGE_GRAPH_ROOT}/overlay/example/merged`,
+              Source:
+                `${STORAGE_GRAPH_ROOT}/overlay-containers/${ORIGINAL_RUNTIME_ID}` +
+                "/userdata/overlay/example/merge",
               Destination: "/opt/openshell/bin",
               RW: false,
             },
@@ -364,6 +369,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
     expect(() =>
       renderPodmanReplacementMountArgs(
         {
+          Id: ORIGINAL_RUNTIME_ID,
           Mounts: [
             {
               Type: "bind",
@@ -384,20 +390,23 @@ describe("Podman managed-bootstrap runtime surface", () => {
     ).toThrow("mount destination resolves to ambiguous runtime mounts");
   });
 
-  it("rejects an image mount paired with a foreign absolute bind", () => {
+  it("rejects an image mount paired with another container's storage bind", () => {
     expect(() =>
       renderPodmanReplacementMountArgs(
         {
+          Id: ORIGINAL_RUNTIME_ID,
           Mounts: [
             {
               Type: "image",
-              Source: `sha256:${"9".repeat(64)}`,
+              Source: SUPERVISOR_IMAGE,
               Destination: "/opt/openshell/bin",
               RW: false,
             },
             {
               Type: "bind",
-              Source: "/srv/overlay/attacker/merged",
+              Source:
+                `${STORAGE_GRAPH_ROOT}/overlay-containers/${"f".repeat(64)}` +
+                "/userdata/overlay/example/merge",
               Destination: "/opt/openshell/bin",
               RW: false,
             },
