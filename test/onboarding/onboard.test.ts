@@ -753,6 +753,7 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
+    assert.match(result.stdout, /\[reuse\] Skipping sandbox \(my-assistant\)/);
   });
 
   it("accepts gateway inference when system inference is separately not configured", async () => {

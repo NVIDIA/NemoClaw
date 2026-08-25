@@ -106,7 +106,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
-  /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
+  /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
   reservationSessionId?: string;
   createdAt?: string;
   /** Immutable catalog provenance for an explicitly selected serving profile. */
