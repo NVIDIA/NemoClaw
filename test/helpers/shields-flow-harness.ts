@@ -88,6 +88,7 @@ export function bindManagedPolicyMutationAuthority(
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
+  clearShieldsState: typeof import("../../src/lib/shields/index.js").clearShieldsState;
   cleanupTempDirSpy: MockInstance;
   dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }>;
   errorSpy: MockInstance;
@@ -694,6 +695,7 @@ export function createShieldsFlowHarness(
   return {
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
+    clearShieldsState: shields.clearShieldsState,
     cleanupTempDirSpy,
     dockerSpawnCalls,
     errorSpy,

@@ -6754,6 +6754,7 @@ function clearShieldsStateWithoutHostLock(sandboxName: string): void {
   } catch {
     /* best effort — absent or unreadable state is already mutable_default */
   }
+  clearExternalPolicyRecoveryArtifact(sandboxName);
 }
 
 function clearShieldsState(sandboxName: string): void {

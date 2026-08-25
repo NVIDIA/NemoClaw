@@ -36,6 +36,21 @@ function readRestrictivePolicy(harness: ShieldsFlowHarness, sandboxName: string)
   >;
 }
 
+function readExternalRecoveryArtifact(artifactPath: string): {
+  content: string;
+  mode: number;
+} {
+  const fileDescriptor = fs.openSync(artifactPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    return {
+      content: fs.readFileSync(fileDescriptor, "utf-8"),
+      mode: fs.fstatSync(fileDescriptor).mode & 0o777,
+    };
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+}
+
 function mismatchedExternalAuthority() {
   return {
     authority: "externally-managed",
@@ -124,9 +139,9 @@ describe("external Shields policy recovery (#9833)", () => {
     expect(harness.getOpenClawPosture()).toBe("mutable");
     const recoveryState = harness.getShieldsPosture(sandboxName, false).state;
     const recoveryArtifactPath = String(recoveryState.externalPolicyRecoveryArtifact?.path);
-    const recoveryArtifactBeforeStatus = fs.readFileSync(recoveryArtifactPath, "utf-8");
-    expect(fs.statSync(recoveryArtifactPath).mode & 0o777).toBe(0o600);
-    expect(YAML.parse(recoveryArtifactBeforeStatus)).toEqual(
+    const recoveryArtifactBeforeStatus = readExternalRecoveryArtifact(recoveryArtifactPath);
+    expect(recoveryArtifactBeforeStatus.mode).toBe(0o600);
+    expect(YAML.parse(recoveryArtifactBeforeStatus.content)).toEqual(
       readRestrictivePolicy(harness, sandboxName),
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(recoveryArtifactPath);
@@ -138,7 +153,9 @@ describe("external Shields policy recovery (#9833)", () => {
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "must make the effective policy",
     );
-    expect(fs.readFileSync(recoveryArtifactPath, "utf-8")).toBe(recoveryArtifactBeforeStatus);
+    expect(readExternalRecoveryArtifact(recoveryArtifactPath).content).toBe(
+      recoveryArtifactBeforeStatus.content,
+    );
 
     const restoredExternalAuthority = externalPolicyMutationAuthority(
       readRestrictivePolicy(harness, sandboxName),
@@ -160,6 +177,29 @@ describe("external Shields policy recovery (#9833)", () => {
     expect(harness.getShieldsPosture(sandboxName, false).state).not.toHaveProperty(
       "externalPolicyRecoveryArtifact",
     );
+  });
+
+  it("clears the sandbox-bound recovery artifact before recreation (#9833)", () => {
+    const sandboxName = "openclaw";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    harness.shieldsDown(sandboxName, { throwOnError: true });
+    harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+    harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "must make the effective policy",
+    );
+    const recoveryState = harness.getShieldsPosture(sandboxName, false).state;
+    const recoveryArtifactPath = String(recoveryState.externalPolicyRecoveryArtifact?.path);
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(true);
+
+    harness.clearShieldsState(sandboxName);
+
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(false);
+    expect(harness.getShieldsPosture(sandboxName, false).mode).toBe("mutable_default");
   });
 
   it("withholds Shields success when external policy changes during config locking (#9833)", () => {
