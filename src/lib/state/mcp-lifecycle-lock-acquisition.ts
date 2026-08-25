@@ -8,10 +8,6 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
-  decideAbandonedTimerRecoveryToken,
-  type AbandonedTimerGeneration,
-} from "../domain/sandbox/abandoned-timer-recovery";
-import {
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerDeadlineExpired,
   readShieldsTimerMarker,
@@ -52,6 +48,11 @@ const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CORRUPT_LOCK_GRACE_MS = 30_000;
 
 type CorruptGenerationTracker = CorruptGenerationState;
+
+interface AbandonedTimerGeneration {
+  key: string;
+  token: string;
+}
 
 interface AcquiredMcpLifecycleLock {
   lockPath: string;
@@ -339,10 +340,9 @@ function confirmAbandonedTimerRecoveryToken(
   stateDir: string,
   aged: AbandonedTimerGeneration,
 ): string | undefined {
-  return decideAbandonedTimerRecoveryToken(
-    aged,
-    localAbandonedTimerGeneration.read(sandboxName, stateDir),
-  );
+  const current = localAbandonedTimerGeneration.read(sandboxName, stateDir);
+  if (!current || aged.key !== current.key || aged.token !== current.token) return undefined;
+  return aged.token;
 }
 
 function abandonedTimerRecoveryTimeoutError(sandboxName: string, sync: boolean): Error {

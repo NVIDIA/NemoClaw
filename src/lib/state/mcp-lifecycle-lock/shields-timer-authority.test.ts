@@ -113,19 +113,6 @@ describe("abandoned Shields timer deadlines", () => {
     ).toBe(false);
   });
 
-  it("treats a live PID as abandoned when a recorded ps identity no longer matches", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
-    tempDirs.push(stateDir);
-    writeExpiringMarker(stateDir, past, { timerProcessStartIdentity: "ps:recorded" });
-
-    expect(
-      isShieldsTimerDeadlineAbandoned("alpha", stateDir, now, {
-        processIsAlive: () => true,
-        readProcessStartIdentity: () => "ps:observed",
-      }),
-    ).toBe(true);
-  });
-
   it("treats a live PID as abandoned when the recorded start identity no longer matches", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
     tempDirs.push(stateDir);
