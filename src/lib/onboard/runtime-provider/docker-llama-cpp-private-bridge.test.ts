@@ -333,6 +333,7 @@ async function request(
     readonly keepAlive?: boolean;
     readonly method?: string;
     readonly path?: string;
+    readonly waitForServerClose?: boolean;
   } = {},
 ): Promise<{
   readonly body: string;
@@ -367,13 +368,16 @@ async function request(
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
         response.once("end", () => {
-          resolve({
-            body: Buffer.concat(chunks).toString("utf8"),
-            continued,
-            headers: response.headers,
-            status: response.statusCode ?? 0,
-          });
-          outgoing.destroy();
+          const finish = () => {
+            resolve({
+              body: Buffer.concat(chunks).toString("utf8"),
+              continued,
+              headers: response.headers,
+              status: response.statusCode ?? 0,
+            });
+            outgoing.destroy();
+          };
+          (input.waitForServerClose ? () => outgoing.once("close", finish) : finish)();
         });
       },
     );
@@ -503,6 +507,7 @@ describe("llama.cpp private bridge request authentication", () => {
         keepAlive: true,
         method: "POST",
         path: "/v1/chat/completions",
+        waitForServerClose: true,
       });
 
       expect(result).toMatchObject({
@@ -510,6 +515,7 @@ describe("llama.cpp private bridge request authentication", () => {
         continued: false,
         status: 413,
       });
+      expect(result.headers.connection).toBe("close");
       expect(receivedBodyBytes).toBe(0);
       await upstreamSocketClosed;
     } finally {
