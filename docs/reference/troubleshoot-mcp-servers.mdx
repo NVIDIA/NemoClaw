@@ -16,7 +16,7 @@ Use the reported status or lifecycle error to choose the matching remediation.
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Rotate it with `mcp restart` when in doubt.
 
-For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting `openshell:resolve:env:KEY` on egress.
+For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
 
 This is a host-side OpenShell defect rather than a NemoClaw registration problem.
