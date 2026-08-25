@@ -53,7 +53,7 @@
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 22,
       "src/lib/sandbox/config.ts": 21,
-      "src/lib/shields/index.ts": 22
+      "src/lib/shields/index.ts": 24
     }
   },
   "allowedCycles": [],
