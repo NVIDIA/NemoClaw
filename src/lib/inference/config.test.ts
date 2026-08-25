@@ -114,6 +114,9 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "deepseek-ai/deepseek-v4-pro",
     );
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "z-ai/glm-5.2",
+    );
   });
 
   it("keeps the NVIDIA Endpoints default on Nemotron 3 Super", () => {

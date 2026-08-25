@@ -8,9 +8,18 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
+  inspectSandboxPolicyAuthority: vi.fn(() => ({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  })),
   livePolicy: "",
   run: vi.fn(),
   runCapture: vi.fn(),
+}));
+
+vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectSandboxPolicyAuthority: harness.inspectSandboxPolicyAuthority,
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -83,6 +92,7 @@ network_policies:
       }),
     );
     expect(registry.getBaselineExclusions("alpha")).toEqual([]);
+    expect(registry.getSandbox("alpha")?.policyAuthority).toBe("nemoclaw-managed");
     interruptedCommit.mockRestore();
 
     // Simulate a new CLI process: reload both the registry and policy modules
@@ -95,5 +105,6 @@ network_policies:
     expect(reloadedRegistry.getBaselineExclusions("alpha")).toEqual([
       expect.objectContaining({ key: "nous_research", digest }),
     ]);
+    expect(reloadedRegistry.getSandbox("alpha")?.policyAuthority).toBe("nemoclaw-managed");
   });
 });

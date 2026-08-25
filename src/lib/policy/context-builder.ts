@@ -111,6 +111,14 @@ export interface PolicyContext {
 }
 
 const POLICY_DOC_URL = "docs/network-policy/customize-network-policy.mdx";
+const EXTERNAL_POLICY_ADD_PATH =
+  "Ask the external policy authority to add or replace the policy entries required by `<preset>`.";
+const EXTERNAL_POLICY_REMOVE_PATH =
+  "Ask the external policy authority to remove the policy entries supplied by `<preset>`.";
+const EXTERNAL_POLICY_RESTORE_PATH =
+  "Ask the external policy authority to restore baseline policy entry `<key>`.";
+const EXTERNAL_POLICY_EXCLUDE_PATH =
+  "Run `nemoclaw <sandbox> policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.";
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
@@ -191,7 +199,11 @@ function partitionPresets(
     // would record the preset as operator-applied (#9079). Sibling base additions
     // with no catalog entry are never iterated here, so this only corrects the
     // incidental name-collision case.
-    if (!isApplied && verification === "gateway-only" && isAgentBasePreset(sandboxName, info.name)) {
+    if (
+      !isApplied &&
+      verification === "gateway-only" &&
+      isAgentBasePreset(sandboxName, info.name)
+    ) {
       verification = "agent-base";
     }
     const enforcedNotApplied =
@@ -255,34 +267,67 @@ function buildBaselineExclusions(
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-function buildApprovalPath(sandboxName: string): PolicyContextApprovalPath {
+function buildApprovalPath(
+  sandboxName: string,
+  externallyManaged: boolean,
+): PolicyContextApprovalPath {
   return {
     inspect: `nemoclaw ${sandboxName} policy list`,
-    add: `nemoclaw ${sandboxName} policy add <preset>`,
-    remove: `nemoclaw ${sandboxName} policy remove <preset>`,
-    excludeBaseline: `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
-    restoreBaseline: `nemoclaw ${sandboxName} policy restore <key>`,
+    add: externallyManaged
+      ? EXTERNAL_POLICY_ADD_PATH
+      : `nemoclaw ${sandboxName} policy add <preset>`,
+    remove: externallyManaged
+      ? EXTERNAL_POLICY_REMOVE_PATH
+      : `nemoclaw ${sandboxName} policy remove <preset>`,
+    excludeBaseline: externallyManaged
+      ? EXTERNAL_POLICY_EXCLUDE_PATH.replace("<sandbox>", sandboxName)
+      : `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
+    restoreBaseline: externallyManaged
+      ? EXTERNAL_POLICY_RESTORE_PATH
+      : `nemoclaw ${sandboxName} policy restore <key>`,
     documentation: POLICY_DOC_URL,
   };
 }
 
-function buildSupportBoundaries(tier: PolicyContextTier | null): PolicyContextSupportBoundary[] {
+function buildSupportBoundaries(
+  tier: PolicyContextTier | null,
+  externallyManaged: boolean,
+): PolicyContextSupportBoundary[] {
   return [
     {
-      capability: "preset selection",
+      capability: "policy requirement selection and verification",
       owner: "nemoclaw",
-      note: tier ? `tier: ${tier.label}` : "no tier recorded",
+      note: externallyManaged
+        ? "NemoClaw selects preset and baseline requirements and verifies the live policy"
+        : tier
+          ? `tier: ${tier.label}`
+          : "no tier recorded",
     },
     {
       capability: "host allowlist enforcement",
       owner: "openshell",
       note: "policy is enforced by the OpenShell gateway",
     },
-    {
-      capability: "shields toggle",
-      owner: "nemoclaw",
-      note: "shields up locks down mutable config",
-    },
+    ...(externallyManaged
+      ? [
+          {
+            capability: "policy mutation",
+            owner: "external" as const,
+            note: "the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
+          },
+          {
+            capability: "Shields state and configuration lock",
+            owner: "nemoclaw" as const,
+            note: "NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
+          },
+        ]
+      : [
+          {
+            capability: "Shields transition",
+            owner: "nemoclaw" as const,
+            note: "Shields up locks down mutable configuration",
+          },
+        ]),
     {
       capability: "credential storage",
       owner: "nemoclaw",
@@ -363,7 +408,8 @@ export function buildPolicyContext(
   options: BuildPolicyContextOptions = {},
 ): PolicyContext {
   const sandbox = registry.getSandbox(sandboxName);
-  const tierName = sandbox?.policyTier ?? null;
+  const externallyManaged = sandbox?.policyAuthority === "externally-managed";
+  const tierName = externallyManaged ? null : (sandbox?.policyTier ?? null);
   const tierDef = tierName ? getTier(tierName) : null;
   const tier: PolicyContextTier | null = tierDef
     ? { name: tierDef.name, label: tierDef.label, description: tierDef.description }
@@ -386,8 +432,8 @@ export function buildPolicyContext(
       sandboxName,
       sandbox?.baselineExclusionTransition ?? null,
     ),
-    approvalPath: buildApprovalPath(sandboxName),
-    supportBoundaries: buildSupportBoundaries(tier),
+    approvalPath: buildApprovalPath(sandboxName, externallyManaged),
+    supportBoundaries: buildSupportBoundaries(tier, externallyManaged),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -430,12 +476,19 @@ function exclusionStatusTag(status: PolicyContextExclusionStatus): string {
   }
 }
 
-function formatExclusionLine(exclusion: PolicyContextExclusion, sandboxName: string): string {
+function formatExclusionLine(
+  exclusion: PolicyContextExclusion,
+  sandboxName: string,
+  restoreAction: string,
+): string {
+  const restore = restoreAction.startsWith("nemoclaw ")
+    ? `\`nemoclaw ${sandboxName} policy restore ${exclusion.key}\``
+    : restoreAction;
   return [
     `- \`${exclusion.key}\` — status: ${exclusionStatusTag(exclusion.status)}`,
     `  acknowledged: ${exclusion.acknowledgedAt ?? "(unknown)"}`,
     `  impact: ${exclusion.supportImpact}`,
-    `  restore: \`nemoclaw ${sandboxName} policy restore ${exclusion.key}\``,
+    `  restore: ${restore}`,
   ].join("\n");
 }
 
@@ -454,6 +507,10 @@ function formatPresetLine(preset: PolicyContextPreset): string {
     `  status: ${verificationTag(preset.verification)}`,
     `  hosts: ${categories}${redactedNote}`,
   ].join("\n");
+}
+
+function formatApprovalAction(action: string): string {
+  return action.startsWith("nemoclaw ") ? `\`${action}\`` : action;
 }
 
 export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
@@ -497,16 +554,20 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
     lines.push("- none");
   } else {
     for (const exclusion of ctx.baselineExclusions) {
-      lines.push(formatExclusionLine(exclusion, ctx.sandboxName));
+      lines.push(formatExclusionLine(exclusion, ctx.sandboxName, ctx.approvalPath.restoreBaseline));
     }
   }
   lines.push("");
   lines.push("## Approval and remediation");
   lines.push(`- inspect: \`${ctx.approvalPath.inspect}\``);
-  lines.push(`- add a preset: \`${ctx.approvalPath.add}\``);
-  lines.push(`- remove a preset: \`${ctx.approvalPath.remove}\``);
-  lines.push(`- preview a baseline exclusion: \`${ctx.approvalPath.excludeBaseline}\``);
-  lines.push(`- restore a baseline entry: \`${ctx.approvalPath.restoreBaseline}\``);
+  lines.push(`- add a preset: ${formatApprovalAction(ctx.approvalPath.add)}`);
+  lines.push(`- remove a preset: ${formatApprovalAction(ctx.approvalPath.remove)}`);
+  lines.push(
+    `- preview a baseline exclusion: ${formatApprovalAction(ctx.approvalPath.excludeBaseline)}`,
+  );
+  lines.push(
+    `- restore a baseline entry: ${formatApprovalAction(ctx.approvalPath.restoreBaseline)}`,
+  );
   lines.push(`- documentation: ${ctx.approvalPath.documentation}`);
   lines.push("");
   lines.push("## Support boundaries");
