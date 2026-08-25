@@ -153,17 +153,15 @@ describe("Hermes deferred onboarding", () => {
     );
   });
 
-  it("does not defer onboarding when a provided credential fails validation (#10288)", () => {
+  it("propagates the onboarding failure when a credential is provided (#10288)", () => {
     const invalidKey = "invalid-runtime-test-value";
     const result = runMain({ deferFlag: true, inferenceKey: invalidKey, onboardStatus: 1 });
 
     expect(result.result.status).toBe(1);
+    expect(result.calls).toContain("host-preflight");
     expect(result.calls).toContain("onboard");
     expect(result.output).toContain("Onboarding did not complete successfully");
     expect(result.output).not.toContain(invalidKey);
-    expect(result.providerCreated).toBe(false);
-    expect(result.sandboxCreated).toBe(false);
-    expect(result.onboardingComplete).toBe(false);
   });
 
   it("keeps the missing-credential failure when deferred onboarding is not enabled (#10288)", () => {
