@@ -28,6 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   rmSync(testRoot, { force: true, recursive: true });
 });
 
@@ -68,6 +69,58 @@ describe("reviewed npm archive downloads", () => {
         pins,
       }),
     ).rejects.toThrow(`downloaded npm archive failed SHA-256 validation: ${pins[1].archive}`);
+    expect(existsSync(output)).toBe(false);
+  });
+
+  it("downloads a chunked archive without a content-length header", async () => {
+    const chunks = [Buffer.from("alpha "), Buffer.from("archive")];
+    const bytes = Buffer.concat(chunks);
+    const archive = pin("alpha", bytes);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const output = path.join(testRoot, "archives");
+
+    await downloadReviewedNpmArchives({ output, pins: [archive] });
+
+    expect(readFileSync(path.join(output, archive.archive))).toEqual(bytes);
+  });
+
+  it("stops a chunked archive when it exceeds the streaming size limit", async () => {
+    const chunks = Array.from({ length: 33 }, () => new Uint8Array(1024 * 1024));
+    const archive = pin("alpha", Buffer.from("unused digest"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const output = path.join(testRoot, "archives");
+
+    await expect(downloadReviewedNpmArchives({ output, pins: [archive] })).rejects.toThrow(
+      `downloaded npm archive size is invalid: ${archive.archive}`,
+    );
     expect(existsSync(output)).toBe(false);
   });
 

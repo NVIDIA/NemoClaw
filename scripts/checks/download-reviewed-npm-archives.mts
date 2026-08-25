@@ -83,9 +83,30 @@ async function defaultDownloadArchive(pin: ReviewedNpmArchivePin): Promise<Uint8
       throw new Error(`npm registry returned an invalid size for ${pin.archive}`);
     }
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_ARCHIVE_BYTES) {
+  if (response.body === null) {
     throw new Error(`downloaded npm archive size is invalid: ${pin.archive}`);
+  }
+  const chunks: Uint8Array[] = [];
+  const reader = response.body.getReader();
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_ARCHIVE_BYTES) {
+      await reader.cancel();
+      throw new Error(`downloaded npm archive size is invalid: ${pin.archive}`);
+    }
+    chunks.push(value);
+  }
+  if (totalBytes === 0) {
+    throw new Error(`downloaded npm archive size is invalid: ${pin.archive}`);
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   }
   return bytes;
 }
