@@ -154,3 +154,29 @@ describe("OpenClaw MCP adapter registration", () => {
     );
   });
 });
+
+describe("Hermes MCP adapter registration", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset().mockReturnValue(registered);
+    mocks.runOpenshellProviderCommand.mockReset().mockReturnValue(lifecycleSuccess);
+  });
+
+  it("projects the readiness-proven credential revision into Hermes config (#10155)", () => {
+    registerAgentAdapter(
+      "alpha",
+      "hermes-config",
+      baseEntry,
+      { GITHUB_TOKEN: "host-only-secret" },
+      { credentialRevision: "v12" },
+    );
+
+    const transactionArgs = mocks.runOpenshellProviderCommand.mock.calls[0]?.[0] as string[];
+    const payloadIndex = transactionArgs.indexOf("--payload") + 1;
+    expect(JSON.parse(transactionArgs[payloadIndex] ?? "{}")).toMatchObject({
+      headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+    });
+    expect(mocks.executeSandboxCommand.mock.calls.at(-1)?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+  });
+});
