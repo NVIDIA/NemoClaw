@@ -5174,20 +5174,6 @@ jobs:
       matrix:
         scenario: [native, fallback, compatibility-only]
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}
-        include:
-          - scenario: native
-            sandbox_name: e2e-hgpu-native
-            observable_outcome: "Native GPU startup reaches the stable Ready route"
-            coverage_variant: native
-          - scenario: fallback
-            sandbox_name: e2e-hgpu-fallback
-            observable_outcome: "Fallback GPU startup reaches the stable Ready route"
-            coverage_variant: fallback
-            gateway_runtimes: docker
-          - scenario: compatibility-only
-            sandbox_name: e2e-hgpu-compat
-            observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route"
-            coverage_variant: compatibility-only
         exclude:
           - scenario: fallback
             runtime_provider: podman
@@ -5198,6 +5184,7 @@ jobs:
       E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_AGENT_RUNTIME: "hermes"
+      E2E_OBSERVABLE_OUTCOME: "Hermes GPU startup reaches the stable Ready route"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local GPU inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
@@ -5210,7 +5197,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.scenario == 'native' && 'e2e-hgpu-native' || matrix.scenario == 'fallback' && 'e2e-hgpu-fallback' || 'e2e-hgpu-compat' }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

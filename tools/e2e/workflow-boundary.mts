@@ -507,6 +507,29 @@ function gatewayRuntimeSupport(value: unknown): E2eGatewayRuntimeSupport | undef
     : undefined;
 }
 
+function scenarioCoverageCandidates(
+  matrix: WorkflowRecord,
+  jobGatewayRuntimes: E2eGatewayRuntimeSupport,
+): WorkflowRecord[] {
+  if (!Array.isArray(matrix.scenario) || jobGatewayRuntimes === E2E_RUNTIME_AGNOSTIC) return [];
+  const scenarios = matrix.scenario.map(stringValue).filter(Boolean);
+  if (scenarios.length !== matrix.scenario.length || new Set(scenarios).size !== scenarios.length) {
+    return [];
+  }
+  const exclusions = Array.isArray(matrix.exclude) ? matrix.exclude.map(asRecord) : [];
+  return scenarios.map((scenario) => ({
+    coverage_variant: scenario,
+    gateway_runtimes: jobGatewayRuntimes
+      .filter(
+        (runtime) =>
+          !exclusions.some(
+            (entry) => entry.scenario === scenario && entry.runtime_provider === runtime,
+          ),
+      )
+      .join(","),
+  }));
+}
+
 function workflowCoverageRows(
   jobId: string,
   job: WorkflowRecord,
@@ -527,7 +550,9 @@ function workflowCoverageRows(
   ].some((key) => Object.hasOwn(env, key));
   if (!hasEnvironmentMetadata && includes.length === 0) return [];
 
-  const candidates = includes.length > 0 ? includes : [{}];
+  const scenarioCandidates = scenarioCoverageCandidates(matrix, jobGatewayRuntimes);
+  const candidates =
+    includes.length > 0 ? includes : scenarioCandidates.length > 0 ? scenarioCandidates : [{}];
   return candidates.map((entry) => {
     const metadata = validateE2eExecutionMetadata(
       {

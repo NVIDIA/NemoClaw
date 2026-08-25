@@ -140,28 +140,7 @@ export function validateHermesGpuStartupWorkflow(
       JSON.stringify(["native", "fallback", "compatibility-only"]) ||
     matrix.runtime_provider !==
       "${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}" ||
-    JSON.stringify(matrix.include) !==
-      JSON.stringify([
-        {
-          scenario: "native",
-          sandbox_name: "e2e-hgpu-native",
-          observable_outcome: "Native GPU startup reaches the stable Ready route",
-          coverage_variant: "native",
-        },
-        {
-          scenario: "fallback",
-          sandbox_name: "e2e-hgpu-fallback",
-          observable_outcome: "Fallback GPU startup reaches the stable Ready route",
-          coverage_variant: "fallback",
-          gateway_runtimes: "docker",
-        },
-        {
-          scenario: "compatibility-only",
-          sandbox_name: "e2e-hgpu-compat",
-          observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route",
-          coverage_variant: "compatibility-only",
-        },
-      ]) ||
+    matrix.include !== undefined ||
     JSON.stringify(matrix.exclude) !==
       JSON.stringify([
         { scenario: "fallback", runtime_provider: "podman" },
@@ -178,13 +157,15 @@ export function validateHermesGpuStartupWorkflow(
     E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
+    E2E_OBSERVABLE_OUTCOME: "Hermes GPU startup reaches the stable Ready route",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
     NEMOCLAW_GATEWAY_RUNTIME: "${{ matrix.runtime_provider }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
+    NEMOCLAW_SANDBOX_NAME:
+      "${{ matrix.scenario == 'native' && 'e2e-hgpu-native' || matrix.scenario == 'fallback' && 'e2e-hgpu-fallback' || 'e2e-hgpu-compat' }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {
