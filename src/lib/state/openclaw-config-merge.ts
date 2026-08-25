@@ -43,6 +43,11 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /**
+   * Fresh rebuild owns the agent heartbeat cadence within `agents`, including
+   * its intentional absence.
+   */
+  agentHeartbeatPath: ["agents", "defaults", "heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -499,6 +504,46 @@ function reconcileAgentPrimaryModel(
   updateMainAgentListModel(agents, freshPrimary);
 }
 
+/** Read the fresh rebuild's `agents.defaults`, or undefined. */
+function readAgentDefaults(config: Record<string, unknown>): Record<string, unknown> | undefined {
+  const agents = config.agents;
+  if (!isPlainObject(agents)) return undefined;
+  const defaults = agents.defaults;
+  return isPlainObject(defaults) ? defaults : undefined;
+}
+
+/**
+ * Re-own the agent heartbeat cadence from the fresh rebuild, including its
+ * intentional absence.
+ *
+ * `agents` is backup-durable (see `backupDurableSections`), so without this
+ * the overlay inherits the backup's `agents.defaults.heartbeat` wholesale —
+ * an older interval overwrites the freshly configured
+ * `NEMOCLAW_AGENT_HEARTBEAT_EVERY`, and a stale backed-up value can resurrect
+ * a heartbeat the fresh config intentionally omits. This is issue #10244:
+ * the profile-owned heartbeat must survive rebuild the same way
+ * `agents.defaults.model.primary` already does.
+ */
+function reconcileAgentHeartbeat(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const currentDefaults = readAgentDefaults(currentConfig);
+  const hasFreshHeartbeat = currentDefaults !== undefined && "heartbeat" in currentDefaults;
+  const mergedDefaults = readAgentDefaults(merged);
+  const hasMergedHeartbeat = mergedDefaults !== undefined && "heartbeat" in mergedDefaults;
+  // Nothing to reconcile: avoid materializing an empty `agents.defaults`
+  // when neither the fresh rebuild nor the merge result has a heartbeat.
+  if (!hasFreshHeartbeat && !hasMergedHeartbeat) return;
+  const agents = ensureMergedObject(merged, "agents");
+  const defaults = ensureMergedObject(agents, "defaults");
+  if (hasFreshHeartbeat) {
+    defaults.heartbeat = cloneJson(currentDefaults!.heartbeat);
+  } else {
+    delete defaults.heartbeat;
+  }
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -537,6 +582,7 @@ export function mergeOpenClawRestoredConfig(
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentHeartbeat(merged, currentConfig);
 
   return merged;
 }

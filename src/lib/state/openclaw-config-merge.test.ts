@@ -119,6 +119,39 @@ describe("mergeOpenClawRestoredConfig", () => {
     ]);
   });
 
+  it("re-owns a fresh heartbeat over an older backed-up interval (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { heartbeat: { every: "30m" }, thinkingDefault: "off" },
+        },
+      },
+      { agents: { defaults: { heartbeat: { every: "2m" } } } },
+    ) as { agents: { defaults: { heartbeat: unknown; thinkingDefault: unknown } } };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+    // Unrelated durable agent config is still inherited from the backup.
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+  });
+
+  it("re-owns a fresh heartbeat when the backup has none configured (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { agents: { defaults: {} } },
+      { agents: { defaults: { heartbeat: { every: "2m" } } } },
+    ) as { agents: { defaults: { heartbeat: unknown } } };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+  });
+
+  it("re-owns intentional heartbeat absence so a stale backup cannot re-enable it (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { agents: { defaults: { heartbeat: { every: "30m" } } } },
+      { agents: { defaults: {} } },
+    ) as { agents: { defaults: { heartbeat: unknown } } };
+
+    expect(merged.agents.defaults.heartbeat).toBeUndefined();
+  });
+
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
