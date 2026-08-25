@@ -517,7 +517,7 @@ export function buildLaunchReadinessRegistryProjection(
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const liveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
   if (!lifecycleGeneration || !liveIdentityFingerprint) throw new ObservationError("identity");
-  if (entry.pendingRouteReservation === true || entry.reservationSessionId) {
+  if (entry.pendingRouteReservation === true) {
     throw new ObservationError("config");
   }
   if (entry.baselineExclusionTransition) throw new ObservationError("config");

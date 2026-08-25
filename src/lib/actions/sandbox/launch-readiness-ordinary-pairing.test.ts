@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
-import { type LaunchReadinessDeps, resolveOrdinaryOpenClawPairingTarget } from "./launch-readiness";
+import {
+  buildLaunchReadinessRegistryProjection,
+  type LaunchReadinessDeps,
+  launchReadinessDigest,
+  resolveOrdinaryOpenClawPairingTarget,
+} from "./launch-readiness";
 
 const SANDBOX_NAME = "alpha";
 const GATEWAY_NAME = "nemoclaw";
@@ -85,6 +90,20 @@ describe("ordinary OpenClaw pairing target", () => {
       stateDirectory: "/sandbox/.openclaw",
       version: "1.0.0",
     });
+  });
+
+  it("keeps a published route receipt outside the readiness identity", () => {
+    const agent = loadAgent("openclaw");
+    expect(
+      launchReadinessDigest(
+        buildLaunchReadinessRegistryProjection(
+          { ...openClawEntry(), reservationSessionId: "session-owner" },
+          agent,
+        ),
+      ),
+    ).toBe(
+      launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)),
+    );
   });
 
   it("resolves a custom Dockerfile without inventing a managed agent version", () => {
