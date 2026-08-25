@@ -14,9 +14,22 @@ const portFile = process.env.FAKE_DISCORD_GATEWAY_PORT_FILE || "";
 const captureFile = process.env.FAKE_DISCORD_GATEWAY_CAPTURE_FILE || "";
 const expectedToken = process.env.FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN || "";
 
-if (!expectedToken) {
+if (require.main === module && !expectedToken) {
   console.error("FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN is required");
   process.exit(2);
+}
+
+function writeWebSocketUpgrade(socket, accept, onFlushed) {
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      "\r\n",
+    ].join("\r\n"),
+    onFlushed,
+  );
 }
 
 function record(event) {
@@ -169,18 +182,11 @@ const server = net.createServer((socket) => {
         .createHash("sha1")
         .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
         .digest("base64");
-      socket.write(
-        [
-          "HTTP/1.1 101 Switching Protocols",
-          "Upgrade: websocket",
-          "Connection: Upgrade",
-          `Sec-WebSocket-Accept: ${accept}`,
-          "\r\n",
-        ].join("\r\n"),
-      );
       upgraded = true;
       record({ event: "upgrade", requestLine });
-      sendJson(socket, { op: 10, d: { heartbeat_interval: 30000 } });
+      writeWebSocketUpgrade(socket, accept, () => {
+        sendJson(socket, { op: 10, d: { heartbeat_interval: 30000 } });
+      });
       framed = Buffer.concat([framed, handshake.slice(end + 4)]);
     } else {
       framed = Buffer.concat([framed, chunk]);
@@ -202,17 +208,21 @@ const server = net.createServer((socket) => {
   });
 });
 
-server.listen(port, host, () => {
-  const address = server.address();
-  if (portFile) {
-    fs.writeFileSync(portFile, `${address.port}\n`, { mode: 0o600 });
-  }
-  record({ event: "listening", host, port: address.port });
-});
-
-for (const signal of ["SIGTERM", "SIGINT"]) {
-  process.on(signal, () => {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 1000).unref();
+if (require.main === module) {
+  server.listen(port, host, () => {
+    const address = server.address();
+    if (portFile) {
+      fs.writeFileSync(portFile, `${address.port}\n`, { mode: 0o600 });
+    }
+    record({ event: "listening", host, port: address.port });
   });
+
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.on(signal, () => {
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 1000).unref();
+    });
+  }
 }
+
+module.exports = { writeWebSocketUpgrade };

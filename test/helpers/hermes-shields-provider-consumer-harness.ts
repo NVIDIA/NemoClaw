@@ -75,6 +75,7 @@ export type HermesShieldsProviderConsumerHarness = {
   lifecycleGateSpy: MockInstance;
   registrySpy: MockInstance;
   routeSpy: MockInstance;
+  runCaptureSpy: MockInstance;
   runSpy: MockInstance;
   shields: typeof import("../../src/lib/shields/index");
   spies: MockInstance[];
@@ -268,8 +269,13 @@ export function createHermesShieldsProviderConsumerHarness(
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
+  // #10104: default to an empty `sandbox list` capture (no matching row, so
+  // the runtime-provider phase probe resolves to null and fails open) so
+  // every existing scenario proceeds exactly as before this spy existed.
+  const runCaptureSpy = vi.spyOn(runner, "runCapture").mockReturnValue("");
   spies.push(
     runSpy,
+    runCaptureSpy,
     vi.spyOn(runner, "validateName").mockImplementation((value: unknown) => String(value)),
     vi
       .spyOn(policy, "buildPolicySetCommand")
@@ -355,6 +361,7 @@ export function createHermesShieldsProviderConsumerHarness(
     lifecycleGateSpy,
     registrySpy,
     routeSpy,
+    runCaptureSpy,
     runSpy,
     shields,
     spies,
