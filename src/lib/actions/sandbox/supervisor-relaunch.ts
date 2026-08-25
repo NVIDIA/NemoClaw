@@ -59,6 +59,9 @@ export type ManagedSupervisorRelaunchDeps = {
   recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
   finalize?: typeof finalizeDockerGpuPatchBackup;
   runOpenshell?: NonNullable<Parameters<typeof finalizeDockerGpuPatchBackup>[1]>["runOpenshell"];
+  runCaptureOpenshell?: NonNullable<
+    Parameters<typeof finalizeDockerGpuPatchBackup>[1]
+  >["runCaptureOpenshell"];
 };
 
 function inspectContainer(containerId: string): DockerContainerInspect {
@@ -287,23 +290,28 @@ export function relaunchManagedSupervisorSession(
           return finalizeFailure();
         }
         const runLifecycleProbe = deps.runOpenshell;
-        if (!runLifecycleProbe) return finalizeFailure();
+        const captureLifecycleProbe = deps.runCaptureOpenshell;
+        if (!runLifecycleProbe || !captureLifecycleProbe) return finalizeFailure();
         const lifecycleDeps = {
+          runCaptureOpenshell: captureLifecycleProbe,
           runOpenshell: runLifecycleProbe,
           ...(deps.sleep ? { sleep: deps.sleep } : {}),
         };
+        const finalized = finalize(
+          {
+            result,
+            supervisorReady: true,
+            sandboxName,
+            finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+          },
+          lifecycleDeps,
+        );
         const outcome = {
-          ...finalize(
-            {
-              result,
-              supervisorReady: true,
-              sandboxName,
-              lifecycleReleaseTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
-            },
-            lifecycleDeps,
-          ),
+          ...finalized,
           stateRestored: true,
-          stateBackupRemoved: removeSettledStateBackup(),
+          ...(finalized.finalHandoffAcknowledged === true
+            ? { stateBackupRemoved: removeSettledStateBackup() }
+            : {}),
         };
         completed = { supervisorReady, outcome };
         return outcome;

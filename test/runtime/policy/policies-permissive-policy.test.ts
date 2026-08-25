@@ -37,10 +37,21 @@ function runPermissivePolicy(options: {
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const policyOut = path.join(tmpDir, "policy.yaml");
   const livePolicyPath = path.join(tmpDir, "live-policy.yaml");
+  const livePolicyResponsePath = path.join(tmpDir, "live-policy-response.json");
   const stagedRecord = path.join(tmpDir, "staged.txt");
   fs.writeFileSync(
     livePolicyPath,
     options.livePolicy ?? YAML.stringify({ version: 1, network_policies: {} }),
+  );
+  fs.writeFileSync(
+    livePolicyResponsePath,
+    JSON.stringify({
+      scope: "sandbox",
+      sandbox: options.sandboxName,
+      status: "effective",
+      policy_source: "sandbox",
+      policy: YAML.parse(fs.readFileSync(livePolicyPath, "utf-8")),
+    }),
   );
   const registration = options.agent
     ? `registry.registerSandbox(${JSON.stringify({
@@ -60,7 +71,11 @@ policies.applyPermissivePolicy(${JSON.stringify(options.sandboxName)});
     `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1 $2" = "policy get" ]; then
-  cat ${JSON.stringify(livePolicyPath)}
+  if [[ " $* " == *" --output json "* ]]; then
+    cat ${JSON.stringify(livePolicyResponsePath)}
+  else
+    cat ${JSON.stringify(livePolicyPath)}
+  fi
   exit 0
 fi
 if [ "$1 $2" = "policy set" ]; then
@@ -96,6 +111,10 @@ exit 1
       NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
     },
   });
+  expect(
+    fs.existsSync(stagedRecord),
+    `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(true);
   const [stagedPath, stagedMode] = fs.readFileSync(stagedRecord, "utf-8").trim().split("\n");
   return {
     result,
@@ -158,9 +177,13 @@ describe("applyPermissivePolicy", () => {
     },
   );
 
-  it("omits credential-bound routes from an unregistered OpenClaw fallback (#10153)", () => {
+  it("omits credential-bound routes when OpenClaw has no live providers (#10153)", () => {
     const sandboxName = "fallback-openclaw";
-    const observed = runPermissivePolicy({ policySetStatus: 0, sandboxName });
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      policySetStatus: 0,
+      sandboxName,
+    });
     try {
       expect(observed.result.status).toBe(0);
       expect(observed.stagedMode).toBe("600");

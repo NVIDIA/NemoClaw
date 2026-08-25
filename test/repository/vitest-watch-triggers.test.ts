@@ -230,6 +230,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
     ]);
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",

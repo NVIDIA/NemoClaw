@@ -435,15 +435,25 @@ qualification target for epic #8178. It exercises an operator-supplied native
 Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
 `process_container` driver. It does not register MXC, call `wxc-exec.exe`
 directly, or establish Windows support.
-The generated driver configuration requests the stricter less-privileged
-AppContainer mode and records that choice in the receipt.
+The generated driver configuration records the exact prototype configuration
+qualified by this target: normal AppContainer mode,
+`privateNetworkClientServer`, the host egress proxy, and an exact
+operator-supplied supervisor relay. This configuration broadens the candidate
+sandbox relative to the earlier less-privileged probe and is not a production
+default.
 
 The target requires a Windows x64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
-identities for that checkout, the OpenShell CLI and gateway, the
-OpenShell-supplied `wxc-exec.exe`, the complete OpenClaw artifact tree, Node.js,
-and the OpenClaw entrypoint. Compute the canonical artifact-tree digest after
-staging:
+identities for that checkout, the OpenShell CLI, gateway, supervisor relay,
+OpenShell-supplied `wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and
+OpenClaw entrypoint. The target also requires an existing work root and records
+the operator's exact host-preparation declaration. It observes whether the test
+process is elevated but does not change host ACLs or elevation. Compute the
+canonical artifact-tree digest after staging:
+
+The share and host-state directories are fresh siblings directly beneath the
+declared drive root. This matches the current package's shallow-share
+requirement and keeps host-only configuration outside the sandbox share.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -454,16 +464,20 @@ values. Do not put credentials in them.
 
 | Variable | Meaning |
 | --- | --- |
-| `E2E_ARTIFACT_DIR` | Existing directory for the secret-free qualification receipt |
+| `E2E_ARTIFACT_DIR` | Existing directory outside the NemoClaw checkout for secret-free qualification receipts |
 | `NEMOCLAW_E2E_EXPECTED_SHA` | Exact 40-character NemoClaw checkout revision |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI` | Extracted `openshell.exe` path |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY` | Extracted `openshell-gateway.exe` path |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY` | Extracted `openshell-supervisor-relay.exe` path from the same package |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC` | `wxc-exec.exe` supplied for that OpenShell package |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION` | Exact OpenShell package version |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION` | Exact 40-character OpenShell source revision |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256` | Expected OpenShell CLI SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY_SHA256` | Expected OpenShell gateway SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256` | Expected OpenShell supervisor relay SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | Exact declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
+| `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
@@ -472,13 +486,15 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_NODE_SHA256` | Expected Node.js SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256` | Expected OpenClaw entrypoint SHA-256 |
 
-The target creates a random OpenClaw gateway token for readiness checks. It
+The target creates a random OpenClaw gateway token for readiness, forwarding,
+and chat checks. It
 passes that token through the MXC agent environment; current OpenShell
 `process_container` packaging can therefore expose its encoded configuration,
 including the token, to privileged host process inspection while `wxc-exec.exe`
 starts the sandbox. The token is never written to the receipt or supplied in
 the OpenClaw command arguments, is not reused, and is useful only for the
-temporary loopback OpenClaw gateway. Cleanup attempts sandbox deletion, stops
+temporary loopback OpenClaw gateway. The host client uses a temporary config
+file that is deleted before a passing receipt is written. Cleanup attempts sandbox deletion, stops
 the recorded OpenClaw process, clears the in-memory environment value, and
 removes the runtime home, state, configuration, and gateway logs. A direct
 process-tree termination is an emergency cleanup fallback only. The host-side
@@ -487,8 +503,8 @@ than the complete caller environment. Before using a termination fallback,
 the host binds the process ID to the expected executable, command arguments,
 and creation time. For OpenClaw, it also validates the probe-parent ancestry.
 The host rejects a mismatched or reused PID. The fallback uses the
-`taskkill.exe` beneath the validated Windows system root. If either the
-OpenClaw process or OpenShell gateway needs that fallback, the qualification
+`taskkill.exe` beneath the validated Windows system root. If the OpenClaw
+process, OpenShell forward, or OpenShell gateway needs that fallback, the qualification
 fails. The delete retry and process-termination paths are failure containment,
 not compatibility workarounds that permit a passing result; their presence does
 not assume a specific upstream defect. Remove them only when failed or partial
@@ -504,13 +520,29 @@ npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-con
 ```
 
 The target verifies OpenClaw startup and in-sandbox health, read-write and denied
-filesystem behavior, registry cleanup, and termination of the recorded
-OpenClaw process on sandbox delete. After preflight and local setup succeed, it
+filesystem behavior, an authenticated host-loopback forward, and one
+credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
+the forward active while deleting the sandbox and requires the listener,
+forward process, sandbox registry entry, and recorded OpenClaw process to stop.
+The complete create, forward, chat, and cleanup flow runs twice to detect stale
+state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
 runtime artifacts were removed. When that cleanup succeeds, a failed run retains
 only non-sensitive probe files for diagnosis.
-Gateway mTLS, governed egress, managed inference, gateway-restart recovery, and
-production activation remain outside this target.
+The host-preparation declaration is operator evidence, not an ACL attestation.
+Gateway mTLS, governed egress policy enforcement, managed inference,
+gateway-restart recovery, standard-user operation, and production activation
+remain outside this target.
+
+If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
+not confirm removal of that exact sandbox. Inspect the registry and delete only
+the recorded name:
+
+```powershell
+$receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox list -o json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
+```
 
 The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` in both selector inputs. Reports use the canonical

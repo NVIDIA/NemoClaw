@@ -71,6 +71,40 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(7);
   });
 
+  it("classifies gateway-pinned direct policy reads", () => {
+    const source = [
+      "function actionApply(gateway: string, sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", "-g", gateway, "--base", sandboxName], { reject: false });',
+      "}",
+      "function inspectAuthority(gateway: string, sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName]);',
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/nemoclaw/src/blueprint/runner.ts", "/repo"))
+      .toEqual([
+        { site: "actionApply", view: "base", failureHandling: "error-preserving" },
+        {
+          site: "inspectAuthority",
+          view: "full",
+          failureHandling: "error-preserving",
+        },
+      ]);
+  });
+
+  it("ignores direct policy reads with ambiguous view flags (#9833)", () => {
+    const source = [
+      "function both(sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", "--base", "--full", sandboxName]);',
+      "}",
+      "function neither(sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", sandboxName]);',
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([]);
+  });
+
   it("classifies each read by function, policy view, and failure handling", () => {
     const source = [
       'import { buildPolicyGetCommand as buildBase, buildPolicyGetFullCommand as buildFull } from "./policy/commands";',

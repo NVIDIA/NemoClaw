@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
+import * as openshellRuntimeNamespace from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
 import type {
@@ -53,6 +54,11 @@ const dockerRun = (
   "default" in dockerRunNamespace ? dockerRunNamespace.default : dockerRunNamespace
 ) as typeof import("../../../src/lib/adapters/docker/run.ts");
 const { dockerCapture: defaultDockerCapture } = dockerRun;
+const openshellRuntime = (
+  "default" in openshellRuntimeNamespace
+    ? openshellRuntimeNamespace.default
+    : openshellRuntimeNamespace
+) as typeof import("../../../src/lib/adapters/openshell/runtime.ts");
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type DockerCapture = NonNullable<DockerGpuPatchDeps["dockerCapture"]>;
@@ -66,11 +72,20 @@ export type LegacyKeepaliveFixtureOptions = {
 export type LegacyKeepaliveFixtureDeps = {
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
+  runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
+  runCaptureOpenshell: NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 };
 
 const defaultDeps: LegacyKeepaliveFixtureDeps = {
   recreate: recreateOpenShellDockerSandboxWithStartupCommand,
   dockerCapture: defaultDockerCapture,
+  runOpenshell: openshellRuntime.runOpenshell,
+  runCaptureOpenshell: (args, options) =>
+    openshellRuntime.captureOpenshell(args, {
+      ignoreError: true,
+      includeStderr: true,
+      timeout: typeof options?.timeout === "number" ? options.timeout : undefined,
+    }).output,
 };
 
 function requireFixtureInput(condition: boolean, message: string): asserts condition {
@@ -253,6 +268,8 @@ export function createLegacyKeepaliveFixture(
 
   const recreate = deps.recreate ?? defaultDeps.recreate;
   const dockerCapture = deps.dockerCapture ?? defaultDeps.dockerCapture;
+  const runOpenshell = deps.runOpenshell ?? defaultDeps.runOpenshell;
+  const runCaptureOpenshell = deps.runCaptureOpenshell ?? defaultDeps.runCaptureOpenshell;
   const result = recreate(
     {
       sandboxName: options.sandboxName,
@@ -262,6 +279,8 @@ export function createLegacyKeepaliveFixture(
     },
     {
       dockerCapture: legacyKeepaliveDockerCapture(options.expectedContainerId, dockerCapture),
+      runCaptureOpenshell,
+      runOpenshell,
     },
   );
 
