@@ -2743,6 +2743,23 @@ describe("provider placeholder refresh (#4251)", () => {
     ).toString("base64");
   }
 
+  const slackAliasCases = [
+    { field: "botToken", envKey: "SLACK_BOT_TOKEN", scheme: "xoxb" },
+    { field: "appToken", envKey: "SLACK_APP_TOKEN", scheme: "xapp" },
+  ] as const;
+
+  function revisionedSlackAlias(field: string, scheme: string, envKey: string): unknown {
+    return {
+      channels: {
+        slack: {
+          accounts: {
+            default: { [field]: `${scheme}-OPENSHELL-RESOLVE-ENV-v42_${envKey}` },
+          },
+        },
+      },
+    };
+  }
+
   it("rewrites Telegram canonical placeholders to OpenShell runtime-scoped placeholders", () => {
     const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
     const run = runRefresh(
@@ -2812,30 +2829,18 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("warns when the Slack config alias is present but SLACK_BOT_TOKEN is missing", () => {
-    const run = runRefresh({
-      channels: {
-        slack: {
-          accounts: {
-            default: {
-              botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-              appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-            },
-          },
-        },
-      },
-    });
+  it.each(slackAliasCases)(
+    "warns when a revisioned Slack $field alias has no runtime placeholder (#10153)",
+    ({ field, envKey, scheme }) => {
+      const run = runRefresh(revisionedSlackAlias(field, scheme, envKey));
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stderr).toContain(
+        `slack.default.${field} expects the ${envKey} provider placeholder but it is missing`,
+      );
+    },
+  );
 
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).toContain(
-      "slack.default.botToken expects the SLACK_BOT_TOKEN provider placeholder but it is missing",
-    );
-    expect(run.result.stderr).toContain(
-      "slack.default.appToken expects the SLACK_APP_TOKEN provider placeholder but it is missing",
-    );
-  });
-
-  it("materializes the current Slack revision into Bolt-compatible config aliases (#10153)", () => {
+  it("preserves the OpenShell credential revision in Bolt-compatible Slack configuration aliases (#10153)", () => {
     const run = runRefresh(
       {
         channels: {
@@ -2912,29 +2917,18 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("warns when the Slack runtime env resolves a different key than expected", () => {
-    // A placeholder for the wrong key must not look healthy — Bolt would still
-    // inherit a non-Slack placeholder and fail at startup.
-    const run = runRefresh(
-      {
-        channels: {
-          slack: {
-            accounts: {
-              default: {
-                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-              },
-            },
-          },
-        },
-      },
-      { SLACK_BOT_TOKEN: "openshell:resolve:env:v51_OTHER_KEY" },
-    );
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).toContain(
-      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- token",
-    );
-  });
+  it.each(slackAliasCases)(
+    "warns when a revisioned Slack $field alias resolves a wrong runtime key (#10153)",
+    ({ field, envKey, scheme }) => {
+      const run = runRefresh(revisionedSlackAlias(field, scheme, envKey), {
+        [envKey]: `openshell:resolve:env:v51_OTHER_${envKey}`,
+      });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stderr).toContain(
+        `slack.default.${field} runtime ${envKey} is neither the ${envKey} OpenShell placeholder nor a ${scheme}- token`,
+      );
+    },
+  );
 
   it("emits the deterministic accepted-extras breadcrumb so e2e harnesses can prove env-arg propagation", () => {
     const run = runRefresh(

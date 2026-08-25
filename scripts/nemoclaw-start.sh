@@ -1838,7 +1838,7 @@ def walk_for_warnings(value, path):
             alias_env_key = value[alias_index + len(alias_marker) :]
             token_scheme = value[:alias_index] + "-"
             for env_key in keys:
-                if env_key != alias_env_key:
+                if not placeholder_suffix_matches_env_key(alias_env_key, env_key):
                     continue
                 label = path_label(path)
                 env_value = os.environ.get(env_key, "")
