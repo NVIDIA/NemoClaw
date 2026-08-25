@@ -43,6 +43,7 @@ import type {
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
+  gatewayName?: string;
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
   targetAgentType: string;
@@ -348,7 +349,9 @@ export function createCreatedSandboxCompletionActions(
       const verifiedLifecycle = lifecycle.revalidate(
         lifecycle.capture(resolveLifecycleRegistrationFields()),
       );
-      return finalizeCreatedSandbox(options.finalization, {
+      return finalizeCreatedSandbox(
+        { ...options.finalization, gatewayName: options.registration.gatewayName },
+        {
         ...deps,
         register: (openclawImagePluginInstalls) =>
           (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
@@ -371,7 +374,8 @@ export function createCreatedSandboxCompletionActions(
             ...verifiedLifecycle,
             inferenceRouteReservation,
           }),
-      });
+        },
+      );
     },
   };
 }
@@ -508,8 +512,7 @@ export function createOnboardCreatedSandboxCompletion(
         hermesApiPort,
         ...gateway,
         hostMounts: resolvedCreateIntent.hostMounts,
-        reservationSessionId:
-          portableLifecycle === true ? undefined : (reservationSessionId ?? undefined),
+        reservationSessionId: reservationSessionId ?? undefined,
       },
       gpu: {
         config: gpuConfig,
@@ -639,8 +642,16 @@ export function finalizeCreatedSandbox(
       }
       if (restore.error) deps.error(`  Restore reason: ${restore.error}`);
       deps.error("  Workspace state restoration did not complete. Registry metadata was not updated.");
-      deps.error("  Remove the unregistered sandbox before retrying:");
-      deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+      const gatewayName = options.gatewayName?.trim();
+      if (gatewayName) {
+        deps.error("  Remove the unregistered sandbox from its owning gateway before retrying:");
+        deps.error(
+          `    openshell sandbox delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(options.sandboxName)}`,
+        );
+        deps.error("  Rerun the original onboarding command after the deletion succeeds.");
+      } else {
+        deps.error("  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.");
+      }
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
     }

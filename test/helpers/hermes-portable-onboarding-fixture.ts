@@ -446,5 +446,10 @@ export function createHermesPortableTransactionFixture(
           },
         }),
   };
-  return { value, events, podman };
+  return {
+    value,
+    events,
+    podman,
+    readRegistry: () => (registryEntry ? structuredClone(registryEntry) : null),
+  };
 }

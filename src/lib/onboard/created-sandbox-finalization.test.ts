@@ -481,6 +481,7 @@ describe("created DCode sandbox finalization", () => {
         finalizeCreatedSandbox(
           {
             sandboxName: "dcode",
+            gatewayName: "nemoclaw",
             restoreBackupPath: fixture.backupPath,
             preUpgradeBackup: false,
             targetAgentType: "langchain-deepagents-code",
@@ -521,8 +522,15 @@ describe("created DCode sandbox finalization", () => {
       expect(error).toHaveBeenCalledWith(
         "  Workspace state restoration did not complete. Registry metadata was not updated.",
       );
-      expect(error).toHaveBeenCalledWith("  Remove the unregistered sandbox before retrying:");
-      expect(error).toHaveBeenCalledWith('    openshell sandbox delete "dcode"');
+      expect(error).toHaveBeenCalledWith(
+        "  Remove the unregistered sandbox from its owning gateway before retrying:",
+      );
+      expect(error).toHaveBeenCalledWith(
+        '    openshell sandbox delete -g "nemoclaw" "dcode"',
+      );
+      expect(error).toHaveBeenCalledWith(
+        "  Rerun the original onboarding command after the deletion succeeds.",
+      );
       expect(error).toHaveBeenCalledWith(
         `  Keep the snapshot for manual recovery: ${fixture.backupPath}`,
       );

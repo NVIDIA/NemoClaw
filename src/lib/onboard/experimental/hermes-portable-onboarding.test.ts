@@ -892,10 +892,18 @@ describe("Hermes portable onboarding transaction", () => {
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
       "registry-to-active exit",
     );
+    expect(fixture.readRegistry()).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: input().inferenceRouteReservation.sessionId,
+    });
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     const resumed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
 
     expect(resumed.active.receipt.phase).toBe("active");
+    expect(fixture.readRegistry()).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: input().inferenceRouteReservation.sessionId,
+    });
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
   });
