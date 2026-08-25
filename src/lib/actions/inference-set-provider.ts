@@ -118,6 +118,7 @@ type CaptureProviderCommand = (
     ignoreError: true;
     includeStreams: true;
     maxBuffer: number;
+    timeout?: number;
     env?: NodeJS.ProcessEnv;
   },
 ) => CaptureOpenshellResult;
@@ -290,7 +291,7 @@ export function prepareInferenceSetProviderBinding(options: {
   const apply = (): void => {
     if (surface.type === OPENAI_GATEWAY_PROVIDER_TYPE) {
       const profile = checkOpenAiInferenceProviderProfile({
-        runOpenshell: (args) =>
+        runOpenshell: (args, runnerOptions) =>
           captureOpenshell(
             args[0] === "provider" && args[1] === "profile"
               ? [args[0], args[1], "-g", gatewayName, ...args.slice(2)]
@@ -299,6 +300,7 @@ export function prepareInferenceSetProviderBinding(options: {
               ignoreError: true,
               includeStreams: true,
               maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+              timeout: runnerOptions?.timeout,
             },
           ),
       });

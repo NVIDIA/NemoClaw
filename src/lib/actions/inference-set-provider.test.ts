@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import type { InferenceSetDeps } from "./inference-set";
 import { __test, prepareInferenceSetProviderBinding } from "./inference-set-provider";
 import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
@@ -96,6 +97,12 @@ describe("inference set provider binding", () => {
       "--output",
       "json",
     ]);
+    expect(capture.mock.calls[1][1]).toEqual({
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: 64 * 1024,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
     expect(capture.mock.calls[2]).toEqual([
       [
         "provider",
