@@ -10,14 +10,6 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as never;
-const EXACT_OPENAI_PROFILE = JSON.stringify({
-  id: "openai",
-  credentials: [],
-  endpoints: [],
-  binaries: [],
-  inference_capable: true,
-});
-
 function restoreCachedModule(modulePath: string, previous: unknown): void {
   Reflect.deleteProperty(requireCache, modulePath);
   Object.assign(requireCache, previous === undefined ? {} : { [modulePath]: previous });
