@@ -11,6 +11,7 @@ import {
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
+  pruneInactiveHermesMessagingPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -78,6 +79,41 @@ describe("messaging policy presets", () => {
       "npm",
       "pypi",
     ]);
+  });
+
+  it("removes inactive repository messaging presets only for Hermes", () => {
+    expect(
+      pruneInactiveHermesMessagingPolicyPresets(
+        ["npm", "slack", "discord", "custom-egress"],
+        ["slack"],
+        "hermes",
+      ),
+    ).toEqual(["npm", "slack", "custom-egress"]);
+    expect(
+      pruneInactiveHermesMessagingPolicyPresets(
+        ["npm", "slack", "discord"],
+        ["slack"],
+        "openclaw",
+      ),
+    ).toEqual(["npm", "slack", "discord"]);
+    expect(
+      pruneInactiveHermesMessagingPolicyPresets(
+        ["npm", "slack", "discord"],
+        null,
+        "hermes",
+      ),
+    ).toEqual(["npm", "slack", "discord"]);
+  });
+
+  it("preserves a custom preset that shadows an inactive repository messaging preset", () => {
+    expect(
+      pruneInactiveHermesMessagingPolicyPresets(
+        ["npm", "discord"],
+        ["slack"],
+        "hermes",
+        new Set(["discord"]),
+      ),
+    ).toEqual(["npm", "discord"]);
   });
 
   it("maps every channel that has a policy preset to its preset for cleanup", () => {
