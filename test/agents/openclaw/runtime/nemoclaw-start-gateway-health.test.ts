@@ -22,7 +22,7 @@ import {
   START_SCRIPT,
   safeTmpHelpers,
   writeProcStatFunction,
-} from "./nemoclaw-start-gateway.test-helpers";
+} from "../../../nemoclaw-start-gateway.test-helpers";
 
 function gatewayMarkerFunction(src: string, name: string, markerPath: string): string {
   return extractShellFunction(src, name).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
@@ -662,25 +662,25 @@ describe("gateway launch wiring (#4710)", () => {
     };
   }
 
-  it.each([
-    "non-root",
-    "root",
-  ] as const)("%s launch clears the marker on supervisor exit after recording the gateway PID", (kind) => {
-    const run = runLaunchWiring(kind);
-    expect(run.result.status, `script failed: ${run.result.stderr}`).toBe(0);
-    expect(run.markerPresent).toBe(true);
-    // The supervisor EXIT trap clears the in-container marker when this fixture
-    // exits, returning healthchecks to the marker-absent branch (#4952).
-    expect(run.markerExists).toBe(false);
-    // The watchdog reads the gateway PID from the pidfile each cycle.
-    expect(run.gatewayPid).toBeDefined();
-    expect(run.pidFileContent?.split(" ")[0]).toBe(run.gatewayPid);
-    // The watchdog runs and is registered for SIGTERM cleanup.
-    expect(run.watchdogPid).toBeDefined();
-    expect(run.stdout).toContain("WATCHDOG_ALIVE=1");
-    expect(run.childPids).toContain(run.watchdogPid);
-    expect(run.childPids).toContain(run.gatewayPid);
-  });
+  it.each(["non-root", "root"] as const)(
+    "%s launch clears the marker on supervisor exit after recording the gateway PID",
+    (kind) => {
+      const run = runLaunchWiring(kind);
+      expect(run.result.status, `script failed: ${run.result.stderr}`).toBe(0);
+      expect(run.markerPresent).toBe(true);
+      // The supervisor EXIT trap clears the in-container marker when this fixture
+      // exits, returning healthchecks to the marker-absent branch (#4952).
+      expect(run.markerExists).toBe(false);
+      // The watchdog reads the gateway PID from the pidfile each cycle.
+      expect(run.gatewayPid).toBeDefined();
+      expect(run.pidFileContent?.split(" ")[0]).toBe(run.gatewayPid);
+      // The watchdog runs and is registered for SIGTERM cleanup.
+      expect(run.watchdogPid).toBeDefined();
+      expect(run.stdout).toContain("WATCHDOG_ALIVE=1");
+      expect(run.childPids).toContain(run.watchdogPid);
+      expect(run.childPids).toContain(run.gatewayPid);
+    },
+  );
 });
 
 // The respawn loop reassigns GATEWAY_PID when it relaunches a dead gateway;
@@ -699,110 +699,110 @@ describe("respawn loop pidfile refresh (#4710)", () => {
     return src.slice(start, end + endToken.length);
   }
 
-  it.each([
-    "non-root",
-    "root",
-  ] as const)("%s respawn records the relaunched gateway PID in the pidfile", (kind) => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-respawn-${kind}-`));
-    const fakeBin = path.join(tmpDir, "bin");
-    const openclawLog = path.join(tmpDir, "openclaw.log");
-    const gatewayLog = path.join(tmpDir, "gateway.log");
-    const pidFile = path.join(tmpDir, "gateway.pid");
-    const initialPidFile = path.join(tmpDir, "initial.pid");
-    const restoreSentinel = path.join(tmpDir, "runtime-guards-restored");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    fs.mkdirSync(fakeBin);
-    fs.writeFileSync(
-      path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\n[ -f ${JSON.stringify(restoreSentinel)} ] || exit 97\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(
-      path.join(fakeBin, "setpriv"),
-      `#!/usr/bin/env bash\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`,
-      {
-        mode: 0o755,
-      },
-    );
-    fs.writeFileSync(gatewayLog, "gateway booting\n");
+  it.each(["non-root", "root"] as const)(
+    "%s respawn records the relaunched gateway PID in the pidfile",
+    (kind) => {
+      const src = fs.readFileSync(START_SCRIPT, "utf-8");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-respawn-${kind}-`));
+      const fakeBin = path.join(tmpDir, "bin");
+      const openclawLog = path.join(tmpDir, "openclaw.log");
+      const gatewayLog = path.join(tmpDir, "gateway.log");
+      const pidFile = path.join(tmpDir, "gateway.pid");
+      const initialPidFile = path.join(tmpDir, "initial.pid");
+      const restoreSentinel = path.join(tmpDir, "runtime-guards-restored");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        `#!/usr/bin/env bash\n[ -f ${JSON.stringify(restoreSentinel)} ] || exit 97\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "setpriv"),
+        `#!/usr/bin/env bash\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`,
+        {
+          mode: 0o755,
+        },
+      );
+      fs.writeFileSync(gatewayLog, "gateway booting\n");
 
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -o pipefail",
-        `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
-        `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
-        '_DASHBOARD_PORT="19000"',
-        `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
-        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
-        `prepare_openclaw_automatic_respawn() { printf restored >${JSON.stringify(restoreSentinel)}; }`,
-        // The loop sleeps 2s between respawns; keep the test fast.
-        "sleep() { command sleep 0.05; }",
-        safeTmpHelpers(src),
-        extractShellFunction(src, "record_gateway_pid"),
-        extractShellFunction(src, "clear_gateway_pid_record"),
-        rootGatewayLifecycleFunctions(src, gatewayLog),
-        kind === "root" ? "mark_in_container_gateway() { :; }" : "",
-        kind === "root" ? "GATEWAY_CONTROL_SIGNAL_PENDING=0" : "",
-        kind === "root" ? "handle_openclaw_gateway_control_request() { :; }" : "",
-        kind === "root"
-          ? 'openclaw_supervised_pid_is_live() { local current; gateway_control_pid_is_live "$1" || return 1; current="$(openclaw_pid_start_identity "$1")" || return 1; [ "$current" = "$2" ]; }'
-          : "",
-        kind === "root" ? "gateway_pid_is_openclaw_gateway() { return 0; }" : "",
-        "SANDBOX_CHILD_PIDS=()",
-        "SANDBOX_WAIT_PID=",
-        "(",
-        // A gateway that dies immediately with a non-zero status drives
-        // exactly one respawn iteration.
-        '  bash -c "sleep 0.1; exit 7" &',
-        "  GATEWAY_PID=$!",
-        '  GATEWAY_PID_START_IDENTITY="$(openclaw_pid_start_identity "$GATEWAY_PID")"',
-        '  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"',
-        `  printf '%s' "$GATEWAY_PID" > ${JSON.stringify(initialPidFile)}`,
-        respawnLoop(src, kind).replaceAll("/tmp/gateway.log", gatewayLog),
-        ") &",
-        "LOOP_PID=$!",
-        'INITIAL=""; CURRENT=""',
-        "for _ in $(command seq 1 200); do",
-        `  INITIAL="$(cat ${JSON.stringify(initialPidFile)} 2>/dev/null || true)"`,
-        `  CURRENT="$(awk '{ print $1 }' ${JSON.stringify(pidFile)} 2>/dev/null || true)"`,
-        '  if [ -n "$INITIAL" ] && [ -n "$CURRENT" ] && [ "$CURRENT" != "$INITIAL" ]; then break; fi',
-        "  command sleep 0.05",
-        "done",
-        // The pidfile is refreshed at spawn time; give the respawned stub a
-        // moment to actually execute and write its argv log before cleanup.
-        `for _ in $(command seq 1 100); do [ -s ${JSON.stringify(openclawLog)} ] && break; command sleep 0.05; done`,
-        'printf "INITIAL=%s\\n" "$INITIAL"',
-        'printf "CURRENT=%s\\n" "$CURRENT"',
-        'if [ -n "$CURRENT" ] && kill -0 "$CURRENT" 2>/dev/null; then printf "RESPAWNED_ALIVE=1\\n"; fi',
-        "disown -a 2>/dev/null || true",
-        // Kill the loop before its gateway so it cannot respawn again.
-        'kill -9 "$LOOP_PID" 2>/dev/null || true',
-        'pkill -P "$LOOP_PID" 2>/dev/null || true',
-        '[ -n "$CURRENT" ] && kill -9 "$CURRENT" 2>/dev/null || true',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -o pipefail",
+          `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
+          `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
+          '_DASHBOARD_PORT="19000"',
+          `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+          "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
+          `prepare_openclaw_automatic_respawn() { printf restored >${JSON.stringify(restoreSentinel)}; }`,
+          // The loop sleeps 2s between respawns; keep the test fast.
+          "sleep() { command sleep 0.05; }",
+          safeTmpHelpers(src),
+          extractShellFunction(src, "record_gateway_pid"),
+          extractShellFunction(src, "clear_gateway_pid_record"),
+          rootGatewayLifecycleFunctions(src, gatewayLog),
+          kind === "root" ? "mark_in_container_gateway() { :; }" : "",
+          kind === "root" ? "GATEWAY_CONTROL_SIGNAL_PENDING=0" : "",
+          kind === "root" ? "handle_openclaw_gateway_control_request() { :; }" : "",
+          kind === "root"
+            ? 'openclaw_supervised_pid_is_live() { local current; gateway_control_pid_is_live "$1" || return 1; current="$(openclaw_pid_start_identity "$1")" || return 1; [ "$current" = "$2" ]; }'
+            : "",
+          kind === "root" ? "gateway_pid_is_openclaw_gateway() { return 0; }" : "",
+          "SANDBOX_CHILD_PIDS=()",
+          "SANDBOX_WAIT_PID=",
+          "(",
+          // A gateway that dies immediately with a non-zero status drives
+          // exactly one respawn iteration.
+          '  bash -c "sleep 0.1; exit 7" &',
+          "  GATEWAY_PID=$!",
+          '  GATEWAY_PID_START_IDENTITY="$(openclaw_pid_start_identity "$GATEWAY_PID")"',
+          '  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"',
+          `  printf '%s' "$GATEWAY_PID" > ${JSON.stringify(initialPidFile)}`,
+          respawnLoop(src, kind).replaceAll("/tmp/gateway.log", gatewayLog),
+          ") &",
+          "LOOP_PID=$!",
+          'INITIAL=""; CURRENT=""',
+          "for _ in $(command seq 1 200); do",
+          `  INITIAL="$(cat ${JSON.stringify(initialPidFile)} 2>/dev/null || true)"`,
+          `  CURRENT="$(awk '{ print $1 }' ${JSON.stringify(pidFile)} 2>/dev/null || true)"`,
+          '  if [ -n "$INITIAL" ] && [ -n "$CURRENT" ] && [ "$CURRENT" != "$INITIAL" ]; then break; fi',
+          "  command sleep 0.05",
+          "done",
+          // The pidfile is refreshed at spawn time; give the respawned stub a
+          // moment to actually execute and write its argv log before cleanup.
+          `for _ in $(command seq 1 100); do [ -s ${JSON.stringify(openclawLog)} ] && break; command sleep 0.05; done`,
+          'printf "INITIAL=%s\\n" "$INITIAL"',
+          'printf "CURRENT=%s\\n" "$CURRENT"',
+          'if [ -n "$CURRENT" ] && kill -0 "$CURRENT" 2>/dev/null; then printf "RESPAWNED_ALIVE=1\\n"; fi',
+          "disown -a 2>/dev/null || true",
+          // Kill the loop before its gateway so it cannot respawn again.
+          'kill -9 "$LOOP_PID" 2>/dev/null || true',
+          'pkill -P "$LOOP_PID" 2>/dev/null || true',
+          '[ -n "$CURRENT" ] && kill -9 "$CURRENT" 2>/dev/null || true',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
 
-    try {
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 20_000 });
-      const stdout = typeof result.stdout === "string" ? result.stdout : "";
-      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
-      const initial = stdout.match(/^INITIAL=(\d+)$/m)?.[1];
-      const current = stdout.match(/^CURRENT=(\d+)$/m)?.[1];
-      expect(initial, `no initial pid in: ${stdout}`).toBeDefined();
-      expect(current, `no current pid in: ${stdout}`).toBeDefined();
-      expect(current).not.toBe(initial);
-      expect(stdout).toContain("RESPAWNED_ALIVE=1");
-      expect(fs.readFileSync(restoreSentinel, "utf-8")).toBe("restored");
-      expect(fs.readFileSync(openclawLog, "utf-8")).toContain("gateway run --port 19000");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 20_000 });
+        const stdout = typeof result.stdout === "string" ? result.stdout : "";
+        expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+        const initial = stdout.match(/^INITIAL=(\d+)$/m)?.[1];
+        const current = stdout.match(/^CURRENT=(\d+)$/m)?.[1];
+        expect(initial, `no initial pid in: ${stdout}`).toBeDefined();
+        expect(current, `no current pid in: ${stdout}`).toBeDefined();
+        expect(current).not.toBe(initial);
+        expect(stdout).toContain("RESPAWNED_ALIVE=1");
+        expect(fs.readFileSync(restoreSentinel, "utf-8")).toBe("restored");
+        expect(fs.readFileSync(openclawLog, "utf-8")).toContain("gateway run --port 19000");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("services a supervisor request that interrupts root respawn backoff before relaunch", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");

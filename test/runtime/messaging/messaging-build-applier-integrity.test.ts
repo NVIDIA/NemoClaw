@@ -14,7 +14,7 @@ import {
   reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "../../helpers/timeouts";
-import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const original =
@@ -90,9 +90,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-applier-boundary-"));
     const messagingRoot = path.join(root, "src", "lib", "messaging");
     try {
-      [...dockerfile.matchAll(
-        /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
-      )].forEach((copy) => {
+      [
+        ...dockerfile.matchAll(
+          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
+        ),
+      ].forEach((copy) => {
         const source = copy[1] ?? "";
         const destination = copy[2] ?? "";
         const sourcePath = path.join(REPO_ROOT, source);

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
+import { runWithEnv, writeSandboxRegistry } from "../../cli/helpers";
 
 function buildStubOpenshell(
   home: string,
