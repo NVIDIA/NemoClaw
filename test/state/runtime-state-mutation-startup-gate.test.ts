@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 const GATE = path.join(
   import.meta.dirname,
   "..",
+  "..",
   "scripts",
   "runtime-state-mutation-startup-gate.py",
 );

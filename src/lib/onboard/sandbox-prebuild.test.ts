@@ -69,7 +69,6 @@ describe("sandbox BuildKit prebuild", () => {
       vi.stubEnv("PATH", "/usr/bin");
       vi.stubEnv("HOME", "/home/user");
       vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
-      vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
       vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
       vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
       vi.stubEnv("BUILDX_BUILDER", "external-builder");
@@ -90,7 +89,6 @@ describe("sandbox BuildKit prebuild", () => {
         PATH: "/usr/bin",
         HOME: "/home/user",
         CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
-        DOCKER_HOST: "unix:///var/run/docker.sock",
         DOCKER_CONFIG: "/home/user/.docker-ci",
         DOCKER_CONTEXT: "remote-builder",
         XDG_CONFIG_HOME: "/home/user/.config",
@@ -100,6 +98,17 @@ describe("sandbox BuildKit prebuild", () => {
       expect(env[key], key).toBeUndefined();
     },
   );
+
+  it("keeps Docker host precedence over an ambient Docker context", () => {
+    vi.stubEnv("DOCKER_HOST", "unix:///selected-docker.sock");
+    vi.stubEnv("DOCKER_CONTEXT", "ambient-remote");
+    vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ambient");
+
+    const env = dockerBuildSubprocessEnv();
+    expect(env).toMatchObject({ DOCKER_HOST: "unix:///selected-docker.sock" });
+    expect(env).not.toHaveProperty("DOCKER_CONTEXT");
+    expect(env).not.toHaveProperty("DOCKER_CONFIG");
+  });
 
   it("never enables a local-image handoff for a remote gateway", () => {
     expect(resolveSandboxPrebuildEnabled({}, false)).toBe(false);

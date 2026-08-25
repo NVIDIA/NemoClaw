@@ -59,7 +59,7 @@ function fixture(ipAddressVersion: string) {
   fs.writeFileSync(arboristBin, "#!/usr/bin/env node\n");
   const npmBin = path.join(npmRoot, "node_modules", ".bin");
   fs.mkdirSync(npmBin);
-  fs.symlinkSync("../../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
+  fs.symlinkSync("../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
   writeJson(path.join(replacementRoot, "package.json"), packageManifest(FIXED_IP_ADDRESS_VERSION));
   fs.mkdirSync(path.join(replacementRoot, "dist"));
   fs.writeFileSync(path.join(replacementRoot, "dist", "ip-address.js"), "fixed\n");

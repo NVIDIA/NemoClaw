@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 const SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "update-hermes-agent.sh");
 const HERMES_BASE_DOCKERFILE = path.join(
   import.meta.dirname,
-  "..",
+  "../..",
   "agents",
   "hermes",
   "Dockerfile.base",

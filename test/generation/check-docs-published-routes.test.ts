@@ -218,7 +218,7 @@ See [Commands](../reference/commands).
 
   it("resolves relative routes from the published URL route", () => {
     expect(
-      resolvePublishedRoute("/user-guide/openclaw/reference/commands", "../../inference/foo"),
+      resolvePublishedRoute("/user-guide/openclaw/reference/commands", "../inference/foo"),
     ).toBe("/user-guide/openclaw/inference/foo");
     expect(
       resolvePublishedRoute("/user-guide/openclaw/reference/commands", "/user-guide/hermes/foo"),

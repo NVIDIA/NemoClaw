@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 
-const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 const SANDBOX = "my-assist";
 
 describe("agent parity across sandbox inventory surfaces", () => {

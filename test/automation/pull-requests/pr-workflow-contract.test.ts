@@ -349,6 +349,18 @@ describe("pull request and main workflow contracts", () => {
     ),
   };
 
+  it("runs the skills hook for the migrated frontmatter test", () => {
+    const result = spawnSync(
+      "npx",
+      ["prek", "run", "test-skills-yaml", "--files", "test/skills/skills-frontmatter.test.ts"],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Test (skills YAML)");
+    expect(result.stdout).not.toContain("Skipped");
+  });
+
   it.each([
     ["pull_request", prWorkflow],
     ["main", mainWorkflow],

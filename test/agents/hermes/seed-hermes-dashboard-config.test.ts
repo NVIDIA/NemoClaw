@@ -23,7 +23,7 @@ import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "hermes",
   "seed-dashboard-config.py",
