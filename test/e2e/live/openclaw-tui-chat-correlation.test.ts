@@ -69,7 +69,7 @@ const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;
 
 // ─── Trace analyzer types + helpers (mirrored from
-//     test/openclaw-tui-chat-correlation.test.ts so the live test is
+//     test/agents/openclaw/openclaw-tui-chat-correlation.test.ts so the live test is
 //     self-contained; kept in lockstep with the unit-test analyzer
 //     via review).
 //     ─────────────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ function issue2603AttemptOutcome(
 // ─── In-sandbox websocket repro driver ─────────────────────────────
 
 function buildLiveReproScript(): string {
-  // Verbatim port of the script in test/openclaw-tui-chat-correlation.test.ts
+  // Verbatim port of the script in test/agents/openclaw/openclaw-tui-chat-correlation.test.ts
   // (loaded at runtime from /usr/local/lib/node_modules/openclaw/package.json
   // so it picks up the in-sandbox OpenClaw `ws` dependency without the
   // sandbox needing its own npm install).
@@ -455,7 +455,7 @@ ws.on("open", async () => {
 // Idempotent: returns 0 if the in-sandbox gateway already responds to
 // /health, otherwise launches `openclaw gateway run --port 18789`,
 // sleeps 10s, and re-checks. Mirrors the legacy `ensureGatewayRunning`
-// helper from test/openclaw-tui-chat-correlation.test.ts.
+// helper from test/agents/openclaw/openclaw-tui-chat-correlation.test.ts.
 async function ensureSandboxGatewayRunning(
   sandbox: SandboxClient,
   sandboxName: string,
