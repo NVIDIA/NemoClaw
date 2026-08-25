@@ -135,8 +135,11 @@ export function verifyShieldsLockState(
         // First whitespace-delimited token is the flags field.
         const [flags] = attrs.trim().split(/\s+/, 1);
         if (!flags.includes("i")) issues.push(`${f} immutable bit not set`);
-      } catch {
-        // lsattr may not be available on all images — skip
+      } catch (err) {
+        // Callers set verifyChattr only after `chattr +i` succeeded on this
+        // image, so a failure here is drift rather than a missing tool.
+        const msg = err instanceof Error ? err.message : String(err);
+        issues.push(`${f} immutable bit unverified (lsattr failed: ${msg})`);
       }
     }
   }

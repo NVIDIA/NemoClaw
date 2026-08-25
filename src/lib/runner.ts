@@ -224,7 +224,12 @@ function runArrayCmd(
   if (result.status !== 0 && !ignoreError) {
     const cmdStr = cmd.join(" ");
     console.error(`  Command failed (exit ${result.status}): ${redact(cmdStr).slice(0, 80)}`);
-    logOpenshellRuntimeHint(exe);
+    // logOpenshellRuntimeHint's bash branch expects the inner shell command
+    // (matching what runShell's spawnAndHandle path passes), not the
+    // "bash -c ..." wrapper itself — otherwise `run(["bash", "-c",
+    // "openshell ..."])` never matches the leading-`openshell` regex.
+    const renderedCommand = exe === "bash" && args[0] === "-c" ? (args[1] ?? "") : cmdStr;
+    logOpenshellRuntimeHint(exe, renderedCommand);
     process.exit(result.status || 1);
   }
   return result;

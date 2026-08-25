@@ -273,7 +273,7 @@ def _write_config(url: str, *, ambiguous: bool = False) -> None:
         "type": "http",
         "url": url,
         "headers": {
-            "Authorization": "Bearer openshell:resolve:env:VALIDATION_MCP_TOKEN"
+            "Authorization": "Bearer openshell:resolve:env:v12_VALIDATION_MCP_TOKEN"
         },
     }
     if ambiguous:

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRm, dockerRun } from "../adapters/docker";
+import { sleepSeconds } from "../core/wait";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
@@ -200,33 +201,77 @@ function probeDockerGpuMode(
   image: string,
   deps: DockerGpuPatchDeps,
   pullPolicy: "missing" | "never",
-): { ok: boolean; error: string | null } {
+): { ok: boolean; error: string | null; cleanupConfirmed: boolean } {
   const run = deps.dockerRun ?? dockerRun;
   const remove = deps.dockerRm ?? dockerRm;
   const probeName = `nemoclaw-gpu-probe-${process.pid}-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2, 8)}`;
+  let outcome: { ok: boolean; error: string | null };
   try {
     const pullArgs = pullPolicy === "never" ? ["--pull", "never"] : [];
-    const result = run(
-      ["create", "--name", probeName, ...pullArgs, ...mode.args, image, "true"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-      },
-    );
-    const ok = hasZeroDockerExitStatus(result);
-    return { ok, error: ok ? null : resultText(result) || "docker create failed" };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  } finally {
-    remove(probeName, {
+    const result = run(["create", "--name", probeName, ...pullArgs, ...mode.args, image, "true"], {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
+    const ok = hasZeroDockerExitStatus(result);
+    outcome = { ok, error: ok ? null : resultText(result) || "docker create failed" };
+  } catch (error) {
+    outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+
+  let cleanupConfirmed = false;
+  try {
+    const removal = remove(probeName, {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    cleanupConfirmed =
+      hasZeroDockerExitStatus(removal) || isMissingDockerContainer(removal, probeName);
+  } catch {
+    // Reconcile below before another Docker mutation.
+  }
+  if (!cleanupConfirmed) {
+    try {
+      const inspection = run(["container", "inspect", probeName], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      cleanupConfirmed = isMissingDockerContainer(inspection, probeName);
+    } catch {
+      // An inconclusive read makes the probe terminal.
+    }
+  }
+  if (!cleanupConfirmed) {
+    outcome = {
+      ok: false,
+      error: outcome.ok
+        ? "Docker GPU probe succeeded, but cleanup could not confirm container removal"
+        : `${outcome.error ?? "docker create failed"}; cleanup could not confirm container removal`,
+    };
+  }
+  return { ...outcome, cleanupConfirmed };
+}
+
+function isMissingDockerContainer(
+  result: {
+    status?: number | null;
+    stdout?: string | Buffer | null;
+    stderr?: string | Buffer | null;
+  },
+  containerName: string,
+): boolean {
+  const text = resultText(result);
+  return result.status !== 0 && /no such container/i.test(text) && text.includes(containerName);
+}
+
+function isTransientDockerDesktopGpuProbeFailure(error: string | null): boolean {
+  return /(?:\b(?:http|status(?: code)?)\D{0,8}5\d{2}\b|internal server error|connection reset|unexpected eof|temporarily unavailable)/i.test(
+    error || "",
+  );
 }
 
 export function selectDockerGpuPatchMode(
@@ -241,15 +286,28 @@ export function selectDockerGpuPatchMode(
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
   const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
+  const attemptsPerMode = options.dockerDesktopWsl ? 2 : 1;
+  const sleep = deps.sleep ?? sleepSeconds;
   for (const mode of buildDockerGpuModeCandidates(options.device, {
     cdiAvailable,
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl,
   })) {
-    const result = probeDockerGpuMode(mode, options.image, deps, options.pullPolicy ?? "missing");
-    const attempt = { mode, ok: result.ok, error: result.error };
-    attempts.push(attempt);
-    if (attempt.ok) return { mode, attempts };
+    for (let attemptNumber = 0; attemptNumber < attemptsPerMode; attemptNumber += 1) {
+      const result = probeDockerGpuMode(mode, options.image, deps, options.pullPolicy ?? "missing");
+      const attempt = { mode, ok: result.ok, error: result.error };
+      attempts.push(attempt);
+      if (!result.cleanupConfirmed) return { mode: null, attempts };
+      if (attempt.ok) return { mode, attempts };
+      if (
+        attemptNumber + 1 < attemptsPerMode &&
+        isTransientDockerDesktopGpuProbeFailure(attempt.error)
+      ) {
+        sleep(1);
+      } else {
+        break;
+      }
+    }
   }
   return { mode: null, attempts };
 }

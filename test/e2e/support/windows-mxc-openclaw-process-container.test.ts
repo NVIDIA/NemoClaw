@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -13,17 +14,24 @@ import {
   assertCleanCheckoutIdentity,
   assertExactArtifactIdentities,
   assertExpectedOpenClawProcessIdentity,
+  assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
   parseWindowsMxcOpenClawQualificationEnvironment,
+  parseOpenClawExactChatReply,
+  parseOpenClawHealthResult,
   parseWindowsProcessQueryResult,
   renderWindowsMxcFilesystemPolicy,
   renderWindowsMxcGatewayConfig,
   renderWindowsMxcOpenClawProbeAgent,
+  retainedWindowsMxcSandboxName,
+  runWindowsMxcForwardCleanup,
   sameWindowsProcessIdentity,
   sandboxListContainsExactName,
   sha256File,
   shouldRetrySandboxDelete,
+  withWindowsMxcLocalSetupOwnership,
   withoutOpenShellGatewaySelection,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
 
@@ -42,6 +50,7 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
     entry: path.join(openClawRoot, "runtime", "openclaw.mjs"),
     gateway: path.join(root, "openshell-gateway.exe"),
     node: path.join(openClawRoot, "node", "node.exe"),
+    relay: path.join(root, "openshell-supervisor-relay.exe"),
     wxc: path.join(root, "wxc-exec.exe"),
   };
   for (const [name, file] of Object.entries(paths)) fs.writeFileSync(file, name, "utf8");
@@ -50,6 +59,7 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
     environment: {
       E2E_ARTIFACT_DIR: artifactDirectory,
       NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION: "wxc-host-prep-prepare-system-drive",
       NEMOCLAW_WINDOWS_MXC_NODE: paths.node,
       NEMOCLAW_WINDOWS_MXC_NODE_SHA256: sha256File(paths.node),
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY: paths.entry,
@@ -62,10 +72,13 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256: sha256File(paths.cli),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY: paths.gateway,
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY_SHA256: sha256File(paths.gateway),
+      NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY: paths.relay,
+      NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256: sha256File(paths.relay),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION: "b".repeat(40),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION: "0.0.12",
       NEMOCLAW_WINDOWS_MXC_WXC_EXEC: paths.wxc,
       NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256: sha256File(paths.wxc),
+      NEMOCLAW_WINDOWS_MXC_WORK_ROOT: root,
     },
   };
 }
@@ -75,6 +88,108 @@ afterEach(() => {
 });
 
 describe("inactive Windows MXC OpenClaw process_container qualification", () => {
+  it("removes token-bearing setup state and closes descriptors after a setup failure (#8178)", async () => {
+    const { root } = fixture();
+    const receiptPath = path.join(root, "setup-failure-receipt.json");
+    const token = "setup-only-secret";
+    let descriptor = -1;
+    let ownedRoot = "";
+
+    await expect(
+      withWindowsMxcLocalSetupOwnership({
+        receiptPath,
+        failureReceipt: (localArtifactsRemoved) => ({
+          cleanup: { localArtifactsRemoved },
+          verdict: "fail",
+        }),
+        operation: async (ownership) => {
+          ownedRoot = ownership.trackRoot(fs.mkdtempSync(path.join(root, "owned-setup-")));
+          const tokenFile = path.join(ownedRoot, "client-home", ".openclaw", "openclaw.json");
+          fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+          fs.writeFileSync(tokenFile, JSON.stringify({ token }), "utf8");
+          descriptor = ownership.trackDescriptor(
+            fs.openSync(path.join(ownedRoot, "gateway.log"), "w"),
+          );
+          throw new Error("injected setup failure");
+        },
+      }),
+    ).rejects.toThrow(/local setup failed/u);
+
+    expect(fs.existsSync(ownedRoot)).toBe(false);
+    expect(() => fs.fstatSync(descriptor)).toThrow();
+    const receiptText = fs.readFileSync(receiptPath, "utf8");
+    expect(receiptText).not.toContain(token);
+    expect(JSON.parse(receiptText)).toEqual({
+      cleanup: { localArtifactsRemoved: true },
+      verdict: "fail",
+    });
+  });
+
+  it("continues forward cleanup after a trusted process query fails (#8178)", async () => {
+    const events: string[] = [];
+    const result = await runWindowsMxcForwardCleanup({
+      childWasRunning: true,
+      sandboxDeleteAccepted: true,
+      stopChild: async () => {
+        events.push("stop-child");
+      },
+      terminateTrustedProcessIfAlive: async () => {
+        events.push("query-trusted-process");
+        throw new Error("injected process query failure");
+      },
+      waitForProcessExit: async () => {
+        events.push("wait-for-process-exit");
+        return true;
+      },
+      waitForListenerClosed: async () => {
+        events.push("wait-for-listener-close");
+        return true;
+      },
+    });
+
+    expect(events).toEqual([
+      "stop-child",
+      "query-trusted-process",
+      "wait-for-process-exit",
+      "wait-for-listener-close",
+    ]);
+    expect(result).toMatchObject({
+      emergencyTerminationNeeded: true,
+      listenerStopped: true,
+      processStopped: true,
+    });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toEqual(new Error("injected process query failure"));
+  });
+
+  it("records the retained sandbox when cleanup cannot confirm deletion (#8178)", () => {
+    const sandboxName = "mxc-oc-retained";
+    const retainedSandboxName = retainedWindowsMxcSandboxName({
+      registryRemovedAfterDelete: false,
+      sandboxCreateStarted: true,
+      sandboxName,
+    });
+    const receipt = { cleanup: { retainedSandboxName }, verdict: "fail" };
+    const failure = createWindowsMxcQualificationFailure({
+      failures: [new Error("injected sandbox delete failure")],
+      openClawProcessStopped: true,
+      receiptPath: "C:\\evidence\\receipt.json",
+      retainedSandboxName,
+      sandboxDeleteRetried: true,
+    });
+
+    expect(receipt.cleanup.retainedSandboxName).toBe(sandboxName);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toContain(`retained sandbox=${sandboxName}`);
+    expect(
+      retainedWindowsMxcSandboxName({
+        registryRemovedAfterDelete: true,
+        sandboxCreateStarted: true,
+        sandboxName,
+      }),
+    ).toBeNull();
+  });
+
   it("requires exact identities and keeps the OpenClaw launch files under one artifact root (#8178)", () => {
     const { environment } = fixture();
     const parsed = parseWindowsMxcOpenClawQualificationEnvironment(environment);
@@ -85,6 +200,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARTIFACT_TREE_SHA256,
     );
     expect(parsed.expected.wxcExecSha256).toBe(environment.NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256);
+    expect(parsed.declaredHostPreparation).toBe("wxc-host-prep-prepare-system-drive");
   });
 
   it("rejects an OpenClaw executable outside the staged artifact root (#8178)", () => {
@@ -106,6 +222,15 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
       /unsupported format/u,
+    );
+  });
+
+  it("rejects an unrecognized host-preparation declaration (#8178)", () => {
+    const { environment } = fixture();
+    environment.NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION = "manual-acl-change";
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /HOST_PREPARATION has an unsupported value/u,
     );
   });
 
@@ -256,15 +381,54 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).toThrow(/does not match/u);
   });
 
-  it("renders a gateway-scoped process_container probe without credential values (#8178)", () => {
+  it("requires the exact OpenShell forward command and loopback ports (#8178)", () => {
+    const identity = {
+      commandLine:
+        '"C:\\package\\openshell.exe" forward service mxc-oc-123 --target-port 18889 --local 127.0.0.1:18790',
+      creationDate: "20260804180000.000000-420",
+      executablePath: "C:\\package\\openshell.exe",
+      parentProcessId: 40,
+      processId: 41,
+    };
+    expect(() =>
+      assertExpectedOpenShellForwardProcessIdentity(identity, {
+        cliPath: "C:\\package\\openshell.exe",
+        localPort: 18790,
+        sandboxName: "mxc-oc-123",
+        targetPort: 18889,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertExpectedOpenShellForwardProcessIdentity(
+        { ...identity, commandLine: identity.commandLine.replace("mxc-oc-123", "other") },
+        {
+          cliPath: "C:\\package\\openshell.exe",
+          localPort: 18790,
+          sandboxName: "mxc-oc-123",
+          targetPort: 18889,
+        },
+      ),
+    ).toThrow(/forward process identity/u);
+  });
+
+  it("renders the exact inactive relay configuration without credential values (#8178)", () => {
     const config = renderWindowsMxcGatewayConfig({
       agentPath: "C:\\artifact\\node.exe",
+      relayPath: "C:\\probe\\share\\openshell-supervisor-relay.exe",
       shareDirectory: "C:\\probe\\share",
+      targetPort: 18889,
       wxcExecPath: "C:\\package\\wxc-exec.exe",
     });
 
     expect(config).toContain('backend = "process_container"');
-    expect(config).toContain("pc_least_privilege = true");
+    expect(config).toContain("pc_least_privilege = false");
+    expect(config).toContain('pc_capabilities = ["privateNetworkClientServer"]');
+    expect(config).toContain("egress_proxy = true");
+    expect(config).toContain('egress_proxy_addr = "127.0.0.1:18080"');
+    expect(config).toContain(
+      'pc_relay_spawner_path = "C:/probe/share/openshell-supervisor-relay.exe"',
+    );
+    expect(config).toContain("pc_relay_target_port = 18889");
     expect(config).toContain('"NEMOCLAW_MXC_E2E_TOKEN"');
     expect(config).not.toContain("credential-value");
     expect(config).not.toContain("--token");
@@ -285,6 +449,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     const agent = renderWindowsMxcOpenClawProbeAgent();
 
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_TOKEN")');
+    expect(agent).toContain('required("NEMOCLAW_MXC_E2E_MOCK_PORT")');
+    expect(agent).toContain('body?.model !== "mock-chat"');
+    expect(agent).toContain('message.role === "user"');
     expect(agent).toContain("if (gateway.pid !== undefined)");
     expect(agent).toContain('gateway.once("error"');
     expect(agent).toContain("writeFileSync(outcomePath");
@@ -292,6 +459,53 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).not.toContain('"--token"');
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });
+
+  it("renders a syntactically valid native OpenClaw probe agent (#8178)", () => {
+    const { root } = fixture();
+    const agentPath = path.join(root, "probe-agent.mjs");
+    fs.writeFileSync(agentPath, renderWindowsMxcOpenClawProbeAgent(), "utf8");
+
+    const checked = spawnSync(process.execPath, ["--check", agentPath], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+
+    expect(checked.status, checked.stderr).toBe(0);
+  });
+
+  it("accepts only authenticated health and one exact chat payload (#8178)", () => {
+    expect(parseOpenClawHealthResult('notice\n{"ok":true}\n')).toBe(true);
+    expect(parseOpenClawHealthResult('{"ok":false}')).toBe(false);
+    expect(
+      parseOpenClawExactChatReply(
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "CHAT_OK" }] } }),
+      ),
+    ).toBe(true);
+    expect(
+      parseOpenClawExactChatReply(
+        JSON.stringify({
+          status: "ok",
+          result: { payloads: [{ text: "CHAT_OK" }, { text: "extra" }] },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      parseOpenClawExactChatReply(
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }] } }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(
+    "rejects a non-exact OpenClaw chat reply %j (#8178)",
+    (text) => {
+      expect(
+        parseOpenClawExactChatReply(
+          JSON.stringify({ status: "ok", result: { payloads: [{ text }] } }),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("passes only allowlisted Windows runtime variables to host child processes (#8178)", () => {
     const allowed = allowlistedWindowsProcessEnvironment({
