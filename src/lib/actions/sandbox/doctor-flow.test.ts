@@ -472,6 +472,13 @@ describe("runSandboxDoctor flow", () => {
       expect(report?.checks).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
+          // #10223: the documented check line for a resolved gateway binding.
+          expect.objectContaining({
+            group: "Gateway",
+            label: "Registered gateway binding",
+            status: "ok",
+            detail: "resolved to 'nemoclaw-19080'",
+          }),
           expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
           expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
           expect.objectContaining({

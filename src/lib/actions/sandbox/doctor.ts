@@ -208,7 +208,18 @@ async function collectGatewayChecks(
   openshellBin: ReturnType<typeof resolveOpenshell>,
   recoverGateway: boolean,
 ): Promise<GatewayProbe> {
-  const checks: DoctorCheck[] = [];
+  // #10223: the fail-only branch at the call site emits this label when the
+  // registered gateway binding cannot be resolved. This branch runs only
+  // when it resolved, so it must report the ok outcome itself, or the
+  // documented check line never appears for a healthy sandbox.
+  const checks: DoctorCheck[] = [
+    {
+      group: "Gateway",
+      label: "Registered gateway binding",
+      status: "ok",
+      detail: `resolved to '${gatewayName}'`,
+    },
+  ];
   const gateway = openshellBin
     ? await probeOpenShellGateway(gatewayName, recoverGateway)
     : { check: null, connected: false };
