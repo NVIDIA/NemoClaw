@@ -27,7 +27,7 @@ import {
   START_SCRIPT,
   safeTmpHelpers,
   writeProcStatFunction,
-} from "./nemoclaw-start-gateway.test-helpers";
+} from "../../nemoclaw-start-gateway.test-helpers";
 
 function watchdogFunctions(gatewayLog: string): string {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
