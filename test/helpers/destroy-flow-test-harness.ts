@@ -12,7 +12,7 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/r
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
 
-const requireDist = createRequire(
+const requireSource = createRequire(
   new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
 );
 const destroyModulePath = "./destroy.js";
@@ -23,6 +23,7 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  destroySourcePath: string;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
@@ -66,8 +67,9 @@ export type DestroyHarness = {
 type DestroyHarnessOptions = {
   activeTimer?: boolean;
   agent?: "openclaw" | "hermes";
+  deleteError?: Error;
   deleteOutput?: string;
-  deleteStatus?: number;
+  deleteStatus?: number | null;
   dockerPsOutput?: string;
   dockerOrphanIds?: string[];
   dockerOrphanQueryStatus?: number | null;
@@ -112,6 +114,8 @@ type DestroyHarnessOptions = {
   shieldsUpError?: Error;
   stopInferenceError?: string;
   workload?: SandboxWorkloadReceipt;
+  wipeError?: Error;
+  wipeStatus?: number | null;
 };
 
 const sandboxEntry = {
@@ -140,7 +144,7 @@ export function sandboxListJson(names: string[]): string {
 }
 
 export function resetDestroyModuleCache(): void {
-  delete require.cache[requireDist.resolve(destroyModulePath)];
+  delete require.cache[requireSource.resolve(destroyModulePath)];
 }
 
 type DestroySandboxPresenceClassifier = (
@@ -150,7 +154,7 @@ type DestroySandboxPresenceClassifier = (
 
 export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceClassifier {
   resetDestroyModuleCache();
-  const destroyModule = requireDist(destroyModulePath) as {
+  const destroyModule = requireSource(destroyModulePath) as {
     classifyDestroySandboxPresence: DestroySandboxPresenceClassifier;
   };
   return destroyModule.classifyDestroySandboxPresence;
@@ -193,35 +197,35 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const resolve = requireDist("../../adapters/openshell/resolve.js");
-  const runtime = requireDist("../../adapters/openshell/runtime.js");
-  const destroyGateway = requireDist("./destroy-gateway.js");
-  const credentialStore = requireDist("../../credentials/store.js");
-  const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
-  const nim = requireDist("../../inference/nim.js");
-  const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
-  const gatewayRouteMutationLock = requireDist("../../inference/gateway-route-mutation-lock.js");
-  const modelRouterProcess = requireDist("../../onboard/model-router-process.js");
-  const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
-  const tunnelServices = requireDist("../../tunnel/services.js");
-  const onboardSession = requireDist("../../state/onboard-session.js");
-  const gatewayRegistry = requireDist("../../state/gateway-registry.js");
-  const mcpLifecycleLock = requireDist(
+  const resolve = requireSource("../../adapters/openshell/resolve.js");
+  const runtime = requireSource("../../adapters/openshell/runtime.js");
+  const destroyGateway = requireSource("./destroy-gateway.js");
+  const credentialStore = requireSource("../../credentials/store.js");
+  const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
+  const nim = requireSource("../../inference/nim.js");
+  const ollamaProxy = requireSource("../../inference/ollama/proxy.js");
+  const gatewayRouteMutationLock = requireSource("../../inference/gateway-route-mutation-lock.js");
+  const modelRouterProcess = requireSource("../../onboard/model-router-process.js");
+  const httpsPinRuntimeAdapter = requireSource("../../inference/https-pin-runtime-adapter.js");
+  const tunnelServices = requireSource("../../tunnel/services.js");
+  const onboardSession = requireSource("../../state/onboard-session.js");
+  const gatewayRegistry = requireSource("../../state/gateway-registry.js");
+  const mcpLifecycleLock = requireSource(
     "../../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
-  const registry = requireDist("../../state/registry.js");
-  const destroyExecution = requireDist("./destroy-execution.js");
-  const destroyPreflight = requireDist("./destroy-preflight.js");
-  const sandboxSession = requireDist("../../state/sandbox-session.js");
-  const shields = requireDist("../../shields/index.js");
-  const timerControl = requireDist("../../shields/timer-control.js");
-  const mcpBridge = requireDist("./mcp-bridge.js");
-  const dockerRun = requireDist("../../adapters/docker/run.js");
-  const portableAgentLifecycle = requireDist(
+  const registry = requireSource("../../state/registry.js");
+  const destroyExecution = requireSource("./destroy-execution.js");
+  const destroyPreflight = requireSource("./destroy-preflight.js");
+  const sandboxSession = requireSource("../../state/sandbox-session.js");
+  const shields = requireSource("../../shields/index.js");
+  const timerControl = requireSource("../../shields/timer-control.js");
+  const mcpBridge = requireSource("./mcp-bridge.js");
+  const dockerRun = requireSource("../../adapters/docker/run.js");
+  const portableAgentLifecycle = requireSource(
     "../../onboard/experimental/portable-agent-lifecycle.js",
   );
-  const localModelProfileCleanup = requireDist("../../inference/local-model-profile/cleanup.js");
-  const portableDemoLifecycle = requireDist(
+  const localModelProfileCleanup = requireSource("../../inference/local-model-profile/cleanup.js");
+  const portableDemoLifecycle = requireSource(
     "../../onboard/experimental/portable-demo-lifecycle.js",
   );
 
@@ -409,7 +413,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     switch (`${String(argv[0])}:${String(argv[1])}`) {
       case "sandbox:exec":
         events.push("wipe");
-        return { status: 0, stdout: "", stderr: "" };
+        return {
+          status: options.wipeStatus === undefined ? 0 : options.wipeStatus,
+          stdout: "",
+          stderr: "",
+          ...(options.wipeError ? { error: options.wipeError } : {}),
+        };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return {
@@ -420,9 +429,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       case "sandbox:delete":
         events.push("delete");
         return {
-          status: options.deleteStatus ?? 0,
+          status: options.deleteStatus === undefined ? 0 : options.deleteStatus,
           stdout: options.deleteOutput ?? "",
           stderr: "",
+          ...(options.deleteError ? { error: options.deleteError } : {}),
         };
       default:
         return { status: 0, stdout: "", stderr: "" };
@@ -596,7 +606,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,
-    destroySandbox: requireDist(destroyModulePath).destroySandbox,
+    destroySandbox: requireSource(destroyModulePath).destroySandbox,
+    destroySourcePath: requireSource.resolve(destroyModulePath),
     errorSpy,
     events,
     executeSandboxDestroySpy,

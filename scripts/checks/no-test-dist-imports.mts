@@ -34,7 +34,7 @@ const SKIP_DIRS = new Set([".git", "node_modules"]);
 // retaining an exemption after the fixture no longer needs one.
 const FIXTURE_EXCLUSIONS = new Set([
   "test/dist-sourcemaps.test.ts",
-  "test/install-cdi-repair.test.ts",
+  "test/install/install-cdi-repair.test.ts",
   "test/installer-integration/install-managed-cli-reuse.test.ts",
   "test/installer-integration/install-preflight.test.ts",
   "test/stale-dist-check.test.ts",

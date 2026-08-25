@@ -241,7 +241,9 @@ jobs:
       # analysis-phase step with a GitHub token, and it has no model credential.
       - name: Prepare advisor sandbox inputs
         env:
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
           GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" prepare
 
       - name: Install OpenShell
