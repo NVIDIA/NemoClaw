@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
