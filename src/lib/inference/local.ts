@@ -1523,28 +1523,48 @@ function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModel
   );
 }
 
-export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
+export function getOllamaModelOptions(
+  runCaptureImpl?: RunCaptureFn,
+  sleepMilliseconds: (milliseconds: number) => void = (milliseconds) =>
+    sleepSeconds(milliseconds / 1_000),
+): string[] {
   const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
-  const tagsOutput = capture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sf",
-        "--connect-timeout",
-        "3",
-        "--max-time",
-        "5",
-        `http://${host}:${OLLAMA_PORT}/api/tags`,
-      ]),
-    ],
-    { ignoreError: true },
-  );
-  const tagsParsed = parseOllamaModelInventory(String(tagsOutput || ""));
+  const modelDiscoveryRetryDelaysMs = [500, 1_000] as const;
+  const readTags = () => {
+    const tagsOutput = capture(
+      [
+        "curl",
+        ...buildValidatedCurlCommandArgs([
+          "-sf",
+          "--connect-timeout",
+          "3",
+          "--max-time",
+          "5",
+          `http://${host}:${OLLAMA_PORT}/api/tags`,
+        ]),
+      ],
+      { ignoreError: true },
+    );
+    return parseOllamaModelInventory(String(tagsOutput || ""));
+  };
+  // The daemon can become unreachable after the earlier readiness check.
+  // Retry only an invalid response; a valid empty inventory is authoritative,
+  // and GET /api/tags does not mutate Ollama.
+  const tagsParsed = retryUntil(readTags, {
+    accept: (models) => models !== null,
+    retryDelaysMs: modelDiscoveryRetryDelaysMs,
+    sleep: sleepMilliseconds,
+  });
   // Do not select a model from a different discovery path after the endpoint
   // returned a malformed inventory. A valid empty inventory may still use the
   // local CLI fallback below.
-  if (tagsParsed === null) return [];
+  if (tagsParsed === null) {
+    throw new Error(
+      `Could not read Ollama models from ${host}:${OLLAMA_PORT} after ${modelDiscoveryRetryDelaysMs.length + 1} attempts. ` +
+        `Verify that Ollama is reachable at http://${host}:${OLLAMA_PORT}, then retry onboarding.`,
+    );
+  }
   if (tagsParsed.length > 0) return tagsParsed;
 
   // The `ollama list` CLI fallback talks to the local daemon. Skip it when
@@ -1581,9 +1601,15 @@ export function resolveNonInteractiveOllamaModel(
   requestedModel: string | null,
   recoveredModel: string | null,
   gpu: GpuInfo | null,
-  log: (message: string) => void = (m) => console.warn(m),
+  installedModelsOrLog?: readonly string[] | ((message: string) => void),
   runCaptureImpl?: RunCaptureFn,
 ): string {
+  const log =
+    typeof installedModelsOrLog === "function"
+      ? installedModelsOrLog
+      : (message: string) => console.warn(message);
+  const installedModels =
+    typeof installedModelsOrLog === "function" ? undefined : installedModelsOrLog;
   const explicit = requestedModel || recoveredModel;
   if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
     const fallback = largestFittableOllamaModelTag(gpu);
@@ -1599,7 +1625,11 @@ export function resolveNonInteractiveOllamaModel(
   if (!explicit && !anyRegistryModelFits(gpu)) {
     warnNoBootstrapModelFits(gpu, log);
   }
-  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
+  if (explicit) return explicit;
+  return selectDefaultOllamaModel(
+    installedModels ?? getOllamaModelOptions(runCaptureImpl),
+    gpu,
+  );
 }
 
 function warnNoBootstrapModelFits(gpu: GpuInfo | null, log: (message: string) => void): void {
@@ -1615,7 +1645,13 @@ export function getDefaultOllamaModel(
   gpu: GpuInfo | null = null,
   runCaptureImpl?: RunCaptureFn,
 ): string {
-  const models = getOllamaModelOptions(runCaptureImpl);
+  return selectDefaultOllamaModel(getOllamaModelOptions(runCaptureImpl), gpu);
+}
+
+export function selectDefaultOllamaModel(
+  models: readonly string[],
+  gpu: GpuInfo | null = null,
+): string {
   if (models.length === 0) {
     // No installed models — pick the largest registry entry that fits the
     // host's currently available memory.
