@@ -272,31 +272,50 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
-  it("custom Hermes selection excludes an inactive repository-owned messaging preset", async () => {
+  it.each(["slack", "googlechat"])(
+    "custom Hermes selection excludes inactive repository-owned $channel",
+    async (channel) => {
+      const payload = await runPolicyScenario({
+        policyMode: "custom",
+        policyPresets: `npm,${channel}`,
+        alreadyApplied: ["npm", channel],
+        selectionOptions: { agent: "hermes", enabledChannels: [] },
+      });
+
+      assert.deepEqual(payload.chosen, ["npm"]);
+      assert.deepEqual(payload.removedCalls, [channel]);
+      assert.deepEqual(payload.finalApplied, ["npm"]);
+    },
+  );
+
+  it.each(["slack", "googlechat"])(
+    "custom Hermes selection preserves operator ownership of $channel",
+    async (channel) => {
+      const payload = await runPolicyScenario({
+        policyMode: "custom",
+        policyPresets: `npm,${channel}`,
+        alreadyApplied: ["npm", channel],
+        customPresetNames: [channel],
+        selectionOptions: { agent: "hermes", enabledChannels: [] },
+      });
+
+      assert.deepEqual(payload.chosen, ["npm", channel]);
+      assert.deepEqual(payload.removedCalls, []);
+      assert.deepEqual(payload.finalApplied, ["npm", channel]);
+    },
+  );
+
+  it("custom Hermes selection applies Google Chat for an enabled Google Chat channel", async () => {
     const payload = await runPolicyScenario({
       policyMode: "custom",
-      policyPresets: "npm,slack",
-      alreadyApplied: ["npm", "slack"],
-      selectionOptions: { agent: "hermes", enabledChannels: [] },
+      policyPresets: "npm",
+      alreadyApplied: [],
+      selectionOptions: { agent: "hermes", enabledChannels: ["googlechat"] },
     });
 
-    assert.deepEqual(payload.chosen, ["npm"]);
-    assert.deepEqual(payload.removedCalls, ["slack"]);
-    assert.deepEqual(payload.finalApplied, ["npm"]);
-  });
-
-  it("custom Hermes selection preserves operator ownership of a messaging preset name", async () => {
-    const payload = await runPolicyScenario({
-      policyMode: "custom",
-      policyPresets: "npm,slack",
-      alreadyApplied: ["npm", "slack"],
-      customPresetNames: ["slack"],
-      selectionOptions: { agent: "hermes", enabledChannels: [] },
-    });
-
-    assert.deepEqual(payload.chosen, ["npm", "slack"]);
-    assert.deepEqual(payload.removedCalls, []);
-    assert.deepEqual(payload.finalApplied, ["npm", "slack"]);
+    assert.deepEqual(payload.chosen, ["npm", "googlechat"]);
+    assert.deepEqual(payload.appliedCalls, ["npm", "googlechat"]);
+    assert.deepEqual(payload.finalApplied, ["npm", "googlechat"]);
   });
 
   // Regression for #5967: Discord (and every messaging channel other than
@@ -394,7 +413,9 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // channel→preset registry iteration as Discord/Telegram, so each apply/remove
   // case guards the egress-policy application for every shipped channel — not
   // only the two already covered above (#5967).
-  const optionalChannelPresets = ["teams", "whatsapp", "wechat"].map((channel) => ({ channel }));
+  const optionalChannelPresets = ["teams", "whatsapp", "wechat", "googlechat"].map((channel) => ({
+    channel,
+  }));
 
   it.each(optionalChannelPresets)(
     "resume selection applies the $channel policy required by a configured $channel channel (#5967)",

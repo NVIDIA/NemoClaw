@@ -103,6 +103,7 @@ describe("onboard policy preset suggestions", () => {
     "slack",
     "discord",
     "telegram",
+    "googlechat",
     "jira",
     "outlook",
     "local-inference",
@@ -165,7 +166,15 @@ describe("onboard policy preset suggestions", () => {
   // one never suggested). Assert both paths yield exactly
   // `allMessagingChannelPolicyPresets` for every channel individually and combined.
   it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
-    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"];
+    const channels = [
+      "slack",
+      "discord",
+      "telegram",
+      "teams",
+      "whatsapp",
+      "wechat",
+      "googlechat",
+    ];
     const knownNames = [...known, "teams", "whatsapp", "wechat"];
     const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
     const channelPresetsFromSuggestions = (enabled: string[]) =>
@@ -595,11 +604,20 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: ["discord"],
       knownPresetNames: known,
     });
+    const googleChatActive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["googlechat"],
+      knownPresetNames: known,
+    });
 
     expect(inactive).not.toContain("discord");
     expect(inactive).not.toContain("slack");
+    expect(inactive).not.toContain("googlechat");
     expect(active).toContain("discord");
     expect(active).not.toContain("slack");
+    expect(googleChatActive).toContain("googlechat");
+    expect(googleChatActive).not.toContain("discord");
+    expect(googleChatActive).not.toContain("slack");
   });
 
   it("preserves a custom Hermes preset whose name matches an inactive messaging preset", () => {
