@@ -58,6 +58,35 @@ interface CommandResult {
   readonly stderr: string;
 }
 
+export type ManagedImageDirectDiagnosticCommand = (
+  args: readonly string[],
+  options: { readonly ignoreError: true; readonly timeout: number },
+) => CommandResult;
+
+type ManagedImageDirectMarkerState = "absent" | "empty" | "present" | "unavailable";
+type ManagedImageDirectContainerState =
+  | "created"
+  | "dead"
+  | "exited"
+  | "paused"
+  | "removing"
+  | "restarting"
+  | "running"
+  | "unavailable";
+
+export interface ManagedImageDirectTimeoutDiagnostic {
+  readonly completionMarker: ManagedImageDirectMarkerState;
+  readonly forwardedCommandMarker: ManagedImageDirectMarkerState;
+  readonly containerState: ManagedImageDirectContainerState;
+  readonly managedStartupStage:
+    | "container-not-running"
+    | "diagnostic-unavailable"
+    | "marker-order-invalid"
+    | "markers-complete"
+    | "waiting-for-forwarded-command"
+    | "waiting-for-startup-completion";
+}
+
 interface ContainerInspect {
   readonly Id?: string;
   readonly Image?: string;
@@ -131,7 +160,10 @@ function docker(
   return normalized;
 }
 
-function requestFor(agent: ShippedManagedImageAgent, changed = false): ManagedStartupRootApplyRequest {
+function requestFor(
+  agent: ShippedManagedImageAgent,
+  changed = false,
+): ManagedStartupRootApplyRequest {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(
@@ -280,6 +312,99 @@ function managedConfig(agent: ShippedManagedImageAgent): string {
   }
 }
 
+const MANAGED_IMAGE_DIRECT_CONTAINER_STATES = new Set<ManagedImageDirectContainerState>([
+  "created",
+  "dead",
+  "exited",
+  "paused",
+  "removing",
+  "restarting",
+  "running",
+]);
+
+function isManagedImageDirectMarkerState(
+  value: string | undefined,
+): value is Exclude<ManagedImageDirectMarkerState, "unavailable"> {
+  return value === "absent" || value === "empty" || value === "present";
+}
+
+function diagnosticMarkerStates(
+  containerId: string,
+  command: ManagedImageDirectDiagnosticCommand,
+): readonly [ManagedImageDirectMarkerState, ManagedImageDirectMarkerState] {
+  const result = command(
+    [
+      "exec",
+      "--user",
+      "0:0",
+      containerId,
+      "/bin/sh",
+      "-eu",
+      "-c",
+      "for marker in \"$@\"; do if [ -s \"$marker\" ]; then printf 'present\\n'; elif [ -e \"$marker\" ]; then printf 'empty\\n'; else printf 'absent\\n'; fi; done",
+      "managed-image-direct-marker-probe",
+      "/run/nemoclaw/managed-startup-complete.json",
+      "/tmp/nemoclaw-managed-command-uid",
+    ],
+    { ignoreError: true, timeout: 5_000 },
+  );
+  const [completionMarker, forwardedCommandMarker, extra] = result.stdout.trim().split("\n");
+  if (
+    result.status === 0 &&
+    extra === undefined &&
+    isManagedImageDirectMarkerState(completionMarker) &&
+    isManagedImageDirectMarkerState(forwardedCommandMarker)
+  ) {
+    return [completionMarker, forwardedCommandMarker];
+  }
+  return ["unavailable", "unavailable"];
+}
+
+export function collectManagedImageDirectTimeoutDiagnostic(
+  containerId: string,
+  command: ManagedImageDirectDiagnosticCommand = docker,
+): ManagedImageDirectTimeoutDiagnostic {
+  const containerResult = command(["inspect", "--format", "{{.State.Status}}", containerId], {
+    ignoreError: true,
+    timeout: 5_000,
+  });
+  const rawContainerState = containerResult.stdout.trim() as ManagedImageDirectContainerState;
+  const containerState =
+    containerResult.status === 0 && MANAGED_IMAGE_DIRECT_CONTAINER_STATES.has(rawContainerState)
+      ? rawContainerState
+      : "unavailable";
+  if (containerState !== "running") {
+    return {
+      completionMarker: "unavailable",
+      forwardedCommandMarker: "unavailable",
+      containerState,
+      managedStartupStage:
+        containerState === "unavailable" ? "diagnostic-unavailable" : "container-not-running",
+    };
+  }
+  const [completionMarker, forwardedCommandMarker] = diagnosticMarkerStates(containerId, command);
+
+  let managedStartupStage: ManagedImageDirectTimeoutDiagnostic["managedStartupStage"];
+  if (completionMarker === "unavailable" || forwardedCommandMarker === "unavailable") {
+    managedStartupStage = "diagnostic-unavailable";
+  } else if (completionMarker !== "present" && forwardedCommandMarker === "present") {
+    managedStartupStage = "marker-order-invalid";
+  } else if (completionMarker !== "present") {
+    managedStartupStage = "waiting-for-startup-completion";
+  } else if (forwardedCommandMarker !== "present") {
+    managedStartupStage = "waiting-for-forwarded-command";
+  } else {
+    managedStartupStage = "markers-complete";
+  }
+
+  return {
+    completionMarker,
+    forwardedCommandMarker,
+    containerState,
+    managedStartupStage,
+  };
+}
+
 function waitForAgentCommand(containerId: string): void {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
@@ -307,7 +432,10 @@ function waitForAgentCommand(containerId: string): void {
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
   }
-  throw new Error("managed image did not reach the forwarded sandbox command");
+  const diagnostic = collectManagedImageDirectTimeoutDiagnostic(containerId);
+  throw new Error(
+    `managed image did not reach the forwarded sandbox command: ${JSON.stringify(diagnostic)}`,
+  );
 }
 
 function exactProxyEnvironment(): string {
