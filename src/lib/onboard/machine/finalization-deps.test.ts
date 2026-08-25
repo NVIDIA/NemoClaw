@@ -49,6 +49,15 @@ const SETTLED: OpenClawPairingSettlementObservation = {
   deviceIdentitySha256: PAIRING_ONLY.deviceIdentitySha256,
 };
 
+const APPROVED_ONE = {
+  attempted: true,
+  reported: false,
+  approved: 0,
+  receipt: "approved-one",
+} as const;
+
+const APPROVE_FAILED = { ...APPROVED_ONE, receipt: "approve-failed" } as const;
+
 function ordinaryPairingDeps(
   overrides: Partial<Parameters<typeof settleOrdinaryOpenClawPairing>[1]> = {},
 ) {
@@ -59,9 +68,11 @@ function ordinaryPairingDeps(
     observePairing: vi.fn(() => SETTLED),
     runWarmup: vi.fn(() => {
       calls.push("warmup");
+      return "executed" as const;
     }),
     runApproval: vi.fn(() => {
       calls.push("approval");
+      return APPROVED_ONE;
     }),
     withSandboxLock: vi.fn(async (_name, operation) => operation()),
     withGatewayLock: vi.fn(async (_gatewayName, operation) => operation()),
@@ -124,10 +135,12 @@ describe("ordinary OpenClaw pairing settlement", () => {
       observePairing,
       runWarmup: vi.fn(() => {
         scope.calls.push("warmup");
+        return "executed" as const;
       }),
       runApproval: vi.fn(() => {
         scope.calls.push("approval");
         vi.mocked(scope.deps.observePairing).mockReturnValue(SETTLED);
+        return APPROVED_ONE;
       }),
     });
 
@@ -140,12 +153,10 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
-  it("reports a failed warm-up without attempting pairing approval", async () => {
+  it("reports a warm-up execution failure receipt without attempting approval", async () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => PAIRING_ONLY),
-      runWarmup: vi.fn(() => {
-        throw new Error("secret runtime detail");
-      }),
+      runWarmup: vi.fn(() => "exec-failed" as const),
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
@@ -158,12 +169,10 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
   });
 
-  it("reports a failed local pairing approval", async () => {
+  it("reports a local pairing approval failure receipt", async () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => SCOPE_UPGRADE_PENDING),
-      runApproval: vi.fn(() => {
-        throw new Error("secret runtime detail");
-      }),
+      runApproval: vi.fn(() => APPROVE_FAILED),
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
@@ -194,9 +203,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
         }),
       runWarmup: vi.fn(() => {
         events.push("warmup");
+        return "executed" as const;
       }),
       runApproval: vi.fn(() => {
         events.push("approval");
+        return APPROVED_ONE;
       }),
       withSandboxLock: vi.fn(async (_name, operation) => {
         events.push("sandbox-lock:start");
@@ -257,6 +268,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
           approvalTargets.push(`${currentTarget.lifecycleGeneration}:${gatewayName}`);
           reportApprovalStarted();
           await approvalPending;
+          return APPROVED_ONE;
         }),
         withSandboxLock: (name, operation) => withMcpLifecycleLock(name, operation, lockOptions),
         withGatewayLock: (gatewayName, operation) =>
@@ -363,6 +375,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       runWarmup: vi.fn(async () => {
         reportWarmupStarted();
         await warmupPending;
+        return "executed" as const;
       }),
     });
 
@@ -399,6 +412,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       runApproval: vi.fn(async () => {
         reportApprovalStarted();
         await approvalPending;
+        return APPROVED_ONE;
       }),
     });
 
@@ -474,9 +488,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
         .mockReturnValue(SETTLED),
       runWarmup: vi.fn(() => {
         now += WARMUP_TIMEOUT_MS;
+        return "executed" as const;
       }),
       runApproval: vi.fn(() => {
         now += CONNECT_AUTO_PAIR_TIMEOUT_MS;
+        return APPROVED_ONE;
       }),
     });
 
@@ -612,8 +628,8 @@ describe("ordinary OpenClaw pairing settlement", () => {
       .mockReturnValueOnce(PAIRING_ONLY)
       .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
       .mockReturnValueOnce(SETTLED);
-    const runSandboxScopeWarmupRun = vi.fn();
-    const runSandboxAutoPairApprovalPass = vi.fn();
+    const runSandboxScopeWarmupRun = vi.fn(() => "executed" as const);
+    const runSandboxAutoPairApprovalPass = vi.fn(() => APPROVED_ONE);
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
     } as never);
@@ -646,6 +662,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       },
       gatewayName: "nemoclaw",
       localDeviceOnly: true,
+      receipt: true,
     });
   });
 

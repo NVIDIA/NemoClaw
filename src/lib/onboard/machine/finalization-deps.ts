@@ -10,6 +10,8 @@ import {
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
+import type { AutoPairApprovalResult } from "../../actions/sandbox/auto-pair-approval";
+import type { SandboxScopeWarmupResult } from "../../actions/sandbox/auto-pair-warmup";
 
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -75,8 +77,14 @@ interface OrdinaryOpenClawPairingSettlementDeps {
     version: string,
     stateDirectory: string,
   ): OpenClawPairingSettlementObservation;
-  runWarmup(name: string, gatewayName: string): Promise<void> | void;
-  runApproval(name: string, gatewayName: string): Promise<void> | void;
+  runWarmup(
+    name: string,
+    gatewayName: string,
+  ): Promise<SandboxScopeWarmupResult> | SandboxScopeWarmupResult;
+  runApproval(
+    name: string,
+    gatewayName: string,
+  ): Promise<AutoPairApprovalResult> | AutoPairApprovalResult;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
   now(): number;
@@ -168,7 +176,7 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         .observeOrdinaryOpenClawPairingSettlement(...args),
     runWarmup: (name, gatewayName) =>
       finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name, gatewayName),
-    runApproval: (name, gatewayName) => {
+    runApproval: (name, gatewayName) =>
       finalizationHandlerRuntime.loadAutoPairApproval().runSandboxAutoPairApprovalPass(name, {
         budget: {
           timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
@@ -178,8 +186,8 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         },
         gatewayName,
         localDeviceOnly: true,
-      });
-    },
+        receipt: true,
+      }),
     withSandboxLock: (name, operation, options) =>
       finalizationHandlerRuntime
         .loadSandboxLifecycleLock()
@@ -272,16 +280,16 @@ export async function settleOrdinaryOpenClawPairing(
             // Running the producer before that identity exists can create no
             // upgrade and leaves an otherwise healthy fresh onboard stuck at
             // pairing-only (#10014).
-            let warmupFailed = false;
+            let warmupResult: SandboxScopeWarmupResult = "exec-failed";
             try {
-              await deps.runWarmup(name, target.gatewayName);
+              warmupResult = await deps.runWarmup(name, target.gatewayName);
             } catch {
-              warmupFailed = true;
+              // Keep the fixed failure result; producer output is never exposed.
             }
             if (!samePairingTarget(target, deps.getTarget(name))) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
-            if (warmupFailed) {
+            if (warmupResult !== "executed") {
               return { kind: "incomplete", reason: "warmup-failed" };
             }
             const scopeUpgradeDeadline = Math.min(
@@ -319,19 +327,15 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
-          let approvalFailed = false;
+          let approvalResult: AutoPairApprovalResult | null = null;
           try {
-            await deps.runApproval(name, target.gatewayName);
+            approvalResult = await deps.runApproval(name, target.gatewayName);
           } catch {
-            approvalFailed = true;
+            // A missing receipt is the fixed failure classification below.
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (approvalFailed) {
-            return { kind: "incomplete", reason: "approval-failed" };
-          }
-
           const finalObservationDeadline = Math.min(
             settlementDeadline,
             deps.now() + OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -348,9 +352,13 @@ export async function settleOrdinaryOpenClawPairing(
           if (final.kind === "target-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          return final.kind === "observed"
-            ? { kind: "settled" }
-            : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          if (final.kind === "observed") return { kind: "settled" };
+          return {
+            kind: "incomplete",
+            reason: approvalResult?.receipt === "approved-one"
+              ? "scope-upgrade-incomplete"
+              : "approval-failed",
+          };
         });
       } catch (error) {
         if (gatewayBodyEntered) throw error;
