@@ -15,6 +15,7 @@ import {
 } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
+import "./test/helpers/vitest-malformed-source-map-guard";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
