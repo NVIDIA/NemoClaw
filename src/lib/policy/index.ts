@@ -779,9 +779,6 @@ export function rejectFinalPolicySetResult(
   }
 }
 
-const inspectPolicyAuthority = inspectPolicyMutationAuthority;
-type PolicyAuthorityContext = PolicyMutationAuthority;
-
 function reportPolicyAuthorityFailure(error: unknown): false {
   console.error(`  ${policyAuthorityError(error)}`);
   return false;
@@ -791,9 +788,9 @@ function inspectNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
   gatewayName?: string,
-): PolicyAuthorityContext | null {
+): PolicyMutationAuthority | null {
   try {
-    const context = inspectPolicyAuthority(sandboxName, operation, gatewayName);
+    const context = inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
     assertNemoClawManagedPolicy(context, operation);
     return context;
   } catch (error) {
@@ -806,7 +803,7 @@ function inspectNemoClawManagedPolicy(
 function recheckNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
-  authority: PolicyAuthorityContext,
+  authority: PolicyMutationAuthority,
 ): boolean {
   try {
     recheckPolicyMutationAuthority(sandboxName, operation, authority);
@@ -903,12 +900,16 @@ function setPolicyDocument(
     gatewayName?: string;
   } = {},
 ): boolean {
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, "set the sandbox policy", options.gatewayName);
+    authority = inspectPolicyMutationAuthority(
+      sandboxName,
+      "set the sandbox policy",
+      options.gatewayName,
+    );
     assertNemoClawManagedPolicy(authority, "set the sandbox policy");
     if (authority.authorityRecordedNow) {
-      authority = inspectPolicyAuthority(
+      authority = inspectPolicyMutationAuthority(
         sandboxName,
         "set the sandbox policy",
         authority.gatewayName,
@@ -2595,9 +2596,9 @@ function applyPresetContent(
     return false;
   }
   const operation = `apply policy preset '${presetName}'`;
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -2874,9 +2875,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   const operation = "apply policy presets";
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -3358,7 +3359,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   const operation = "apply the permissive sandbox policy";
-  const authority = inspectPolicyAuthority(sandboxName, operation);
+  const authority = inspectPolicyMutationAuthority(sandboxName, operation);
   assertNemoClawManagedPolicy(authority, operation);
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
@@ -3375,7 +3376,12 @@ function applyPermissivePolicy(sandboxName: string): void {
   assertOpenshellResolvable();
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
   setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
-  const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
+  const observed = inspectPolicyMutationAuthority(
+    sandboxName,
+    operation,
+    authority.gatewayName,
+    true,
+  );
   assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
   assertNemoClawManagedPolicy(observed, operation);
   console.log("  Applied permissive policy.");

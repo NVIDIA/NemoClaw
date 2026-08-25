@@ -1735,11 +1735,25 @@ function validatedExternalPolicyRecoveryArtifact(
 }
 
 function clearExternalPolicyRecoveryArtifact(sandboxName: string): void {
+  const artifactPath = externalPolicyRecoveryArtifactPath(sandboxName);
   try {
-    fs.rmSync(externalPolicyRecoveryArtifactPath(sandboxName), { force: true });
+    fs.rmSync(artifactPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not remove external Shields policy recovery artifact '${artifactPath}': ${detail}`,
+      { cause: error },
+    );
+  }
+  try {
     fsyncShieldsStateDirectory();
-  } catch {
-    // A stale read-only handoff cannot weaken the committed Shields posture.
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Removed external Shields policy recovery artifact '${artifactPath}', but could not make its removal durable: ${detail}`,
+      { cause: error },
+    );
   }
 }
 
@@ -4994,6 +5008,7 @@ function recoverExpiredAutoRestoreInline(
     return { attempted: true, restored: false };
   }
 
+  clearExternalPolicyRecoveryArtifact(sandboxName);
   saveShieldsState(sandboxName, {
     shieldsDown: false,
     shieldsDownAt: null,
@@ -5009,7 +5024,6 @@ function recoverExpiredAutoRestoreInline(
         }
       : {}),
   });
-  clearExternalPolicyRecoveryArtifact(sandboxName);
   if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     clearShieldsDownTransition(sandboxName, marker.processToken);
   }
@@ -6362,6 +6376,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
   //    captured chattrApplied + fileHashes into the persisted state so
   //    drift detection on the next `shields status` has a seal to compare
   //    against. The non-snapshot branch already persisted those above.
+  clearExternalPolicyRecoveryArtifact(sandboxName);
   saveShieldsState(sandboxName, {
     shieldsDown: false,
     shieldsDownAt: null,
@@ -6377,7 +6392,6 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
         }
       : {}),
   });
-  clearExternalPolicyRecoveryArtifact(sandboxName);
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
     clearShieldsDownTransition(sandboxName, timerMarker.processToken);
@@ -6740,10 +6754,13 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
  * the live sandbox is gone, so the recorded lock seal/file-hashes no longer
  * correspond to any live image. Clearing the state prevents a stale seal from
  * blocking a fresh `shields up` and stops a freshly recreated (mutable) sandbox
- * from being reported as locked. Best-effort: a missing state file is fine.
+ * from being reported as locked. A missing state file or recovery artifact is
+ * fine; a recovery artifact that cannot be removed remains bound and blocks
+ * state cleanup.
  */
 function clearShieldsStateWithoutHostLock(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
+  clearExternalPolicyRecoveryArtifact(sandboxName);
   const timerMarker = readTimerMarker(sandboxName);
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
@@ -6754,7 +6771,6 @@ function clearShieldsStateWithoutHostLock(sandboxName: string): void {
   } catch {
     /* best effort — absent or unreadable state is already mutable_default */
   }
-  clearExternalPolicyRecoveryArtifact(sandboxName);
 }
 
 function clearShieldsState(sandboxName: string): void {

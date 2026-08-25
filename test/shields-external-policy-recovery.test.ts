@@ -9,11 +9,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
-  bindExternalPolicyRecovery,
   createShieldsFlowHarness,
   externalPolicyAuthorityInspection,
-  externalPolicyMutationAuthority,
-  prepareExternalMcpRecoveryFixture,
+  managedMcpPolicy,
+  managedMcpSandbox,
   type ShieldsFlowHarness,
 } from "./helpers/shields-flow-harness";
 
@@ -21,6 +20,50 @@ const requireSource = createRequire(
   path.join(import.meta.dirname, "..", "src", "lib", "shields", "index.js"),
 );
 let tmpDir: string;
+
+function externalPolicyMutationAuthority(effectivePolicy: Record<string, unknown>) {
+  return {
+    authority: "externally-managed" as const,
+    authorityRecordedNow: false,
+    gatewayName: "nemoclaw",
+    inspection: { authority: "externally-managed" as const, effectivePolicy },
+  };
+}
+
+function prepareExternalMcpRecoveryFixture() {
+  const alpha = managedMcpPolicy("alpha");
+  const beta = managedMcpPolicy("beta");
+  const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+    livePolicyYaml: YAML.stringify({
+      version: 1,
+      network_policies: { restrictive_baseline: {}, [alpha.key]: alpha.networkPolicy },
+    }),
+    sandboxEntry: managedMcpSandbox([alpha]),
+  });
+  harness.shieldsDown("openclaw", { throwOnError: true });
+  const snapshotPath = String(
+    harness.getShieldsPosture("openclaw", false).state.shieldsPolicySnapshotPath,
+  );
+  const savedPolicy = YAML.parse(fs.readFileSync(snapshotPath, "utf-8"));
+  const registry = requireSource(
+    "../state/registry.js",
+  ) as typeof import("../src/lib/state/registry.js");
+  vi.mocked(registry.getSandbox).mockReturnValue({
+    ...managedMcpSandbox([beta]),
+    policyAuthority: "externally-managed",
+  });
+  return { alpha, beta, harness, savedPolicy, snapshotPath };
+}
+
+function bindExternalPolicyRecovery(
+  harness: ShieldsFlowHarness,
+  effectivePolicy: Record<string, unknown>,
+): void {
+  const authority = externalPolicyMutationAuthority(effectivePolicy);
+  harness.policyAuthoritySpy.mockReturnValue(authority);
+  harness.policyRecoveryAuthoritySpy.mockReturnValue(authority);
+  harness.runCaptureSpy.mockReturnValue(YAML.stringify(effectivePolicy));
+}
 
 function countPolicySets(harness: ShieldsFlowHarness): number {
   return harness.runSpy.mock.calls.filter(
@@ -79,10 +122,7 @@ describe("external Shields policy recovery (#9833)", () => {
   });
 
   it("publishes the complete current MCP policy handoff (#9833)", () => {
-    const { alpha, beta, harness, savedPolicy, snapshotPath } = prepareExternalMcpRecoveryFixture(
-      requireSource,
-      tmpDir,
-    );
+    const { alpha, beta, harness, savedPolicy, snapshotPath } = prepareExternalMcpRecoveryFixture();
     bindExternalPolicyRecovery(harness, savedPolicy);
 
     expect(() =>
@@ -179,7 +219,7 @@ describe("external Shields policy recovery (#9833)", () => {
     );
   });
 
-  it("clears the sandbox-bound recovery artifact before recreation (#9833)", () => {
+  it("removes the external recovery artifact when Shields state is cleared (#9833)", () => {
     const sandboxName = "openclaw";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       confirmOpenClawInodeFlags: true,
@@ -200,6 +240,37 @@ describe("external Shields policy recovery (#9833)", () => {
 
     expect(fs.existsSync(recoveryArtifactPath)).toBe(false);
     expect(harness.getShieldsPosture(sandboxName, false).mode).toBe("mutable_default");
+  });
+
+  it("keeps the external recovery artifact bound when state cleanup cannot remove it (#9833)", () => {
+    const sandboxName = "openclaw";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    harness.shieldsDown(sandboxName, { throwOnError: true });
+    harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+    harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority());
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "must make the effective policy",
+    );
+    const recoveryState = harness.getShieldsPosture(sandboxName, false).state;
+    const recoveryArtifactPath = String(recoveryState.externalPolicyRecoveryArtifact?.path);
+    const removalError = new Error("permission denied") as NodeJS.ErrnoException;
+    removalError.code = "EACCES";
+    vi.spyOn(fs, "rmSync").mockImplementationOnce((artifactPath) => {
+      expect(String(artifactPath)).toBe(recoveryArtifactPath);
+      throw removalError;
+    });
+
+    expect(() => harness.clearShieldsState(sandboxName)).toThrow(
+      `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
+    );
+
+    expect(fs.existsSync(recoveryArtifactPath)).toBe(true);
+    expect(
+      harness.getShieldsPosture(sandboxName, false).state.externalPolicyRecoveryArtifact?.path,
+    ).toBe(recoveryArtifactPath);
   });
 
   it("withholds Shields success when external policy changes during config locking (#9833)", () => {
