@@ -1763,12 +1763,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
       it("keeps codex-acp checksum-sourced, SRI-verified, multiarch, and offline", () => {
         const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
         const block = dockerfile.slice(
-          dockerfile.indexOf("FROM scratch AS codex-acp-common-archive"),
+          dockerfile.indexOf("AS codex-acp-common-archive"),
           dockerfile.indexOf("FROM node:22-trixie-slim", dockerfile.indexOf("AS wechat-npm-cache")),
         );
 
         expect(block).toContain(
-          `ADD --checksum=sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 ${PINNED_CODEX_ACP_TARBALL} /codex-acp.tgz`,
+          `b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 ${PINNED_CODEX_ACP_TARBALL} codex-acp.tgz`,
         );
         expect(block).toContain("AS codex-acp-amd64-archive");
         expect(block).toContain("AS codex-acp-arm64-archive");
@@ -1792,7 +1792,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
       it("keeps optional OpenClaw plugins checksum-sourced, SRI-verified, and offline", () => {
         const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
         const archiveBlock = dockerfile.slice(
-          dockerfile.indexOf("FROM scratch AS openclaw-optional-plugin-archives"),
+          dockerfile.indexOf("AS openclaw-optional-plugin-archives"),
           dockerfile.indexOf("FROM codex-acp-${TARGETARCH}-archive"),
         );
         const installBlock = extractRunBlock(
@@ -1814,16 +1814,16 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6",
+          "a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz diagnostics-otel-2026.7.1.tgz",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+          "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz brave-plugin-2026.7.1.tgz",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61",
+          "2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz propagator-jaeger-2.9.0.tgz",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab",
+          "b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz core-2.9.0.tgz",
         );
         expect(installSource).toContain("RUN --network=none");
         expect(installSource).toContain("--mount=from=openclaw-optional-plugin-archives");

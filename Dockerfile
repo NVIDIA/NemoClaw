@@ -106,33 +106,48 @@ RUN set -eu; \
     strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
     strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
 
-# Fetch immutable reviewed archives outside RUN instructions. The protected
-# GPU rebuild imports these checksum-addressed source records from the
-# amd64 build cache, while every package-materialization RUN remains offline.
-FROM scratch AS wechat-npm-archives
+# Fetch immutable reviewed archives in Podman-compatible stages. The downloader
+# verifies each committed SHA-256 pin before publishing read-only archives, while
+# every package-materialization RUN remains offline.
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS wechat-npm-archives
 
-ADD --checksum=sha256:422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz /openclaw-weixin-2.4.3.tgz
-ADD --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
-ADD --checksum=sha256:ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz /zod-4.4.3.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz openclaw-weixin-2.4.3.tgz \
+        3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz qrcode-terminal-0.12.0.tgz \
+        ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz zod-4.4.3.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
-FROM scratch AS codex-acp-common-archive
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-common-archive
 
-ADD --checksum=sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz /codex-acp.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz codex-acp.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
-FROM scratch AS codex-acp-amd64-archive
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-amd64-archive
 
-ADD --checksum=sha256:051cc1c1b632797b65b574e31b3eebaa0b8795639a3080c93710b96755e62be3 https://registry.npmjs.org/@zed-industries/codex-acp-linux-x64/-/codex-acp-linux-x64-0.11.1.tgz /codex-acp-platform.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        051cc1c1b632797b65b574e31b3eebaa0b8795639a3080c93710b96755e62be3 https://registry.npmjs.org/@zed-industries/codex-acp-linux-x64/-/codex-acp-linux-x64-0.11.1.tgz codex-acp-platform.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
-FROM scratch AS codex-acp-arm64-archive
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-arm64-archive
 
-ADD --checksum=sha256:0ec75f1cd0bd6011b687d0aac25478f3123ffa81ec299281bcb1747dd3162e2a https://registry.npmjs.org/@zed-industries/codex-acp-linux-arm64/-/codex-acp-linux-arm64-0.11.1.tgz /codex-acp-platform.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        0ec75f1cd0bd6011b687d0aac25478f3123ffa81ec299281bcb1747dd3162e2a https://registry.npmjs.org/@zed-industries/codex-acp-linux-arm64/-/codex-acp-linux-arm64-0.11.1.tgz codex-acp-platform.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
-FROM scratch AS openclaw-optional-plugin-archives
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-optional-plugin-archives
 
-ADD --chmod=0444 --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz /diagnostics-otel-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz /brave-plugin-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz /propagator-jaeger-2.9.0.tgz
-ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz /core-2.9.0.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz diagnostics-otel-2026.7.1.tgz \
+        f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz brave-plugin-2026.7.1.tgz \
+        2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz propagator-jaeger-2.9.0.tgz \
+        b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz core-2.9.0.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
@@ -144,8 +159,8 @@ ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY
 ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY
-COPY --from=codex-acp-common-archive /codex-acp.tgz /tmp/codex-acp/codex-acp.tgz
-COPY --from=codex-acp-platform-archive /codex-acp-platform.tgz /tmp/codex-acp/codex-acp-platform.tgz
+COPY --from=codex-acp-common-archive /out/codex-acp.tgz /tmp/codex-acp/codex-acp.tgz
+COPY --from=codex-acp-platform-archive /out/codex-acp-platform.tgz /tmp/codex-acp/codex-acp-platform.tgz
 # hadolint ignore=DL4006,DL3016,SC2016
 RUN --network=none set -eu; \
     case "$TARGETARCH" in \
@@ -166,7 +181,7 @@ FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada75
 COPY agents/openclaw/wechat-runtime/package.json agents/openclaw/wechat-runtime/package-lock.json /opt/wechat-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
-COPY --from=wechat-npm-archives / /opt/wechat-npm-archives/
+COPY --from=wechat-npm-archives /out/ /opt/wechat-npm-archives/
 RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && node --experimental-strip-types /opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts \
         --lockfile /opt/wechat-runtime/package-lock.json \
@@ -188,299 +203,298 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch every locked messaging archive outside RUN instructions. BuildKit
-# verifies the committed SHA-256 source pins before the selected architecture
-# enters the cache stage; SHA-512 verification against package-lock.json and
-# every package-materialization command then execute with networking disabled.
-FROM scratch AS openclaw-managed-messaging-npm-common-archives-1
+# Fetch every exact-lock messaging archive in Podman-compatible stages. The
+# downloader verifies committed SHA-256 source pins before the selected
+# architecture enters the cache stage; SHA-512 verification against
+# package-lock.json and every package-materialization command then execute with
+# networking disabled.
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-common-archives
 
-ADD --chmod=0444 --checksum=sha256:d98ffa76628ea162ddf7539b7b84ab851ef889689b16d454483456ba2e166d84 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.1.2.tgz /abort-controller-2.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:173d915f7d88df8cd4db2129a030c3b1c9cafd3b7aee5b89465bf3ad18372542 https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz /accepts-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:bc6da06f2a2e6bc80fa5878bd7227bd0318812976d45f47f17e1aafcec2be831 https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz /agent-base-6.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz /agent-base-7.1.4.tgz
-ADD --chmod=0444 --checksum=sha256:0041878b8209f2fa4bcc5e0666355ebc96ff97f360c3054ffe83dbb78ee1c119 https://registry.npmjs.org/@protobufjs/aspromise/-/aspromise-1.1.2.tgz /aspromise-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:f05a60581cd0c5e70a025fa51ae0cd699a7edf3db64043e69715d5cf79b35af8 https://registry.npmjs.org/async-mutex/-/async-mutex-0.5.0.tgz /async-mutex-0.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:8c254f30f70792645042e4d71f590ec49f8e386a475772f7430c73b964b57dcf https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz /asynckit-0.4.0.tgz
-ADD --chmod=0444 --checksum=sha256:44749ee4b82d2b5fa66323af77c5b836c08368667015a9c8a966033801a56964 https://registry.npmjs.org/atomic-sleep/-/atomic-sleep-1.0.0.tgz /atomic-sleep-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:76b4890271f3a1882ceb7968362ae551687cc8244749371e399ff4112b5776fa https://registry.npmjs.org/audio-buffer/-/audio-buffer-5.0.0.tgz /audio-buffer-5.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:1c04c7be41a4124efa569cbfcf3807bd2b351924c17dee9cfb81721979b21b92 https://registry.npmjs.org/audio-decode/-/audio-decode-2.2.3.tgz /audio-decode-2.2.3.tgz
-ADD --chmod=0444 --checksum=sha256:811be12f19eaf0f89c3cd3a219046cdf94e32cf54e866208eebf80aaf4f4c18f https://registry.npmjs.org/audio-type/-/audio-type-2.4.1.tgz /audio-type-2.4.1.tgz
-ADD --chmod=0444 --checksum=sha256:1897a043ad06c9d96784dd729b30d6d16dc638e9feee987c6ce987c5dfddacd4 https://registry.npmjs.org/axios/-/axios-1.16.0.tgz /axios-1.16.0.tgz
-ADD --chmod=0444 --checksum=sha256:5cd85fce29cbc3c1f2fafbad54721a6f27e76a32b5bfb5003b2c92393a8357cf https://registry.npmjs.org/axios/-/axios-1.18.0.tgz /axios-1.18.0.tgz
-ADD --chmod=0444 --checksum=sha256:5967d7b471213ab39485b6dd5d24d0b8f1267a65fdb55cccc8a8500efb143933 https://registry.npmjs.org/baileys/-/baileys-7.0.0-rc13.tgz /baileys-7.0.0-rc13.tgz
-ADD --chmod=0444 --checksum=sha256:d67e6ee6e1445512478cdfc34c12144f579bdd9f06529eef3ef8d88f84031a6a https://registry.npmjs.org/@protobufjs/base64/-/base64-1.1.2.tgz /base64-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:b1b7a945b52685269083425216d6597e33d97bf21699d656e92fdb3eb5210a85 https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz /base64-js-1.5.1.tgz
-ADD --chmod=0444 --checksum=sha256:054607db65aa02c4f2d82d81a9a5c4d0d00386e2af77135893ea067a834ffb79 https://registry.npmjs.org/@keyv/bigmap/-/bigmap-1.3.1.tgz /bigmap-1.3.1.tgz
-ADD --chmod=0444 --checksum=sha256:f5a943ea290e66f64cb9adaaed2ff1b7c4ee02a4cca9d709d9c9c6c222512e82 https://registry.npmjs.org/bignumber.js/-/bignumber.js-9.3.1.tgz /bignumber.js-9.3.1.tgz
-ADD --chmod=0444 --checksum=sha256:7f4aa165d56b17dfc82500016f9f83ca6a7a3fa34fecc26bf036abe18a4f9211 https://registry.npmjs.org/@thi.ng/bitstream/-/bitstream-2.4.53.tgz /bitstream-2.4.53.tgz
-ADD --chmod=0444 --checksum=sha256:031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz /body-parser-2.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:455afc51e720c29a70cece533ca7008e35dd122bf81dc8603f872d02a492f0de https://registry.npmjs.org/@slack/bolt/-/bolt-4.7.3.tgz /bolt-4.7.3.tgz
-ADD --chmod=0444 --checksum=sha256:e29b7bf5e6c1bb5119ce74adbbf27cb55f5132435f16fa7aaa6788d0161d0269 https://registry.npmjs.org/@hapi/boom/-/boom-9.1.4.tgz /boom-9.1.4.tgz
-ADD --chmod=0444 --checksum=sha256:8f455159e342103e7854ed6a4cc73edbab144d857917c88edefea862f09fe75a https://registry.npmjs.org/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz /buffer-equal-constant-time-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:35e49d4240c91cbe4ca29926139feea848302e9eea317f31d9e81b972ce90911 https://registry.npmjs.org/bundle-name/-/bundle-name-4.1.0.tgz /bundle-name-4.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:835e37ad5a40da45eaed6e32d99847627a15b2a4671741182521fe48dee3c581 https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz /bytes-3.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:69a2c0e6d81c1a38c601bf34bf0935998823043a219a01401455d23e29377bab https://registry.npmjs.org/cacheable/-/cacheable-2.5.0.tgz /cacheable-2.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:073e9ff9dbabedf5c128020a677381e9f92c90188d118830b30a7656a7c37d2c https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz /call-bind-apply-helpers-1.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:32086f492fedf1b9b34811f2ee50ca2cca53da5c783f7cd5f939d3f1e86bbd32 https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz /call-bound-1.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:37cfcc258a77800d370b841e33cf19a18a3be6a990c0d1332ea3e01cb4ac4272 https://registry.npmjs.org/codec-parser/-/codec-parser-2.5.0.tgz /codec-parser-2.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:20bafed1221bcba23a2450a841998edaef9a56bc2101d6e38c2117dd58a13a01 https://registry.npmjs.org/@protobufjs/codegen/-/codegen-2.0.5.tgz /codegen-2.0.5.tgz
-ADD --chmod=0444 --checksum=sha256:b6be5aabe53e90635beb77cd0e0ba7ae6a25c8cf903b15fcc342353e732e1512 https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz /combined-stream-1.0.8.tgz
-ADD --chmod=0444 --checksum=sha256:052220a48a739f2de5419d35dd393ebd89b06ffa2b69f4e9cd6742bfd7c37070 https://registry.npmjs.org/@wasm-audio-decoders/common/-/common-9.0.7.tgz /common-9.0.7.tgz
-ADD --chmod=0444 --checksum=sha256:2f8b1925a8b123a86606c11322fc10aafc1dd85f2860fffe32893e20aef4093c https://registry.npmjs.org/content-disposition/-/content-disposition-1.1.0.tgz /content-disposition-1.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:ac31d098405f0242dd712218f38a14a6202bd4eb01067db05db765d9a9bd12c8 https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz /content-type-1.0.5.tgz
-ADD --chmod=0444 --checksum=sha256:a2d4689d44f4de2c2c5039f58e01279f2d4bb13994a5046de413e772a5a1bc06 https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz /content-type-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:76b160f8251c630a116a2e0acf03557b0758975b2c0df800607248fc9aae9e20 https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz /cookie-0.7.2.tgz
-ADD --chmod=0444 --checksum=sha256:4d2bbaaf1c299e60ef0d7df952b52af95b20d56cbcbd4468d4210650083553d3 https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz /cookie-signature-1.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:e993cb3c4532e3bc165590d7bc0b99b47d5b2de843ce4ee0c106dc896e2402f5 https://registry.npmjs.org/@azure/core-auth/-/core-auth-1.10.1.tgz /core-auth-1.10.1.tgz
-ADD --chmod=0444 --checksum=sha256:680a0a7867e926a1c9dd52c272d8cfc9b5d7e497fec4e89ab8733c41b6e9832d https://registry.npmjs.org/@azure/core-client/-/core-client-1.10.2.tgz /core-client-1.10.2.tgz
-ADD --chmod=0444 --checksum=sha256:1ae445bd85dea54707e7bff73a437942e496fe286ac519e14d95b2c5b5c0ddde https://registry.npmjs.org/@azure/core-rest-pipeline/-/core-rest-pipeline-1.24.0.tgz /core-rest-pipeline-1.24.0.tgz
-ADD --chmod=0444 --checksum=sha256:52f588b0f2efa667e863df855c1470253d32dc46fee3a33a7734edf210f33c2f https://registry.npmjs.org/@azure/core-tracing/-/core-tracing-1.3.1.tgz /core-tracing-1.3.1.tgz
-ADD --chmod=0444 --checksum=sha256:a03d763406b766aee921955f2531a608658e03b82ce20f455f972560dffeafb1 https://registry.npmjs.org/@azure/core-util/-/core-util-1.13.1.tgz /core-util-1.13.1.tgz
-ADD --chmod=0444 --checksum=sha256:32242124397140800e1238a252b4cd74669d58c81b655d9d3721789b56c1c1ff https://registry.npmjs.org/cors/-/cors-2.8.6.tgz /cors-2.8.6.tgz
-ADD --chmod=0444 --checksum=sha256:eb81efb34061b1dc995374ded0e0ef0e9bd3bb4715be4029abed76193fefa38d https://registry.npmjs.org/curve25519-js/-/curve25519-js-0.0.4.tgz /curve25519-js-0.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:a5742b1b775d0b29fb562ff7e12f7ca19874e1c47322087b47a79230791642a1 https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz /data-uri-to-buffer-4.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:fe86bdcca1256437e5781f74784a143e526e62d281df0abc4e91c9cec2143ef2 https://registry.npmjs.org/@snazzah/davey/-/davey-0.1.12.tgz /davey-0.1.12.tgz
-ADD --chmod=0444 --checksum=sha256:89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7 https://registry.npmjs.org/debug/-/debug-4.4.3.tgz /debug-4.4.3.tgz
-ADD --chmod=0444 --checksum=sha256:efe35ce84f4b4aad7d7125435562f3207a429353423c4643b4c982f5ea8612b7 https://registry.npmjs.org/default-browser/-/default-browser-5.5.0.tgz /default-browser-5.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:3c94fbe0d90b610de6dc068180c780cbb7ef0ade6d2f3a7b5401f99f215d7429 https://registry.npmjs.org/default-browser-id/-/default-browser-id-5.0.1.tgz /default-browser-id-5.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:bbe9fe67a229c64ff9b8c77ace12278e2d44048a2a5af96e5fc95abbc94c49b5 https://registry.npmjs.org/define-lazy-prop/-/define-lazy-prop-3.0.0.tgz /define-lazy-prop-3.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:ac38fce4217dfb1d772427c7d8d0d073e35ecd832915e97a61d9ab5c504129d3 https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz /delayed-stream-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:28a58a2056093441f1d00d677d95918d2e4b3e98bac86237159101cae315d4a7 https://registry.npmjs.org/depd/-/depd-2.0.0.tgz /depd-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:28f1511de04906def70f7ff6950cd2d26f52be0ec93c5efce8f5c07cb46bc521 https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz /discord-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:0184d637297b25e341758ef724387b9716dd1ee233ffa55d758fba0e0c990c7f https://registry.npmjs.org/discord-api-types/-/discord-api-types-0.38.49.tgz /discord-api-types-0.38.49.tgz
-ADD --chmod=0444 --checksum=sha256:3675a81353c4150ec0659ba22d7df2e95bc330968ac08fa848cb269fc1d4fc8c https://registry.npmjs.org/@nolyfill/domexception/-/domexception-1.0.28.tgz /domexception-1.0.28.tgz
-ADD --chmod=0444 --checksum=sha256:ed1342228c82c10df9921c59d684df516a0cd6ed25b61e5f9d6330895326cfdb https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz /dunder-proto-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:487cb94dff2414772c3bb648a5e4e41c03cbbcc64263d08a56e36d735fc848fe https://registry.npmjs.org/ecdsa-sig-formatter/-/ecdsa-sig-formatter-1.0.11.tgz /ecdsa-sig-formatter-1.0.11.tgz
-ADD --chmod=0444 --checksum=sha256:5148e8eb7e222b2a09127618bbdb5033daf6262cfc735d3101ea98620128b99c https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz /ee-first-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:9b2e418b8851b8f9e7a13d5ada3bd4d3c5ef042885867261f556347d4bbefb29 https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz /encodeurl-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:1ac56a4d6d22fc5819f9db2998d425c1321a7c599af2e06e700cc28483f2d96d https://registry.npmjs.org/@thi.ng/errors/-/errors-2.6.15.tgz /errors-2.6.15.tgz
-ADD --chmod=0444 --checksum=sha256:5986b8b13121340a8b0d5c7d8f0f961aa80ef3a74515ca9cb7a78d86ed0385f7 https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz /es-define-property-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:d14dd1c35b4bd3b8aca3219fd3627eb7f3eb49cf6b4c8a7ca58b91fd7a190993 https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz /es-errors-1.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:f295c5df6751c65b4b9492b03c88fab5e13419de28a51ecdf17e693b4a421af0 https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz /es-object-atoms-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:5675f51a5c33ee402bff8a2a341a0390f85e82d3c199859244d2f67091b0b93d https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz /es-set-tostringtag-2.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:a101155c3cbdfb1e4f98f2f83c8b5e392db6accfa606df0eba8b87a5762b0366 https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz /escape-html-1.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:f6a96c78a973d2ab660c9efeee6aa74a399cd9e770625ba1ed95e1aca9fd0faf https://registry.npmjs.org/etag/-/etag-1.8.1.tgz /etag-1.8.1.tgz
-ADD --chmod=0444 --checksum=sha256:5536b98cb7062e771c1dadd1828e352ebe40034f1480836f21c776ec372a797c https://registry.npmjs.org/@protobufjs/eventemitter/-/eventemitter-1.1.1.tgz /eventemitter-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:703cdecfa6951d9ad258f615ab96895750add3cb2d95e3727837b78709975de8 https://registry.npmjs.org/eventemitter3/-/eventemitter3-4.0.7.tgz /eventemitter3-4.0.7.tgz
-ADD --chmod=0444 --checksum=sha256:21d4a36175672b9e6640c39a68613af73f9a4c47a4a4da39993e8cd085564eb6 https://registry.npmjs.org/eventemitter3/-/eventemitter3-5.0.4.tgz /eventemitter3-5.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:1773a16c02b4422653479b9c4d211268f7022bdac0d817b5698535bb485dd005 https://registry.npmjs.org/express/-/express-5.2.1.tgz /express-5.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2 https://registry.npmjs.org/extend/-/extend-3.0.2.tgz /extend-3.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:54481d9c62debce1c38b0239f2358eeb3b73f7bb1ba3105bd6123fd81b8b7268 https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.1.tgz /fetch-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:4abf0d58a4977fce2240e08c280a2bc59f5363e9553a4f236cea6d74cce40c52 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz /fetch-blob-3.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:87fdc6557e71ec47373edfbde774165e976c760845d02733f81fbfe1ad232780 https://registry.npmjs.org/file-type/-/file-type-22.0.1.tgz /file-type-22.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:22949bfc51a620b3598bbe67d65619a9efd781d52704a38d7ba675e248a8b872 https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.1.tgz /finalhandler-2.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:ca8b00245b783f6f6f85e55b6df3d51be88ad74c4881a8ebf8e0796231352c5f https://registry.npmjs.org/@wasm-audio-decoders/flac/-/flac-0.2.10.tgz /flac-0.2.10.tgz
-ADD --chmod=0444 --checksum=sha256:20b3d612d53281b754602d52a8e6a6e09032169d5399e515f6f5e8b7d3de712d https://registry.npmjs.org/@protobufjs/float/-/float-1.0.2.tgz /float-1.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:eba127bdabdf79d668187c7bac7123c136eee08930dd421416ba8a72613bae77 https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.0.tgz /follow-redirects-1.16.0.tgz
-ADD --chmod=0444 --checksum=sha256:de54fd307f6a0b4586ca67e6544f0dc63a17b87133a579a1fa223cafca0e64dd https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz /form-data-2.5.6.tgz
-ADD --chmod=0444 --checksum=sha256:fc4d94e9b629f5378367ba46da7d96115696c01e25c99cd57c2c9a3d098bb557 https://registry.npmjs.org/form-data/-/form-data-4.0.6.tgz /form-data-4.0.6.tgz
-ADD --chmod=0444 --checksum=sha256:1ff73b4138ea33f0fd0f41b67910409a2c8eb1b71a4cf1a4f8ab738a6e8487e9 https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz /formdata-polyfill-4.0.10.tgz
-ADD --chmod=0444 --checksum=sha256:9b5a5de95fb85fcb58db5e4fcd94ce8ab9f0476d02202e20a5225cec60431c99 https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz /forwarded-0.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:ad08397ab05f62b2b507682e23aad699cf8cc33922e0030be0cb640a23277ad7 https://registry.npmjs.org/fresh/-/fresh-2.0.0.tgz /fresh-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:704402651b02a1454f17d445fc7dd716efc282d059407126d58ef30a47e807aa https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz /function-bind-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:8bef405e734a145716140d8dd9e3338f45e1bad7b751e45aea5490ac481fb7f8 https://registry.npmjs.org/gaxios/-/gaxios-7.1.5.tgz /gaxios-7.1.5.tgz
-ADD --chmod=0444 --checksum=sha256:f9c3f2c868755c074152ecd291733c56c536678b0284c34c3613365bc730db94 https://registry.npmjs.org/gcp-metadata/-/gcp-metadata-8.1.2.tgz /gcp-metadata-8.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:662e27e54e00fe46fbb08f9f4aacb054e3695dbe72cc14b436613fbcfb780544 https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz /get-intrinsic-1.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:eb2cc52afb1f1fd82c5fc2a58c2380f0f16fdcdb5631538f3c66887435d70681 https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz /get-proto-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:38b6f95064454daf55a9e66c726a8189fe569357ca2a693a375e70a65501a02f https://registry.npmjs.org/google-auth-library/-/google-auth-library-10.9.0.tgz /google-auth-library-10.9.0.tgz
-
-FROM scratch AS openclaw-managed-messaging-npm-common-archives-2
-
-ADD --chmod=0444 --checksum=sha256:3a921c0d4e333f94be726fc2c0ce10025f8d87f8fae5affa01a52b2da7970bbd https://registry.npmjs.org/google-logging-utils/-/google-logging-utils-1.1.3.tgz /google-logging-utils-1.1.3.tgz
-ADD --chmod=0444 --checksum=sha256:fe035c9489db54aa424fc60b5987d629fffa1bd28b81407c535ebeea958b767d https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.7.1.tgz /googlechat-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:d536d0de4dd285dc1468fbb7f39334a47ee0eec9c27f9b626a6e71466c9fda82 https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz /gopd-1.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:4460c7532f28b8df2ddc9a1ec17816d43c24d4b9591dc6c5936b82f7f86ae7c5 https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz /has-symbols-1.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:dc1c74e3f1179a6271f84747d72c89f258aa46ad3e6464fae0e41737a7f0ef7b https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz /has-tostringtag-1.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:9a174c770b98d20b26e16a6563b37f79d53d3bcef6dadcf08507dd4993158d0f https://registry.npmjs.org/hashery/-/hashery-1.5.1.tgz /hashery-1.5.1.tgz
-ADD --chmod=0444 --checksum=sha256:e9d2b03f95573600e1c13124ce618e3142ed2c538d164595bedcd4408b8a4e4c https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz /hasown-2.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:557ff1ff42d1ae2b5d73fda777d06d387ee17adf9e60dc179e975057c0af0066 https://registry.npmjs.org/@hapi/hoek/-/hoek-9.3.0.tgz /hoek-9.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:7f96a9aa7ee1230008083deecaf2b512f9d2b9b8c08efe1a3252fccd09edca70 https://registry.npmjs.org/hookified/-/hookified-1.15.1.tgz /hookified-1.15.1.tgz
-ADD --chmod=0444 --checksum=sha256:01aa4e32fec989b18ab2b7a6b593ec968efdd4db287d7fef94813678bc2b1564 https://registry.npmjs.org/hookified/-/hookified-2.2.0.tgz /hookified-2.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:ad62bbb11baf079699a3f269ed089efdb589be16083ceed94a1117801e1a6c61 https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz /http-errors-2.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:785f73faa92bfba8d61da20bf59325ab2b3dca1bbc0bbac523406f404d8a6f02 https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz /http-proxy-agent-7.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:6da16fb44331f2e5d30bd21bf880aa934c1ad4fe7da7187910ef2b2509712019 https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz /https-proxy-agent-5.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0 https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz /https-proxy-agent-7.0.6.tgz
-ADD --chmod=0444 --checksum=sha256:61d46769e71f9235ae4d2f5652e5742e3beb83fb096a9d84247103624e8da03e https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.2.tgz /iconv-lite-0.7.2.tgz
-ADD --chmod=0444 --checksum=sha256:0022f11f6dcaf3cc662b2122c23e5da284a241939d5bffd8ca243b026398e9b6 https://registry.npmjs.org/@azure/identity/-/identity-4.13.1.tgz /identity-4.13.1.tgz
-ADD --chmod=0444 --checksum=sha256:8ef14b9b397e339db89db97881fb714f49319d8f0eb1275901f45567b28f9dac https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz /ieee754-1.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:41f6a60b13cf29eebdd06723223dc68ff1d47721d56e4fef93d2d450167d9dc0 https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz /inflate-0.4.1.tgz
-ADD --chmod=0444 --checksum=sha256:d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz /inherits-2.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:2ad382b4e119874271424d00044194b2e3dce38e11c2c341f460113963a8a7aa https://registry.npmjs.org/@protobufjs/inquire/-/inquire-1.1.2.tgz /inquire-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:7441d9623f67fe4160eccfd82ae9a404dcd55e1e4f1b68e06e2374dade4e8fee https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz /ipaddr.js-1.9.1.tgz
-ADD --chmod=0444 --checksum=sha256:1a230b0b25c81eff06bdee3856a742fd17260169b0bf958de9368c4b3ce2ddee https://registry.npmjs.org/is-docker/-/is-docker-3.0.0.tgz /is-docker-3.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:e3491fc018fc80fc20bf2dc198983c6283e3be203461de5f312149353cc5944a https://registry.npmjs.org/is-electron/-/is-electron-2.2.2.tgz /is-electron-2.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:dbde95b8434fc4757624974d4139c4f32391d08c4153565ae91a5f3fd772e07b https://registry.npmjs.org/is-inside-container/-/is-inside-container-1.0.0.tgz /is-inside-container-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:853891173876fa03b8762cf63e7f0c0d60e524947f4e4d5852d94c22acb445a7 https://registry.npmjs.org/is-promise/-/is-promise-4.0.0.tgz /is-promise-4.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:3501ff72a20b78f1a2170a4982d82d9a71d16b99a935bec9787f1c486d61b6d7 https://registry.npmjs.org/is-stream/-/is-stream-2.0.1.tgz /is-stream-2.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:f0f93f9796c2e768a487a35bbe8f96c0b703edeb01add088686ba91a72b92eb2 https://registry.npmjs.org/is-wsl/-/is-wsl-3.1.1.tgz /is-wsl-3.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:15d92c0711c570e8a900770ca4545fbf872fed252ce153c263e0e030f21ddaa0 https://registry.npmjs.org/jose/-/jose-4.15.9.tgz /jose-4.15.9.tgz
-ADD --chmod=0444 --checksum=sha256:4c4f502953cfb36cfe1c6c4989676bf9b76899a253237fc0220814b88ff903b6 https://registry.npmjs.org/json-bigint/-/json-bigint-1.0.0.tgz /json-bigint-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:ba70d14832394c094607e2cbb98d126cf51352e3d810caf1e52e7bcc15177aae https://registry.npmjs.org/@types/jsonwebtoken/-/jsonwebtoken-9.0.10.tgz /jsonwebtoken-9.0.10.tgz
-ADD --chmod=0444 --checksum=sha256:d9af2628a7a4dda25acf1e19c7ecc2468e1e9e8d4619fe2cae829e89d96f6b82 https://registry.npmjs.org/jsonwebtoken/-/jsonwebtoken-9.0.3.tgz /jsonwebtoken-9.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:c8bc0cf9fbbdc9d2f1b6f3f97ab9c1f70130eec6b153f29fd69baa5a6aa8341d https://registry.npmjs.org/jwa/-/jwa-2.0.1.tgz /jwa-2.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:01c60583d8f3b098580792e5362447c2ffb6857dda4ff4ecc0c2a5a4514513f6 https://registry.npmjs.org/jwks-rsa/-/jwks-rsa-3.2.2.tgz /jwks-rsa-3.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:ed3a5fb027f8ce1006c8e30a37e88e7cd49824d4873efca8765304b20fe92e12 https://registry.npmjs.org/jws/-/jws-4.0.1.tgz /jws-4.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:d16dfbf80fa1f084be989d790e89c496cb71ec3f96c278fbbe4801a5ccb4e6eb https://registry.npmjs.org/jwt-decode/-/jwt-decode-4.0.0.tgz /jwt-decode-4.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:db982b7c83daadc135266141d1cb542443f26d42c72f25ee2d45644fc631e7e0 https://registry.npmjs.org/keyv/-/keyv-5.6.0.tgz /keyv-5.6.0.tgz
-ADD --chmod=0444 --checksum=sha256:1e21c10c247a4e7ef40874d74553dbe11954f343fef2a377b71307c8751f52df https://registry.npmjs.org/libopus-wasm/-/libopus-wasm-0.2.0.tgz /libopus-wasm-0.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:121278ea39d5bceb6efeb5e5daab1a790b044840be6e117ae74ec74e82d72ba7 https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz /libsignal-6.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:84ff39cceb2eaef0800daa64a5ac16138c073308437a97ec6a8b4728c1f86ded https://registry.npmjs.org/limiter/-/limiter-1.1.5.tgz /limiter-1.1.5.tgz
-ADD --chmod=0444 --checksum=sha256:cd3630dddc6fcb73e1bd27fce6972b2d20aa0ecadb001c523174648efbfe0312 https://registry.npmjs.org/lodash.clonedeep/-/lodash.clonedeep-4.5.0.tgz /lodash.clonedeep-4.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:ad1fb3f7aa3c53d2aa7b5fd006507404d71fcccb341162b6423645d997c808d7 https://registry.npmjs.org/lodash.includes/-/lodash.includes-4.3.0.tgz /lodash.includes-4.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:11a52014f5d33bdc0b58a79fd10355b8209aeb1b2c57f2c13b7395ca57dcee9d https://registry.npmjs.org/lodash.isboolean/-/lodash.isboolean-3.0.3.tgz /lodash.isboolean-3.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:7885443a78d4400274bf42a5929f6aaab23ca5d7e303deee76fe702ffe873b7d https://registry.npmjs.org/lodash.isinteger/-/lodash.isinteger-4.0.4.tgz /lodash.isinteger-4.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:73e5167e1e06f496cbad0f96afda0590302c0867f9840730e2600edf03c29b63 https://registry.npmjs.org/lodash.isnumber/-/lodash.isnumber-3.0.3.tgz /lodash.isnumber-3.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:986420e1ce139727af84069d7b88912facac64e5ca1281efd9f55b228fad72d0 https://registry.npmjs.org/lodash.isplainobject/-/lodash.isplainobject-4.0.6.tgz /lodash.isplainobject-4.0.6.tgz
-ADD --chmod=0444 --checksum=sha256:45fd48aeca41f05f44fd413471f254c472e1e7a811ab84ea41448d2e7155cd5f https://registry.npmjs.org/lodash.isstring/-/lodash.isstring-4.0.1.tgz /lodash.isstring-4.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:0d67808f6f1d4c35c65e0e34c19e0a2de02727616cc8e276535f3eae98ce23b5 https://registry.npmjs.org/lodash.once/-/lodash.once-4.1.1.tgz /lodash.once-4.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:4a8aac68a201fe0ed1eae25ad6d8161967d2a1f75f55f0b08c5fc10ac36c90af https://registry.npmjs.org/@azure/logger/-/logger-1.3.0.tgz /logger-1.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:572e17d49f67723a3631869a484a2eacd2da977e88d60144488da48f0f27ac7d https://registry.npmjs.org/@slack/logger/-/logger-4.0.1.tgz /logger-4.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:68033e466773df7d52c9e59341bb729d83716cd920c56460395724456d646b26 https://registry.npmjs.org/long/-/long-5.3.2.tgz /long-5.3.2.tgz
-ADD --chmod=0444 --checksum=sha256:305fc63289b98a4a33ac2f1807ea7ddc25c366bb416dfa822832f879217b29e5 https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.1.tgz /lru-cache-11.5.1.tgz
-ADD --chmod=0444 --checksum=sha256:5ce40deb031cf6968f3832502a68f8d26be09764dc4f8fc07957a2fd7e8cdf5e https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz /lru-cache-6.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:4fe2dc759c1113c1df731891b02601e9af9670ce2a344ce36b07285294496445 https://registry.npmjs.org/lru-memoizer/-/lru-memoizer-2.3.0.tgz /lru-memoizer-2.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:b8c2c35575493dc086df88cfc468a9e2651b6617336480ab3f00fcf853f443a7 https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz /math-intrinsics-1.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:b5dc531e1d1efc92cfb659be11e74e7e697caef935c233e05016a7b2997c19be https://registry.npmjs.org/media-typer/-/media-typer-1.1.0.tgz /media-typer-1.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:9b50410e3d25f14da0ec92ca6d245f55f15ac6ee9c452900bf8907aaa79279d6 https://registry.npmjs.org/media-typer/-/media-typer-2.0.0.tgz /media-typer-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:9dffad84622ba74be37dcec88ba7537cc9d168551e349588757add056f5289b9 https://registry.npmjs.org/@cacheable/memory/-/memory-2.2.0.tgz /memory-2.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:ae88322a5fc71952d3990ae999a7afc7a4bf7cba086b9ccc1c9482432b101dce https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-2.0.0.tgz /merge-descriptors-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:b8e70bb4d52acd5d0d1ed848c0e6e3c903a533aa500acffbe003f011b18f9e3b https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz /mime-db-1.52.0.tgz
-ADD --chmod=0444 --checksum=sha256:2b21054e65d0eabd58c5002d2713e968dd47b15700bfed4b7281a344ded1c420 https://registry.npmjs.org/mime-db/-/mime-db-1.54.0.tgz /mime-db-1.54.0.tgz
-ADD --chmod=0444 --checksum=sha256:49734fc98906e9baaacf8034923470a4c84de72943a7c005face63360701d1c3 https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz /mime-types-2.1.35.tgz
-ADD --chmod=0444 --checksum=sha256:2f9dd28353c303ff8750fbf68e474755b01c54a989883d227d605f7bfa3dd2ac https://registry.npmjs.org/mime-types/-/mime-types-3.0.2.tgz /mime-types-3.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:5207b35109ec884e7d47ab89b670bc86438399f681e1a6c26716003b3949cc5c https://registry.npmjs.org/mpg123-decoder/-/mpg123-decoder-1.0.3.tgz /mpg123-decoder-1.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:a07f7b4d84e44bd8c55e44ee084f3529d5b3bbb2f212ef1749aced718bcb6c09 https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz /ms-2.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6 https://registry.npmjs.org/ms/-/ms-2.1.3.tgz /ms-2.1.3.tgz
-ADD --chmod=0444 --checksum=sha256:3a10b0b0694a9d46e4e4af0cfdf6ffee9ed705bf3372e20fbb639ad7f98d84bd https://registry.npmjs.org/@azure/msal-browser/-/msal-browser-5.16.0.tgz /msal-browser-5.16.0.tgz
-ADD --chmod=0444 --checksum=sha256:37c1324439e70d7599949c79aa9eea99ad26c7f78c3526a57b2cc9ad357520c6 https://registry.npmjs.org/@azure/msal-common/-/msal-common-16.11.0.tgz /msal-common-16.11.0.tgz
-ADD --chmod=0444 --checksum=sha256:38197844b3edef99c23b7af71ca0874d967811ccebfc3b29dae03a9024d99077 https://registry.npmjs.org/@azure/msal-node/-/msal-node-5.3.1.tgz /msal-node-5.3.1.tgz
-ADD --chmod=0444 --checksum=sha256:03fc4181fa52c1982b68d23d5c32221d6216d1620675a62b9a50d03f14d4e452 https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz /msteams-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:a8049e71f007232b9597322670fb16a2738d342a8ca61b4e63509faad93f06f3 https://registry.npmjs.org/music-metadata/-/music-metadata-11.13.0.tgz /music-metadata-11.13.0.tgz
-ADD --chmod=0444 --checksum=sha256:b5a2dfee1dc0ac52c623cd5c0304be5a8a41cfad40e09f1a13606972cb2dbc04 https://registry.npmjs.org/negotiator/-/negotiator-1.0.0.tgz /negotiator-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:b99ec57cfdd28256a22b9308425709e9c94fbfdb3dea1fd6ab193010adb01832 https://registry.npmjs.org/@types/node/-/node-26.1.0.tgz /node-26.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:02a71bfedcef6479c6e576a60b19c966abcfd6ddc9fcb18ccd193749a6280deb https://registry.npmjs.org/@cacheable/node-cache/-/node-cache-1.7.6.tgz /node-cache-1.7.6.tgz
-ADD --chmod=0444 --checksum=sha256:615af90e363f8f276b4b54f8e6c163cf3686dce1d8867dd7e52cbed4d38d2dab https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz /node-fetch-3.3.2.tgz
-ADD --chmod=0444 --checksum=sha256:41e932bc7fb027c8e5d5725aeeaf8174c35d2d7521d1b8e18baedc1d7d8b2e23 https://registry.npmjs.org/node-wav/-/node-wav-0.0.2.tgz /node-wav-0.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:55f8ccb72315749da800595d305cc9102a4ae63f55a4f9e4425292548e1e3c1a https://registry.npmjs.org/@slack/oauth/-/oauth-3.0.5.tgz /oauth-3.0.5.tgz
-ADD --chmod=0444 --checksum=sha256:782d726a263ba7b26cced612af97b80035516df4b0cd788524e7b2cebc4e29ed https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz /object-assign-4.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:8324967a3afd8a45b0401e3554aebc1843f493bec46a89a7ce8cf072e62e90bf https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz /object-inspect-1.13.4.tgz
-ADD --chmod=0444 --checksum=sha256:b173dfcaa897eec1fb303a4810b02aaa95dd0dcedb16c6cc056410d2bd9c01d3 https://registry.npmjs.org/ogg-opus-decoder/-/ogg-opus-decoder-1.7.3.tgz /ogg-opus-decoder-1.7.3.tgz
-ADD --chmod=0444 --checksum=sha256:64c914f05c5dd46e7e54f36919447ba59968a7eb87beda7669fec33e2234fc8e https://registry.npmjs.org/@wasm-audio-decoders/ogg-vorbis/-/ogg-vorbis-0.1.20.tgz /ogg-vorbis-0.1.20.tgz
-ADD --chmod=0444 --checksum=sha256:1ed10cfc6a8a8807b1c7b7eae520dbd15a104d5d0256202f8b08e1ec56cda1a8 https://registry.npmjs.org/on-exit-leak-free/-/on-exit-leak-free-2.1.2.tgz /on-exit-leak-free-2.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:f64d42f1049c386cdac5204737e09564271639b2b7d203a3ea07ec07d5ddbd0a https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz /on-finished-2.4.1.tgz
-ADD --chmod=0444 --checksum=sha256:cf51460ba370c698f68b976e514d113497339ba018b6003e8e8eb569c6fccfcf https://registry.npmjs.org/once/-/once-1.4.0.tgz /once-1.4.0.tgz
-ADD --chmod=0444 --checksum=sha256:b5b60d1271802682a5c8e0ed1cc8e825d3be7fd610afaaf3d4d8ce799e825be9 https://registry.npmjs.org/open/-/open-10.2.0.tgz /open-10.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz /openclaw-weixin-2.4.3.tgz
-ADD --chmod=0444 --checksum=sha256:1c8c0b27f5b4e941e8059bbbf8d26ff8e9f7c882e2465bb68da1b19ceaa64e25 https://registry.npmjs.org/opus-decoder/-/opus-decoder-0.7.11.tgz /opus-decoder-0.7.11.tgz
-ADD --chmod=0444 --checksum=sha256:63c6cdb9895ee0bf65aa8fe17b49ab4678b68cacfc5b239ce19133ce806a85d5 https://registry.npmjs.org/@wasm-audio-decoders/opus-ml/-/opus-ml-0.0.2.tgz /opus-ml-0.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:effd84e09e1330542a84a243f1f4da21a700d459b83761eaca16070eb1fb8841 https://registry.npmjs.org/p-finally/-/p-finally-1.0.0.tgz /p-finally-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:4d94fe81f32ce77f88f6d7b676fdff3a844a1ac445da522b2a1d9467b86a405d https://registry.npmjs.org/p-queue/-/p-queue-6.6.2.tgz /p-queue-6.6.2.tgz
-ADD --chmod=0444 --checksum=sha256:b78dd7f04d342af574ebf9b039ef47b37e259963c3c4dc739269eeb432bb9cd8 https://registry.npmjs.org/p-queue/-/p-queue-9.3.0.tgz /p-queue-9.3.0.tgz
-
-FROM scratch AS openclaw-managed-messaging-npm-common-archives-3
-
-ADD --chmod=0444 --checksum=sha256:21112bb484de3120e9e85f1ebe6a66125ecfda48072ae48b0d202693337fb558 https://registry.npmjs.org/p-retry/-/p-retry-4.6.2.tgz /p-retry-4.6.2.tgz
-ADD --chmod=0444 --checksum=sha256:226b0886e0a837928501e3f5f96c5ec2f4c97aa2e287719b50d5341678da1c67 https://registry.npmjs.org/p-timeout/-/p-timeout-3.2.0.tgz /p-timeout-3.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:0a39ef5e2e147e571a668c47a1e8b33961ae6764379ce65bc523e6bc80b13c02 https://registry.npmjs.org/p-timeout/-/p-timeout-7.0.1.tgz /p-timeout-7.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:56ef4bfa11e097ce8196b26fa04b42d6091c32498fcab4478e6dd298435f021a https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz /parseurl-1.3.3.tgz
-ADD --chmod=0444 --checksum=sha256:cc364ee910173c36d5734535a2bb53b8e7e86d2d219f27218158ab3f3dca328c https://registry.npmjs.org/@protobufjs/path/-/path-1.1.2.tgz /path-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:29d04afd81fc75b664674fb38f18694d801aa27d023572d1538bbe46f330240b https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.0.tgz /path-to-regexp-8.4.0.tgz
-ADD --chmod=0444 --checksum=sha256:e3cf66fc547c957aad15864cdf980dd14d8c9a1f5a363134ffe25c599a769508 https://registry.npmjs.org/pino/-/pino-9.14.0.tgz /pino-9.14.0.tgz
-ADD --chmod=0444 --checksum=sha256:eded21b859cbee8e21988d1a32f95a00cb4f15a528a3708aac654d0cd647149c https://registry.npmjs.org/pino-abstract-transport/-/pino-abstract-transport-2.0.0.tgz /pino-abstract-transport-2.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:c8ee1578a9fd84a929924515d7572eaeb4a3944d38953eaf8eb3dbd165020763 https://registry.npmjs.org/pino-std-serializers/-/pino-std-serializers-7.1.0.tgz /pino-std-serializers-7.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:f721dbd27282d2c7d1c2bf1ae9f7a03cc3ef9cf882fe469a32c14d1dae732703 https://registry.npmjs.org/@protobufjs/pool/-/pool-1.1.0.tgz /pool-1.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:cb092328f50c6f8d29a7e78f1cc0be5f41373c8eb9eedf9ff3364784e301b432 https://registry.npmjs.org/prism-media/-/prism-media-1.3.5.tgz /prism-media-1.3.5.tgz
-ADD --chmod=0444 --checksum=sha256:9220188a409e3593eb8fb481d2f4714edfb8514aedfb8711a713fc2338fc6b92 https://registry.npmjs.org/process-warning/-/process-warning-5.0.0.tgz /process-warning-5.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:fab4af9004100a959d999f11b006e4307a2e18257c7f7f8a37a75d53a5e8b69e https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.3.tgz /protobufjs-7.6.3.tgz
-ADD --chmod=0444 --checksum=sha256:a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz /proxy-addr-2.0.7.tgz
-ADD --chmod=0444 --checksum=sha256:e9c52dbf1e382319d5da00b8d964805859b7eb1424450e049d12743d7e19fc9a https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz /proxy-from-env-2.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:5acca41a42576ff888cf16cbcf505efbe3b0d4f55232edf3a931298a4b5ca662 https://registry.npmjs.org/qified/-/qified-0.10.1.tgz /qified-0.10.1.tgz
-ADD --chmod=0444 --checksum=sha256:329df324f93519ccf718a45f9ed802e823d6cae8d97a0b974d09dc4b90091e3e https://registry.npmjs.org/qoa-format/-/qoa-format-1.0.1.tgz /qoa-format-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
-ADD --chmod=0444 --checksum=sha256:e699d4b3ac62181f5bcd29c1d15224054c20d81aab67f7b2e75b7f7a2185b897 https://registry.npmjs.org/qs/-/qs-6.15.2.tgz /qs-6.15.2.tgz
-ADD --chmod=0444 --checksum=sha256:acba54ec5587ffddfb0811b693aad4844366772f01511291302d3380d431a485 https://registry.npmjs.org/quick-format-unescaped/-/quick-format-unescaped-4.0.4.tgz /quick-format-unescaped-4.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:51b79ec072db6788b132680256e9e733af8bb091df4f8ce8562ca631118f0fae https://registry.npmjs.org/range-parser/-/range-parser-1.3.0.tgz /range-parser-1.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:66de2a025036de58bbe50ab1d42a24ec6d33eda338b8115a3ebf942dae8419db https://registry.npmjs.org/raw-body/-/raw-body-3.0.2.tgz /raw-body-3.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:2aa86d462e4bcec95cca91c935002e102644e1bb2fcd36a9b52e4f4555c73f96 https://registry.npmjs.org/real-require/-/real-require-0.2.0.tgz /real-require-0.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:d66004def64efb6c13629b0740639344e0775fe537373674571711a2bb2fc704 https://registry.npmjs.org/@pinojs/redact/-/redact-0.4.0.tgz /redact-0.4.0.tgz
-ADD --chmod=0444 --checksum=sha256:cad52ea77001223648829bfa3c4e677d30939928b12ed3566148bf2b7e1df18f https://registry.npmjs.org/reflect-metadata/-/reflect-metadata-0.2.2.tgz /reflect-metadata-0.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:062c4d9d2b7ba41a3869cf55903d0b5d439d838e241b6b0f42d53aa22d3debd8 https://registry.npmjs.org/@types/retry/-/retry-0.12.5.tgz /retry-0.12.5.tgz
-ADD --chmod=0444 --checksum=sha256:7521d8445e845475e888ccb7af473c4afb17aabafefe35a23371a8a8c79b8084 https://registry.npmjs.org/retry/-/retry-0.13.1.tgz /retry-0.13.1.tgz
-ADD --chmod=0444 --checksum=sha256:b144af37b39a9517f7a89f1d867e9c2cf29f13f4147d3e80c499fe6ffab69461 https://registry.npmjs.org/router/-/router-2.2.0.tgz /router-2.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:d29ace7117aaa0d6b119027e9a157c238e6899bbb35d03f508ae8d4fa9ca8c9d https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz /run-applescript-7.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz /safe-buffer-5.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:acf5b4e0f8e5f0bfd9479eae41a6dd90e175d89eecd98fe1c834eab602073e91 https://registry.npmjs.org/safe-stable-stringify/-/safe-stable-stringify-2.5.0.tgz /safe-stable-stringify-2.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3 https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz /safer-buffer-2.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:d85045d4300d7d57c891336b95df532e73f34c22ffcd222452b6d08b9d127d5d https://registry.npmjs.org/semver/-/semver-7.8.5.tgz /semver-7.8.5.tgz
-ADD --chmod=0444 --checksum=sha256:fa254fb316dd23ddcb2beebd533b23788aec4cf6a3dba58af34150170435c472 https://registry.npmjs.org/send/-/send-1.2.1.tgz /send-1.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:5730adf7d1edef7c84a7ce658c3a2915386529b4d795523265c30a2e94f91366 https://registry.npmjs.org/@keyv/serialize/-/serialize-1.1.1.tgz /serialize-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:36d4f72bb59372eb18202fee25ff3d8bf46655f0121830fbe32e32cbdc625f43 https://registry.npmjs.org/serve-static/-/serve-static-2.2.1.tgz /serve-static-2.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:c83bcc6ea632567e3f6928a83a1c0c7073519aaca9b88b847a3b404417eadfe2 https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz /setprototypeof-1.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:e6edbc8f203901612a3cd938f940ed520333923986d5427b95c87aa1882e7bd5 https://registry.npmjs.org/side-channel/-/side-channel-1.1.1.tgz /side-channel-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:793c94ac215be772757045f8804406578b8cbc1bda7e1cde23011f9145af74f7 https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.1.tgz /side-channel-list-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:3b256b6421300bcc962d891b1588fd4b64e84e339b9c29f78c61b72f2a7116d6 https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz /side-channel-map-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:3b2a54f0c5e7ad898c8f0ffda2a6805fb2cc5d68f53addf0b4a9ec0db9d0d06e https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz /side-channel-weakmap-1.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:52151d29797654e08019f3d45e5f22c16ebc3c356258b00926aa4db636012fbd https://registry.npmjs.org/simple-yenc/-/simple-yenc-1.0.4.tgz /simple-yenc-1.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:d6ae8745867d812560e917707e633c8b66b36f7270124a8cca9602c6dc98ef46 https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz /slack-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:7630e4606e5cc42195711f097a2d6b719e295847a37b10dc159a53051728936d https://registry.npmjs.org/@slack/socket-mode/-/socket-mode-2.0.7.tgz /socket-mode-2.0.7.tgz
-ADD --chmod=0444 --checksum=sha256:bf128eca0c2a2ed9eb9f598a69eb374df08f3886dd9c506c5129935487166b87 https://registry.npmjs.org/sonic-boom/-/sonic-boom-4.2.1.tgz /sonic-boom-4.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:e0061e7f042fc5ff6dcda8afb66619757d92ab1ff514a28a5904f2ebde27bf54 https://registry.npmjs.org/split2/-/split2-4.2.0.tgz /split2-4.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:ca800a24710488b568f4e73e8f570dd6b911c122cbf42b06930dee7c25949fe0 https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz /statuses-2.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:58595fe65b2340514ea1c74dbae2bc4d8e5049c4d060cc38eed745da48fa7c96 https://registry.npmjs.org/strtok3/-/strtok3-10.3.5.tgz /strtok3-10.3.5.tgz
-ADD --chmod=0444 --checksum=sha256:ad8ac7ebf8ed4a4fd9d79e01f9928602c0c62aeb4bb657589a43021a795583c1 https://registry.npmjs.org/@microsoft/teams.api/-/teams.api-2.0.13.tgz /teams.api-2.0.13.tgz
-ADD --chmod=0444 --checksum=sha256:2581963dc2749b5833595489f8f767d616046fc723df67862b23d343a26a46bc https://registry.npmjs.org/@microsoft/teams.apps/-/teams.apps-2.0.13.tgz /teams.apps-2.0.13.tgz
-ADD --chmod=0444 --checksum=sha256:75bd4ee076340d62565f611440a5a8c57528d9c2b23d680e3ad087c589db3ace https://registry.npmjs.org/@microsoft/teams.cards/-/teams.cards-2.0.13.tgz /teams.cards-2.0.13.tgz
-ADD --chmod=0444 --checksum=sha256:fb9d41d2491340a97196f94256f9dfd42fe68d101390695d50e62c016309c725 https://registry.npmjs.org/@microsoft/teams.common/-/teams.common-2.0.13.tgz /teams.common-2.0.13.tgz
-ADD --chmod=0444 --checksum=sha256:281259676f833d8386e0f8a4e4fff46dd8e9d0c282ff0ba0b201ea4184306c66 https://registry.npmjs.org/@microsoft/teams.graph/-/teams.graph-2.0.13.tgz /teams.graph-2.0.13.tgz
-ADD --chmod=0444 --checksum=sha256:991d87763add805a12d5b3e67b201476681a5b738d8dcb9229bed1df755acba0 https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz /text-codec-0.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:99ec7b0a30060ca693bebe16c780642ecd2b4b92b1e7ab89ef0cd8014f78ecf1 https://registry.npmjs.org/thread-stream/-/thread-stream-3.2.0.tgz /thread-stream-3.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:186fcc77488de327daf911d362d4e773bab9909f1df2a5f0c20b875205b92e08 https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz /toidentifier-1.0.1.tgz
-ADD --chmod=0444 --checksum=sha256:911758ceca239c8e5372700eedfbbd514f16d3c117b5af0a648f6e720487c209 https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz /token-0.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:eb4820714d28f6dad949d392e7b74ec919ae3b120421240a032027bf2bd25f41 https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz /token-types-6.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:74a77ed8979f4f2187fa24ef6fcd5431049f58310214ff93db9184f58aa0f68e https://registry.npmjs.org/@typespec/ts-http-runtime/-/ts-http-runtime-0.3.6.tgz /ts-http-runtime-0.3.6.tgz
-ADD --chmod=0444 --checksum=sha256:66f635d5eeabae44807534976913a102cf615b9a045368359c9f79ae6ee2119e https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz /tslib-2.8.1.tgz
-ADD --chmod=0444 --checksum=sha256:0abaf4f02f0140b331fe6125b7556d5974a627a53734f73ce4c46f5615d1f9de https://registry.npmjs.org/tsscmp/-/tsscmp-1.0.6.tgz /tsscmp-1.0.6.tgz
-ADD --chmod=0444 --checksum=sha256:9a53088d69cd488e0c2cb4fcee5a983089c0d492404cf212161c77501fb302fc https://registry.npmjs.org/type-is/-/type-is-2.1.0.tgz /type-is-2.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:32accdf2534503b9c6d0a70eb138188307d230bf645f9382a6e6f7aad161b4dc https://registry.npmjs.org/typebox/-/typebox-1.3.3.tgz /typebox-1.3.3.tgz
-ADD --chmod=0444 --checksum=sha256:f5422a83e79e1737b2ebd8d501d373e5952ab6ea623072a9c608691a06742887 https://registry.npmjs.org/@slack/types/-/types-2.21.1.tgz /types-2.21.1.tgz
-ADD --chmod=0444 --checksum=sha256:65834dc9ce7ecceff4334a14796c85960cbf665d09364698bf3196ceed04d677 https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz /uint8array-extras-1.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:9d72c56c17ad2b3d66f006d53945374cc0d2bc68f322439495b972269f4de6bc https://registry.npmjs.org/undici/-/undici-8.10.0.tgz /undici-8.10.0.tgz
-ADD --chmod=0444 --checksum=sha256:164b59cd288030078e5ebc4f33bae472009ec3d974b1dd78c2ec5045fc7d0111 https://registry.npmjs.org/undici/-/undici-8.5.0.tgz /undici-8.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:07a721cb2cd0dd798c24757de34d14e8b640ff8fddef85d662e00b392562a1f2 https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz /undici-types-8.3.0.tgz
-ADD --chmod=0444 --checksum=sha256:2dfb5e06d1d4bf1fe9f0fa7f633c4a2fde04d8b41cf0b9bd249a42561d5edfb6 https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz /unpipe-1.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:46ea4e6d025995a9e0a1ae98b4371e03179827d6dc09a7a0d4263a9b864673ef https://registry.npmjs.org/@protobufjs/utf8/-/utf8-1.1.1.tgz /utf8-1.1.1.tgz
-ADD --chmod=0444 --checksum=sha256:243841e7a895205b7984be00bfd162aab703423d878a4837367e617033689a02 https://registry.npmjs.org/@cacheable/utils/-/utils-2.5.0.tgz /utils-2.5.0.tgz
-ADD --chmod=0444 --checksum=sha256:7378860671377a35e7a443ecfdca0745cfd066f595c90d581b827defea246e71 https://registry.npmjs.org/vary/-/vary-1.1.2.tgz /vary-1.1.2.tgz
-ADD --chmod=0444 --checksum=sha256:d73df40425aad46ab0b13e9424731b2855c1c8c52d36b7cf0d2c8cf9a7bf0200 https://registry.npmjs.org/@discordjs/voice/-/voice-0.19.2.tgz /voice-0.19.2.tgz
-ADD --chmod=0444 --checksum=sha256:2a352d4b79ecb9ec565d7e02b48225da186a1e1947b4edf45db681c036482ffb https://registry.npmjs.org/@slack/web-api/-/web-api-7.18.0.tgz /web-api-7.18.0.tgz
-ADD --chmod=0444 --checksum=sha256:1ee138d3dc0263ead35c40604da75d7d56c4fa0ef32dc2e3a7fbac10480ebb54 https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz /web-streams-polyfill-3.3.3.tgz
-ADD --chmod=0444 --checksum=sha256:92af6282372f58bba0bc3afbb6df63136e3efd9ab9afa4262be0de0d6ccb682d https://registry.npmjs.org/@eshaz/web-worker/-/web-worker-1.2.2.tgz /web-worker-1.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:a00dab45c1f2e99e6d28796b4cd20ccc4c4f10309e99bb53c95783774622f098 https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz /whatsapp-2026.7.1.tgz
-ADD --chmod=0444 --checksum=sha256:063a810df0af84c49c4acc03de91f5f51d29135f84a443a002efb400f5251387 https://registry.npmjs.org/whatsapp-rust-bridge/-/whatsapp-rust-bridge-0.5.4.tgz /whatsapp-rust-bridge-0.5.4.tgz
-ADD --chmod=0444 --checksum=sha256:38ae8b4e3926453bd8b23f5a0b134c0599ae51c47c1d20eedde56cf06fb4878b https://registry.npmjs.org/win-guid/-/win-guid-0.2.1.tgz /win-guid-0.2.1.tgz
-ADD --chmod=0444 --checksum=sha256:aff3730d91b7b1e143822956d14608f563163cf11b9d0ae602df1fe1e430fdfb https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz /wrappy-1.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:dc2763952a24bf15dc920830a2d2884c23bccc08a853e8556e34771401254fa5 https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz /ws-8.18.1.tgz
-ADD --chmod=0444 --checksum=sha256:d08b726b3aae3a0fed5218a0d9a4b2ac8d75d4ad453a9271db55fe38e94eb4cf https://registry.npmjs.org/ws/-/ws-8.21.0.tgz /ws-8.21.0.tgz
-ADD --chmod=0444 --checksum=sha256:d2cbb69eb9d502a5248d79232b18d7fcbf23c9d33b8045f9bc01250650d98dd4 https://registry.npmjs.org/wsl-utils/-/wsl-utils-0.1.0.tgz /wsl-utils-0.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:a80c78aa276536615891ef66efbc17d3bd07c8cb14e3bd5298eed3006bfa4d49 https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz /yallist-4.0.0.tgz
-ADD --chmod=0444 --checksum=sha256:ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz /zod-4.4.3.tgz
-
-FROM scratch AS openclaw-managed-messaging-npm-common-archives
-COPY --from=openclaw-managed-messaging-npm-common-archives-1 / /
-COPY --from=openclaw-managed-messaging-npm-common-archives-2 / /
-COPY --from=openclaw-managed-messaging-npm-common-archives-3 / /
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /out \
+        d98ffa76628ea162ddf7539b7b84ab851ef889689b16d454483456ba2e166d84 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.1.2.tgz abort-controller-2.1.2.tgz \
+        173d915f7d88df8cd4db2129a030c3b1c9cafd3b7aee5b89465bf3ad18372542 https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz accepts-2.0.0.tgz \
+        bc6da06f2a2e6bc80fa5878bd7227bd0318812976d45f47f17e1aafcec2be831 https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz agent-base-6.0.2.tgz \
+        7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz agent-base-7.1.4.tgz \
+        0041878b8209f2fa4bcc5e0666355ebc96ff97f360c3054ffe83dbb78ee1c119 https://registry.npmjs.org/@protobufjs/aspromise/-/aspromise-1.1.2.tgz aspromise-1.1.2.tgz \
+        f05a60581cd0c5e70a025fa51ae0cd699a7edf3db64043e69715d5cf79b35af8 https://registry.npmjs.org/async-mutex/-/async-mutex-0.5.0.tgz async-mutex-0.5.0.tgz \
+        8c254f30f70792645042e4d71f590ec49f8e386a475772f7430c73b964b57dcf https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz asynckit-0.4.0.tgz \
+        44749ee4b82d2b5fa66323af77c5b836c08368667015a9c8a966033801a56964 https://registry.npmjs.org/atomic-sleep/-/atomic-sleep-1.0.0.tgz atomic-sleep-1.0.0.tgz \
+        76b4890271f3a1882ceb7968362ae551687cc8244749371e399ff4112b5776fa https://registry.npmjs.org/audio-buffer/-/audio-buffer-5.0.0.tgz audio-buffer-5.0.0.tgz \
+        1c04c7be41a4124efa569cbfcf3807bd2b351924c17dee9cfb81721979b21b92 https://registry.npmjs.org/audio-decode/-/audio-decode-2.2.3.tgz audio-decode-2.2.3.tgz \
+        811be12f19eaf0f89c3cd3a219046cdf94e32cf54e866208eebf80aaf4f4c18f https://registry.npmjs.org/audio-type/-/audio-type-2.4.1.tgz audio-type-2.4.1.tgz \
+        1897a043ad06c9d96784dd729b30d6d16dc638e9feee987c6ce987c5dfddacd4 https://registry.npmjs.org/axios/-/axios-1.16.0.tgz axios-1.16.0.tgz \
+        5cd85fce29cbc3c1f2fafbad54721a6f27e76a32b5bfb5003b2c92393a8357cf https://registry.npmjs.org/axios/-/axios-1.18.0.tgz axios-1.18.0.tgz \
+        5967d7b471213ab39485b6dd5d24d0b8f1267a65fdb55cccc8a8500efb143933 https://registry.npmjs.org/baileys/-/baileys-7.0.0-rc13.tgz baileys-7.0.0-rc13.tgz \
+        d67e6ee6e1445512478cdfc34c12144f579bdd9f06529eef3ef8d88f84031a6a https://registry.npmjs.org/@protobufjs/base64/-/base64-1.1.2.tgz base64-1.1.2.tgz \
+        b1b7a945b52685269083425216d6597e33d97bf21699d656e92fdb3eb5210a85 https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz base64-js-1.5.1.tgz \
+        054607db65aa02c4f2d82d81a9a5c4d0d00386e2af77135893ea067a834ffb79 https://registry.npmjs.org/@keyv/bigmap/-/bigmap-1.3.1.tgz bigmap-1.3.1.tgz \
+        f5a943ea290e66f64cb9adaaed2ff1b7c4ee02a4cca9d709d9c9c6c222512e82 https://registry.npmjs.org/bignumber.js/-/bignumber.js-9.3.1.tgz bignumber.js-9.3.1.tgz \
+        7f4aa165d56b17dfc82500016f9f83ca6a7a3fa34fecc26bf036abe18a4f9211 https://registry.npmjs.org/@thi.ng/bitstream/-/bitstream-2.4.53.tgz bitstream-2.4.53.tgz \
+        031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz body-parser-2.3.0.tgz \
+        455afc51e720c29a70cece533ca7008e35dd122bf81dc8603f872d02a492f0de https://registry.npmjs.org/@slack/bolt/-/bolt-4.7.3.tgz bolt-4.7.3.tgz \
+        e29b7bf5e6c1bb5119ce74adbbf27cb55f5132435f16fa7aaa6788d0161d0269 https://registry.npmjs.org/@hapi/boom/-/boom-9.1.4.tgz boom-9.1.4.tgz \
+        8f455159e342103e7854ed6a4cc73edbab144d857917c88edefea862f09fe75a https://registry.npmjs.org/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz buffer-equal-constant-time-1.0.1.tgz \
+        35e49d4240c91cbe4ca29926139feea848302e9eea317f31d9e81b972ce90911 https://registry.npmjs.org/bundle-name/-/bundle-name-4.1.0.tgz bundle-name-4.1.0.tgz \
+        835e37ad5a40da45eaed6e32d99847627a15b2a4671741182521fe48dee3c581 https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz bytes-3.1.2.tgz \
+        69a2c0e6d81c1a38c601bf34bf0935998823043a219a01401455d23e29377bab https://registry.npmjs.org/cacheable/-/cacheable-2.5.0.tgz cacheable-2.5.0.tgz \
+        073e9ff9dbabedf5c128020a677381e9f92c90188d118830b30a7656a7c37d2c https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz call-bind-apply-helpers-1.0.2.tgz \
+        32086f492fedf1b9b34811f2ee50ca2cca53da5c783f7cd5f939d3f1e86bbd32 https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz call-bound-1.0.4.tgz \
+        37cfcc258a77800d370b841e33cf19a18a3be6a990c0d1332ea3e01cb4ac4272 https://registry.npmjs.org/codec-parser/-/codec-parser-2.5.0.tgz codec-parser-2.5.0.tgz \
+        20bafed1221bcba23a2450a841998edaef9a56bc2101d6e38c2117dd58a13a01 https://registry.npmjs.org/@protobufjs/codegen/-/codegen-2.0.5.tgz codegen-2.0.5.tgz \
+        b6be5aabe53e90635beb77cd0e0ba7ae6a25c8cf903b15fcc342353e732e1512 https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz combined-stream-1.0.8.tgz \
+        052220a48a739f2de5419d35dd393ebd89b06ffa2b69f4e9cd6742bfd7c37070 https://registry.npmjs.org/@wasm-audio-decoders/common/-/common-9.0.7.tgz common-9.0.7.tgz \
+        2f8b1925a8b123a86606c11322fc10aafc1dd85f2860fffe32893e20aef4093c https://registry.npmjs.org/content-disposition/-/content-disposition-1.1.0.tgz content-disposition-1.1.0.tgz \
+        ac31d098405f0242dd712218f38a14a6202bd4eb01067db05db765d9a9bd12c8 https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz content-type-1.0.5.tgz \
+        a2d4689d44f4de2c2c5039f58e01279f2d4bb13994a5046de413e772a5a1bc06 https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz content-type-2.0.0.tgz \
+        76b160f8251c630a116a2e0acf03557b0758975b2c0df800607248fc9aae9e20 https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz cookie-0.7.2.tgz \
+        4d2bbaaf1c299e60ef0d7df952b52af95b20d56cbcbd4468d4210650083553d3 https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz cookie-signature-1.2.2.tgz \
+        e993cb3c4532e3bc165590d7bc0b99b47d5b2de843ce4ee0c106dc896e2402f5 https://registry.npmjs.org/@azure/core-auth/-/core-auth-1.10.1.tgz core-auth-1.10.1.tgz \
+        680a0a7867e926a1c9dd52c272d8cfc9b5d7e497fec4e89ab8733c41b6e9832d https://registry.npmjs.org/@azure/core-client/-/core-client-1.10.2.tgz core-client-1.10.2.tgz \
+        1ae445bd85dea54707e7bff73a437942e496fe286ac519e14d95b2c5b5c0ddde https://registry.npmjs.org/@azure/core-rest-pipeline/-/core-rest-pipeline-1.24.0.tgz core-rest-pipeline-1.24.0.tgz \
+        52f588b0f2efa667e863df855c1470253d32dc46fee3a33a7734edf210f33c2f https://registry.npmjs.org/@azure/core-tracing/-/core-tracing-1.3.1.tgz core-tracing-1.3.1.tgz \
+        a03d763406b766aee921955f2531a608658e03b82ce20f455f972560dffeafb1 https://registry.npmjs.org/@azure/core-util/-/core-util-1.13.1.tgz core-util-1.13.1.tgz \
+        32242124397140800e1238a252b4cd74669d58c81b655d9d3721789b56c1c1ff https://registry.npmjs.org/cors/-/cors-2.8.6.tgz cors-2.8.6.tgz \
+        eb81efb34061b1dc995374ded0e0ef0e9bd3bb4715be4029abed76193fefa38d https://registry.npmjs.org/curve25519-js/-/curve25519-js-0.0.4.tgz curve25519-js-0.0.4.tgz \
+        a5742b1b775d0b29fb562ff7e12f7ca19874e1c47322087b47a79230791642a1 https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz data-uri-to-buffer-4.0.1.tgz \
+        fe86bdcca1256437e5781f74784a143e526e62d281df0abc4e91c9cec2143ef2 https://registry.npmjs.org/@snazzah/davey/-/davey-0.1.12.tgz davey-0.1.12.tgz \
+        89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7 https://registry.npmjs.org/debug/-/debug-4.4.3.tgz debug-4.4.3.tgz \
+        efe35ce84f4b4aad7d7125435562f3207a429353423c4643b4c982f5ea8612b7 https://registry.npmjs.org/default-browser/-/default-browser-5.5.0.tgz default-browser-5.5.0.tgz \
+        3c94fbe0d90b610de6dc068180c780cbb7ef0ade6d2f3a7b5401f99f215d7429 https://registry.npmjs.org/default-browser-id/-/default-browser-id-5.0.1.tgz default-browser-id-5.0.1.tgz \
+        bbe9fe67a229c64ff9b8c77ace12278e2d44048a2a5af96e5fc95abbc94c49b5 https://registry.npmjs.org/define-lazy-prop/-/define-lazy-prop-3.0.0.tgz define-lazy-prop-3.0.0.tgz \
+        ac38fce4217dfb1d772427c7d8d0d073e35ecd832915e97a61d9ab5c504129d3 https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz delayed-stream-1.0.0.tgz \
+        28a58a2056093441f1d00d677d95918d2e4b3e98bac86237159101cae315d4a7 https://registry.npmjs.org/depd/-/depd-2.0.0.tgz depd-2.0.0.tgz \
+        28f1511de04906def70f7ff6950cd2d26f52be0ec93c5efce8f5c07cb46bc521 https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz discord-2026.7.1.tgz \
+        0184d637297b25e341758ef724387b9716dd1ee233ffa55d758fba0e0c990c7f https://registry.npmjs.org/discord-api-types/-/discord-api-types-0.38.49.tgz discord-api-types-0.38.49.tgz \
+        3675a81353c4150ec0659ba22d7df2e95bc330968ac08fa848cb269fc1d4fc8c https://registry.npmjs.org/@nolyfill/domexception/-/domexception-1.0.28.tgz domexception-1.0.28.tgz \
+        ed1342228c82c10df9921c59d684df516a0cd6ed25b61e5f9d6330895326cfdb https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz dunder-proto-1.0.1.tgz \
+        487cb94dff2414772c3bb648a5e4e41c03cbbcc64263d08a56e36d735fc848fe https://registry.npmjs.org/ecdsa-sig-formatter/-/ecdsa-sig-formatter-1.0.11.tgz ecdsa-sig-formatter-1.0.11.tgz \
+        5148e8eb7e222b2a09127618bbdb5033daf6262cfc735d3101ea98620128b99c https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz ee-first-1.1.1.tgz \
+        9b2e418b8851b8f9e7a13d5ada3bd4d3c5ef042885867261f556347d4bbefb29 https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz encodeurl-2.0.0.tgz \
+        1ac56a4d6d22fc5819f9db2998d425c1321a7c599af2e06e700cc28483f2d96d https://registry.npmjs.org/@thi.ng/errors/-/errors-2.6.15.tgz errors-2.6.15.tgz \
+        5986b8b13121340a8b0d5c7d8f0f961aa80ef3a74515ca9cb7a78d86ed0385f7 https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz es-define-property-1.0.1.tgz \
+        d14dd1c35b4bd3b8aca3219fd3627eb7f3eb49cf6b4c8a7ca58b91fd7a190993 https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz es-errors-1.3.0.tgz \
+        f295c5df6751c65b4b9492b03c88fab5e13419de28a51ecdf17e693b4a421af0 https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz es-object-atoms-1.1.2.tgz \
+        5675f51a5c33ee402bff8a2a341a0390f85e82d3c199859244d2f67091b0b93d https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz es-set-tostringtag-2.1.0.tgz \
+        a101155c3cbdfb1e4f98f2f83c8b5e392db6accfa606df0eba8b87a5762b0366 https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz escape-html-1.0.3.tgz \
+        f6a96c78a973d2ab660c9efeee6aa74a399cd9e770625ba1ed95e1aca9fd0faf https://registry.npmjs.org/etag/-/etag-1.8.1.tgz etag-1.8.1.tgz \
+        5536b98cb7062e771c1dadd1828e352ebe40034f1480836f21c776ec372a797c https://registry.npmjs.org/@protobufjs/eventemitter/-/eventemitter-1.1.1.tgz eventemitter-1.1.1.tgz \
+        703cdecfa6951d9ad258f615ab96895750add3cb2d95e3727837b78709975de8 https://registry.npmjs.org/eventemitter3/-/eventemitter3-4.0.7.tgz eventemitter3-4.0.7.tgz \
+        21d4a36175672b9e6640c39a68613af73f9a4c47a4a4da39993e8cd085564eb6 https://registry.npmjs.org/eventemitter3/-/eventemitter3-5.0.4.tgz eventemitter3-5.0.4.tgz \
+        1773a16c02b4422653479b9c4d211268f7022bdac0d817b5698535bb485dd005 https://registry.npmjs.org/express/-/express-5.2.1.tgz express-5.2.1.tgz \
+        1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2 https://registry.npmjs.org/extend/-/extend-3.0.2.tgz extend-3.0.2.tgz \
+        54481d9c62debce1c38b0239f2358eeb3b73f7bb1ba3105bd6123fd81b8b7268 https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.1.tgz fetch-1.1.1.tgz \
+        4abf0d58a4977fce2240e08c280a2bc59f5363e9553a4f236cea6d74cce40c52 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz fetch-blob-3.2.0.tgz \
+        87fdc6557e71ec47373edfbde774165e976c760845d02733f81fbfe1ad232780 https://registry.npmjs.org/file-type/-/file-type-22.0.1.tgz file-type-22.0.1.tgz \
+        22949bfc51a620b3598bbe67d65619a9efd781d52704a38d7ba675e248a8b872 https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.1.tgz finalhandler-2.1.1.tgz \
+        ca8b00245b783f6f6f85e55b6df3d51be88ad74c4881a8ebf8e0796231352c5f https://registry.npmjs.org/@wasm-audio-decoders/flac/-/flac-0.2.10.tgz flac-0.2.10.tgz \
+        20b3d612d53281b754602d52a8e6a6e09032169d5399e515f6f5e8b7d3de712d https://registry.npmjs.org/@protobufjs/float/-/float-1.0.2.tgz float-1.0.2.tgz \
+        eba127bdabdf79d668187c7bac7123c136eee08930dd421416ba8a72613bae77 https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.0.tgz follow-redirects-1.16.0.tgz \
+        de54fd307f6a0b4586ca67e6544f0dc63a17b87133a579a1fa223cafca0e64dd https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz form-data-2.5.6.tgz \
+        fc4d94e9b629f5378367ba46da7d96115696c01e25c99cd57c2c9a3d098bb557 https://registry.npmjs.org/form-data/-/form-data-4.0.6.tgz form-data-4.0.6.tgz \
+        1ff73b4138ea33f0fd0f41b67910409a2c8eb1b71a4cf1a4f8ab738a6e8487e9 https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz formdata-polyfill-4.0.10.tgz \
+        9b5a5de95fb85fcb58db5e4fcd94ce8ab9f0476d02202e20a5225cec60431c99 https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz forwarded-0.2.0.tgz \
+        ad08397ab05f62b2b507682e23aad699cf8cc33922e0030be0cb640a23277ad7 https://registry.npmjs.org/fresh/-/fresh-2.0.0.tgz fresh-2.0.0.tgz \
+        704402651b02a1454f17d445fc7dd716efc282d059407126d58ef30a47e807aa https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz function-bind-1.1.2.tgz \
+        8bef405e734a145716140d8dd9e3338f45e1bad7b751e45aea5490ac481fb7f8 https://registry.npmjs.org/gaxios/-/gaxios-7.1.5.tgz gaxios-7.1.5.tgz \
+        f9c3f2c868755c074152ecd291733c56c536678b0284c34c3613365bc730db94 https://registry.npmjs.org/gcp-metadata/-/gcp-metadata-8.1.2.tgz gcp-metadata-8.1.2.tgz \
+        662e27e54e00fe46fbb08f9f4aacb054e3695dbe72cc14b436613fbcfb780544 https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz get-intrinsic-1.3.0.tgz \
+        eb2cc52afb1f1fd82c5fc2a58c2380f0f16fdcdb5631538f3c66887435d70681 https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz get-proto-1.0.1.tgz \
+        38b6f95064454daf55a9e66c726a8189fe569357ca2a693a375e70a65501a02f https://registry.npmjs.org/google-auth-library/-/google-auth-library-10.9.0.tgz google-auth-library-10.9.0.tgz \
+        3a921c0d4e333f94be726fc2c0ce10025f8d87f8fae5affa01a52b2da7970bbd https://registry.npmjs.org/google-logging-utils/-/google-logging-utils-1.1.3.tgz google-logging-utils-1.1.3.tgz \
+        fe035c9489db54aa424fc60b5987d629fffa1bd28b81407c535ebeea958b767d https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.7.1.tgz googlechat-2026.7.1.tgz \
+        d536d0de4dd285dc1468fbb7f39334a47ee0eec9c27f9b626a6e71466c9fda82 https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz gopd-1.2.0.tgz \
+        4460c7532f28b8df2ddc9a1ec17816d43c24d4b9591dc6c5936b82f7f86ae7c5 https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz has-symbols-1.1.0.tgz \
+        dc1c74e3f1179a6271f84747d72c89f258aa46ad3e6464fae0e41737a7f0ef7b https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz has-tostringtag-1.0.2.tgz \
+        9a174c770b98d20b26e16a6563b37f79d53d3bcef6dadcf08507dd4993158d0f https://registry.npmjs.org/hashery/-/hashery-1.5.1.tgz hashery-1.5.1.tgz \
+        e9d2b03f95573600e1c13124ce618e3142ed2c538d164595bedcd4408b8a4e4c https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz hasown-2.0.4.tgz \
+        557ff1ff42d1ae2b5d73fda777d06d387ee17adf9e60dc179e975057c0af0066 https://registry.npmjs.org/@hapi/hoek/-/hoek-9.3.0.tgz hoek-9.3.0.tgz \
+        7f96a9aa7ee1230008083deecaf2b512f9d2b9b8c08efe1a3252fccd09edca70 https://registry.npmjs.org/hookified/-/hookified-1.15.1.tgz hookified-1.15.1.tgz \
+        01aa4e32fec989b18ab2b7a6b593ec968efdd4db287d7fef94813678bc2b1564 https://registry.npmjs.org/hookified/-/hookified-2.2.0.tgz hookified-2.2.0.tgz \
+        ad62bbb11baf079699a3f269ed089efdb589be16083ceed94a1117801e1a6c61 https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz http-errors-2.0.1.tgz \
+        785f73faa92bfba8d61da20bf59325ab2b3dca1bbc0bbac523406f404d8a6f02 https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz http-proxy-agent-7.0.2.tgz \
+        6da16fb44331f2e5d30bd21bf880aa934c1ad4fe7da7187910ef2b2509712019 https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz https-proxy-agent-5.0.1.tgz \
+        960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0 https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz https-proxy-agent-7.0.6.tgz \
+        61d46769e71f9235ae4d2f5652e5742e3beb83fb096a9d84247103624e8da03e https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.2.tgz iconv-lite-0.7.2.tgz \
+        0022f11f6dcaf3cc662b2122c23e5da284a241939d5bffd8ca243b026398e9b6 https://registry.npmjs.org/@azure/identity/-/identity-4.13.1.tgz identity-4.13.1.tgz \
+        8ef14b9b397e339db89db97881fb714f49319d8f0eb1275901f45567b28f9dac https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz ieee754-1.2.1.tgz \
+        41f6a60b13cf29eebdd06723223dc68ff1d47721d56e4fef93d2d450167d9dc0 https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz inflate-0.4.1.tgz \
+        d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz inherits-2.0.4.tgz \
+        2ad382b4e119874271424d00044194b2e3dce38e11c2c341f460113963a8a7aa https://registry.npmjs.org/@protobufjs/inquire/-/inquire-1.1.2.tgz inquire-1.1.2.tgz \
+        7441d9623f67fe4160eccfd82ae9a404dcd55e1e4f1b68e06e2374dade4e8fee https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz ipaddr.js-1.9.1.tgz \
+        1a230b0b25c81eff06bdee3856a742fd17260169b0bf958de9368c4b3ce2ddee https://registry.npmjs.org/is-docker/-/is-docker-3.0.0.tgz is-docker-3.0.0.tgz \
+        e3491fc018fc80fc20bf2dc198983c6283e3be203461de5f312149353cc5944a https://registry.npmjs.org/is-electron/-/is-electron-2.2.2.tgz is-electron-2.2.2.tgz \
+        dbde95b8434fc4757624974d4139c4f32391d08c4153565ae91a5f3fd772e07b https://registry.npmjs.org/is-inside-container/-/is-inside-container-1.0.0.tgz is-inside-container-1.0.0.tgz \
+        853891173876fa03b8762cf63e7f0c0d60e524947f4e4d5852d94c22acb445a7 https://registry.npmjs.org/is-promise/-/is-promise-4.0.0.tgz is-promise-4.0.0.tgz \
+        3501ff72a20b78f1a2170a4982d82d9a71d16b99a935bec9787f1c486d61b6d7 https://registry.npmjs.org/is-stream/-/is-stream-2.0.1.tgz is-stream-2.0.1.tgz \
+        f0f93f9796c2e768a487a35bbe8f96c0b703edeb01add088686ba91a72b92eb2 https://registry.npmjs.org/is-wsl/-/is-wsl-3.1.1.tgz is-wsl-3.1.1.tgz \
+        15d92c0711c570e8a900770ca4545fbf872fed252ce153c263e0e030f21ddaa0 https://registry.npmjs.org/jose/-/jose-4.15.9.tgz jose-4.15.9.tgz \
+        4c4f502953cfb36cfe1c6c4989676bf9b76899a253237fc0220814b88ff903b6 https://registry.npmjs.org/json-bigint/-/json-bigint-1.0.0.tgz json-bigint-1.0.0.tgz \
+        ba70d14832394c094607e2cbb98d126cf51352e3d810caf1e52e7bcc15177aae https://registry.npmjs.org/@types/jsonwebtoken/-/jsonwebtoken-9.0.10.tgz jsonwebtoken-9.0.10.tgz \
+        d9af2628a7a4dda25acf1e19c7ecc2468e1e9e8d4619fe2cae829e89d96f6b82 https://registry.npmjs.org/jsonwebtoken/-/jsonwebtoken-9.0.3.tgz jsonwebtoken-9.0.3.tgz \
+        c8bc0cf9fbbdc9d2f1b6f3f97ab9c1f70130eec6b153f29fd69baa5a6aa8341d https://registry.npmjs.org/jwa/-/jwa-2.0.1.tgz jwa-2.0.1.tgz \
+        01c60583d8f3b098580792e5362447c2ffb6857dda4ff4ecc0c2a5a4514513f6 https://registry.npmjs.org/jwks-rsa/-/jwks-rsa-3.2.2.tgz jwks-rsa-3.2.2.tgz \
+        ed3a5fb027f8ce1006c8e30a37e88e7cd49824d4873efca8765304b20fe92e12 https://registry.npmjs.org/jws/-/jws-4.0.1.tgz jws-4.0.1.tgz \
+        d16dfbf80fa1f084be989d790e89c496cb71ec3f96c278fbbe4801a5ccb4e6eb https://registry.npmjs.org/jwt-decode/-/jwt-decode-4.0.0.tgz jwt-decode-4.0.0.tgz \
+        db982b7c83daadc135266141d1cb542443f26d42c72f25ee2d45644fc631e7e0 https://registry.npmjs.org/keyv/-/keyv-5.6.0.tgz keyv-5.6.0.tgz \
+        1e21c10c247a4e7ef40874d74553dbe11954f343fef2a377b71307c8751f52df https://registry.npmjs.org/libopus-wasm/-/libopus-wasm-0.2.0.tgz libopus-wasm-0.2.0.tgz \
+        121278ea39d5bceb6efeb5e5daab1a790b044840be6e117ae74ec74e82d72ba7 https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz libsignal-6.0.0.tgz \
+        84ff39cceb2eaef0800daa64a5ac16138c073308437a97ec6a8b4728c1f86ded https://registry.npmjs.org/limiter/-/limiter-1.1.5.tgz limiter-1.1.5.tgz \
+        cd3630dddc6fcb73e1bd27fce6972b2d20aa0ecadb001c523174648efbfe0312 https://registry.npmjs.org/lodash.clonedeep/-/lodash.clonedeep-4.5.0.tgz lodash.clonedeep-4.5.0.tgz \
+        ad1fb3f7aa3c53d2aa7b5fd006507404d71fcccb341162b6423645d997c808d7 https://registry.npmjs.org/lodash.includes/-/lodash.includes-4.3.0.tgz lodash.includes-4.3.0.tgz \
+        11a52014f5d33bdc0b58a79fd10355b8209aeb1b2c57f2c13b7395ca57dcee9d https://registry.npmjs.org/lodash.isboolean/-/lodash.isboolean-3.0.3.tgz lodash.isboolean-3.0.3.tgz \
+        7885443a78d4400274bf42a5929f6aaab23ca5d7e303deee76fe702ffe873b7d https://registry.npmjs.org/lodash.isinteger/-/lodash.isinteger-4.0.4.tgz lodash.isinteger-4.0.4.tgz \
+        73e5167e1e06f496cbad0f96afda0590302c0867f9840730e2600edf03c29b63 https://registry.npmjs.org/lodash.isnumber/-/lodash.isnumber-3.0.3.tgz lodash.isnumber-3.0.3.tgz \
+        986420e1ce139727af84069d7b88912facac64e5ca1281efd9f55b228fad72d0 https://registry.npmjs.org/lodash.isplainobject/-/lodash.isplainobject-4.0.6.tgz lodash.isplainobject-4.0.6.tgz \
+        45fd48aeca41f05f44fd413471f254c472e1e7a811ab84ea41448d2e7155cd5f https://registry.npmjs.org/lodash.isstring/-/lodash.isstring-4.0.1.tgz lodash.isstring-4.0.1.tgz \
+        0d67808f6f1d4c35c65e0e34c19e0a2de02727616cc8e276535f3eae98ce23b5 https://registry.npmjs.org/lodash.once/-/lodash.once-4.1.1.tgz lodash.once-4.1.1.tgz \
+        4a8aac68a201fe0ed1eae25ad6d8161967d2a1f75f55f0b08c5fc10ac36c90af https://registry.npmjs.org/@azure/logger/-/logger-1.3.0.tgz logger-1.3.0.tgz \
+        572e17d49f67723a3631869a484a2eacd2da977e88d60144488da48f0f27ac7d https://registry.npmjs.org/@slack/logger/-/logger-4.0.1.tgz logger-4.0.1.tgz \
+        68033e466773df7d52c9e59341bb729d83716cd920c56460395724456d646b26 https://registry.npmjs.org/long/-/long-5.3.2.tgz long-5.3.2.tgz \
+        305fc63289b98a4a33ac2f1807ea7ddc25c366bb416dfa822832f879217b29e5 https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.1.tgz lru-cache-11.5.1.tgz \
+        5ce40deb031cf6968f3832502a68f8d26be09764dc4f8fc07957a2fd7e8cdf5e https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz lru-cache-6.0.0.tgz \
+        4fe2dc759c1113c1df731891b02601e9af9670ce2a344ce36b07285294496445 https://registry.npmjs.org/lru-memoizer/-/lru-memoizer-2.3.0.tgz lru-memoizer-2.3.0.tgz \
+        b8c2c35575493dc086df88cfc468a9e2651b6617336480ab3f00fcf853f443a7 https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz math-intrinsics-1.1.0.tgz \
+        b5dc531e1d1efc92cfb659be11e74e7e697caef935c233e05016a7b2997c19be https://registry.npmjs.org/media-typer/-/media-typer-1.1.0.tgz media-typer-1.1.0.tgz \
+        9b50410e3d25f14da0ec92ca6d245f55f15ac6ee9c452900bf8907aaa79279d6 https://registry.npmjs.org/media-typer/-/media-typer-2.0.0.tgz media-typer-2.0.0.tgz \
+        9dffad84622ba74be37dcec88ba7537cc9d168551e349588757add056f5289b9 https://registry.npmjs.org/@cacheable/memory/-/memory-2.2.0.tgz memory-2.2.0.tgz \
+        ae88322a5fc71952d3990ae999a7afc7a4bf7cba086b9ccc1c9482432b101dce https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-2.0.0.tgz merge-descriptors-2.0.0.tgz \
+        b8e70bb4d52acd5d0d1ed848c0e6e3c903a533aa500acffbe003f011b18f9e3b https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz mime-db-1.52.0.tgz \
+        2b21054e65d0eabd58c5002d2713e968dd47b15700bfed4b7281a344ded1c420 https://registry.npmjs.org/mime-db/-/mime-db-1.54.0.tgz mime-db-1.54.0.tgz \
+        49734fc98906e9baaacf8034923470a4c84de72943a7c005face63360701d1c3 https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz mime-types-2.1.35.tgz \
+        2f9dd28353c303ff8750fbf68e474755b01c54a989883d227d605f7bfa3dd2ac https://registry.npmjs.org/mime-types/-/mime-types-3.0.2.tgz mime-types-3.0.2.tgz \
+        5207b35109ec884e7d47ab89b670bc86438399f681e1a6c26716003b3949cc5c https://registry.npmjs.org/mpg123-decoder/-/mpg123-decoder-1.0.3.tgz mpg123-decoder-1.0.3.tgz \
+        a07f7b4d84e44bd8c55e44ee084f3529d5b3bbb2f212ef1749aced718bcb6c09 https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz ms-2.1.0.tgz \
+        f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6 https://registry.npmjs.org/ms/-/ms-2.1.3.tgz ms-2.1.3.tgz \
+        3a10b0b0694a9d46e4e4af0cfdf6ffee9ed705bf3372e20fbb639ad7f98d84bd https://registry.npmjs.org/@azure/msal-browser/-/msal-browser-5.16.0.tgz msal-browser-5.16.0.tgz \
+        37c1324439e70d7599949c79aa9eea99ad26c7f78c3526a57b2cc9ad357520c6 https://registry.npmjs.org/@azure/msal-common/-/msal-common-16.11.0.tgz msal-common-16.11.0.tgz \
+        38197844b3edef99c23b7af71ca0874d967811ccebfc3b29dae03a9024d99077 https://registry.npmjs.org/@azure/msal-node/-/msal-node-5.3.1.tgz msal-node-5.3.1.tgz \
+        03fc4181fa52c1982b68d23d5c32221d6216d1620675a62b9a50d03f14d4e452 https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz msteams-2026.7.1.tgz \
+        a8049e71f007232b9597322670fb16a2738d342a8ca61b4e63509faad93f06f3 https://registry.npmjs.org/music-metadata/-/music-metadata-11.13.0.tgz music-metadata-11.13.0.tgz \
+        b5a2dfee1dc0ac52c623cd5c0304be5a8a41cfad40e09f1a13606972cb2dbc04 https://registry.npmjs.org/negotiator/-/negotiator-1.0.0.tgz negotiator-1.0.0.tgz \
+        b99ec57cfdd28256a22b9308425709e9c94fbfdb3dea1fd6ab193010adb01832 https://registry.npmjs.org/@types/node/-/node-26.1.0.tgz node-26.1.0.tgz \
+        02a71bfedcef6479c6e576a60b19c966abcfd6ddc9fcb18ccd193749a6280deb https://registry.npmjs.org/@cacheable/node-cache/-/node-cache-1.7.6.tgz node-cache-1.7.6.tgz \
+        615af90e363f8f276b4b54f8e6c163cf3686dce1d8867dd7e52cbed4d38d2dab https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz node-fetch-3.3.2.tgz \
+        41e932bc7fb027c8e5d5725aeeaf8174c35d2d7521d1b8e18baedc1d7d8b2e23 https://registry.npmjs.org/node-wav/-/node-wav-0.0.2.tgz node-wav-0.0.2.tgz \
+        55f8ccb72315749da800595d305cc9102a4ae63f55a4f9e4425292548e1e3c1a https://registry.npmjs.org/@slack/oauth/-/oauth-3.0.5.tgz oauth-3.0.5.tgz \
+        782d726a263ba7b26cced612af97b80035516df4b0cd788524e7b2cebc4e29ed https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz object-assign-4.1.1.tgz \
+        8324967a3afd8a45b0401e3554aebc1843f493bec46a89a7ce8cf072e62e90bf https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz object-inspect-1.13.4.tgz \
+        b173dfcaa897eec1fb303a4810b02aaa95dd0dcedb16c6cc056410d2bd9c01d3 https://registry.npmjs.org/ogg-opus-decoder/-/ogg-opus-decoder-1.7.3.tgz ogg-opus-decoder-1.7.3.tgz \
+        64c914f05c5dd46e7e54f36919447ba59968a7eb87beda7669fec33e2234fc8e https://registry.npmjs.org/@wasm-audio-decoders/ogg-vorbis/-/ogg-vorbis-0.1.20.tgz ogg-vorbis-0.1.20.tgz \
+        1ed10cfc6a8a8807b1c7b7eae520dbd15a104d5d0256202f8b08e1ec56cda1a8 https://registry.npmjs.org/on-exit-leak-free/-/on-exit-leak-free-2.1.2.tgz on-exit-leak-free-2.1.2.tgz \
+        f64d42f1049c386cdac5204737e09564271639b2b7d203a3ea07ec07d5ddbd0a https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz on-finished-2.4.1.tgz \
+        cf51460ba370c698f68b976e514d113497339ba018b6003e8e8eb569c6fccfcf https://registry.npmjs.org/once/-/once-1.4.0.tgz once-1.4.0.tgz \
+        b5b60d1271802682a5c8e0ed1cc8e825d3be7fd610afaaf3d4d8ce799e825be9 https://registry.npmjs.org/open/-/open-10.2.0.tgz open-10.2.0.tgz \
+        422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz openclaw-weixin-2.4.3.tgz \
+        1c8c0b27f5b4e941e8059bbbf8d26ff8e9f7c882e2465bb68da1b19ceaa64e25 https://registry.npmjs.org/opus-decoder/-/opus-decoder-0.7.11.tgz opus-decoder-0.7.11.tgz \
+        63c6cdb9895ee0bf65aa8fe17b49ab4678b68cacfc5b239ce19133ce806a85d5 https://registry.npmjs.org/@wasm-audio-decoders/opus-ml/-/opus-ml-0.0.2.tgz opus-ml-0.0.2.tgz \
+        effd84e09e1330542a84a243f1f4da21a700d459b83761eaca16070eb1fb8841 https://registry.npmjs.org/p-finally/-/p-finally-1.0.0.tgz p-finally-1.0.0.tgz \
+        4d94fe81f32ce77f88f6d7b676fdff3a844a1ac445da522b2a1d9467b86a405d https://registry.npmjs.org/p-queue/-/p-queue-6.6.2.tgz p-queue-6.6.2.tgz \
+        b78dd7f04d342af574ebf9b039ef47b37e259963c3c4dc739269eeb432bb9cd8 https://registry.npmjs.org/p-queue/-/p-queue-9.3.0.tgz p-queue-9.3.0.tgz \
+        21112bb484de3120e9e85f1ebe6a66125ecfda48072ae48b0d202693337fb558 https://registry.npmjs.org/p-retry/-/p-retry-4.6.2.tgz p-retry-4.6.2.tgz \
+        226b0886e0a837928501e3f5f96c5ec2f4c97aa2e287719b50d5341678da1c67 https://registry.npmjs.org/p-timeout/-/p-timeout-3.2.0.tgz p-timeout-3.2.0.tgz \
+        0a39ef5e2e147e571a668c47a1e8b33961ae6764379ce65bc523e6bc80b13c02 https://registry.npmjs.org/p-timeout/-/p-timeout-7.0.1.tgz p-timeout-7.0.1.tgz \
+        56ef4bfa11e097ce8196b26fa04b42d6091c32498fcab4478e6dd298435f021a https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz parseurl-1.3.3.tgz \
+        cc364ee910173c36d5734535a2bb53b8e7e86d2d219f27218158ab3f3dca328c https://registry.npmjs.org/@protobufjs/path/-/path-1.1.2.tgz path-1.1.2.tgz \
+        29d04afd81fc75b664674fb38f18694d801aa27d023572d1538bbe46f330240b https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.0.tgz path-to-regexp-8.4.0.tgz \
+        e3cf66fc547c957aad15864cdf980dd14d8c9a1f5a363134ffe25c599a769508 https://registry.npmjs.org/pino/-/pino-9.14.0.tgz pino-9.14.0.tgz \
+        eded21b859cbee8e21988d1a32f95a00cb4f15a528a3708aac654d0cd647149c https://registry.npmjs.org/pino-abstract-transport/-/pino-abstract-transport-2.0.0.tgz pino-abstract-transport-2.0.0.tgz \
+        c8ee1578a9fd84a929924515d7572eaeb4a3944d38953eaf8eb3dbd165020763 https://registry.npmjs.org/pino-std-serializers/-/pino-std-serializers-7.1.0.tgz pino-std-serializers-7.1.0.tgz \
+        f721dbd27282d2c7d1c2bf1ae9f7a03cc3ef9cf882fe469a32c14d1dae732703 https://registry.npmjs.org/@protobufjs/pool/-/pool-1.1.0.tgz pool-1.1.0.tgz \
+        cb092328f50c6f8d29a7e78f1cc0be5f41373c8eb9eedf9ff3364784e301b432 https://registry.npmjs.org/prism-media/-/prism-media-1.3.5.tgz prism-media-1.3.5.tgz \
+        9220188a409e3593eb8fb481d2f4714edfb8514aedfb8711a713fc2338fc6b92 https://registry.npmjs.org/process-warning/-/process-warning-5.0.0.tgz process-warning-5.0.0.tgz \
+        fab4af9004100a959d999f11b006e4307a2e18257c7f7f8a37a75d53a5e8b69e https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.3.tgz protobufjs-7.6.3.tgz \
+        a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz proxy-addr-2.0.7.tgz \
+        e9c52dbf1e382319d5da00b8d964805859b7eb1424450e049d12743d7e19fc9a https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz proxy-from-env-2.1.0.tgz \
+        5acca41a42576ff888cf16cbcf505efbe3b0d4f55232edf3a931298a4b5ca662 https://registry.npmjs.org/qified/-/qified-0.10.1.tgz qified-0.10.1.tgz \
+        329df324f93519ccf718a45f9ed802e823d6cae8d97a0b974d09dc4b90091e3e https://registry.npmjs.org/qoa-format/-/qoa-format-1.0.1.tgz qoa-format-1.0.1.tgz \
+        3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz qrcode-terminal-0.12.0.tgz \
+        e699d4b3ac62181f5bcd29c1d15224054c20d81aab67f7b2e75b7f7a2185b897 https://registry.npmjs.org/qs/-/qs-6.15.2.tgz qs-6.15.2.tgz \
+        acba54ec5587ffddfb0811b693aad4844366772f01511291302d3380d431a485 https://registry.npmjs.org/quick-format-unescaped/-/quick-format-unescaped-4.0.4.tgz quick-format-unescaped-4.0.4.tgz \
+        51b79ec072db6788b132680256e9e733af8bb091df4f8ce8562ca631118f0fae https://registry.npmjs.org/range-parser/-/range-parser-1.3.0.tgz range-parser-1.3.0.tgz \
+        66de2a025036de58bbe50ab1d42a24ec6d33eda338b8115a3ebf942dae8419db https://registry.npmjs.org/raw-body/-/raw-body-3.0.2.tgz raw-body-3.0.2.tgz \
+        2aa86d462e4bcec95cca91c935002e102644e1bb2fcd36a9b52e4f4555c73f96 https://registry.npmjs.org/real-require/-/real-require-0.2.0.tgz real-require-0.2.0.tgz \
+        d66004def64efb6c13629b0740639344e0775fe537373674571711a2bb2fc704 https://registry.npmjs.org/@pinojs/redact/-/redact-0.4.0.tgz redact-0.4.0.tgz \
+        cad52ea77001223648829bfa3c4e677d30939928b12ed3566148bf2b7e1df18f https://registry.npmjs.org/reflect-metadata/-/reflect-metadata-0.2.2.tgz reflect-metadata-0.2.2.tgz \
+        062c4d9d2b7ba41a3869cf55903d0b5d439d838e241b6b0f42d53aa22d3debd8 https://registry.npmjs.org/@types/retry/-/retry-0.12.5.tgz retry-0.12.5.tgz \
+        7521d8445e845475e888ccb7af473c4afb17aabafefe35a23371a8a8c79b8084 https://registry.npmjs.org/retry/-/retry-0.13.1.tgz retry-0.13.1.tgz \
+        b144af37b39a9517f7a89f1d867e9c2cf29f13f4147d3e80c499fe6ffab69461 https://registry.npmjs.org/router/-/router-2.2.0.tgz router-2.2.0.tgz \
+        d29ace7117aaa0d6b119027e9a157c238e6899bbb35d03f508ae8d4fa9ca8c9d https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz run-applescript-7.1.0.tgz \
+        5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz safe-buffer-5.2.1.tgz \
+        acf5b4e0f8e5f0bfd9479eae41a6dd90e175d89eecd98fe1c834eab602073e91 https://registry.npmjs.org/safe-stable-stringify/-/safe-stable-stringify-2.5.0.tgz safe-stable-stringify-2.5.0.tgz \
+        78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3 https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz safer-buffer-2.1.2.tgz \
+        d85045d4300d7d57c891336b95df532e73f34c22ffcd222452b6d08b9d127d5d https://registry.npmjs.org/semver/-/semver-7.8.5.tgz semver-7.8.5.tgz \
+        fa254fb316dd23ddcb2beebd533b23788aec4cf6a3dba58af34150170435c472 https://registry.npmjs.org/send/-/send-1.2.1.tgz send-1.2.1.tgz \
+        5730adf7d1edef7c84a7ce658c3a2915386529b4d795523265c30a2e94f91366 https://registry.npmjs.org/@keyv/serialize/-/serialize-1.1.1.tgz serialize-1.1.1.tgz \
+        36d4f72bb59372eb18202fee25ff3d8bf46655f0121830fbe32e32cbdc625f43 https://registry.npmjs.org/serve-static/-/serve-static-2.2.1.tgz serve-static-2.2.1.tgz \
+        c83bcc6ea632567e3f6928a83a1c0c7073519aaca9b88b847a3b404417eadfe2 https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz setprototypeof-1.2.0.tgz \
+        e6edbc8f203901612a3cd938f940ed520333923986d5427b95c87aa1882e7bd5 https://registry.npmjs.org/side-channel/-/side-channel-1.1.1.tgz side-channel-1.1.1.tgz \
+        793c94ac215be772757045f8804406578b8cbc1bda7e1cde23011f9145af74f7 https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.1.tgz side-channel-list-1.0.1.tgz \
+        3b256b6421300bcc962d891b1588fd4b64e84e339b9c29f78c61b72f2a7116d6 https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz side-channel-map-1.0.1.tgz \
+        3b2a54f0c5e7ad898c8f0ffda2a6805fb2cc5d68f53addf0b4a9ec0db9d0d06e https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz side-channel-weakmap-1.0.2.tgz \
+        52151d29797654e08019f3d45e5f22c16ebc3c356258b00926aa4db636012fbd https://registry.npmjs.org/simple-yenc/-/simple-yenc-1.0.4.tgz simple-yenc-1.0.4.tgz \
+        d6ae8745867d812560e917707e633c8b66b36f7270124a8cca9602c6dc98ef46 https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz slack-2026.7.1.tgz \
+        7630e4606e5cc42195711f097a2d6b719e295847a37b10dc159a53051728936d https://registry.npmjs.org/@slack/socket-mode/-/socket-mode-2.0.7.tgz socket-mode-2.0.7.tgz \
+        bf128eca0c2a2ed9eb9f598a69eb374df08f3886dd9c506c5129935487166b87 https://registry.npmjs.org/sonic-boom/-/sonic-boom-4.2.1.tgz sonic-boom-4.2.1.tgz \
+        e0061e7f042fc5ff6dcda8afb66619757d92ab1ff514a28a5904f2ebde27bf54 https://registry.npmjs.org/split2/-/split2-4.2.0.tgz split2-4.2.0.tgz \
+        ca800a24710488b568f4e73e8f570dd6b911c122cbf42b06930dee7c25949fe0 https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz statuses-2.0.2.tgz \
+        58595fe65b2340514ea1c74dbae2bc4d8e5049c4d060cc38eed745da48fa7c96 https://registry.npmjs.org/strtok3/-/strtok3-10.3.5.tgz strtok3-10.3.5.tgz \
+        ad8ac7ebf8ed4a4fd9d79e01f9928602c0c62aeb4bb657589a43021a795583c1 https://registry.npmjs.org/@microsoft/teams.api/-/teams.api-2.0.13.tgz teams.api-2.0.13.tgz \
+        2581963dc2749b5833595489f8f767d616046fc723df67862b23d343a26a46bc https://registry.npmjs.org/@microsoft/teams.apps/-/teams.apps-2.0.13.tgz teams.apps-2.0.13.tgz \
+        75bd4ee076340d62565f611440a5a8c57528d9c2b23d680e3ad087c589db3ace https://registry.npmjs.org/@microsoft/teams.cards/-/teams.cards-2.0.13.tgz teams.cards-2.0.13.tgz \
+        fb9d41d2491340a97196f94256f9dfd42fe68d101390695d50e62c016309c725 https://registry.npmjs.org/@microsoft/teams.common/-/teams.common-2.0.13.tgz teams.common-2.0.13.tgz \
+        281259676f833d8386e0f8a4e4fff46dd8e9d0c282ff0ba0b201ea4184306c66 https://registry.npmjs.org/@microsoft/teams.graph/-/teams.graph-2.0.13.tgz teams.graph-2.0.13.tgz \
+        991d87763add805a12d5b3e67b201476681a5b738d8dcb9229bed1df755acba0 https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz text-codec-0.2.2.tgz \
+        99ec7b0a30060ca693bebe16c780642ecd2b4b92b1e7ab89ef0cd8014f78ecf1 https://registry.npmjs.org/thread-stream/-/thread-stream-3.2.0.tgz thread-stream-3.2.0.tgz \
+        186fcc77488de327daf911d362d4e773bab9909f1df2a5f0c20b875205b92e08 https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz toidentifier-1.0.1.tgz \
+        911758ceca239c8e5372700eedfbbd514f16d3c117b5af0a648f6e720487c209 https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz token-0.3.0.tgz \
+        eb4820714d28f6dad949d392e7b74ec919ae3b120421240a032027bf2bd25f41 https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz token-types-6.1.2.tgz \
+        74a77ed8979f4f2187fa24ef6fcd5431049f58310214ff93db9184f58aa0f68e https://registry.npmjs.org/@typespec/ts-http-runtime/-/ts-http-runtime-0.3.6.tgz ts-http-runtime-0.3.6.tgz \
+        66f635d5eeabae44807534976913a102cf615b9a045368359c9f79ae6ee2119e https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz tslib-2.8.1.tgz \
+        0abaf4f02f0140b331fe6125b7556d5974a627a53734f73ce4c46f5615d1f9de https://registry.npmjs.org/tsscmp/-/tsscmp-1.0.6.tgz tsscmp-1.0.6.tgz \
+        9a53088d69cd488e0c2cb4fcee5a983089c0d492404cf212161c77501fb302fc https://registry.npmjs.org/type-is/-/type-is-2.1.0.tgz type-is-2.1.0.tgz \
+        32accdf2534503b9c6d0a70eb138188307d230bf645f9382a6e6f7aad161b4dc https://registry.npmjs.org/typebox/-/typebox-1.3.3.tgz typebox-1.3.3.tgz \
+        f5422a83e79e1737b2ebd8d501d373e5952ab6ea623072a9c608691a06742887 https://registry.npmjs.org/@slack/types/-/types-2.21.1.tgz types-2.21.1.tgz \
+        65834dc9ce7ecceff4334a14796c85960cbf665d09364698bf3196ceed04d677 https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz uint8array-extras-1.5.0.tgz \
+        9d72c56c17ad2b3d66f006d53945374cc0d2bc68f322439495b972269f4de6bc https://registry.npmjs.org/undici/-/undici-8.10.0.tgz undici-8.10.0.tgz \
+        164b59cd288030078e5ebc4f33bae472009ec3d974b1dd78c2ec5045fc7d0111 https://registry.npmjs.org/undici/-/undici-8.5.0.tgz undici-8.5.0.tgz \
+        07a721cb2cd0dd798c24757de34d14e8b640ff8fddef85d662e00b392562a1f2 https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz undici-types-8.3.0.tgz \
+        2dfb5e06d1d4bf1fe9f0fa7f633c4a2fde04d8b41cf0b9bd249a42561d5edfb6 https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz unpipe-1.0.0.tgz \
+        46ea4e6d025995a9e0a1ae98b4371e03179827d6dc09a7a0d4263a9b864673ef https://registry.npmjs.org/@protobufjs/utf8/-/utf8-1.1.1.tgz utf8-1.1.1.tgz \
+        243841e7a895205b7984be00bfd162aab703423d878a4837367e617033689a02 https://registry.npmjs.org/@cacheable/utils/-/utils-2.5.0.tgz utils-2.5.0.tgz \
+        7378860671377a35e7a443ecfdca0745cfd066f595c90d581b827defea246e71 https://registry.npmjs.org/vary/-/vary-1.1.2.tgz vary-1.1.2.tgz \
+        d73df40425aad46ab0b13e9424731b2855c1c8c52d36b7cf0d2c8cf9a7bf0200 https://registry.npmjs.org/@discordjs/voice/-/voice-0.19.2.tgz voice-0.19.2.tgz \
+        2a352d4b79ecb9ec565d7e02b48225da186a1e1947b4edf45db681c036482ffb https://registry.npmjs.org/@slack/web-api/-/web-api-7.18.0.tgz web-api-7.18.0.tgz \
+        1ee138d3dc0263ead35c40604da75d7d56c4fa0ef32dc2e3a7fbac10480ebb54 https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz web-streams-polyfill-3.3.3.tgz \
+        92af6282372f58bba0bc3afbb6df63136e3efd9ab9afa4262be0de0d6ccb682d https://registry.npmjs.org/@eshaz/web-worker/-/web-worker-1.2.2.tgz web-worker-1.2.2.tgz \
+        a00dab45c1f2e99e6d28796b4cd20ccc4c4f10309e99bb53c95783774622f098 https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz whatsapp-2026.7.1.tgz \
+        063a810df0af84c49c4acc03de91f5f51d29135f84a443a002efb400f5251387 https://registry.npmjs.org/whatsapp-rust-bridge/-/whatsapp-rust-bridge-0.5.4.tgz whatsapp-rust-bridge-0.5.4.tgz \
+        38ae8b4e3926453bd8b23f5a0b134c0599ae51c47c1d20eedde56cf06fb4878b https://registry.npmjs.org/win-guid/-/win-guid-0.2.1.tgz win-guid-0.2.1.tgz \
+        aff3730d91b7b1e143822956d14608f563163cf11b9d0ae602df1fe1e430fdfb https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz wrappy-1.0.2.tgz \
+        dc2763952a24bf15dc920830a2d2884c23bccc08a853e8556e34771401254fa5 https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz ws-8.18.1.tgz \
+        d08b726b3aae3a0fed5218a0d9a4b2ac8d75d4ad453a9271db55fe38e94eb4cf https://registry.npmjs.org/ws/-/ws-8.21.0.tgz ws-8.21.0.tgz \
+        d2cbb69eb9d502a5248d79232b18d7fcbf23c9d33b8045f9bc01250650d98dd4 https://registry.npmjs.org/wsl-utils/-/wsl-utils-0.1.0.tgz wsl-utils-0.1.0.tgz \
+        a80c78aa276536615891ef66efbc17d3bd07c8cb14e3bd5298eed3006bfa4d49 https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz yallist-4.0.0.tgz \
+        ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz zod-4.4.3.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-amd64-archives
 
-ADD --chmod=0444 --checksum=sha256:67a7e52a3d0990dcac2e9e3f3be52a7a31500202a3248725922ae0a42f902fa8 https://registry.npmjs.org/@snazzah/davey-linux-x64-gnu/-/davey-linux-x64-gnu-0.1.12.tgz /davey-linux-x64-gnu-0.1.12.tgz
-ADD --chmod=0444 --checksum=sha256:836b7b1c248d96e9c29082dfe8e5c5fa565aed2c6dda205c2f0d933efd796069 https://registry.npmjs.org/@snazzah/davey-linux-x64-musl/-/davey-linux-x64-musl-0.1.12.tgz /davey-linux-x64-musl-0.1.12.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /arch \
+        67a7e52a3d0990dcac2e9e3f3be52a7a31500202a3248725922ae0a42f902fa8 https://registry.npmjs.org/@snazzah/davey-linux-x64-gnu/-/davey-linux-x64-gnu-0.1.12.tgz davey-linux-x64-gnu-0.1.12.tgz \
+        836b7b1c248d96e9c29082dfe8e5c5fa565aed2c6dda205c2f0d933efd796069 https://registry.npmjs.org/@snazzah/davey-linux-x64-musl/-/davey-linux-x64-musl-0.1.12.tgz davey-linux-x64-musl-0.1.12.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-arm64-archives
 
-ADD --chmod=0444 --checksum=sha256:b99b75f3f91e908c5417417f8df58d5487e953ddae2b9f286f28baa353cd0603 https://registry.npmjs.org/@snazzah/davey-linux-arm64-gnu/-/davey-linux-arm64-gnu-0.1.12.tgz /davey-linux-arm64-gnu-0.1.12.tgz
-ADD --chmod=0444 --checksum=sha256:a6fda898620be2c49d477a0b266f4be3a9eb16da47426d99dc089509922c32d5 https://registry.npmjs.org/@snazzah/davey-linux-arm64-musl/-/davey-linux-arm64-musl-0.1.12.tgz /davey-linux-arm64-musl-0.1.12.tgz
+COPY scripts/checks/download-reviewed-npm-archives.mts /opt/nemoclaw-build-tools/
+RUN node --experimental-strip-types /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts /arch \
+        b99b75f3f91e908c5417417f8df58d5487e953ddae2b9f286f28baa353cd0603 https://registry.npmjs.org/@snazzah/davey-linux-arm64-gnu/-/davey-linux-arm64-gnu-0.1.12.tgz davey-linux-arm64-gnu-0.1.12.tgz \
+        a6fda898620be2c49d477a0b266f4be3a9eb16da47426d99dc089509922c32d5 https://registry.npmjs.org/@snazzah/davey-linux-arm64-musl/-/davey-linux-arm64-musl-0.1.12.tgz davey-linux-arm64-musl-0.1.12.tgz \
+    && rm -f /opt/nemoclaw-build-tools/download-reviewed-npm-archives.mts
 
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
@@ -498,7 +512,8 @@ ENV NPM_CONFIG_AUDIT=false \
 COPY agents/openclaw/managed-image-messaging-runtime/package.json agents/openclaw/managed-image-messaging-runtime/package-lock.json /opt/managed-image-messaging-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/nemoclaw-build-tools/checks/
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/lib/
-COPY --from=openclaw-managed-messaging-npm-archives / /opt/nemoclaw-build-tools/npm-cache-seed/
+COPY --from=openclaw-managed-messaging-npm-archives /out/ /opt/nemoclaw-build-tools/npm-cache-seed/
+COPY --from=openclaw-managed-messaging-npm-archives /arch/ /opt/nemoclaw-build-tools/npm-cache-seed/
 RUN --network=none set -eu; \
     case "$TARGETARCH" in \
         amd64) npm_target_cpu=x64 ;; \
@@ -1732,7 +1747,7 @@ RUN set -eu; \
 # provenance, which fails the trusted-official-install check gating
 # openKeyedStore on OpenClaw >= 2026.6.10.
 # hadolint ignore=DL3059,DL4006,SC2016
-RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
+RUN --network=none --mount=from=openclaw-optional-plugin-archives,source=/out,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
     export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
     managed_image_union="${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION:-0}"; \
     verify_openclaw_plugin_integrity() { \
@@ -2449,11 +2464,9 @@ RUN set -eu; \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
-        "libevent-core-2.1-7t64=2.1.13-stable-1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -2462,15 +2475,11 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
-    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' libevent-core-2.1-7t64)" = "2.1.13-stable-1"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
-    test "$(tmux -V)" = "tmux 3.5a"; \
-    ldd /usr/bin/tmux | grep -Eq 'libevent_core-2[.]1[.]so[.]7'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
     python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION"; \

@@ -281,6 +281,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "download-reviewed-npm-archives.mts"),
+    path.join(stagedScriptsDir, "checks", "download-reviewed-npm-archives.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );

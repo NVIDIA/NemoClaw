@@ -22,9 +22,6 @@ interface DockerArchivePin {
   resolved: string;
 }
 
-// BuildKit failed at the 130th remote ADD during a cold managed-image build.
-const MAX_CHECKSUM_ADD_CHAIN = 120;
-
 function dockerfileSection(startMarker: string, endMarker: string): string {
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
@@ -36,7 +33,7 @@ function dockerfileSection(startMarker: string, endMarker: string): string {
 function archivePins(section: string): DockerArchivePin[] {
   return [
     ...section.matchAll(
-      /^ADD --chmod=0444 --checksum=sha256:([a-f0-9]{64}) (https:\/\/registry\.npmjs\.org\/\S+) \/([^/\s]+\.tgz)$/gmu,
+      /^\s{8}([a-f0-9]{64}) (https:\/\/registry\.npmjs\.org\/\S+) ([^/\s]+\.tgz) \\$/gmu,
     ),
   ].map((match) => ({ archive: match[3], digest: match[1], resolved: match[2] }));
 }
@@ -46,7 +43,7 @@ function archiveIdentity(archive: LockedArchive | DockerArchivePin): string {
 }
 
 describe("OpenClaw managed messaging offline image build", () => {
-  it("pins the complete lock graphs below the cold-build layer limit", () => {
+  it("pins the complete amd64 and arm64 lock graphs in architecture-selected stages", () => {
     const amd64Lock = lockedArchives(lockSource, { cpu: "x64", libc: "glibc", os: "linux" });
     const arm64Lock = lockedArchives(lockSource, {
       cpu: "arm64",
@@ -59,18 +56,11 @@ describe("OpenClaw managed messaging offline image build", () => {
     const amd64OnlyLock = amd64Lock.filter(({ archive }) => !arm64Names.has(archive));
     const arm64OnlyLock = arm64Lock.filter(({ archive }) => !amd64Names.has(archive));
 
-    const commonArchiveStages = [1, 2, 3].map((part) =>
+    const commonPins = archivePins(
       dockerfileSection(
-        `FROM scratch AS openclaw-managed-messaging-npm-common-archives-${part}`,
-        part < 3
-          ? `FROM scratch AS openclaw-managed-messaging-npm-common-archives-${part + 1}`
-          : "FROM scratch AS openclaw-managed-messaging-npm-common-archives\n",
+        "AS openclaw-managed-messaging-npm-common-archives",
+        "FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-amd64-archives",
       ),
-    );
-    const commonPins = commonArchiveStages.flatMap(archivePins);
-    const commonArchiveMerge = dockerfileSection(
-      "FROM scratch AS openclaw-managed-messaging-npm-common-archives\n",
-      "FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-amd64-archives",
     );
     const amd64OnlyPins = archivePins(
       dockerfileSection(
@@ -86,18 +76,6 @@ describe("OpenClaw managed messaging offline image build", () => {
     );
 
     expect(commonPins.map(archiveIdentity)).toEqual(commonLock.map(archiveIdentity));
-    expect(
-      commonArchiveStages.every((stage) => archivePins(stage).length <= MAX_CHECKSUM_ADD_CHAIN),
-    ).toBe(true);
-    expect(commonArchiveMerge).toContain(
-      "COPY --from=openclaw-managed-messaging-npm-common-archives-1 / /",
-    );
-    expect(commonArchiveMerge).toContain(
-      "COPY --from=openclaw-managed-messaging-npm-common-archives-2 / /",
-    );
-    expect(commonArchiveMerge).toContain(
-      "COPY --from=openclaw-managed-messaging-npm-common-archives-3 / /",
-    );
     expect(amd64OnlyPins.map(archiveIdentity)).toEqual(amd64OnlyLock.map(archiveIdentity));
     expect(arm64OnlyPins.map(archiveIdentity)).toEqual(arm64OnlyLock.map(archiveIdentity));
     expect(new Set(commonPins.map(({ digest }) => digest)).size).toBe(commonPins.length);
@@ -105,6 +83,8 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(new Set(arm64OnlyPins.map(({ digest }) => digest)).size).toBe(arm64OnlyPins.length);
     expect(commonPins.length + amd64OnlyPins.length).toBe(amd64Lock.length);
     expect(commonPins.length + arm64OnlyPins.length).toBe(arm64Lock.length);
+    expect(dockerfile).not.toContain("ADD --checksum");
+    expect(dockerfile).not.toMatch(/^ADD .*--checksum/gmu);
   });
 
   it("verifies and materializes the selected archives with networking disabled", () => {
@@ -117,7 +97,10 @@ describe("OpenClaw managed messaging offline image build", () => {
       "FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives",
     );
     expect(cacheStage).toContain(
-      "COPY --from=openclaw-managed-messaging-npm-archives / /opt/nemoclaw-build-tools/npm-cache-seed/",
+      "COPY --from=openclaw-managed-messaging-npm-archives /out/ /opt/nemoclaw-build-tools/npm-cache-seed/",
+    );
+    expect(cacheStage).toContain(
+      "COPY --from=openclaw-managed-messaging-npm-archives /arch/ /opt/nemoclaw-build-tools/npm-cache-seed/",
     );
     expect(cacheStage).toContain("RUN --network=none set -eu;");
     expect(cacheStage).toContain("--archive-directory /opt/nemoclaw-build-tools/npm-cache-seed");

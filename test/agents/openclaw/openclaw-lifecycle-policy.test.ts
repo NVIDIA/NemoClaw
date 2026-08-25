@@ -82,7 +82,7 @@ const messagingInstallBlock = between(
 );
 
 const codexMatch = dockerfile.match(
-  /ADD --checksum=sha256:[0-9a-f]{64} https:\/\/registry\.npmjs\.org\/@zed-industries\/codex-acp\/-\/codex-acp-0\.11\.1\.tgz/,
+  /[0-9a-f]{64} https:\/\/registry\.npmjs\.org\/@zed-industries\/codex-acp\/-\/codex-acp-0\.11\.1\.tgz codex-acp\.tgz/,
 );
 const optionalPluginSpecs = [...optionalPluginBlock.matchAll(
     /"(@openclaw\/[^"\s]+@[0-9]+(?:\.[0-9]+){2})"\)\s+expected_integrity=/g,
