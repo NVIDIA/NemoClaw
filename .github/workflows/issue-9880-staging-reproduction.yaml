@@ -35,6 +35,7 @@ jobs:
             package-lock.json
             vitest.config.ts
             nemoclaw/vitest.project.ts
+            ci/cli-test-timing-hints.json
             tsconfig.json
             oxlint.config.ts
             oxfmt.config.ts
@@ -107,7 +108,7 @@ jobs:
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
           HOME: ${{ runner.temp }}/issue-9880-home
-        run: node --experimental-strip-types tools/e2e/cleanup-brev-workspace.mts
+        run: ./node_modules/.bin/tsx tools/e2e/cleanup-brev-workspace.mts
 
       - name: Remove Brev credentials
         if: always()
