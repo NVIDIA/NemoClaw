@@ -492,14 +492,18 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }] } }),
       ),
     ).toBe(false);
-    for (const text of [" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"]) {
+  });
+
+  it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(
+    "rejects a non-exact OpenClaw chat reply %j (#8178)",
+    (text) => {
       expect(
         parseOpenClawExactChatReply(
           JSON.stringify({ status: "ok", result: { payloads: [{ text }] } }),
         ),
       ).toBe(false);
-    }
-  });
+    },
+  );
 
   it("passes only allowlisted Windows runtime variables to host child processes (#8178)", () => {
     const allowed = allowlistedWindowsProcessEnvironment({
