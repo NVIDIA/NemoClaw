@@ -19,10 +19,7 @@ import {
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
-import {
-  type OllamaModelHolder,
-  supersededOllamaModel,
-} from "../inference/ollama/model-ownership";
+import { type OllamaModelHolder, supersededOllamaModel } from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
@@ -39,6 +36,10 @@ import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
+import {
+  type RoutedProviderDeps,
+  upsertRoutedProvider as upsertRoutedInferenceProvider,
+} from "./routed-inference";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -306,6 +307,37 @@ export function bindOpenAiProviderProfile(
   };
 }
 
+export function createRoutedResumeProviderUpsert(deps: {
+  upsertProvider: SetupInferenceDeps["upsertProvider"];
+  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
+  hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
+  error?: CommonDeps["error"];
+  exitProcess?: CommonDeps["exitProcess"];
+}) {
+  return (
+    gatewayName: string,
+    provider: string,
+    endpointUrl: string | null,
+    credentialEnv: string | null,
+  ) => {
+    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+      upsertProvider: bindOpenAiProviderProfile(
+        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+        deps.runGatewayOpenshell,
+        deps.error ?? console.error,
+        deps.exitProcess ?? ((code) => process.exit(code)),
+      ),
+      hydrateCredentialEnv: deps.hydrateCredentialEnv,
+    });
+    return {
+      ok: result.ok,
+      endpointUrl: result.endpointUrl,
+      message: result.result.message,
+      status: result.result.status,
+    };
+  };
+}
+
 export function selectGatewayForFollowupOrExit(
   gatewayName: string,
   runOpenshell: SetupInferenceDeps["runOpenshell"],
@@ -508,8 +540,7 @@ function releaseSupersededOllamaModel(
   // still owns its model.
   if (!previous || result.retry) return;
   try {
-    const withOwnershipLock =
-      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const superseded = supersededOllamaModel(previous, nextModel, peers);
@@ -1068,18 +1099,17 @@ export function createSetupInference(
     // happens before the lock opens, so a serialized re-onboard can neither
     // replace the row under the read nor select the captured model before
     // this cleanup runs.
-    const mutateGatewayRouteAndReleaseSupersededModel =
-      async (): Promise<SetupInferenceResult> => {
-        let previousSandbox: OllamaModelHolder | null = null;
-        try {
-          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
-        } catch {
-          /* An unreadable registry skips GPU release; it must not fail onboarding. */
-        }
-        const result = await mutateGatewayRoute();
-        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
-        return result;
-      };
+    const mutateGatewayRouteAndReleaseSupersededModel = async (): Promise<SetupInferenceResult> => {
+      let previousSandbox: OllamaModelHolder | null = null;
+      try {
+        previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+      } catch {
+        /* An unreadable registry skips GPU release; it must not fail onboarding. */
+      }
+      const result = await mutateGatewayRoute();
+      releaseSupersededOllamaModel(previousSandbox, model, result, deps);
+      return result;
+    };
     return sandboxName
       ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
       : mutateGatewayRouteAndReleaseSupersededModel();
