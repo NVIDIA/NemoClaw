@@ -480,15 +480,17 @@ root_owned_file_is_not_writable_by_group_or_other() {
   (((8#$mode & 0022) == 0))
 }
 
-cloud_init_failure_is_qualified() {
-  local actual_sha
-  ((NETWORK_VALIDATED == 1)) || return 1
+cloud_init_telemetry_failure_is_qualified() {
   root_owned_file_is_not_writable_by_group_or_other "$FACTORY_CLOUD_INIT_TELEMETRY" \
     || return 1
   root_owned_file_is_not_writable_by_group_or_other "$FACTORY_CLOUD_INIT_RESULT" || return 1
-  actual_sha="$(sha256sum "$FACTORY_CLOUD_INIT_TELEMETRY" 2>/dev/null | awk '{print $1}')"
-  [[ "$actual_sha" == "$FACTORY_CLOUD_INIT_TELEMETRY_SHA256" ]] || return 1
+  file_sha256_matches "$FACTORY_CLOUD_INIT_TELEMETRY" "$FACTORY_CLOUD_INIT_TELEMETRY_SHA256" \
+    || return 1
   grep -Fq "\"('bootcmd', ProcessExecutionError(" "$FACTORY_CLOUD_INIT_RESULT"
+}
+
+cloud_init_failure_is_qualified() {
+  ((NETWORK_VALIDATED == 1)) && cloud_init_telemetry_failure_is_qualified
 }
 
 network_wait_failure_is_qualified() {
@@ -550,14 +552,12 @@ factory_failed_unit_matches() {
 }
 
 factory_cloud_init_failure_is_qualified() {
-  local result=/run/cloud-init/result.json
   ((NETWORK_VALIDATED == 1)) \
     && factory_failed_unit_matches cloud-init.service \
       /usr/lib/systemd/system/cloud-init.service "$FACTORY_CLOUD_INIT_UNIT_SHA256" enabled 1 \
     && file_sha256_matches /etc/cloud/cloud.cfg "$FACTORY_CLOUD_CFG_SHA256" \
-    && root_owned_file_is_not_writable_by_group_or_other "$result" \
-    && grep -Fq '"datasource": "DataSourceConfigDrive ' "$result" \
-    && grep -Fq "\"('bootcmd', ProcessExecutionError(" "$result"
+    && grep -Fq '"datasource": "DataSourceConfigDrive ' "$FACTORY_CLOUD_INIT_RESULT" \
+    && cloud_init_telemetry_failure_is_qualified
 }
 
 factory_fluent_bit_failure_is_qualified() {

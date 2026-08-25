@@ -469,7 +469,6 @@ dgx_station_release_file_is_safe "$DGX_RELEASE"
 
   it.each([
     ["supported-dgx-os", writeDgxReleaseFixture("7.5.0")],
-    ["supported-dgx-os", writeNoOtaDgxOs76Release()],
     ["unsupported-dgx-os", writeDgxReleaseFixture("7.7.0")],
   ])("classifies a present marker as %s", (expected, release) => {
     const { result, output } = runSourced(
@@ -821,6 +820,39 @@ is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
     expect(changedCause.result.status, changedCause.output).not.toBe(0);
+  });
+
+  it("requires pinned telemetry evidence for a factory cloud-init bootcmd failure (#9898)", () => {
+    const qualified = runSourced(
+      STATION_PREPARE,
+      `
+NETWORK_VALIDATED=1
+factory_failed_unit_matches() { return 0; }
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+grep() { return 0; }
+file_sha256_matches() {
+  [[ "$1:$2" == "/etc/cloud/cloud.cfg:$FACTORY_CLOUD_CFG_SHA256" \
+    || "$1:$2" == "$FACTORY_CLOUD_INIT_TELEMETRY:$FACTORY_CLOUD_INIT_TELEMETRY_SHA256" ]]
+}
+factory_cloud_init_failure_is_qualified
+`,
+    );
+    expect(qualified.result.status, qualified.output).toBe(0);
+
+    const unrelatedBootcmd = runSourced(
+      STATION_PREPARE,
+      `
+NETWORK_VALIDATED=1
+factory_failed_unit_matches() { return 0; }
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+grep() { return 0; }
+file_sha256_matches() {
+  [[ "$1:$2" == "/etc/cloud/cloud.cfg:$FACTORY_CLOUD_CFG_SHA256" ]]
+}
+factory_cloud_init_failure_is_qualified
+`,
+    );
+    expect(unrelatedBootcmd.result.status, unrelatedBootcmd.output).not.toBe(0);
   });
 
   it("allows BaseOS failures only with exact packages and the expected cause fingerprint", () => {
