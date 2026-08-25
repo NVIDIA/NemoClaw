@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readYaml } from "../.././helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
   readonly name?: string;

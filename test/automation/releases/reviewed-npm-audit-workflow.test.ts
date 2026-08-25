@@ -20,7 +20,6 @@ import {
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
-import { readYaml } from "../.././helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
   readonly env?: Record<string, string>;
