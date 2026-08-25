@@ -12,7 +12,7 @@ import {
   createTerminologyToolController,
   TERMINOLOGY_TRACE_TOOL,
   traceTerminology,
-} from "../tools/pr-review-advisor/terminology.mts";
+} from "../../../tools/pr-review-advisor/terminology.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const temporaryDirectories: string[] = [];

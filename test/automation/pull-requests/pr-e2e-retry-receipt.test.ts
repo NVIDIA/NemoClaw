@@ -9,7 +9,7 @@ import {
   dispatchNotObservedReceiptMarker,
   retryableFailureMarker,
   retryableFailureReason,
-} from "../tools/e2e/pr-e2e-retry-receipt.mts";
+} from "../../../tools/e2e/pr-e2e-retry-receipt.mts";
 
 const RECEIPT: DispatchNotObservedReceipt = {
   correlationId: "123e4567-e89b-42d3-a456-426614174000",

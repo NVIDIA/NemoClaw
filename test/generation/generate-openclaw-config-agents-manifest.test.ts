@@ -22,7 +22,7 @@ import {
   readMessagingBuildPlanFromEnv,
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "../helpers/openclaw-env-fixture";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnv } from "../messaging-plan-test-helper";
 
 const APPLIER_PATH = path.join(
   import.meta.dirname,

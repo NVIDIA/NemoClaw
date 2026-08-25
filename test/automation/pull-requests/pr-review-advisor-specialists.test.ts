@@ -7,21 +7,21 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { canonicalRepoReadPath } from "../tools/advisors/repo-read-only-tools.mts";
+import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
-import { runSpecialistAdvisor, writeSpecialistSummary } from "../tools/pr-review-advisor/run-specialist.mts";
-import { writeSpecialistDiff } from "../tools/pr-review-advisor/specialist-context.mts";
-import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
+import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
+import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
+import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
+import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   readAdvisorSpecialists,
   type AdvisorInterest,
-} from "../tools/pr-review-advisor/specialists.mts";
-import type { InvestigateTurnContext } from "../tools/pr-review-advisor/investigate-turn.mts";
+} from "../../../tools/pr-review-advisor/specialists.mts";
+import type { InvestigateTurnContext } from "../../../tools/pr-review-advisor/investigate-turn.mts";
 
 type CallableTool = ToolDefinition & {
   execute(

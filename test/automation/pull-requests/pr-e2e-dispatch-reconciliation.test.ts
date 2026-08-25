@@ -3,14 +3,14 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GitHubApiError, type GitHubApiResponse } from "../tools/advisors/github.mts";
+import { GitHubApiError, type GitHubApiResponse } from "../../../tools/advisors/github.mts";
 import {
   assertDispatchStillNotObserved,
   DispatchNotObservedError,
   DispatchReconciliationError,
   dispatchWorkflowWithReconciliation,
-} from "../tools/e2e/pr-e2e-dispatch-reconciliation.mts";
-import type { DispatchNotObservedReceipt } from "../tools/e2e/pr-e2e-retry-receipt.mts";
+} from "../../../tools/e2e/pr-e2e-dispatch-reconciliation.mts";
+import type { DispatchNotObservedReceipt } from "../../../tools/e2e/pr-e2e-retry-receipt.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_SHA = "d".repeat(40);

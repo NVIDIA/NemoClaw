@@ -4,11 +4,10 @@
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { settleAdvisorTurn } from "../tools/advisors/session.mts";
-import { advisorExecutionErrors } from "../tools/pr-review-advisor/analyze.mts";
-import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
+import { settleAdvisorTurn } from "../../../tools/advisors/session.mts";
+import { advisorExecutionErrors } from "../../../tools/pr-review-advisor/analyze.mts";
+import { artifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
 
-const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("PR review advisor turn trace", () => {
   it("keeps the HTML session as the only debugging transcript", () => {

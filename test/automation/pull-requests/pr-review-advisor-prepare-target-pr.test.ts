@@ -12,7 +12,7 @@ import {
   prepareTargetPr,
   validatePrepareTargetDirectory,
   validatePrepareTargetPrInput,
-} from "../tools/pr-review-advisor/prepare-target-pr.mts";
+} from "../../../tools/pr-review-advisor/prepare-target-pr.mts";
 
 const REPO = "NVIDIA/NemoClaw";
 const BASE_SHA = "a".repeat(40);

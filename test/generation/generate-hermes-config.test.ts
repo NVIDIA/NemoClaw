@@ -30,7 +30,7 @@ import { testTimeout } from "../helpers/timeouts";
 import {
   withLegacyMessagingPlanEnv,
   withLegacyMessagingPlanEnvDirect,
-} from "./messaging-plan-test-helper";
+} from "../messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "../..", "agents", "hermes", "generate-config.ts");
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
@@ -1279,7 +1279,7 @@ describe("agents/hermes/generate-config.ts", () => {
   it("discovers the bundled registry from the script path when cwd differs", () => {
     const sourceRegistryDir = path.join(
       import.meta.dirname,
-      "..",
+      "../..",
       "nemoclaw-blueprint",
       "model-specific-setup",
     );

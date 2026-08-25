@@ -12,13 +12,13 @@ import {
   type ConflictMatrixEntry,
   type PullRequest,
   selectConflictingPullRequests,
-} from "../tools/pr-merge-conflict-fixer/discover.mts";
-import { prepareMerge, writeTree } from "../tools/pr-merge-conflict-fixer/merge.mts";
+} from "../../../tools/pr-merge-conflict-fixer/discover.mts";
+import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
 import {
   publishResolution,
   validatePublicationState,
   validateResolutionPatch,
-} from "../tools/pr-merge-conflict-fixer/publish.mts";
+} from "../../../tools/pr-merge-conflict-fixer/publish.mts";
 import {
   configureOpenShellInference,
   createResolutionSandbox,
@@ -28,7 +28,7 @@ import {
   resolverModelConfiguration,
   resolverPrompt,
   runResolutionTask,
-} from "../tools/pr-merge-conflict-fixer/resolve.mts";
+} from "../../../tools/pr-merge-conflict-fixer/resolve.mts";
 
 const temporaryDirectories: string[] = [];
 

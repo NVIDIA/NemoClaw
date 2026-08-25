@@ -13,14 +13,14 @@ import {
   advisorInferenceBaseUrl,
   DEFAULT_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
-} from "../tools/advisors/session.mts";
-import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
+} from "../../../tools/advisors/session.mts";
+import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import {
   collectGitHubReviewContext,
   MAX_PREPARED_GITHUB_CONTEXT_BYTES,
   readPreparedGitHubContext,
   serializePreparedGitHubContext,
-} from "../tools/pr-review-advisor/github-context.mts";
+} from "../../../tools/pr-review-advisor/github-context.mts";
 import {
   configureAdvisorOpenShellInference,
   createAdvisorSandbox,
@@ -30,12 +30,11 @@ import {
   runAdvisorSandbox,
   verifyAdvisorGitWorktree,
   writeUnavailableAdvisorArtifacts,
-} from "../tools/pr-review-advisor/openshell.mts";
-import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
-import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
+} from "../../../tools/pr-review-advisor/openshell.mts";
+import { runPrReviewAdvisorAnalysis } from "../../../tools/pr-review-advisor/run-analysis.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
-const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 function temporaryDirectory(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pr-advisor-openshell-"));

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
+import { renderSummary } from "../../../tools/pr-review-advisor/render-result.mts";
 import {
   enforceDeterministicTestDepthFloor,
   type ReviewTestDepth,
-} from "../tools/pr-review-advisor/review-quality.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+} from "../../../tools/pr-review-advisor/review-quality.mts";
+import { buildComment } from "../../../tools/pr-review-advisor/comment.mts";
 
 type TestDepth = ReviewTestDepth;
 type ReviewResult = Parameters<typeof renderSummary>[0];

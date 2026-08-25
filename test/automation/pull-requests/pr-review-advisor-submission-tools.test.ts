@@ -3,12 +3,12 @@
 
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import reviewSchema from "../tools/pr-review-advisor/schema.json" with { type: "json" };
+import reviewSchema from "../../../tools/pr-review-advisor/schema.json" with { type: "json" };
 import {
   applyReviewSubmissionTurn,
   persistSuccessfulReview,
-} from "../tools/pr-review-advisor/analyze.mts";
-import type { ArtifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
+} from "../../../tools/pr-review-advisor/analyze.mts";
+import type { ArtifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
 import {
   ACCEPTANCE_FINDING_REFERENCE_PAIRS,
   createReviewSubmissionController,
@@ -17,8 +17,8 @@ import {
   RECOMMEND_E2E_TOOL,
   SUBMIT_REVIEW_TOOL,
   type ReviewSubmissionController,
-} from "../tools/pr-review-advisor/review-submission.mts";
-import type { TerminologyTrace } from "../tools/pr-review-advisor/terminology.mts";
+} from "../../../tools/pr-review-advisor/review-submission.mts";
+import type { TerminologyTrace } from "../../../tools/pr-review-advisor/terminology.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HEAD = "a".repeat(40);

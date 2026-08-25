@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { main } from "../../scripts/generate-openclaw-config.mts";
 import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "../helpers/openclaw-env-fixture";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnv } from "../messaging-plan-test-helper";
 
 const BASE_ENV = baseOpenClawGenerationEnv();
 

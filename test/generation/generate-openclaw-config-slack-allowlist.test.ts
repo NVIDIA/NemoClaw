@@ -17,7 +17,7 @@ import {
   applyMessagingAgentRenderToObject,
   readMessagingBuildPlanFromEnv,
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnv } from "../messaging-plan-test-helper";
 
 /** Minimal env for a valid config-generation run with Slack enabled. */
 function slackEnv(overrides: Record<string, string> = {}): Record<string, string> {
