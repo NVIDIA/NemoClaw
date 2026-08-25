@@ -3791,12 +3791,23 @@ validate_deferred_hermes_onboarding_request() {
 
 should_defer_hermes_onboarding() {
   local registered_sandbox_count="${1:-0}"
+  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
   [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
   [[ "$registered_sandbox_count" == "0" ]] || return 1
   [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
   [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
-  [[ -z "${NEMOCLAW_PROVIDER_KEY:-}" ]] || return 1
+
+  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
+  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
+  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
+  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
+  # src/lib/onboard/providers.ts. These values select a route; they are not
+  # inference credentials.
+  case "$provider_key" in
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    *) return 1 ;;
+  esac
 }
 
 run_onboard() {

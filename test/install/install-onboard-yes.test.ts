@@ -694,6 +694,24 @@ describe("Hermes deferred onboarding", () => {
     },
   );
 
+  it.each(["build", "routed", "custom"])(
+    "treats the %s provider key as a selector when credentials are absent (#10288)",
+    (providerKey) => {
+      const result = runDeferredOnboardingMain({ deferFlag: true, providerKey });
+
+      expect(result.result.status, result.output).toBe(0);
+      expect(result.calls).toContain("install-nemoclaw");
+      expect(result.calls).not.toContain("host-preflight");
+      expect(result.calls).not.toContain("onboard");
+      expect(result.output).toContain("NVIDIA inference credentials are absent");
+      expect(result.output).toContain("Onboarding did not run");
+      expect(result.output).toContain("nemohermes onboard");
+      expect(result.providerCreated).toBe(false);
+      expect(result.sandboxCreated).toBe(false);
+      expect(result.onboardingComplete).toBe(false);
+    },
+  );
+
   it.each([
     ["NVIDIA_INFERENCE_API_KEY", { inferenceKey: "nvapi-primary-runtime-test" }],
     ["NVIDIA_API_KEY", { nvidiaApiKey: "nvapi-alias-runtime-test" }],
