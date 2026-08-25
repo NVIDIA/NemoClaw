@@ -35,11 +35,14 @@ RETRY_NAME = "activation-retry.json"
 HANDOFF_ROOT = "/run/nemoclaw/runtime-state-mutation-startup"
 CANDIDATE_NAME = "startup-complete.json"
 RETRY_ACK_NAME = "retry-ack.json"
+RELEASE_ACK_NAME = "release-ack.json"
+RELEASE_ACK_PENDING_NAME = ".release-ack.json.pending"
 PERMIT_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-permit-v1"
 RELEASE_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-release-v1"
 RETRY_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-retry-v1"
 CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v1"
 RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
+RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"
 MAX_FILE_BYTES = 32 * 1024
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
@@ -615,11 +618,80 @@ def _publish_retry_ack(binding: dict[str, object], retry_payload: bytes) -> None
         os.close(directory_fd)
 
 
+def _prepare_release_ack(binding: dict[str, object]) -> str:
+    directory_fd = _open_absolute_directory(
+        str(binding["candidateDirectory"]), readable_final=True
+    )
+    try:
+        metadata = os.fstat(directory_fd)
+        if (
+            metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            _fail("candidate-directory-invalid")
+        release_payload = _canonical(binding) + b"\n"
+        ack = {
+            "schemaVersion": SCHEMA_VERSION,
+            "protocol": RELEASE_ACK_PROTOCOL,
+            "transactionId": binding["transactionId"],
+            "nonce": binding["nonce"],
+            "releaseSha256": hashlib.sha256(release_payload).hexdigest(),
+            "start": binding["start"],
+        }
+        payload = _canonical(ack) + b"\n"
+        for name in (RELEASE_ACK_NAME, RELEASE_ACK_PENDING_NAME):
+            existing = _read_at(
+                directory_fd,
+                name,
+                uid=os.geteuid(),
+                gid=os.getegid(),
+                mode=0o600,
+                missing=True,
+            )
+            if existing is not None:
+                if existing != payload:
+                    _fail("release-ack-conflict")
+                return str(binding["nonce"])
+        temporary = f".{RELEASE_ACK_NAME}.{os.getpid()}.{secrets.token_hex(8)}"
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    _fail("release-ack-write-failed")
+                view = view[written:]
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(
+            temporary,
+            RELEASE_ACK_PENDING_NAME,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+        return str(binding["nonce"])
+    except OSError:
+        _fail("release-ack-write-failed")
+    finally:
+        os.close(directory_fd)
+
+
 def _run(action: str) -> str:
     directory_fd = _active_directory()
     if not _active_exists(directory_fd):
         if directory_fd is not None:
             os.close(directory_fd)
+        if action == "acknowledge":
+            _fail("activation-release-missing")
         return "inactive"
     assert directory_fd is not None
     try:
@@ -628,6 +700,8 @@ def _run(action: str) -> str:
         )
         if released is not None:
             _verify_release_candidate(released)
+            if action == "acknowledge":
+                return _prepare_release_ack(released)
             return "released"
         retry = _read_binding(directory_fd, RETRY_NAME, RETRY_PROTOCOL, RETRY_KEYS)
         if retry is not None:
@@ -653,12 +727,20 @@ def _run(action: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments not in (["admit"], ["checkpoint"], ["restart"], ["resume"]):
+    if arguments not in (
+        ["admit"],
+        ["checkpoint"],
+        ["restart"],
+        ["resume"],
+        ["acknowledge"],
+    ):
         print("runtime-state-mutation-startup-gate: invalid action", file=sys.stderr)
         return 64
     try:
         state = _run(arguments[0])
         print(state)
+        if arguments[0] == "acknowledge":
+            return 0
         return {
             "inactive": 0,
             "released": 0,

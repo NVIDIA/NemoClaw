@@ -54,16 +54,21 @@ const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
-// Retained activation recovery can consume three consecutive 150-second
-// controller windows: retry acknowledgement, startup checkpoint, and live
-// service verification. Keep the broker outside that bound and below the
-// existing 15-minute Shields state-mutation guard.
-const HELPER_ACTIVATION_TIMEOUT_MS = 8 * 60_000;
+const HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS = 5_000;
+const HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS = 150_000;
+const HELPER_ACTIVATION_HEALTH_TIMEOUT_MS = 150_000;
+const HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS = 30_000;
+const HELPER_ACTIVATION_TIMEOUT_MS =
+  HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS +
+  HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS +
+  HELPER_ACTIVATION_HEALTH_TIMEOUT_MS +
+  HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS;
 const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS = 30_000;
 const HELPER_TRANSPORT_POLL_MS = 250;
 const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
@@ -1401,8 +1406,9 @@ function writePrivateTransportFile(filePath: string, value: Buffer): void {
 function copyHelperTransportFile(
   capture: HelperTransportCapture,
   command: PersistedEngineLifecycleExactCommand,
+  timeoutMs = HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
 ): ContainerEngineCommandResult {
-  return capture(command, HELPER_TRANSPORT_COMMAND_TIMEOUT_MS);
+  return capture(command, timeoutMs);
 }
 
 function readHelperTransportFile(
@@ -1416,10 +1422,13 @@ function readHelperTransportFile(
     const destination = path.join(temporary, "response");
     const deadline = Date.now() + timeoutMs;
     while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) fail("root helper transport response did not arrive");
       fs.rmSync(destination, { force: true });
       const result = copyHelperTransportFile(
         capture,
         helperTransportCopyFromCommand(runtimeId, containerPath, destination),
+        Math.min(HELPER_TRANSPORT_COMMAND_TIMEOUT_MS, remainingMs),
       );
       if (!result.error && result.status === 0 && result.stderr.length === 0) {
         const value = fs.readFileSync(destination);
@@ -1427,6 +1436,9 @@ function readHelperTransportFile(
           fail("root helper transport response exceeds its byte bound");
         }
         return value;
+      }
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+        fail("root helper transport response copy timed out");
       }
       if (Date.now() >= deadline) fail("root helper transport response did not arrive");
       Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
@@ -1611,7 +1623,7 @@ function invokeHelperTransport(
       options.runtimeId,
       `${sessionPath}/${identity}.response`,
       options.hostTransportRoot,
-      helperTimeoutMs(action) + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+      helperTimeoutMs(action) + HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS,
     );
     const parsed = parseHelperTransportResult(response, action, identity);
     const acknowledgement = path.join(temporary, "ack");

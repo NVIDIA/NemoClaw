@@ -92,6 +92,8 @@ ACTIVATION_RETRY_NAME = "activation-retry.json"
 ACTIVATION_CLEANUP_NAME = "activation-cleanup.json"
 STARTUP_CANDIDATE_NAME = "startup-complete.json"
 STARTUP_RETRY_ACK_NAME = "retry-ack.json"
+STARTUP_RELEASE_ACK_NAME = "release-ack.json"
+STARTUP_RELEASE_ACK_PENDING_NAME = ".release-ack.json.pending"
 RELEASED_RECEIPT_NAME = "released.json"
 PUBLISHER_MODULE_PATH = (
     "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"
@@ -103,6 +105,7 @@ ACTIVATION_RETRY_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-retry-v1
 ACTIVATION_CLEANUP_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-cleanup-v1"
 STARTUP_CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v1"
 STARTUP_RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
+STARTUP_RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
 BASH_ARGV0 = (b"bash", b"/bin/bash", b"/usr/bin/bash")
@@ -919,6 +922,14 @@ STARTUP_RETRY_ACK_KEYS = (
     "retrySha256",
     "start",
 )
+STARTUP_RELEASE_ACK_KEYS = (
+    "schemaVersion",
+    "protocol",
+    "transactionId",
+    "nonce",
+    "releaseSha256",
+    "start",
+)
 
 
 def _process_command_sha256(command: tuple[bytes, ...]) -> str:
@@ -1103,6 +1114,19 @@ def _startup_retry_ack_payload(
         "transactionId": marker["transactionId"],
         "nonce": marker["nonce"],
         "retrySha256": _sha256(retry_payload),
+        "start": _process_reference_payload(fence.start),
+    }
+
+
+def _startup_release_ack_payload(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> dict[str, object]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "protocol": STARTUP_RELEASE_ACK_PROTOCOL,
+        "transactionId": marker["transactionId"],
+        "nonce": marker["nonce"],
+        "releaseSha256": _sha256(release_payload),
         "start": _process_reference_payload(fence.start),
     }
 
@@ -2022,6 +2046,77 @@ def _wait_for_startup_retry_ack(
         time.sleep(min(POLL_SECONDS, remaining))
 
 
+def _read_startup_release_ack(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> dict[str, object] | None:
+    opened = _open_startup_candidate_directory(marker, create=False)
+    if opened is None:
+        return None
+    root_fd, directory_fd = opened
+    sandbox_uid, sandbox_gid = _sandbox_account()
+    try:
+        try:
+            fd = os.open(
+                STARTUP_RELEASE_ACK_NAME,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return None
+        except OSError:
+            _fail("activation-release-ack-invalid")
+        try:
+            before = os.fstat(fd)
+            payload = os.read(fd, MAX_MARKER_BYTES + 1)
+            after = os.fstat(fd)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != sandbox_uid
+                or before.st_gid != sandbox_gid
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_nlink != 1
+                or len(payload) > MAX_MARKER_BYTES
+                or os.read(fd, 1)
+                or _stable_stat(before) != _stable_stat(after)
+            ):
+                _fail("activation-release-ack-invalid")
+        finally:
+            os.close(fd)
+        ack = _exact_keys(
+            _parse_json(payload, MAX_MARKER_BYTES, "activation-release-ack-invalid"),
+            STARTUP_RELEASE_ACK_KEYS,
+            "activation-release-ack-invalid",
+        )
+        expected = _startup_release_ack_payload(
+            marker, fence, release_payload
+        )
+        if (
+            ack["schemaVersion"] != SCHEMA_VERSION
+            or ack["protocol"] != STARTUP_RELEASE_ACK_PROTOCOL
+            or payload != _json_bytes(expected) + b"\n"
+            or not secrets.compare_digest(_json_bytes(ack), _json_bytes(expected))
+        ):
+            _fail("activation-release-ack-invalid")
+        return expected
+    finally:
+        os.close(directory_fd)
+        os.close(root_fd)
+
+
+def _wait_for_startup_release_ack(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> None:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        if _read_startup_release_ack(marker, fence, release_payload) is not None:
+            _recapture_reference(fence.start, "activation-release-identity-drift")
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("activation-release-ack-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
 def _verify_activation_checkpoint(
     marker: dict[str, object], fence: FenceProof, activation: ActivationProof
 ) -> None:
@@ -2043,9 +2138,16 @@ def _cleanup_startup_candidate_directory(marker: dict[str, object]) -> None:
     try:
         for name in os.listdir(directory_fd):
             if (
-                name not in (STARTUP_CANDIDATE_NAME, STARTUP_RETRY_ACK_NAME)
+                name
+                not in (
+                    STARTUP_CANDIDATE_NAME,
+                    STARTUP_RETRY_ACK_NAME,
+                    STARTUP_RELEASE_ACK_NAME,
+                    STARTUP_RELEASE_ACK_PENDING_NAME,
+                )
                 and not name.startswith(f".{STARTUP_CANDIDATE_NAME}.")
                 and not name.startswith(f".{STARTUP_RETRY_ACK_NAME}.")
+                and not name.startswith(f".{STARTUP_RELEASE_ACK_NAME}.")
             ):
                 _fail("activation-candidate-directory-invalid")
             try:
@@ -3831,6 +3933,9 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _fail("activation-marker-invalid")
     _verify_activation_checkpoint(marker, fence, activation)
     _publish_activation_release(durable_fd, marker, fence, activation)
+    release_payload = _canonical_protocol_payload(
+        _activation_release_payload(marker, fence, activation)
+    )
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
@@ -3841,6 +3946,7 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _resume_reference(reference)
     _resume_reference(fence.start)
     _prove_released_activation(marker, fence, activation)
+    _wait_for_startup_release_ack(marker, fence, release_payload)
 
 
 def _complete_released_receipt(

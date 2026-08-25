@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,19 +52,36 @@ function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   };
 }
 
+async function waitForPath(filePath: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      fs.accessSync(filePath);
+      return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${path.basename(filePath)}`);
+}
+
 afterEach(() => {
   cleanupDockerStateMutationRoots();
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
-  it("keeps the detached activation broker alive through retained-fence recovery (#10155)", () => {
+  it("derives the activation broker deadline from retry and readiness windows (#10155)", () => {
     const controller = path.join(
       import.meta.dirname,
       "../../../../scripts/runtime-state-mutation-control.py",
     );
-    const activationWindow = /^ACTIVATION_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
-      fs.readFileSync(controller, "utf8"),
+    const controllerSource = fs.readFileSync(controller, "utf8");
+    const processStateWindow = /^PROCESS_STATE_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
+      controllerSource,
     );
+    const activationWindow = /^ACTIVATION_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
+      controllerSource,
+    );
+    const processStateWindowSeconds = Number(processStateWindow?.[1] ?? Number.NaN);
     const activationWindowSeconds = Number(activationWindow?.[1] ?? Number.NaN);
     const brokerTimeouts = JSON.parse(
       /^TIMEOUTS = (\{[^\n]+\})$/mu.exec(
@@ -70,9 +89,11 @@ describe("Docker runtime-provider state mutation surface", () => {
       )?.[1] ?? "null",
     ) as Record<string, unknown> | null;
 
+    expect(processStateWindowSeconds).toBeGreaterThan(0);
     expect(activationWindowSeconds).toBeGreaterThan(0);
-    expect(brokerTimeouts?.activate).toEqual(expect.any(Number));
-    expect(brokerTimeouts?.activate as number).toBeGreaterThan(activationWindowSeconds * 3);
+    expect(brokerTimeouts?.activate).toBe(
+      processStateWindowSeconds + 2 * activationWindowSeconds + 30,
+    );
     expect(brokerTimeouts?.release).toBe(300);
   });
 
@@ -151,7 +172,74 @@ print(json.dumps(timeouts))
           timeout: 5_000,
         }),
       ),
-    ).toEqual([480, 255]);
+    ).toEqual([335, 110]);
+  });
+
+  it("publishes a bounded activation timeout after the helper deadline (#10155)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-mutation-broker-"));
+    const helper = path.join(root, "slow-helper.py");
+    const transaction = randomBytes(32).toString("hex");
+    const session = path.join(root, transaction);
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    const brokerSource = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.replace(
+      'ROOT = "/run/nemoclaw/runtime-state-mutation"',
+      `ROOT = ${JSON.stringify(root)}`,
+    )
+      .replace(/"activate": [0-9.]+/u, '"activate": 0.05')
+      .replaceAll(
+        "metadata.st_uid != 0 or metadata.st_gid != 0",
+        `metadata.st_uid != ${uid} or metadata.st_gid != ${gid}`,
+      )
+      .replaceAll(
+        "before.st_uid != 0 or before.st_gid != 0",
+        `before.st_uid != ${uid} or before.st_gid != ${gid}`,
+      );
+    fs.writeFileSync(helper, "import time\ntime.sleep(1)\n", { mode: 0o500 });
+    const broker = spawn("python3", ["-I", "-c", brokerSource, helper, transaction], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const brokerExit = new Promise<void>((resolve, reject) => {
+      broker.once("exit", () => resolve());
+      broker.once("error", reject);
+    });
+    let brokerStderr = "";
+    broker.stderr.setEncoding("utf8");
+    broker.stderr.on("data", (chunk: string) => {
+      brokerStderr += chunk;
+    });
+
+    try {
+      await waitForPath(path.join(session, "ready"), 2_000);
+      const request = Buffer.from(
+        `${JSON.stringify({ action: "activate", transactionId: transaction })}\n`,
+        "utf8",
+      );
+      const identity = createHash("sha256").update(request).digest("hex");
+      const responsePath = path.join(session, `${identity}.response`);
+      const startedAt = Date.now();
+      fs.writeFileSync(path.join(session, `${identity}.activate.incoming`), request, {
+        mode: 0o600,
+      });
+      await waitForPath(responsePath, 1_000);
+
+      const response = JSON.parse(fs.readFileSync(responsePath, "utf8"));
+      expect(response).toEqual({
+        schemaVersion: 1,
+        action: "activate",
+        identity,
+        status: 1,
+        stdout: "",
+        stderr:
+          '{"schemaVersion":1,"action":"activate","status":"failed","code":"helper-timeout"}\n',
+      });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    } finally {
+      broker.kill("SIGTERM");
+      await brokerExit;
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+    expect(brokerStderr).toBe("");
   });
 
   it("uses one harness-owned absolute Docker executable", () => {
@@ -409,8 +497,8 @@ describe("Docker state mutation owner", () => {
       ["acquire", 30_000],
       ["assert", 30_000],
       ["rollback", 15 * 60_000],
-      ["activate", 8 * 60_000],
-      ["activate", 8 * 60_000],
+      ["activate", 335_000],
+      ["activate", 335_000],
       ["release", 5 * 60_000],
     ]);
     const acquireRequest = JSON.parse(helperCalls[0]?.[3]?.toString("utf8") ?? "null");

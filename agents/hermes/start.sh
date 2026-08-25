@@ -30,10 +30,13 @@ NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("$@")
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON="/opt/hermes/.venv/bin/python3"
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER="/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV="/usr/bin/setpriv"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV="/usr/bin/mv"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT="/run/nemoclaw/runtime-state-mutation-startup"
 
 if [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" ] \
   || [ ! -f "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
   || [ -L "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
+  || [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV" ] \
   || { [ "$EUID" -eq 0 ] && [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" ]; }; then
   printf '%s\n' '[SECURITY] Required runtime state mutation startup gate is unavailable.' >&2
   exit 1
@@ -50,6 +53,34 @@ nemoclaw_runtime_state_mutation_gate() {
   fi
   "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
     "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
+}
+
+nemoclaw_runtime_state_mutation_acknowledge_release() {
+  local nonce pending final
+  if [ "$EUID" -eq 0 ]; then
+    nonce="$("$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
+      --reuid=sandbox --regid=sandbox --init-groups -- \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge)" || return 1
+  else
+    nonce="$("$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge)" || return 1
+  fi
+  if [ "${#nonce}" -ne 64 ]; then
+    return 1
+  fi
+  case "$nonce" in
+    *[!0-9a-f]*) return 1 ;;
+  esac
+  pending="${NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT}/${nonce}/.release-ack.json.pending"
+  final="${NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT}/${nonce}/release-ack.json"
+  if [ -f "$final" ] && [ ! -L "$final" ]; then
+    return 0
+  fi
+  if [ ! -f "$pending" ] || [ -L "$pending" ]; then
+    return 1
+  fi
+  "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV" -f -- "$pending" "$final"
 }
 
 nemoclaw_runtime_state_mutation_retry_exec() {
@@ -106,7 +137,12 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   fi
   kill -STOP "$$"
   if nemoclaw_runtime_state_mutation_gate resume; then
-    return 0
+    if nemoclaw_runtime_state_mutation_acknowledge_release; then
+      return 0
+    fi
+    printf '%s\n' '[SECURITY] Runtime state mutation release acknowledgement failed; holding startup.' >&2
+    kill -STOP "$$"
+    return 1
   else
     status=$?
   fi

@@ -840,6 +840,7 @@ def resume_reference(reference):
     return state_process(by_release_pid[reference.pid])
 control._resume_reference = resume_reference
 control._prove_released_activation = lambda *_args: release_events.append(["health"])
+control._wait_for_startup_release_ack = lambda *_args: None
 control._verify_activation_checkpoint = lambda *_args: release_events.append(["verify-checkpoint"])
 control._publish_activation_release = lambda *_args: release_events.append(["release-receipt"])
 terminated_release_pids = set()

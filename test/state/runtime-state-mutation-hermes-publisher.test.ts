@@ -416,12 +416,24 @@ describe("Hermes runtime state mutation publisher", () => {
     expect(start).toContain("trap nemoclaw_runtime_state_mutation_retry_exec USR2");
     expect(start).toContain("exec /usr/local/bin/nemoclaw-start");
     expect(start).toContain("nemoclaw_runtime_state_mutation_gate resume");
+    expect(start).toContain("nemoclaw_runtime_state_mutation_acknowledge_release");
+    expect(start).toMatch(
+      /nemoclaw_runtime_state_mutation_gate resume; then\n\s+if nemoclaw_runtime_state_mutation_acknowledge_release; then\n\s+return 0/u,
+    );
+    expect(start).toContain('NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV="/usr/bin/mv"');
+    expect(start).toContain(
+      '"$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV" -f -- "$pending" "$final"',
+    );
 
     const startupGate = fs.readFileSync(STARTUP_GATE, "utf8");
     expect(startupGate).toContain('DURABLE_DIRECTORY = "/var/lib/nemoclaw/runtime-state-mutation"');
     expect(startupGate).toContain('"permitted": 10');
     expect(startupGate).toContain('"activation-ready": 11');
     expect(startupGate).toContain('"retry": 12');
+    expect(startupGate).toContain(
+      'RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"',
+    );
+    expect(startupGate).toContain('["acknowledge"]');
     expect(fs.readFileSync(PUBLISHER, "utf8")).toContain(
       'PYTHON_PATH = "/opt/hermes/.venv/bin/python3"',
     );

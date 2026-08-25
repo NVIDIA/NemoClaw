@@ -139,8 +139,23 @@ with tempfile.TemporaryDirectory() as root:
         "start": start,
         "candidateDirectory": candidate_directory,
     }
-    write(os.path.join(durable, gate.RELEASE_NAME), release, 0o444)
+    release_path = os.path.join(durable, gate.RELEASE_NAME)
+    write(release_path, release, 0o444)
     results["released"] = gate._run("admit")
+    results["release_ack_nonce"] = gate._run("acknowledge")
+    release_ack_pending = os.path.join(
+        candidate_directory, gate.RELEASE_ACK_PENDING_NAME
+    )
+    with open(release_ack_pending, "rb") as stream:
+        results["release_ack"] = json.load(stream)
+    os.replace(
+        release_ack_pending,
+        os.path.join(candidate_directory, gate.RELEASE_ACK_NAME),
+    )
+    results["release_ack_committed"] = gate._run("acknowledge")
+    gate._capture_parent = lambda: {**start, "pid": 42}
+    results["foreign_parent_ack"] = code(lambda: gate._run("acknowledge"))
+    gate._capture_parent = lambda: start
     with open(candidate_path, "ab") as stream:
         stream.write(b"tamper")
     results["tampered_release"] = code(lambda: gate._run("admit"))
@@ -197,6 +212,9 @@ describe("runtime state mutation startup gate", () => {
       retry_wait: "retry-wait",
       retry_wrong_transaction: "retry-permit-mismatch",
       released: "released",
+      release_ack_nonce: "b".repeat(64),
+      release_ack_committed: "b".repeat(64),
+      foreign_parent_ack: "gate-start-mismatch",
       tampered_release: "release-candidate-mismatch",
       symlink_directory: "unsafe-directory",
       invalid_present_directory: "gate-directory-invalid",
@@ -214,6 +232,14 @@ describe("runtime state mutation startup gate", () => {
         transactionId: "c".repeat(64),
         nonce: "b".repeat(64),
         retrySha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        start: expectedStart,
+      },
+      release_ack: {
+        schemaVersion: 1,
+        protocol: "nemoclaw-runtime-state-mutation-release-ack-v1",
+        transactionId: "c".repeat(64),
+        nonce: "b".repeat(64),
+        releaseSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
         start: expectedStart,
       },
     });
