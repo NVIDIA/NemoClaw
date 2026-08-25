@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -138,31 +139,58 @@ export function isShieldsTimerDeadlineExpired(
 export interface ShieldsTimerLivenessProbes {
   processIsAlive(pid: number): boolean;
   /**
-   * Optional override for tests. Production uses `/proc/<pid>/stat` starttime
-   * (`proc:<ticks>`), the same prefix the Linux timer marker stores.
+   * Optional override for tests. Production uses the same `proc:` / `ps:`
+   * reader as Shields timer control.
    */
   readProcessStartIdentity?(pid: number): string | null;
 }
 
-function readLinuxTimerProcessStartIdentity(pid: number): string | null {
+const DEFAULT_TIMER_IDENTITY_TIMEOUT_MS = 5_000;
+
+/**
+ * Read the same start identity Shields timer control records: Linux
+ * `/proc/<pid>/stat` starttime as `proc:<ticks>`, then `ps -o lstart=` as
+ * `ps:<start-time>` when `/proc` is unavailable.
+ */
+export function readTimerProcessStartIdentity(
+  pid: number,
+  timeoutMs = DEFAULT_TIMER_IDENTITY_TIMEOUT_MS,
+): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
     const closingParen = raw.lastIndexOf(")");
-    if (closingParen < 0) return null;
-    const fields = raw
-      .slice(closingParen + 2)
-      .trim()
-      .split(/\s+/);
-    return fields[19] ? `proc:${fields[19]}` : null;
+    if (closingParen >= 0) {
+      const fields = raw
+        .slice(closingParen + 2)
+        .trim()
+        .split(/\s+/);
+      if (fields[19]) return `proc:${fields[19]}`;
+    }
+  } catch {
+    // Fall through to the portable ps identity.
+  }
+  try {
+    const timeout = Math.max(1, Math.floor(timeoutMs));
+    const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout,
+    })
+      .toString()
+      .trim();
+    return started ? `ps:${started}` : null;
   } catch {
     return null;
   }
 }
 
+export const localTimerProcessStartIdentity = {
+  read: readTimerProcessStartIdentity,
+};
+
 const LOCAL_TIMER_LIVENESS_PROBES: ShieldsTimerLivenessProbes = {
   processIsAlive,
-  readProcessStartIdentity: readLinuxTimerProcessStartIdentity,
+  readProcessStartIdentity: (pid) => localTimerProcessStartIdentity.read(pid),
 };
 
 /**
@@ -184,9 +212,9 @@ export function isShieldsTimerDeadlineAbandoned(
   if (!marker) return false;
   const recorded = marker.timerProcessStartIdentity;
   if (typeof recorded === "string" && recorded.length > 0) {
-    const observed =
-      probes.readProcessStartIdentity?.(marker.pid) ??
-      readLinuxTimerProcessStartIdentity(marker.pid);
+    const observed = probes.readProcessStartIdentity
+      ? probes.readProcessStartIdentity(marker.pid)
+      : localTimerProcessStartIdentity.read(marker.pid);
     if (observed !== null && observed !== recorded) return true;
     if (observed === null && probes.processIsAlive(marker.pid)) return false;
   }

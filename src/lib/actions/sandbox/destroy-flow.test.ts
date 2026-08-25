@@ -17,11 +17,13 @@ import {
   expectFailedHardeningStillDeletes,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
+  expectHardenWhenOpenshellAbsentWithLiveDocker,
   expectMcpFinalizeAfterDelete,
   expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpPrepareBridgeErrorAborts,
   expectMcpRestoreAfterDeleteFailure,
   expectShieldsUpRefusalBeforeMutation,
+  expectSkipUnrestorableHardeningWhenDockerEmpty,
   expectStrictSandboxPresenceClassification,
   expectSuccessfulLiveDestroy,
 } from "../../../../test/helpers/destroy-flow-test-assertions";
@@ -1334,32 +1336,12 @@ describe("destroySandbox flow", () => {
 
     expectActiveTimerDestroyOrder(harness);
   });
-
-  it(
-    "skips unrestorable Shields hardening when Docker identity is empty even if OpenShell still lists the sandbox (#10066)",
-    { timeout: 30_000 },
-    async () => {
-      const harness = createDestroyHarness({
-        activeTimer: true,
-        sandboxPresent: true,
-        dockerRunResult: { status: 0, stdout: "", stderr: "" },
-        openshellDriver: "docker",
-        shieldsUpError: new Error("inline auto-restore would commit containment"),
-      });
-
-      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-      expect(harness.events).not.toContain("wipe");
-      expect(harness.events).not.toContain("harden");
-      expect(harness.events.indexOf("delete")).toBeLessThan(
-        harness.events.indexOf("timer-cleanup"),
-      );
-      expect(harness.killTimerSpy).toHaveBeenCalledOnce();
-      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-      expect(exitSpy).not.toHaveBeenCalled();
-    },
-  );
-
+  it.each([
+    ["empty Docker even if OpenShell lists it", expectSkipUnrestorableHardeningWhenDockerEmpty],
+    ["OpenShell absent with live Docker identity", expectHardenWhenOpenshellAbsentWithLiveDocker],
+  ] as const)("applies Docker identity to Shields hardening: %s (#10066)", { timeout: 30_000 }, async (_label, run) => {
+    await run(exitSpy);
+  });
   it("warns and still deletes when active-window hardening fails after the wipe (#7727)", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,

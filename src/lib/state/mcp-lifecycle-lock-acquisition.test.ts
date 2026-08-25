@@ -17,6 +17,9 @@ import {
   withMcpLifecycleLockSync,
 } from "./mcp-lifecycle-lock-acquisition";
 import {
+  localTimerProcessStartIdentity,
+} from "./mcp-lifecycle-lock/shields-timer-authority";
+import {
   createMcpLifecycleLockOwner,
   readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
@@ -44,6 +47,7 @@ function writeTimerMarker(
   processToken: string | undefined,
   restoreAt = new Date(Date.now() + 60_000).toISOString(),
   pid = process.pid,
+  extra: Record<string, unknown> = {},
 ): void {
   fs.writeFileSync(
     path.join(stateDir, `shields-timer-${SANDBOX_NAME}.json`),
@@ -53,6 +57,7 @@ function writeTimerMarker(
       snapshotPath: path.join(stateDir, "snapshot.yaml"),
       restoreAt,
       ...(processToken ? { processToken } : {}),
+      ...extra,
     }),
   );
 }
@@ -263,6 +268,30 @@ describe("MCP lifecycle lock acquisition", () => {
     );
     expect(fs.existsSync(lockPath)).toBe(false);
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("admits synchronous ordinary acquisition after a live PID's recorded ps identity no longer matches", () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("8".repeat(32), new Date(Date.now() - 1_000).toISOString(), process.pid, {
+      timerProcessStartIdentity: "ps:recorded",
+    });
+    vi.spyOn(localTimerProcessStartIdentity, "read").mockReturnValue("ps:observed");
+
+    expect(withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", options())).toBe("entered");
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("admits asynchronous ordinary acquisition after a live PID's recorded ps identity no longer matches", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("9".repeat(32), new Date(Date.now() - 1_000).toISOString(), process.pid, {
+      timerProcessStartIdentity: "ps:recorded",
+    });
+    vi.spyOn(localTimerProcessStartIdentity, "read").mockReturnValue("ps:observed");
+
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, () => "entered", options())).resolves.toBe(
+      "entered",
+    );
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 
   it("keeps waiting when an expired timer's process is still alive", async () => {

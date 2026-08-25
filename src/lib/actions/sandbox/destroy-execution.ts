@@ -458,11 +458,12 @@ export async function executeSandboxDestroy({
     }
     // `expectedContainerIdentity === null` is a completed Docker identity
     // probe with zero matching containers. `undefined` means this runtime
-    // does not use that probe (or Portable owns identity) and must not skip
-    // hardening. OpenShell list may still be `unknown`/`present`; do not call
-    // shieldsUp to restore a runtime that Docker already proved gone.
+    // does not use that probe (or Portable owns identity); skip hardening
+    // only when OpenShell already proved absence. A live labeled Docker
+    // identity still hardens even if the OpenShell list says absent.
     const sandboxRuntimeConfirmedAbsent =
-      sandboxConfirmedAbsent || expectedContainerIdentity === null;
+      expectedContainerIdentity === null ||
+      (expectedContainerIdentity === undefined && sandboxConfirmedAbsent);
     let hardened: HardenedDeleteState;
     try {
       hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxRuntimeConfirmedAbsent, deps);

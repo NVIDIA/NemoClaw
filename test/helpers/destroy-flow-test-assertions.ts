@@ -4,6 +4,7 @@
 import { expect, type MockInstance } from "vitest";
 
 import {
+  createDestroyHarness,
   type DestroyHarness,
   loadDestroySandboxPresenceClassifier,
   sandboxListJson,
@@ -110,6 +111,46 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
   expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+}
+
+export async function expectSkipUnrestorableHardeningWhenDockerEmpty(
+  exitSpy: MockInstance,
+): Promise<void> {
+  const harness = createDestroyHarness({
+    activeTimer: true,
+    sandboxPresent: true,
+    dockerRunResult: { status: 0, stdout: "", stderr: "" },
+    openshellDriver: "docker",
+    shieldsUpError: new Error("inline auto-restore would commit containment"),
+  });
+  await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+  expect(harness.events).not.toContain("wipe");
+  expect(harness.events).not.toContain("harden");
+  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+  expect(harness.killTimerSpy).toHaveBeenCalledOnce();
+  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  expect(exitSpy).not.toHaveBeenCalled();
+}
+
+export async function expectHardenWhenOpenshellAbsentWithLiveDocker(
+  exitSpy: MockInstance,
+): Promise<void> {
+  const harness = createDestroyHarness({
+    activeTimer: true,
+    sandboxPresent: false,
+    dockerRunResult: {
+      status: 0,
+      stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
+      stderr: "",
+    },
+    openshellDriver: "docker",
+    shieldsUpError: new Error("must still harden a live Docker identity"),
+  });
+  await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+  expect(harness.events).toContain("wipe");
+  expect(harness.events).toContain("harden");
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  expect(exitSpy).toHaveBeenCalledWith(1);
 }
 
 export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {

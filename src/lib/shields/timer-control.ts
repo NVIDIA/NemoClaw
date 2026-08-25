@@ -10,6 +10,7 @@ import { performance } from "node:perf_hooks";
 import {
   readShieldsTimerMarker,
   readShieldsTimerTakeoverToken,
+  readTimerProcessStartIdentity,
   type ShieldsTimerMarker,
   shieldsTimerMarkerPath,
 } from "../state/mcp-lifecycle-lock/shields-timer-authority";
@@ -282,36 +283,9 @@ function readProcessStartIdentity(
   pid: number,
   deadline = processInspectionDeadline(),
 ): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (remainingProcessInspectionTimeout(deadline) === null) return null;
-  try {
-    const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
-    const closingParen = raw.lastIndexOf(")");
-    if (closingParen >= 0) {
-      const fields = raw
-        .slice(closingParen + 2)
-        .trim()
-        .split(/\s+/);
-      // The suffix starts at field 3 (`state`); Linux starttime is field 22.
-      if (fields[19]) return `proc:${fields[19]}`;
-    }
-  } catch {
-    // Fall through to the portable ps identity.
-  }
-
-  try {
-    const timeout = remainingProcessInspectionTimeout(deadline);
-    if (timeout === null) return null;
-    const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout,
-    })
-      .toString()
-      .trim();
-    return started ? `ps:${started}` : null;
-  } catch {
-    return null;
-  }
+  const timeout = remainingProcessInspectionTimeout(deadline);
+  if (timeout === null) return null;
+  return readTimerProcessStartIdentity(pid, timeout);
 }
 
 function readProcessCommandLine(
