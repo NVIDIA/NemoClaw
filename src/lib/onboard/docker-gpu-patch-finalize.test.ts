@@ -777,8 +777,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
     const recordPath = outcome.rollbackRecordPath;
     expect(recordPath).toBeTypeOf("string");
-    expect(fs.statSync(recordPath as string).mode & 0o777).toBe(0o600);
-    const record = fs.readFileSync(recordPath as string, "utf8");
+    const recordFd = fs.openSync(recordPath as string, "r");
+    let record: string;
+    try {
+      expect(fs.fstatSync(recordFd).mode & 0o777).toBe(0o600);
+      record = fs.readFileSync(recordFd, "utf8");
+    } finally {
+      fs.closeSync(recordFd);
+    }
     expect(record).toContain(ROLLBACK_IMAGE_ID);
     expect(record).toContain('"command": "docker"');
     expect(record).toContain('"run"');
