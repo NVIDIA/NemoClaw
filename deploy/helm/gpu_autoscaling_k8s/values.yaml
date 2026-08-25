@@ -98,6 +98,24 @@ nim:
     value: ""
     existingSecret: ""
     existingSecretKey: NGC_API_KEY
+  # Kubernetes imagePullSecret so kubelet can authenticate to nvcr.io to pull the NIM *image*
+  # itself — separate from NGC_API_KEY above, which the already-running container uses to pull
+  # its model profile. Without this, a node with no prior nvcr.io credentials can hit
+  # ImagePullBackOff before the container ever starts (and before NGC_API_KEY is read).
+  # Auto-created (as a `kubernetes.io/dockerconfigjson` Secret) from ngcApiKey.value above when
+  # `create: true` (default) — the same NGC API key authenticates both the registry pull and
+  # the in-container model download, so no extra key is needed for the common case. If you use
+  # ngcApiKey.existingSecret instead of ngcApiKey.value, the chart cannot read that Secret's
+  # data at template time, so set imagePullSecret.existingSecret to a pre-created
+  # `kubernetes.io/dockerconfigjson` Secret instead:
+  #   kubectl create secret docker-registry ngc-registry --docker-server=nvcr.io \
+  #     --docker-username='$oauthtoken' --docker-password=<NGC_API_KEY> -n <namespace>
+  # Set create: false (with existingSecret left empty) only if every GPU node already has
+  # nvcr.io pull access configured out of band (e.g. containerd credentials, node image cache).
+  imagePullSecret:
+    create: true
+    existingSecret: ""
+    registry: nvcr.io
   # Extra env vars (list of {name, value}) for NIM-specific tuning, e.g. NIM_MODEL_PROFILE.
   extraEnv: []
   persistence:

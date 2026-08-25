@@ -77,6 +77,14 @@ PathPrefix
 {{- end -}}
 {{- end }}
 
+{{- define "nemoclaw-gpu.nimImagePullSecretName" -}}
+{{- if .Values.nim.imagePullSecret.existingSecret -}}
+{{- .Values.nim.imagePullSecret.existingSecret -}}
+{{- else -}}
+{{- printf "%s-nim-ngc-registry" (include "nemoclaw-gpu.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end }}
+
 {{- define "nemoclaw-gpu.replicas" -}}
 {{- if .Values.gpuScaling.oneReplicaPerGpu -}}
 {{- .Values.gpuScaling.count | int }}

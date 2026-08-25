@@ -26,12 +26,29 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- $runtime := include "nemoclaw-gpu.runtime" . }}
+      {{- if eq $runtime "nim" }}
+      {{- if and (not .Values.nim.ngcApiKey.value) (not .Values.nim.ngcApiKey.existingSecret) }}
+      {{- fail "nim.ngcApiKey.value or nim.ngcApiKey.existingSecret is required when inference.runtime=nim" }}
+      {{- end }}
+      {{- /* imagePullSecrets: kubelet needs nvcr.io credentials to pull the NIM *image* itself,
+      separately from NGC_API_KEY, which only the already-running container reads. Auto-derived
+      from ngcApiKey.value below; if ngcApiKey.existingSecret is used instead, the chart cannot
+      read that Secret's data at template time, so an existingSecret is required here too. */}}
+      {{- if and .Values.nim.imagePullSecret.create (not .Values.nim.ngcApiKey.value) (not .Values.nim.imagePullSecret.existingSecret) }}
+      {{- fail "inference.runtime=nim with nim.ngcApiKey.existingSecret (instead of nim.ngcApiKey.value) also needs nim.imagePullSecret.existingSecret — a pre-created kubernetes.io/dockerconfigjson Secret for nvcr.io — since the chart cannot read Secret data at template time to derive one automatically. Set nim.imagePullSecret.create=false instead only if every GPU node already has nvcr.io pull access configured out of band." }}
+      {{- end }}
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.runtimeClassName }}
       runtimeClassName: {{ .Values.runtimeClassName | quote }}
+      {{- end }}
+      {{- if and (eq $runtime "nim") (or .Values.nim.imagePullSecret.existingSecret .Values.nim.imagePullSecret.create) }}
+      imagePullSecrets:
+        - name: {{ include "nemoclaw-gpu.nimImagePullSecretName" . | quote }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -46,7 +63,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        {{- $runtime := include "nemoclaw-gpu.runtime" . }}
         {{- $rt := index .Values $runtime }}
         {{- $securityContext := index .Values (printf "%sSecurityContext" $runtime) }}
         {{- if eq $runtime "ollama" }}
@@ -156,9 +172,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 12
         {{- else if eq $runtime "nim" }}
-        {{- if and (not .Values.nim.ngcApiKey.value) (not .Values.nim.ngcApiKey.existingSecret) }}
-        {{- fail "nim.ngcApiKey.value or nim.ngcApiKey.existingSecret is required when inference.runtime=nim" }}
-        {{- end }}
+        {{- /* nim.ngcApiKey / nim.imagePullSecret presence is validated above, at the top of spec. */}}
         - name: nim
           image: {{ include "nemoclaw-gpu.imageRef" .Values.nim.image | quote }}
           imagePullPolicy: {{ .Values.nim.image.pullPolicy }}

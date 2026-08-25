@@ -143,6 +143,9 @@ fi
 if [[ -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
   HPA_HELM_ARGS+=(--set-string "nim.ngcApiKey.existingSecret=${NIM_NGC_API_KEY_SECRET}")
 fi
+if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
+  HPA_HELM_ARGS+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
+fi
 helm "${HPA_HELM_ARGS[@]}" >/dev/null
 
 IFS=$'\t' read -r DEPLOYED_INFERENCE_SECRET DEPLOYED_INFERENCE_SECRET_KEY < <(

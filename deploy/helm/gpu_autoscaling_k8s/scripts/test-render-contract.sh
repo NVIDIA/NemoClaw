@@ -463,13 +463,16 @@ print(f"OK: {runtime} render contract holds (container/image/port/metrics-proxy 
 PYEOF
 
 python3 - "${NIM_RENDERED_FILE}" <<'PYEOF'
+import base64
+import json
 import sys
 import yaml
 
 with open(sys.argv[1]) as f:
     docs = [d for d in yaml.safe_load_all(f) if d]
 deploy = next(d for d in docs if d.get("kind") == "Deployment")
-containers = deploy["spec"]["template"]["spec"]["containers"]
+pod_spec = deploy["spec"]["template"]["spec"]
+containers = pod_spec["containers"]
 nim_containers = [c for c in containers if c.get("name") == "nim"]
 if len(nim_containers) != 1:
     sys.exit(f"FAIL: expected exactly one nim container, found {len(nim_containers)}")
@@ -481,7 +484,26 @@ if not secret_name:
 secrets = [d for d in docs if d.get("kind") == "Secret" and d.get("metadata", {}).get("name") == secret_name]
 if len(secrets) != 1:
     sys.exit(f"FAIL: expected the chart to render the generated NIM NGC Secret {secret_name!r}, found {len(secrets)}")
-print("OK: nim render contract holds (NGC_API_KEY Secret wiring)")
+
+# kubelet needs an imagePullSecret to pull the NIM image from nvcr.io — separate from
+# NGC_API_KEY above, which only the already-running container reads.
+pull_secrets = [s.get("name") for s in pod_spec.get("imagePullSecrets", [])]
+if len(pull_secrets) != 1:
+    sys.exit(f"FAIL: expected exactly one imagePullSecrets entry on the nim pod, found {pull_secrets}")
+pull_secret_name = pull_secrets[0]
+if pull_secret_name == secret_name:
+    sys.exit("FAIL: imagePullSecrets must reference a kubernetes.io/dockerconfigjson Secret, not the Opaque NGC_API_KEY Secret")
+registry_secrets = [d for d in docs if d.get("kind") == "Secret" and d.get("metadata", {}).get("name") == pull_secret_name]
+if len(registry_secrets) != 1:
+    sys.exit(f"FAIL: expected the chart to render the generated nvcr.io registry Secret {pull_secret_name!r}, found {len(registry_secrets)}")
+registry_secret = registry_secrets[0]
+if registry_secret.get("type") != "kubernetes.io/dockerconfigjson":
+    sys.exit(f"FAIL: nvcr.io registry Secret type is {registry_secret.get('type')!r}, expected kubernetes.io/dockerconfigjson")
+dockerconfig = json.loads(base64.b64decode(registry_secret["data"][".dockerconfigjson"]))
+nvcr_auth = dockerconfig.get("auths", {}).get("nvcr.io", {})
+if nvcr_auth.get("username") != "$oauthtoken" or nvcr_auth.get("password") != "test-ngc-key":
+    sys.exit(f"FAIL: nvcr.io dockerconfigjson auth is wrong: {nvcr_auth!r}")
+print("OK: nim render contract holds (NGC_API_KEY Secret + nvcr.io imagePullSecret wiring)")
 PYEOF
 
 if BAD_RUNTIME_OUTPUT="$(helm template bad-runtime-check "${CHART_DIR}" \
@@ -512,8 +534,79 @@ if [[ "${NIM_NO_KEY_OUTPUT}" != *"nim.ngcApiKey"* ]]; then
 fi
 echo "OK: chart requires an NGC API key when inference.runtime=nim"
 
+# Using nim.ngcApiKey.existingSecret (instead of .value) means the chart cannot read that
+# Secret's data at template time to also derive an nvcr.io imagePullSecret — it must fail
+# fast instead of silently omitting imagePullSecrets and risking ImagePullBackOff later.
+if NIM_NO_PULL_SECRET_OUTPUT="$(helm template nim-missing-pull-secret-check "${CHART_DIR}" \
+  "${AUTH_HELM_SETS[@]}" \
+  --set ingress.allowInsecureHttp=true \
+  --set inference.runtime=nim \
+  --set-string nim.ngcApiKey.existingSecret=pre-created-ngc-secret 2>&1)"; then
+  echo "FAIL: chart rendered inference.runtime=nim with ngcApiKey.existingSecret but no imagePullSecret" >&2
+  exit 1
+fi
+if [[ "${NIM_NO_PULL_SECRET_OUTPUT}" != *"nim.imagePullSecret.existingSecret"* ]]; then
+  echo "FAIL: missing NIM imagePullSecret rejection returned an unexpected error" >&2
+  printf '%s\n' "${NIM_NO_PULL_SECRET_OUTPUT}" >&2
+  exit 1
+fi
+echo "OK: chart requires an imagePullSecret when inference.runtime=nim uses ngcApiKey.existingSecret"
+
+# nim.imagePullSecret.create=false is an explicit opt-out (e.g. nodes already have nvcr.io
+# credentials configured out of band) — it must render successfully with no imagePullSecrets.
+NIM_NO_PULL_SECRET_OPTOUT_FILE="$(mktemp)"
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${NIM_RENDERED_FILE}" "${NIM_NO_PULL_SECRET_OPTOUT_FILE}"' EXIT
+helm template nim-pull-secret-optout-check "${CHART_DIR}" \
+  "${AUTH_HELM_SETS[@]}" \
+  --set ingress.allowInsecureHttp=true \
+  --set inference.runtime=nim \
+  --set-string nim.ngcApiKey.existingSecret=pre-created-ngc-secret \
+  --set nim.imagePullSecret.create=false \
+  >"${NIM_NO_PULL_SECRET_OPTOUT_FILE}"
+python3 - "${NIM_NO_PULL_SECRET_OPTOUT_FILE}" <<'PYEOF'
+import sys
+import yaml
+
+with open(sys.argv[1]) as f:
+    docs = [d for d in yaml.safe_load_all(f) if d]
+deploy = next(d for d in docs if d.get("kind") == "Deployment")
+pod_spec = deploy["spec"]["template"]["spec"]
+if pod_spec.get("imagePullSecrets"):
+    sys.exit(f"FAIL: nim.imagePullSecret.create=false should render no imagePullSecrets, got {pod_spec['imagePullSecrets']!r}")
+if any(d.get("kind") == "Secret" and "registry" in d.get("metadata", {}).get("name", "") for d in docs):
+    sys.exit("FAIL: nim.imagePullSecret.create=false should not render an nvcr.io registry Secret")
+print("OK: chart honors nim.imagePullSecret.create=false as an explicit opt-out")
+PYEOF
+
+# A pre-created imagePullSecret must be referenced as-is, without the chart also creating its
+# own nvcr.io registry Secret alongside it.
+NIM_EXISTING_PULL_SECRET_FILE="$(mktemp)"
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${NIM_RENDERED_FILE}" "${NIM_NO_PULL_SECRET_OPTOUT_FILE}" "${NIM_EXISTING_PULL_SECRET_FILE}"' EXIT
+helm template nim-existing-pull-secret-check "${CHART_DIR}" \
+  "${AUTH_HELM_SETS[@]}" \
+  --set ingress.allowInsecureHttp=true \
+  --set inference.runtime=nim \
+  --set-string nim.ngcApiKey.existingSecret=pre-created-ngc-secret \
+  --set-string nim.imagePullSecret.existingSecret=pre-created-registry-secret \
+  >"${NIM_EXISTING_PULL_SECRET_FILE}"
+python3 - "${NIM_EXISTING_PULL_SECRET_FILE}" <<'PYEOF'
+import sys
+import yaml
+
+with open(sys.argv[1]) as f:
+    docs = [d for d in yaml.safe_load_all(f) if d]
+deploy = next(d for d in docs if d.get("kind") == "Deployment")
+pod_spec = deploy["spec"]["template"]["spec"]
+pull_secrets = [s.get("name") for s in pod_spec.get("imagePullSecrets", [])]
+if pull_secrets != ["pre-created-registry-secret"]:
+    sys.exit(f"FAIL: expected imagePullSecrets=['pre-created-registry-secret'], got {pull_secrets!r}")
+if any(d.get("kind") == "Secret" and "registry" in d.get("metadata", {}).get("name", "") for d in docs):
+    sys.exit("FAIL: chart should not render its own nvcr.io registry Secret when nim.imagePullSecret.existingSecret is set")
+print("OK: chart references a pre-created nim.imagePullSecret.existingSecret without creating a duplicate")
+PYEOF
+
 RENDERED_FILE="$(mktemp)"
-trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${NIM_RENDERED_FILE}" "${RENDERED_FILE}"' EXIT
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${NIM_RENDERED_FILE}" "${NIM_NO_PULL_SECRET_OPTOUT_FILE}" "${NIM_EXISTING_PULL_SECRET_FILE}" "${RENDERED_FILE}"' EXIT
 # A legacy non-GPU metric-name override must not alter the fixed HPA metric.
 helm template test-release "${CHART_DIR}" \
   "${AUTH_HELM_SETS[@]}" -f "${CHART_DIR}/values.yaml" \
@@ -689,7 +782,7 @@ PYEOF
 
 EXISTING_SECRET_RENDERED_FILE="$(mktemp)"
 DOTTED_KEY_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${RENDERED_FILE}" "${EXISTING_SECRET_RENDERED_FILE}" "${DOTTED_KEY_RENDERED_FILE}"' EXIT
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${NIM_NO_PULL_SECRET_OPTOUT_FILE}" "${NIM_EXISTING_PULL_SECRET_FILE}" "${RENDERED_FILE}" "${EXISTING_SECRET_RENDERED_FILE}" "${DOTTED_KEY_RENDERED_FILE}"' EXIT
 OPERATOR_SECRET_NAME='operator-inference-api.gpu-platform.production.cluster.example.internal'
 helm template existing-secret-policy-check "${CHART_DIR}" \
   "${AUTH_HELM_SETS[@]}" \
@@ -755,7 +848,7 @@ if key != "api.key":
 PYEOF
 
 LATENCY_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${RENDERED_FILE}" "${EXISTING_SECRET_RENDERED_FILE}" "${DOTTED_KEY_RENDERED_FILE}" "${LATENCY_RENDERED_FILE}"' EXIT
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${NIM_NO_PULL_SECRET_OPTOUT_FILE}" "${NIM_EXISTING_PULL_SECRET_FILE}" "${RENDERED_FILE}" "${EXISTING_SECRET_RENDERED_FILE}" "${DOTTED_KEY_RENDERED_FILE}" "${LATENCY_RENDERED_FILE}"' EXIT
 helm template latency-metric-check "${CHART_DIR}" \
   "${AUTH_HELM_SETS[@]}" \
   -f "${CHART_DIR}/values.yaml" \
@@ -833,6 +926,6 @@ echo "OK: synchronized replica and GPU caps permit an eight-GPU Kubernetes HPA"
 echo "OK: chart requires an explicit ReadWriteMany storage class for shared PVC persistence"
 echo "OK: chart preserves the explicit single-node hostPath persistence mode"
 echo "OK: vllm render contract holds (container/image/port/metrics-proxy env)"
-echo "OK: nim render contract holds (NGC_API_KEY Secret wiring)"
+echo "OK: nim render contract holds (NGC_API_KEY Secret + nvcr.io imagePullSecret wiring)"
 echo "OK: chart rejects unsupported inference.runtime values"
 echo "OK: chart requires an NGC API key when inference.runtime=nim"

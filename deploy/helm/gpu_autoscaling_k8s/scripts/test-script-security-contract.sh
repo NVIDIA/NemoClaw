@@ -286,6 +286,20 @@ ALLOW_INSECURE_HTTP=0 ENABLE_ENVOY_LB=0 NEMOCLAW_TARGET_NODE=test-gpu \
 grep -Fq -- '--set ingress.gateway.enabled=false' "${HELM_LOG}" \
   || fail "GPU Helm upgrade did not honor ENABLE_ENVOY_LB=0"
 
+: >"${HELM_LOG}"
+ALLOW_INSECURE_HTTP=0 NIM_NGC_API_KEY=test-ngc-key NIM_IMAGE_PULL_SECRET=my-registry-secret \
+  hpa_common_gpu_helm_upgrade test-release /tmp/test-chart test-namespace /tmp/test-values.yaml
+grep -Fq -- '--set-string nim.ngcApiKey.value=test-ngc-key' "${HELM_LOG}" \
+  || fail "GPU Helm upgrade did not forward NIM_NGC_API_KEY to nim.ngcApiKey.value"
+grep -Fq -- '--set-string nim.imagePullSecret.existingSecret=my-registry-secret' "${HELM_LOG}" \
+  || fail "GPU Helm upgrade did not forward NIM_IMAGE_PULL_SECRET to nim.imagePullSecret.existingSecret"
+
+: >"${HELM_LOG}"
+ALLOW_INSECURE_HTTP=0 NIM_NGC_API_KEY_SECRET=pre-created-ngc-secret \
+  hpa_common_gpu_helm_upgrade test-release /tmp/test-chart test-namespace /tmp/test-values.yaml
+grep -Fq -- '--set-string nim.ngcApiKey.existingSecret=pre-created-ngc-secret' "${HELM_LOG}" \
+  || fail "GPU Helm upgrade did not forward NIM_NGC_API_KEY_SECRET to nim.ngcApiKey.existingSecret"
+
 [[ "$(ENABLE_ENVOY_LB=0 hpa_common_envoy_lb_helm_value)" == "false" ]] \
   || fail "ENABLE_ENVOY_LB=0 did not map to helm false"
 [[ "$(ENABLE_ENVOY_LB=1 hpa_common_envoy_lb_helm_value)" == "true" ]] \

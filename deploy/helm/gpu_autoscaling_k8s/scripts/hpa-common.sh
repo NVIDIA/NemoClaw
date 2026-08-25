@@ -1308,11 +1308,19 @@ hpa_common_gpu_helm_upgrade() {
     helm_args+=(--set-string "$(hpa_common_target_node_helm_value)")
   fi
   # Only relevant when inference_runtime=nim; harmless (ignored by the chart) otherwise.
+  # NIM_NGC_API_KEY alone is enough for the common case: the chart derives both the
+  # in-container NGC_API_KEY Secret and the nvcr.io imagePullSecret from this one value.
   if [[ -n "${NIM_NGC_API_KEY:-}" ]]; then
     helm_args+=(--set-string "nim.ngcApiKey.value=${NIM_NGC_API_KEY}")
   fi
   if [[ -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
     helm_args+=(--set-string "nim.ngcApiKey.existingSecret=${NIM_NGC_API_KEY_SECRET}")
+  fi
+  # Only needed when NIM_NGC_API_KEY_SECRET is used instead of NIM_NGC_API_KEY: the chart
+  # cannot read that Secret's data at template time to derive an imagePullSecret, so point it
+  # at a pre-created `kubernetes.io/dockerconfigjson` Secret for nvcr.io instead.
+  if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
+    helm_args+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
   fi
 
   helm "${helm_args[@]}" >/dev/null
