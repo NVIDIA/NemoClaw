@@ -9,13 +9,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
-} from "./helpers/host-local-inference-receipt";
-import { createSandboxHostLocalInferenceProvenance } from "../src/lib/state/registry/host-local-inference";
+} from ".././helpers/host-local-inference-receipt";
+import { createSandboxHostLocalInferenceProvenance } from "../../src/lib/state/registry/host-local-inference";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-local-registry-test-"));
 process.env.HOME = tmpDir;
 
-const registry = await import("../src/lib/state/registry");
+const registry = await import("../../src/lib/state/registry");
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
 beforeEach(() => {

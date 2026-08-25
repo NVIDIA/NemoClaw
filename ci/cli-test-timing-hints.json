@@ -110,7 +110,7 @@
     "test/credentials/credentials.test.ts": 6328,
     "test/dependency-upgrade-skill-security.test.ts": 5353,
     "test/dependency-upgrade-skill.test.ts": 19850,
-    "test/dns-proxy.test.ts": 5827,
+    "test/networking/dns-proxy.test.ts": 5827,
     "test/e2e/support/base-image-publication-workflow-boundary.test.ts": 5429,
     "test/e2e/support/cli-artifact-workflow-boundary.test.ts": 5392,
     "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts": 6533,

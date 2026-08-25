@@ -10,16 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hasPreparedRemoteDashboardBind,
   patchStagedDockerfile as patchStagedDockerfileImpl,
-} from "../src/lib/onboard/dockerfile-patch";
-import { prepareSandboxCreateLaunch } from "../src/lib/onboard/sandbox-create-launch";
-import { prepareSandboxDockerfilePatch } from "../src/lib/onboard/sandbox-dockerfile-patch-flow";
-import { buildCreatedSandboxRegistryEntry } from "../src/lib/onboard/sandbox-registration";
-import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reuse";
+} from "../../src/lib/onboard/dockerfile-patch";
+import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch";
+import { prepareSandboxDockerfilePatch } from "../../src/lib/onboard/sandbox-dockerfile-patch-flow";
+import { buildCreatedSandboxRegistryEntry } from "../../src/lib/onboard/sandbox-registration";
+import { applyReusedSandboxDashboardState } from "../../src/lib/onboard/sandbox-reuse";
 
 const requireSource = createRequire(import.meta.url);
 const { ensureSandboxPortForward } = requireSource(
-  "../src/lib/actions/sandbox/forward-recovery.js",
-) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
+  "../../src/lib/actions/sandbox/forward-recovery.js",
+) as typeof import("../../src/lib/actions/sandbox/forward-recovery.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -550,8 +550,8 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
@@ -592,9 +592,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("force-restarts a healthy forward on all interfaces only after preparation (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -623,9 +623,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("rejects a loopback forward after requesting remote exposure (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -650,8 +650,8 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("does not replace another sandbox's forward during remote-bind recovery (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
@@ -669,9 +669,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("forceRestart re-verifies remote-bind preparation before opening the forward (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(registry, "getSandbox")
@@ -701,9 +701,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("restores loopback when default connect finds an all-interface forward (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
@@ -739,9 +739,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("restores an all-interface forward for WSL without remote-bind opt-in (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
@@ -772,9 +772,9 @@ describe("remote dashboard bind production lifecycle", () => {
   });
 
   it("keeps a prepared sandbox on loopback without remote-bind opt-in (#6024)", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../src/lib/state/registry.js");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");

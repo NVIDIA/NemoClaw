@@ -7,9 +7,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 
-const SETUP_DNS_PROXY = path.join(import.meta.dirname, "..", "scripts", "setup-dns-proxy.sh");
-const RUNTIME_SH = path.join(import.meta.dirname, "..", "scripts", "lib", "runtime.sh");
-const FIX_COREDNS = path.join(import.meta.dirname, "..", "scripts", "fix-coredns.sh");
+const SETUP_DNS_PROXY = path.join(import.meta.dirname, "../..", "scripts", "setup-dns-proxy.sh");
+const RUNTIME_SH = path.join(import.meta.dirname, "../..", "scripts", "lib", "runtime.sh");
+const FIX_COREDNS = path.join(import.meta.dirname, "../..", "scripts", "fix-coredns.sh");
 
 describe("setup-dns-proxy.sh", () => {
   it("exists and is executable", () => {

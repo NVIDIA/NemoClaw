@@ -23,9 +23,9 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { waitUntil } from "../src/lib/core/wait";
-import { resolveGatewayStateDirName } from "../src/lib/onboard/gateway-binding";
-import { releaseManagedGatewayPort } from "../src/lib/tunnel/gateway-port-release";
+import { waitUntil } from "../../src/lib/core/wait";
+import { resolveGatewayStateDirName } from "../../src/lib/onboard/gateway-binding";
+import { releaseManagedGatewayPort } from "../../src/lib/tunnel/gateway-port-release";
 
 // POSIX-only: the release path relies on lsof/ps/POSIX signals and the
 // cmdline gate reads /proc or `ps -o args=`. Windows has no equivalent and is
