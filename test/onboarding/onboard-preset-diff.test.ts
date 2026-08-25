@@ -321,7 +321,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
 
   // The #5967 fix is channel-agnostic — it iterates the channel→preset registry
   // rather than special-casing Discord or Slack. Telegram is not
-  // `requiredAtCreate`, so its egress preset is not injected at create time;
+  // `requiredAtCreate`, so its egress preset is not included at create time;
   // exercising it end-to-end through the real `setupPoliciesWithSelection` path
   // guards the security-critical egress-policy application for a second, distinct
   // non-required channel (not just Discord).

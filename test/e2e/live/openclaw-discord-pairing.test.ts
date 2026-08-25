@@ -123,7 +123,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
     accountProxy: string;
     managedProxy: string;
   };
-  expect(configSummary.hasToken, "Discord config must defer to injected process env").toBe(false);
+  expect(configSummary.hasToken, "Discord config must omit the token field").toBe(false);
   expect(configSummary.dmPolicy).not.toBe("allowlist");
   expect(configSummary.accountProxy, "Discord account proxy").toBe("");
   expect(configSummary.managedProxy, "OpenClaw managed proxy").toMatch(/^http:\/\//);

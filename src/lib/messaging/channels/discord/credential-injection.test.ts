@@ -13,7 +13,7 @@ type PolicyEndpoint = {
   readonly credential_binding?: { readonly provider?: string };
 };
 
-describe("Discord credential injection", () => {
+describe("Discord placeholder routing", () => {
   it("applies the credential-binding preset before the sandbox process starts", () => {
     expect(discordManifest.policyPresets).toEqual(
       expect.arrayContaining([
@@ -22,7 +22,7 @@ describe("Discord credential injection", () => {
     );
   });
 
-  it("lets OpenClaw read the injected token without persisting a canonical placeholder", () => {
+  it("omits the OpenClaw token field while preserving the Hermes placeholder", () => {
     const openClawRender = discordManifest.render.find(
       (render) => render.id === "discord-openclaw-channel",
     );
@@ -34,7 +34,7 @@ describe("Discord credential injection", () => {
     expect(JSON.stringify(hermesRender)).toContain("credential.discordBotToken.placeholder");
   });
 
-  it("binds every OpenClaw Discord credential route to the sandbox provider", () => {
+  it("binds every OpenClaw Discord credential endpoint to the sandbox provider", () => {
     const content = loadMessagingChannelPolicyPreset("discord", {
       agent: "openclaw",
       sandboxName: "discord-proof",

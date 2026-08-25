@@ -554,7 +554,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     },
   );
 
-  it("defers the Discord token to the process environment", async () => {
+  it("omits the Discord token from generated config", async () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = await runMessagingConfig(channels);
     expect(config.proxy).toMatchObject({
