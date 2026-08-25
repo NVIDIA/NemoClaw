@@ -49,7 +49,6 @@ qualificationTest(
     } as const;
 
     progress.phase("start OpenClaw and verify in-sandbox readiness plus filesystem enforcement");
-    progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
     const firstReceipt = await runWindowsMxcOpenClawProcessContainerQualification(inputs, progress);
     expect(firstReceipt.verdict).toBe("pass");
     expect(firstReceipt.configuration).toEqual(expectedConfiguration);

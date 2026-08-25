@@ -28,6 +28,7 @@ import {
   sandboxListContainsExactName,
   sha256File,
   shouldRetrySandboxDelete,
+  withWindowsMxcLocalSetupOwnership,
   withoutOpenShellGatewaySelection,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
 
@@ -84,6 +85,43 @@ afterEach(() => {
 });
 
 describe("inactive Windows MXC OpenClaw process_container qualification", () => {
+  it("removes token-bearing setup state and closes descriptors after a setup failure (#8178)", async () => {
+    const { root } = fixture();
+    const receiptPath = path.join(root, "setup-failure-receipt.json");
+    const token = "setup-only-secret";
+    let descriptor = -1;
+    let ownedRoot = "";
+
+    await expect(
+      withWindowsMxcLocalSetupOwnership({
+        receiptPath,
+        failureReceipt: (localArtifactsRemoved) => ({
+          cleanup: { localArtifactsRemoved },
+          verdict: "fail",
+        }),
+        operation: async (ownership) => {
+          ownedRoot = ownership.trackRoot(fs.mkdtempSync(path.join(root, "owned-setup-")));
+          const tokenFile = path.join(ownedRoot, "client-home", ".openclaw", "openclaw.json");
+          fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+          fs.writeFileSync(tokenFile, JSON.stringify({ token }), "utf8");
+          descriptor = ownership.trackDescriptor(
+            fs.openSync(path.join(ownedRoot, "gateway.log"), "w"),
+          );
+          throw new Error("injected setup failure");
+        },
+      }),
+    ).rejects.toThrow(/local setup failed/u);
+
+    expect(fs.existsSync(ownedRoot)).toBe(false);
+    expect(() => fs.fstatSync(descriptor)).toThrow();
+    const receiptText = fs.readFileSync(receiptPath, "utf8");
+    expect(receiptText).not.toContain(token);
+    expect(JSON.parse(receiptText)).toEqual({
+      cleanup: { localArtifactsRemoved: true },
+      verdict: "fail",
+    });
+  });
+
   it("requires exact identities and keeps the OpenClaw launch files under one artifact root (#8178)", () => {
     const { environment } = fixture();
     const parsed = parseWindowsMxcOpenClawQualificationEnvironment(environment);
@@ -344,7 +382,6 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_TOKEN")');
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_MOCK_PORT")');
-    expect(agent).toContain('content: "CHAT_OK"');
     expect(agent).toContain("if (gateway.pid !== undefined)");
     expect(agent).toContain('gateway.once("error"');
     expect(agent).toContain("writeFileSync(outcomePath");

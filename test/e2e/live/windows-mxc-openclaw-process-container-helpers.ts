@@ -19,6 +19,7 @@ import {
 } from "../fixtures/observed-child-process.ts";
 
 type QualificationProgress = ChildProcessProgress & {
+  hasReached(label: string): boolean;
   phase(label: string): void;
 };
 
@@ -189,6 +190,165 @@ export interface WindowsMxcOpenClawQualificationReceipt {
     "gateway-restart-recovery",
     "production-activation",
   ];
+}
+
+export interface WindowsMxcLocalSetupOwnership {
+  closeDescriptor(descriptor: number): void;
+  releaseRoot(root: string): void;
+  trackDescriptor(descriptor: number): number;
+  trackRoot(root: string): string;
+}
+
+class LocalSetupOwnership implements WindowsMxcLocalSetupOwnership {
+  readonly #descriptors = new Set<number>();
+  readonly #roots = new Set<string>();
+
+  closeDescriptor(descriptor: number): void {
+    try {
+      fs.closeSync(descriptor);
+    } finally {
+      this.#descriptors.delete(descriptor);
+    }
+  }
+
+  releaseRoot(root: string): void {
+    this.#roots.delete(root);
+  }
+
+  trackDescriptor(descriptor: number): number {
+    this.#descriptors.add(descriptor);
+    return descriptor;
+  }
+
+  trackRoot(root: string): string {
+    this.#roots.add(root);
+    return root;
+  }
+
+  cleanup(): readonly unknown[] {
+    const failures: unknown[] = [];
+    for (const descriptor of this.#descriptors) {
+      try {
+        this.closeDescriptor(descriptor);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    for (const root of [...this.#roots].reverse()) {
+      try {
+        fs.rmSync(root, { force: true, recursive: true });
+        this.releaseRoot(root);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    return failures;
+  }
+}
+
+export async function withWindowsMxcLocalSetupOwnership<T, R extends object>(input: {
+  readonly failureReceipt: (localArtifactsRemoved: boolean) => R;
+  readonly operation: (ownership: WindowsMxcLocalSetupOwnership) => Promise<T>;
+  readonly receiptPath: string;
+}): Promise<T> {
+  const ownership = new LocalSetupOwnership();
+  try {
+    return await input.operation(ownership);
+  } catch (error) {
+    const cleanupFailures = [...ownership.cleanup()];
+    const localArtifactsRemoved = cleanupFailures.length === 0;
+    try {
+      fs.writeFileSync(
+        input.receiptPath,
+        `${JSON.stringify(input.failureReceipt(localArtifactsRemoved), null, 2)}\n`,
+        { encoding: "utf8", flag: "wx", mode: 0o600 },
+      );
+    } catch (receiptError) {
+      cleanupFailures.push(receiptError);
+    }
+    throw new AggregateError(
+      [error, ...cleanupFailures],
+      `Windows MXC local setup failed; receipt: ${input.receiptPath}`,
+    );
+  }
+}
+
+function buildWindowsMxcSetupFailureReceipt(
+  inputs: WindowsMxcOpenClawQualificationInputs,
+  processElevated: boolean,
+  localArtifactsRemoved: boolean,
+): WindowsMxcOpenClawQualificationReceipt {
+  return {
+    schemaVersion: 2,
+    classification: "inactive-candidate",
+    backend: "process_container",
+    configuration: {
+      declaredHostPreparation: inputs.declaredHostPreparation,
+      egressProxy: true,
+      pcCapabilities: ["privateNetworkClientServer"],
+      pcLeastPrivilege: false,
+      shareAtDriveRoot: true,
+    },
+    identities: {
+      host: {
+        architecture: "x64",
+        processElevated,
+        platform: "win32",
+        release: os.release(),
+      },
+      nemoClawRevision: inputs.expected.nemoClawRevision,
+      openClaw: {
+        artifactTreeSha256: inputs.expected.openClawArtifactTreeSha256,
+        entrySha256: inputs.expected.openClawEntrySha256,
+        nodeSha256: inputs.expected.nodeSha256,
+        version: inputs.openClaw.version,
+      },
+      openShell: {
+        cliSha256: inputs.expected.openShellCliSha256,
+        gatewaySha256: inputs.expected.openShellGatewaySha256,
+        packageVersion: inputs.openShell.packageVersion,
+        relaySha256: inputs.expected.openShellRelaySha256,
+        revision: inputs.openShell.revision,
+      },
+      wxcExecSha256: inputs.expected.wxcExecSha256,
+    },
+    checks: {
+      artifactIdentity: true,
+      filesystemControlWrite: false,
+      filesystemDeniedWrite: false,
+      forwardAuthenticatedHealth: false,
+      forwardListening: false,
+      forwardedChatExactReply: false,
+      openClawHealth: false,
+      openClawProcessPresentWhileReady: false,
+      registryPresentWhileReady: false,
+      registryRemovedAfterDelete: false,
+      sandboxCreateAccepted: false,
+      sandboxDeleteAccepted: false,
+      workloadTerminatedByDelete: false,
+    },
+    cleanup: {
+      boundedStopMarkerNeeded: false,
+      emergencyProcessTerminationNeeded: false,
+      emergencyGatewayTerminationNeeded: false,
+      emergencyForwardTerminationNeeded: false,
+      forwardListenerStopped: false,
+      forwardProcessStopped: false,
+      gatewayProcessStopped: false,
+      openClawProcessStopped: false,
+      runDirectoryRemoved: localArtifactsRemoved,
+      sandboxDeleteRetried: false,
+      sensitiveRuntimeArtifactsRemoved: localArtifactsRemoved,
+    },
+    verdict: "fail",
+    deferred: [
+      "gateway-mtls",
+      "managed-inference",
+      "governed-egress",
+      "gateway-restart-recovery",
+      "production-activation",
+    ],
+  };
 }
 
 function requiredEnvironment(environment: NodeJS.ProcessEnv, name: string): string {
@@ -592,6 +752,7 @@ const openClawPidPath = required("NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH");
 const env = {
   ...process.env,
   HOME: home,
+  OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:" + port,
   OPENCLAW_GATEWAY_TOKEN: token,
   USERPROFILE: home,
 };
@@ -756,8 +917,6 @@ while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError =
     "gateway",
     "health",
     "--json",
-    "--url",
-    "ws://127.0.0.1:" + port,
     "--timeout",
     "5000",
   ]);
@@ -1250,6 +1409,191 @@ function assertExactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): v
   assertExactArtifactIdentities(inputs);
 }
 
+async function prepareWindowsMxcOpenClawLocalSetup(input: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly inputs: WindowsMxcOpenClawQualificationInputs;
+  readonly processElevated: boolean;
+  readonly receiptPath: string;
+  readonly runId: string;
+}) {
+  return await withWindowsMxcLocalSetupOwnership({
+    receiptPath: input.receiptPath,
+    failureReceipt: (localArtifactsRemoved) =>
+      buildWindowsMxcSetupFailureReceipt(
+        input.inputs,
+        input.processElevated,
+        localArtifactsRemoved,
+      ),
+    operation: async (localSetup) => {
+      const runRoot = localSetup.trackRoot(
+        fs.mkdtempSync(
+          path.join(input.inputs.workDirectory, `nemoclaw-mxc-openclaw-${input.runId}-`),
+        ),
+      );
+      const shareDirectory = localSetup.trackRoot(
+        fs.mkdtempSync(path.join(input.inputs.workDirectory, `nemoclaw-mxc-share-${input.runId}-`)),
+      );
+      const stateDirectory = path.join(runRoot, "state");
+      const configDirectory = path.join(runRoot, "config");
+      const homeDirectory = path.join(shareDirectory, "home");
+      const clientHomeDirectory = path.join(runRoot, "client-home");
+      for (const directory of [
+        shareDirectory,
+        stateDirectory,
+        configDirectory,
+        homeDirectory,
+        clientHomeDirectory,
+      ]) {
+        fs.mkdirSync(directory, { recursive: true });
+      }
+
+      const gatewayConfigPath = path.join(runRoot, "gateway.toml");
+      const policyPath = path.join(runRoot, "policy.yaml");
+      const probeAgentPath = path.join(shareDirectory, "probe-agent.mjs");
+      const relayPath = path.join(shareDirectory, "openshell-supervisor-relay.exe");
+      const readyPath = path.join(shareDirectory, "ready.json");
+      const resultPath = path.join(shareDirectory, "result.json");
+      const outcomePath = path.join(shareDirectory, "outcome.json");
+      const heartbeatPath = path.join(shareDirectory, "heartbeat.txt");
+      const openClawPidPath = path.join(shareDirectory, "openclaw.pid");
+      const stopPath = path.join(shareDirectory, "stop.txt");
+      const denyPath = path.join(runRoot, "denied-write.txt");
+      const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
+      const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
+      const forwardLogPath = path.join(runRoot, "openshell-forward.log");
+      const forwardErrorPath = path.join(runRoot, "openshell-forward.err.log");
+      const [gatewayPort, forwardPort, mockPort, openClawPort] = await freeDistinctLoopbackPorts(4);
+      if (
+        gatewayPort === undefined ||
+        forwardPort === undefined ||
+        mockPort === undefined ||
+        openClawPort === undefined
+      ) {
+        throw new Error("could not allocate all Windows MXC qualification ports");
+      }
+      const sandboxName = `mxc-oc-${input.runId}`;
+      const gatewayName = `mxc-gw-${input.runId}`;
+      const token = randomBytes(32).toString("base64url");
+
+      fs.copyFileSync(input.inputs.openShell.relayPath, relayPath);
+      assertExactFileIdentity(
+        relayPath,
+        input.inputs.expected.openShellRelaySha256,
+        "stagedRelaySha256",
+      );
+
+      fs.writeFileSync(
+        gatewayConfigPath,
+        renderWindowsMxcGatewayConfig({
+          agentPath: input.inputs.openClaw.nodePath,
+          relayPath,
+          shareDirectory,
+          targetPort: openClawPort,
+          wxcExecPath: input.inputs.openShell.wxcExecPath,
+        }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      fs.writeFileSync(
+        policyPath,
+        renderWindowsMxcFilesystemPolicy({
+          openClawRoot: input.inputs.openClaw.root,
+          shareDirectory,
+        }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      fs.writeFileSync(probeAgentPath, renderWindowsMxcOpenClawProbeAgent(), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+
+      const gatewayEnvironment: NodeJS.ProcessEnv = withoutOpenShellGatewaySelection({
+        ...allowlistedWindowsProcessEnvironment(input.environment),
+        NEMOCLAW_MXC_E2E_DENY_PATH: denyPath,
+        NEMOCLAW_MXC_E2E_ENTRY: input.inputs.openClaw.entryPath,
+        NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: heartbeatPath,
+        NEMOCLAW_MXC_E2E_HOME: homeDirectory,
+        NEMOCLAW_MXC_E2E_MOCK_PORT: String(mockPort),
+        NEMOCLAW_MXC_E2E_NODE: input.inputs.openClaw.nodePath,
+        NEMOCLAW_MXC_E2E_OPENCLAW_PORT: String(openClawPort),
+        NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: openClawPidPath,
+        NEMOCLAW_MXC_E2E_OUTCOME_PATH: outcomePath,
+        NEMOCLAW_MXC_E2E_READY_PATH: readyPath,
+        NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
+        NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
+        NEMOCLAW_MXC_E2E_TOKEN: token,
+        OPENSHELL_DRIVERS: "mxc",
+        OPENSHELL_GATEWAY_CONFIG: gatewayConfigPath,
+        XDG_CONFIG_HOME: configDirectory,
+        XDG_STATE_HOME: stateDirectory,
+      });
+      const controlEnvironment: NodeJS.ProcessEnv = {
+        ...gatewayEnvironment,
+        NEMOCLAW_MXC_E2E_TOKEN: undefined,
+      };
+      const clientEnvironment: NodeJS.ProcessEnv = {
+        ...allowlistedWindowsProcessEnvironment(input.environment),
+        HOME: clientHomeDirectory,
+        OPENCLAW_GATEWAY_URL: `ws://127.0.0.1:${forwardPort}`,
+        OPENCLAW_GATEWAY_TOKEN: token,
+        USERPROFILE: clientHomeDirectory,
+      };
+      const clientConfigDirectory = path.join(clientHomeDirectory, ".openclaw");
+      fs.mkdirSync(clientConfigDirectory, { recursive: true });
+      fs.writeFileSync(
+        path.join(clientConfigDirectory, "openclaw.json"),
+        JSON.stringify({
+          gateway: {
+            mode: "remote",
+            remote: {
+              url: `ws://127.0.0.1:${forwardPort}`,
+            },
+          },
+        }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+
+      const gatewayStdout = localSetup.trackDescriptor(fs.openSync(gatewayLogPath, "w"));
+      const gatewayStderr = localSetup.trackDescriptor(fs.openSync(gatewayErrorPath, "w"));
+      const forwardStdout = localSetup.trackDescriptor(fs.openSync(forwardLogPath, "w"));
+      const forwardStderr = localSetup.trackDescriptor(fs.openSync(forwardErrorPath, "w"));
+      return {
+        clientEnvironment,
+        clientHomeDirectory,
+        configDirectory,
+        controlEnvironment,
+        denyPath,
+        forwardErrorPath,
+        forwardLogPath,
+        forwardPort,
+        forwardStderr,
+        forwardStdout,
+        gatewayEnvironment,
+        gatewayErrorPath,
+        gatewayLogPath,
+        gatewayName,
+        gatewayPort,
+        gatewayStderr,
+        gatewayStdout,
+        heartbeatPath,
+        homeDirectory,
+        localSetup,
+        openClawPidPath,
+        openClawPort,
+        outcomePath,
+        policyPath,
+        probeAgentPath,
+        readyPath,
+        resultPath,
+        runRoot,
+        sandboxName,
+        shareDirectory,
+        stateDirectory,
+        stopPath,
+      };
+    },
+  });
+}
+
 function receiptPasses(checks: QualificationChecks): boolean {
   return Object.values(checks).every(Boolean);
 }
@@ -1308,128 +1652,50 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   }
 
   const runId = randomBytes(4).toString("hex");
-  const runRoot = fs.mkdtempSync(
-    path.join(inputs.workDirectory, `nemoclaw-mxc-openclaw-${runId}-`),
+  const receiptPath = path.join(
+    inputs.artifactDirectory,
+    `windows-mxc-openclaw-receipt-${runId}.json`,
   );
-  const shareDirectory = fs.mkdtempSync(
-    path.join(inputs.workDirectory, `nemoclaw-mxc-share-${runId}-`),
-  );
-  const stateDirectory = path.join(runRoot, "state");
-  const configDirectory = path.join(runRoot, "config");
-  const homeDirectory = path.join(shareDirectory, "home");
-  const clientHomeDirectory = path.join(runRoot, "client-home");
-  for (const directory of [
+  const {
+    clientEnvironment,
+    clientHomeDirectory,
+    configDirectory,
+    controlEnvironment,
+    denyPath,
+    forwardErrorPath,
+    forwardLogPath,
+    forwardPort,
+    forwardStderr,
+    forwardStdout,
+    gatewayEnvironment,
+    gatewayErrorPath,
+    gatewayLogPath,
+    gatewayName,
+    gatewayPort,
+    gatewayStderr,
+    gatewayStdout,
+    heartbeatPath,
+    homeDirectory,
+    localSetup,
+    openClawPidPath,
+    openClawPort,
+    outcomePath,
+    policyPath,
+    probeAgentPath,
+    readyPath,
+    resultPath,
+    runRoot,
+    sandboxName,
     shareDirectory,
     stateDirectory,
-    configDirectory,
-    homeDirectory,
-    clientHomeDirectory,
-  ]) {
-    fs.mkdirSync(directory, { recursive: true });
-  }
-
-  const agentPath = inputs.openClaw.nodePath;
-  const gatewayConfigPath = path.join(runRoot, "gateway.toml");
-  const policyPath = path.join(runRoot, "policy.yaml");
-  const probeAgentPath = path.join(shareDirectory, "probe-agent.mjs");
-  const relayPath = path.join(shareDirectory, "openshell-supervisor-relay.exe");
-  const readyPath = path.join(shareDirectory, "ready.json");
-  const resultPath = path.join(shareDirectory, "result.json");
-  const outcomePath = path.join(shareDirectory, "outcome.json");
-  const heartbeatPath = path.join(shareDirectory, "heartbeat.txt");
-  const openClawPidPath = path.join(shareDirectory, "openclaw.pid");
-  const stopPath = path.join(shareDirectory, "stop.txt");
-  const denyPath = path.join(runRoot, "denied-write.txt");
-  const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
-  const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
-  const [gatewayPort, forwardPort, mockPort, openClawPort] = await freeDistinctLoopbackPorts(4);
-  if (
-    gatewayPort === undefined ||
-    forwardPort === undefined ||
-    mockPort === undefined ||
-    openClawPort === undefined
-  ) {
-    throw new Error("could not allocate all Windows MXC qualification ports");
-  }
-  const sandboxName = `mxc-oc-${runId}`;
-  const gatewayName = `mxc-gw-${runId}`;
-  const token = randomBytes(32).toString("base64url");
-
-  fs.copyFileSync(inputs.openShell.relayPath, relayPath);
-  assertExactFileIdentity(relayPath, inputs.expected.openShellRelaySha256, "stagedRelaySha256");
-
-  fs.writeFileSync(
-    gatewayConfigPath,
-    renderWindowsMxcGatewayConfig({
-      agentPath,
-      relayPath,
-      shareDirectory,
-      targetPort: openClawPort,
-      wxcExecPath: inputs.openShell.wxcExecPath,
-    }),
-    { encoding: "utf8", mode: 0o600 },
-  );
-  fs.writeFileSync(
-    policyPath,
-    renderWindowsMxcFilesystemPolicy({
-      openClawRoot: inputs.openClaw.root,
-      shareDirectory,
-    }),
-    { encoding: "utf8", mode: 0o600 },
-  );
-  fs.writeFileSync(probeAgentPath, renderWindowsMxcOpenClawProbeAgent(), {
-    encoding: "utf8",
-    mode: 0o600,
+    stopPath,
+  } = await prepareWindowsMxcOpenClawLocalSetup({
+    environment,
+    inputs,
+    processElevated,
+    receiptPath,
+    runId,
   });
-
-  const gatewayEnvironment: NodeJS.ProcessEnv = withoutOpenShellGatewaySelection({
-    ...allowlistedWindowsProcessEnvironment(environment),
-    NEMOCLAW_MXC_E2E_DENY_PATH: denyPath,
-    NEMOCLAW_MXC_E2E_ENTRY: inputs.openClaw.entryPath,
-    NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: heartbeatPath,
-    NEMOCLAW_MXC_E2E_HOME: homeDirectory,
-    NEMOCLAW_MXC_E2E_MOCK_PORT: String(mockPort),
-    NEMOCLAW_MXC_E2E_NODE: inputs.openClaw.nodePath,
-    NEMOCLAW_MXC_E2E_OPENCLAW_PORT: String(openClawPort),
-    NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: openClawPidPath,
-    NEMOCLAW_MXC_E2E_OUTCOME_PATH: outcomePath,
-    NEMOCLAW_MXC_E2E_READY_PATH: readyPath,
-    NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
-    NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
-    NEMOCLAW_MXC_E2E_TOKEN: token,
-    OPENSHELL_DRIVERS: "mxc",
-    OPENSHELL_GATEWAY_CONFIG: gatewayConfigPath,
-    XDG_CONFIG_HOME: configDirectory,
-    XDG_STATE_HOME: stateDirectory,
-  });
-  const controlEnvironment: NodeJS.ProcessEnv = {
-    ...gatewayEnvironment,
-    NEMOCLAW_MXC_E2E_TOKEN: undefined,
-  };
-  const clientEnvironment: NodeJS.ProcessEnv = {
-    ...allowlistedWindowsProcessEnvironment(environment),
-    HOME: clientHomeDirectory,
-    OPENCLAW_GATEWAY_TOKEN: token,
-    USERPROFILE: clientHomeDirectory,
-  };
-  const clientConfigDirectory = path.join(clientHomeDirectory, ".openclaw");
-  fs.mkdirSync(clientConfigDirectory, { recursive: true });
-  fs.writeFileSync(
-    path.join(clientConfigDirectory, "openclaw.json"),
-    JSON.stringify({
-      gateway: {
-        mode: "remote",
-        remote: {
-          token,
-          url: `ws://127.0.0.1:${forwardPort}`,
-        },
-      },
-    }),
-    { encoding: "utf8", mode: 0o600 },
-  );
-
-  const gatewayStdout = fs.openSync(gatewayLogPath, "w");
-  const gatewayStderr = fs.openSync(gatewayErrorPath, "w");
   let gateway: ChildProcess | null = null;
   let forward: ChildProcess | null = null;
   let gatewayStopped = false;
@@ -1600,7 +1866,13 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       sandboxCreateAccepted: create.exitCode === 0,
     };
 
-    progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
+    if (
+      !progress.hasReached(
+        "forward authenticated traffic and require the exact mock-backed chat reply",
+      )
+    ) {
+      progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
+    }
     assertExactFileIdentity(
       inputs.openShell.cliPath,
       inputs.expected.openShellCliSha256,
@@ -1622,7 +1894,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         progress,
         spawn: {
           env: controlEnvironment,
-          stdio: "ignore",
+          stdio: ["ignore", forwardStdout, forwardStderr],
           windowsHide: true,
         },
       },
@@ -1655,16 +1927,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
 
     const forwardedHealth = await runCommand(
       inputs.openClaw.nodePath,
-      [
-        inputs.openClaw.entryPath,
-        "gateway",
-        "health",
-        "--json",
-        "--url",
-        `ws://127.0.0.1:${forwardPort}`,
-        "--timeout",
-        "60000",
-      ],
+      [inputs.openClaw.entryPath, "gateway", "health", "--json", "--timeout", "60000"],
       clientEnvironment,
       progress,
       "command: windows-mxc-openclaw-forwarded-health",
@@ -1708,26 +1971,16 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       throw new Error("forwarded OpenClaw chat did not return the exact CHAT_OK payload");
     }
 
-    progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
+    if (
+      !progress.hasReached("delete the sandbox and verify registry plus OpenClaw process cleanup")
+    ) {
+      progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
+    }
     const remove = await runOpenShellCommand(
       ["sandbox", "delete", sandboxName],
       "command: windows-mxc-sandbox-delete",
     );
     checks = { ...checks, sandboxDeleteAccepted: remove.exitCode === 0 };
-    if (trustedForwardProcess !== null) {
-      forwardProcessStopped = await waitForTrustedProcessExit(
-        trustedForwardProcess,
-        powershellPath,
-        controlEnvironment,
-        progress,
-      );
-    }
-    forwardListenerStopped = await waitForLoopbackListenerClosed({
-      environment: controlEnvironment,
-      port: forwardPort,
-      powershellPath,
-      progress,
-    });
     checks = {
       ...checks,
       workloadTerminatedByDelete:
@@ -1985,9 +2238,9 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     }
     gatewayEnvironment.NEMOCLAW_MXC_E2E_TOKEN = undefined;
     clientEnvironment.OPENCLAW_GATEWAY_TOKEN = undefined;
-    for (const descriptor of [gatewayStdout, gatewayStderr]) {
+    for (const descriptor of [gatewayStdout, gatewayStderr, forwardStdout, forwardStderr]) {
       try {
-        fs.closeSync(descriptor);
+        localSetup.closeDescriptor(descriptor);
       } catch (error) {
         cleanupFailures.push(error);
       }
@@ -1999,6 +2252,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       stateDirectory,
       gatewayLogPath,
       gatewayErrorPath,
+      forwardLogPath,
+      forwardErrorPath,
     ];
     for (const sensitivePath of sensitivePaths) {
       try {
@@ -2031,6 +2286,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       fs.rmSync(runRoot, { force: true, recursive: true });
       fs.rmSync(shareDirectory, { force: true, recursive: true });
       runDirectoryRemoved = !fs.existsSync(runRoot) && !fs.existsSync(shareDirectory);
+      if (runDirectoryRemoved) {
+        localSetup.releaseRoot(runRoot);
+        localSetup.releaseRoot(shareDirectory);
+      }
       if (!runDirectoryRemoved) {
         cleanupFailures.push(new Error("qualification run directory remains after cleanup"));
       }
@@ -2100,10 +2359,6 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     ],
   };
 
-  const receiptPath = path.join(
-    inputs.artifactDirectory,
-    `windows-mxc-openclaw-receipt-${runId}.json`,
-  );
   fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",
