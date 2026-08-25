@@ -10,7 +10,11 @@ import { describe, expect, it } from "vitest";
 // `unknown`-shaped so their runtime guards type-narrow correctly. Switching to
 // a named ESM import would break those neighbouring tests' narrowing.
 type OnboardRollbackInternals = {
-  buildOrphanedSandboxRollbackMessage: (sandboxName: string, err: unknown) => string[];
+  buildOrphanedSandboxRollbackMessage: (
+    sandboxName: string,
+    err: unknown,
+    gatewayName?: string,
+  ) => string[];
 };
 
 function isOnboardRollbackInternals(value: object | null): value is OnboardRollbackInternals {
@@ -35,6 +39,7 @@ describe("ghost-sandbox rollback message (#2174)", () => {
     const lines = buildOrphanedSandboxRollbackMessage(
       "alpha",
       new Error("All dashboard ports in range 18789-18798 are occupied"),
+      "nemoclaw-18080",
     );
     expect(lines[0]).toBe("");
     expect(lines).toContain("  Could not allocate a dashboard port for 'alpha'.");
@@ -43,7 +48,7 @@ describe("ghost-sandbox rollback message (#2174)", () => {
       "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
     );
     expect(lines).toContain("  Verify the sandbox identity, then clean up manually:");
-    expect(lines).toContain('    openshell sandbox delete "alpha"');
+    expect(lines).toContain('    openshell sandbox delete -g "nemoclaw-18080" "alpha"');
   });
 
   it("renders non-Error throwables via String coercion", () => {
@@ -52,7 +57,21 @@ describe("ghost-sandbox rollback message (#2174)", () => {
   });
 
   it("escapes the sandbox name into the manual-cleanup command exactly", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("weird-name_42", new Error("oops"));
-    expect(lines).toContain('    openshell sandbox delete "weird-name_42"');
+    const lines = buildOrphanedSandboxRollbackMessage(
+      'weird-name_42"',
+      new Error("oops"),
+      'gateway"name',
+    );
+    expect(lines).toContain(
+      '    openshell sandbox delete -g "gateway\\\"name" "weird-name_42\\\""',
+    );
+  });
+
+  it("does not suggest deletion when the owning gateway is unknown", () => {
+    const lines = buildOrphanedSandboxRollbackMessage("alpha", new Error("oops"));
+    expect(lines).toContain(
+      "  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.",
+    );
+    expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 });

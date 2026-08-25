@@ -112,6 +112,7 @@ export interface OnboardDashboardHelpers {
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
     err: unknown,
+    gatewayName?: string,
   ): string[];
   ensureDashboardForward(
     sandboxName: string,
@@ -299,23 +300,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
     err: unknown,
+    gatewayName?: string,
   ): string[] {
+    const owningGateway = gatewayName?.trim();
     const lines = [
       "",
       `  Could not allocate a dashboard port for '${sandboxName}'.`,
       `  ${err instanceof Error ? err.message : String(err)}`,
       "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
-      "  Verify the sandbox identity, then clean up manually:",
-      `    openshell sandbox delete "${sandboxName}"`,
     ];
+    if (owningGateway) {
+      lines.push(
+        "  Verify the sandbox identity, then clean up manually:",
+        `    openshell sandbox delete -g ${JSON.stringify(owningGateway)} ${JSON.stringify(sandboxName)}`,
+      );
+    } else {
+      lines.push("  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.");
+    }
     return lines;
   }
 
-  function rollbackSandboxAndExit(
-    sandboxName: string,
-    err: unknown,
-  ): never {
-    for (const line of buildOrphanedSandboxRollbackMessage(sandboxName, err)) {
+  function rollbackSandboxAndExit(sandboxName: string, err: unknown, gatewayName?: string): never {
+    for (const line of buildOrphanedSandboxRollbackMessage(sandboxName, err, gatewayName)) {
       console.error(line);
     }
     process.exit(1);
@@ -375,7 +381,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
-      rollbackSandboxAndExit(sandboxName, err);
+      rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
     }
 
     if (actualPort !== preferredPort) {
@@ -391,7 +397,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             `CHAT_UI_URL=${preferredPort}. Free the port and re-run \`${deps.cliName()} onboard\`, ` +
             `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
         );
-        rollbackSandboxAndExit(sandboxName, err);
+        rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
       console.warn(`  ! Port ${preferredPort} is taken. Using port ${actualPort} instead.`);
     }
@@ -438,7 +444,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
             : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
         );
-        rollbackSandboxAndExit(sandboxName, err);
+        rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
       if (looksLikePortConflict) {
         console.warn(
@@ -464,7 +470,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         note: deps.note,
         rollbackOnFailure: {
           runOpenshell: deps.runOpenshell,
-          buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
+          buildRollbackMessage: (name, error) =>
+            buildOrphanedSandboxRollbackMessage(name, error, options.gatewayName),
           cliName: deps.cliName,
           forwardPortsToStop: [actualPort],
           beforeMutation: revalidatePolicyAuthority,

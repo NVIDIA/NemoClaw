@@ -121,6 +121,7 @@ export interface CreatedSandboxCompletionOptions {
       chatUiUrl: string,
       options: {
         rollbackSandboxOnFailure: true;
+        gatewayName: string;
         revalidatePolicyAuthority?: (operation: string) => void;
       },
     ) => number;
@@ -334,6 +335,7 @@ export function createCreatedSandboxCompletionActions(
     );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      gatewayName: options.registration.gatewayName,
       revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
     });
     deps.revalidatePolicyAuthority?.(

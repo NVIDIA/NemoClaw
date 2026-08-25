@@ -19,7 +19,7 @@ const requiredPolicy = {
 };
 
 describe("sandbox policy authority preflight", () => {
-  it("normalizes the default OpenClaw agent at the production policy binding (#9833)", () => {
+  it("preflights policy authority for the default OpenClaw agent (#9833)", () => {
     const inspectSandboxForCreate = vi.fn(() => ({ existingEntry: null, liveExists: false }));
     const loadDefaultAgent = vi.fn((name: string) => loadAgent(name));
     const bindings = createOnboardPolicyAuthorityBindings(
