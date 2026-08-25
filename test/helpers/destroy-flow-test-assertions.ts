@@ -146,11 +146,11 @@ export async function expectHardenWhenOpenshellAbsentWithLiveDocker(
     openshellDriver: "docker",
     shieldsUpError: new Error("must still harden a live Docker identity"),
   });
-  await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+  await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
   expect(harness.events).toContain("wipe");
   expect(harness.events).toContain("harden");
-  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-  expect(exitSpy).toHaveBeenCalledWith(1);
+  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  expect(exitSpy).not.toHaveBeenCalled();
 }
 
 export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {

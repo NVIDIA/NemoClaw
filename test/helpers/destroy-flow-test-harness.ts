@@ -491,8 +491,14 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     }
     identityProbeCall += 1;
     options.onDockerRun?.(identityProbeCall);
-    const result = options.dockerRunResultSequence?.[identityProbeCall - 1] ??
-      options.dockerRunResult ?? { status: 0 };
+    const defaultIdentityResult = {
+      status: 0,
+      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
+    };
+    const result =
+      options.dockerRunResultSequence?.[identityProbeCall - 1] ??
+      options.dockerRunResult ??
+      defaultIdentityResult;
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
   const selectGatewaySpy = vi
