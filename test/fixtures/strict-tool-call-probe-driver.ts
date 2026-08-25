@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Process-level driver for the Local Ollama strict Chat Completions
-// tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
+// tool-call probe. Loaded by test/security/strict-tool-call-probe.test.ts via
 // `node --import tsx <driver>`; not picked up by Vitest's discovery (lives under
 // test/fixtures/, which is excluded from the test glob).
 //
