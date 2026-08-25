@@ -118,15 +118,15 @@ describe("compiled-test import boundary", () => {
 
   it("resolves aliases and constants in their lexical scope", () => {
     const fixture = [
-      'const target = "../../dist/lib/real.js";',
+      'const target = "../dist/lib/real.js";',
       "require(target);",
       "{",
-      '  const target = "../../src/lib/safe.js";',
+      '  const target = "../src/lib/safe.js";',
       "  require(target);",
       "}",
       "const load = createRequire(import.meta.url);",
       "function useInjectedLoader(load: (value: string) => unknown) {",
-      '  load("../../dist/lib/shadowed.js");',
+      '  load("../dist/lib/shadowed.js");',
       "}",
     ].join("\n");
 
@@ -138,13 +138,13 @@ describe("compiled-test import boundary", () => {
 
   it("ignores inert text and shadowed built-in helpers", () => {
     const fixture = [
-      '// require("../../dist/lib/comment.js");',
-      "const generatedExample = 'require(\"../../dist/lib/inert.js\");';",
+      '// require("../dist/lib/comment.js");',
+      "const generatedExample = 'require(\"../dist/lib/inert.js\");';",
       "function useSafeHelpers(require: (value: string) => unknown, path: unknown) {",
-      '  require("../../dist/commands/shadowed.js");',
+      '  require("../dist/commands/shadowed.js");',
       '  path.resolve("dist", "lib", "shadowed.js");',
       "}",
-      'require("../../src/lib/source.js");',
+      'require("../src/lib/source.js");',
     ].join("\n");
 
     expect(findCompiledInternalViolations("test/example.test.ts", fixture)).toEqual([]);
@@ -173,7 +173,7 @@ describe("compiled-test import boundary", () => {
     const fixture = [
       'const { createRequire: makeRequire } = require("node:module");',
       "const load = makeRequire(import.meta.url);",
-      'load("../../dist/lib/commonjs-create-require.js");',
+      'load("../dist/lib/commonjs-create-require.js");',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -186,10 +186,10 @@ describe("compiled-test import boundary", () => {
     const fixture = [
       'import { createRequire } from "node:module";',
       'import * as nodeModule from "node:module";',
-      'createRequire(import.meta.url)("../../dist/lib/direct-create-require.js");',
-      'nodeModule.createRequire(import.meta.url)("../../dist/commands/namespace-create-require.js");',
+      'createRequire(import.meta.url)("../dist/lib/direct-create-require.js");',
+      'nodeModule.createRequire(import.meta.url)("../dist/commands/namespace-create-require.js");',
       'const commonJsModule = require("node:module");',
-      'commonJsModule.createRequire(import.meta.url)("../../dist/lib/commonjs-namespace.js");',
+      'commonJsModule.createRequire(import.meta.url)("../dist/lib/commonjs-namespace.js");',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -206,12 +206,12 @@ describe("compiled-test import boundary", () => {
 
   it("unwraps JavaScript and TypeScript expression wrappers around static loaders", () => {
     const fixture = [
-      'require(("../../dist/lib/parenthesized.js"));',
-      'import(("../../dist/commands/dynamic.js"));',
-      'require.resolve(("../../dist/lib/resolved.js"));',
-      'const asserted = "../../dist/lib/asserted.js" as const;',
+      'require(("../dist/lib/parenthesized.js"));',
+      'import(("../dist/commands/dynamic.js"));',
+      'require.resolve(("../dist/lib/resolved.js"));',
+      'const asserted = "../dist/lib/asserted.js" as const;',
       "require(asserted);",
-      'const satisfied = "../../dist/commands/satisfied.js" satisfies string;',
+      'const satisfied = "../dist/commands/satisfied.js" satisfies string;',
       "require(satisfied);",
     ].join("\n");
 
@@ -231,8 +231,8 @@ describe("compiled-test import boundary", () => {
 
   it("detects compiled internals in TypeScript import-equals declarations", () => {
     const fixture = [
-      'import compiled = require("../../dist/lib/import-equals.js");',
-      'export import exported = require("../../dist/commands/export-import-equals.js");',
+      'import compiled = require("../dist/lib/import-equals.js");',
+      'export import exported = require("../dist/commands/export-import-equals.js");',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -249,7 +249,7 @@ describe("compiled-test import boundary", () => {
   it("preserves static String.raw substitutions while scanning generated scripts", () => {
     const fixture = [
       "const script = String.raw`",
-      'require(${JSON.stringify("../../dist/lib/generated-substitution.js")});',
+      'require(${JSON.stringify("../dist/lib/generated-substitution.js")});',
       "`;",
     ].join("\n");
 
@@ -264,11 +264,11 @@ describe("compiled-test import boundary", () => {
       'import * as nodeModule from "node:module";',
       "const makeRequire = nodeModule.createRequire;",
       "const load = makeRequire(import.meta.url);",
-      'load("../../dist/lib/member-alias.js");',
-      'require("node:module").createRequire(import.meta.url)("../../dist/commands/inline.js");',
+      'load("../dist/lib/member-alias.js");',
+      'require("node:module").createRequire(import.meta.url)("../dist/commands/inline.js");',
       "const { createRequire: destructuredFactory } = nodeModule;",
       "const destructuredLoad = destructuredFactory(import.meta.url);",
-      'destructuredLoad("../../dist/lib/destructured-member.js");',
+      'destructuredLoad("../dist/lib/destructured-member.js");',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -308,7 +308,7 @@ describe("compiled-test import boundary", () => {
       "function loadCompiledModule() {",
       "  require(TARGET);",
       "}",
-      'const TARGET = "../../dist/lib/later.js";',
+      'const TARGET = "../dist/lib/later.js";',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -321,13 +321,13 @@ describe("compiled-test import boundary", () => {
     const fixture = [
       "switch (mode) {",
       "  case 0:",
-      '    require("../../dist/lib/shadowed-before-declaration.js");',
+      '    require("../dist/lib/shadowed-before-declaration.js");',
       "    break;",
       "  case 1:",
       "    const require = injectedLoader;",
       "    break;",
       "}",
-      'require("../../dist/lib/outer.js");',
+      'require("../dist/lib/outer.js");',
     ].join("\n");
 
     const violations = findCompiledInternalViolations("test/example.test.ts", fixture);
@@ -338,7 +338,7 @@ describe("compiled-test import boundary", () => {
 
   it("evaluates switch discriminants outside the shared case scope", () => {
     const fixture = [
-      'switch (require("../../dist/lib/discriminant.js")) {',
+      'switch (require("../dist/lib/discriminant.js")) {',
       "  case 0:",
       "    const require = injectedLoader;",
       "    break;",
@@ -354,7 +354,7 @@ describe("compiled-test import boundary", () => {
   it("evaluates computed method names outside the method parameter scope", () => {
     const fixture = [
       "const methods = {",
-      '  [require("../../dist/lib/computed-name.js")](require: unknown) {},',
+      '  [require("../dist/lib/computed-name.js")](require: unknown) {},',
       "};",
     ].join("\n");
 
@@ -367,7 +367,7 @@ describe("compiled-test import boundary", () => {
   it("evaluates method decorators outside the method parameter scope", () => {
     const fixture = [
       "class Decorated {",
-      '  @register(require("../../dist/lib/decorator.js"))',
+      '  @register(require("../dist/lib/decorator.js"))',
       "  run(require: unknown) {}",
       "}",
     ].join("\n");
@@ -381,7 +381,7 @@ describe("compiled-test import boundary", () => {
   it("evaluates parameter decorators outside the method parameter scope", () => {
     const fixture = [
       "class Decorated {",
-      '  run(@register(require("../../dist/lib/parameter-decorator.js")) value: unknown, require: unknown) {}',
+      '  run(@register(require("../dist/lib/parameter-decorator.js")) value: unknown, require: unknown) {}',
       "}",
     ].join("\n");
 
@@ -418,7 +418,7 @@ describe("compiled-test import boundary", () => {
       "namespace Fixtures {",
       "  var path = injectedPath;",
       "}",
-      'require("../../dist/lib/outer.js");',
+      'require("../dist/lib/outer.js");',
       'path.join(root, "dist", "commands", "outer.js");',
     ].join("\n");
 

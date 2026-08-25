@@ -66,6 +66,8 @@ let sandboxRecreated = false;
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
   if (cmd.includes("sandbox list")) {
