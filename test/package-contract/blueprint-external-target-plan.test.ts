@@ -43,13 +43,13 @@ import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { syncBuiltinESMExports } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import { pathToFileURL } from "node:url";
 
-const [runnerPath, blueprintRoot, ambientRoot, credentialPath] = process.argv.slice(2);
+const [runnerPath, blueprintRoot, ambientRoot, credentialPath, caPath] = process.argv.slice(2);
 const effects = [];
 const forbid = (kind) => (..._args) => {
   effects.push(kind);
@@ -145,6 +145,45 @@ process.env.NEMOCLAW_BLUEPRINT_PATH = blueprintRoot;
 
 const runnerUrl = pathToFileURL(runnerPath).href;
 const runner = await import(runnerUrl);
+const require = createRequire(import.meta.url);
+const sharedRoot = path.join(path.dirname(runnerPath), "..", "shared");
+const targetBoundary = require(path.join(sharedRoot, "openshell-external-target-boundary.cjs"));
+const observationBoundary = require(path.join(sharedRoot, "openshell-observation-boundary.cjs"));
+const issuedPlan = targetBoundary.buildSanitizedExternalOpenShellTargetPlan(
+  {
+    endpoint: "https://openshell.example.test:8443",
+    workspace: "default",
+    expected_release: "0.0.106",
+    lifecycle: "external",
+    trust: { ca_file: caPath },
+    authentication: { credential_file: credentialPath },
+  },
+  { minVersion: "0.0.106", maxVersion: "0.0.106" },
+);
+const acceptedTarget = observationBoundary.externalOpenShellGateway(issuedPlan);
+let forgedPlanRejected = false;
+try {
+  observationBoundary.externalOpenShellGateway({ ...issuedPlan });
+} catch {
+  forgedPlanRejected = true;
+}
+let forgedObserverCalls = 0;
+const forgedObservation = await observationBoundary.observeExternalOpenShellTarget(
+  {
+    getGatewayHealth: async () => {
+      forgedObserverCalls += 1;
+      throw new Error("forged target reached observer");
+    },
+    connectWithCredentialFile: async () => {
+      forgedObserverCalls += 1;
+      throw new Error("forged target reached observer");
+    },
+  },
+  {
+    target: { kind: "external", plan: { ...issuedPlan }, allWorkspaces: false },
+    timeoutMs: 2500,
+  },
+);
 let planOutput = "";
 const originalWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk) => {
@@ -164,7 +203,22 @@ try {
   process.stdout.write = originalWrite;
 }
 
-originalWrite(JSON.stringify({ applyError, effects, planOutput, runnerUrl }));
+originalWrite(
+  JSON.stringify({
+    applyError,
+    effects,
+    planOutput,
+    runnerUrl,
+    packageBoundary: {
+      acceptedIssuedPlan: acceptedTarget.plan === issuedPlan,
+      acceptedPlanKeys: Object.keys(acceptedTarget.plan).sort(),
+      allWorkspaces: acceptedTarget.allWorkspaces,
+      forgedPlanRejected,
+      forgedObservation,
+      forgedObserverCalls,
+    },
+  }),
+);
 `,
   );
 }
@@ -294,7 +348,14 @@ describe("packaged Blueprint Runner external target", () => {
         writeRuntimeProbe(probePath);
         const probe = spawnSync(
           process.execPath,
-          [probePath, installedRunner, blueprintRoot, ambientRoot, privateAuthenticationPath],
+          [
+            probePath,
+            installedRunner,
+            blueprintRoot,
+            ambientRoot,
+            privateAuthenticationPath,
+            privateCaPath,
+          ],
           {
             cwd: runtimeRoot,
             encoding: "utf8",
@@ -319,9 +380,39 @@ describe("packaged Blueprint Runner external target", () => {
           effects: string[];
           planOutput: string;
           runnerUrl: string;
+          packageBoundary: {
+            acceptedIssuedPlan: boolean;
+            acceptedPlanKeys: string[];
+            allWorkspaces: boolean;
+            forgedPlanRejected: boolean;
+            forgedObservation: unknown;
+            forgedObserverCalls: number;
+          };
         };
         expect(result.runnerUrl.startsWith("file://" + installedPackage)).toBe(true);
         expect(result.effects).toEqual([]);
+        expect(result.packageBoundary).toEqual({
+          acceptedIssuedPlan: true,
+          acceptedPlanKeys: [
+            "authentication_source",
+            "ca_fingerprint",
+            "endpoint",
+            "expected_release",
+            "lifecycle",
+            "workspace",
+          ],
+          allWorkspaces: false,
+          forgedPlanRejected: true,
+          forgedObservation: {
+            ok: false,
+            error: {
+              kind: "command",
+              reason: "invalid_request",
+              message: "The external OpenShell observation target is not a validated target plan.",
+            },
+          },
+          forgedObserverCalls: 0,
+        });
         expect(result.applyError).toBe(
           "External OpenShell target apply is not available until typed readiness and inventory are implemented.",
         );

@@ -14,13 +14,18 @@
 // removalCondition: remove only when no NemoClaw consumer observes OpenShell
 // gateway, workspace, or sandbox state through a transport-neutral contract.
 
+import {
+  isValidatedSanitizedExternalOpenShellTargetPlan,
+  type SanitizedExternalOpenShellTargetPlan,
+} from "./openshell-external-target-boundary.cjs";
+
 export type OpenShellExternalGatewayTarget = Readonly<{
   kind: "external";
-  endpoint: string;
-  workspace: string;
-  expectedRelease: string;
+  plan: SanitizedExternalOpenShellTargetPlan;
   allWorkspaces: false;
 }>;
+
+const validatedExternalOpenShellGatewayTargets = new WeakSet<object>();
 
 export type OpenShellGatewayTarget =
   | Readonly<{ kind: "named"; gatewayName: string }>
@@ -168,11 +173,18 @@ export function selectedOpenShellGateway(): OpenShellGatewayTarget {
 }
 
 export function externalOpenShellGateway(
-  endpoint: string,
-  workspace: string,
-  expectedRelease: string,
+  plan: SanitizedExternalOpenShellTargetPlan,
 ): OpenShellExternalGatewayTarget {
-  return { kind: "external", endpoint, workspace, expectedRelease, allWorkspaces: false };
+  if (!isValidatedSanitizedExternalOpenShellTargetPlan(plan)) {
+    throw new Error("external OpenShell observation requires a validated target plan");
+  }
+  const target: OpenShellExternalGatewayTarget = Object.freeze({
+    kind: "external",
+    plan,
+    allWorkspaces: false,
+  });
+  validatedExternalOpenShellGatewayTargets.add(target);
+  return target;
 }
 
 function failure<T>(error: OpenShellSandboxError): OpenShellSandboxResult<T> {
@@ -212,6 +224,68 @@ function sanitizedExternalObservationError(error: OpenShellSandboxError): OpenSh
   }
 }
 
+function unexpectedExternalObservationError(): OpenShellSandboxError {
+  return {
+    kind: "transport",
+    reason: "unreachable",
+    message: "NemoClaw could not reach the external OpenShell target.",
+  };
+}
+
+async function invokeExternalObserver<T>(
+  operation: () => Promise<OpenShellSandboxResult<T>>,
+): Promise<OpenShellSandboxResult<T>> {
+  try {
+    return await operation();
+  } catch {
+    return failure(unexpectedExternalObservationError());
+  }
+}
+
+function snapshotGatewayHealth(
+  value: OpenShellGatewayHealthObservation,
+): OpenShellGatewayHealthObservation {
+  return Object.freeze({ status: value.status, release: value.release });
+}
+
+function snapshotCurrentUser(
+  value: OpenShellCurrentUserObservation,
+): OpenShellCurrentUserObservation {
+  return Object.freeze({ subjectFingerprint: value.subjectFingerprint });
+}
+
+function snapshotWorkspace(value: OpenShellWorkspaceObservation): OpenShellWorkspaceObservation {
+  return Object.freeze({ name: value.name, phase: value.phase });
+}
+
+function snapshotInventory(value: OpenShellSandboxInventory): OpenShellSandboxInventory {
+  return Object.freeze({
+    sandboxes: Object.freeze(
+      value.sandboxes.map((sandbox) =>
+        Object.freeze({
+          name: sandbox.name,
+          phase: sandbox.phase,
+          readiness: sandbox.readiness,
+        }),
+      ),
+    ),
+  });
+}
+
+function snapshotExternalObservationRequest(
+  request: ObserveExternalOpenShellTargetRequest,
+): ObserveExternalOpenShellTargetRequest | null {
+  const { target: sourceTarget, timeoutMs } = request;
+  if (!validatedExternalOpenShellGatewayTargets.has(sourceTarget)) return null;
+  const target: OpenShellExternalGatewayTarget = Object.freeze({
+    kind: "external",
+    plan: sourceTarget.plan,
+    allWorkspaces: false,
+  });
+  validatedExternalOpenShellGatewayTargets.add(target);
+  return Object.freeze({ target, timeoutMs });
+}
+
 /**
  * Collect the read-only external-target receipt through one shared observer.
  * Public health and release validation complete before the opaque credential
@@ -223,40 +297,71 @@ export async function observeExternalOpenShellTarget(
   observer: OpenShellExternalTargetObserver,
   request: ObserveExternalOpenShellTargetRequest,
 ): Promise<OpenShellExternalTargetResult<ExternalOpenShellTargetObservation>> {
-  const health = await observer.getGatewayHealth(request);
-  if (!health.ok) return failure(sanitizedExternalObservationError(health.error));
-  if (health.value.release !== request.target.expectedRelease) {
+  const validatedRequest = snapshotExternalObservationRequest(request);
+  if (validatedRequest === null) {
+    return externalFailure({
+      kind: "command",
+      reason: "invalid_request",
+      message: "The external OpenShell observation target is not a validated target plan.",
+    });
+  }
+
+  const healthResult = await invokeExternalObserver(() =>
+    observer.getGatewayHealth(validatedRequest),
+  );
+  if (!healthResult.ok) {
+    return failure(sanitizedExternalObservationError(healthResult.error));
+  }
+  const health = snapshotGatewayHealth(healthResult.value);
+  if (health.release !== validatedRequest.target.plan.expected_release) {
     return externalFailure({
       kind: "compatibility",
       message: "The external OpenShell target release does not match the configured release.",
     });
   }
 
-  const authenticated = await observer.connectWithCredentialFile(request);
+  const authenticated = await invokeExternalObserver(() =>
+    observer.connectWithCredentialFile(validatedRequest),
+  );
   if (!authenticated.ok) {
     return failure(sanitizedExternalObservationError(authenticated.error));
   }
-  const identity = await authenticated.value.getCurrentUser(request);
-  if (!identity.ok) return failure(sanitizedExternalObservationError(identity.error));
-  const workspace = await authenticated.value.getWorkspace(request);
-  if (!workspace.ok) return failure(sanitizedExternalObservationError(workspace.error));
-  if (workspace.value.name !== request.target.workspace) {
+  const identityResult = await invokeExternalObserver(() =>
+    authenticated.value.getCurrentUser(validatedRequest),
+  );
+  if (!identityResult.ok) {
+    return failure(sanitizedExternalObservationError(identityResult.error));
+  }
+  const identity = snapshotCurrentUser(identityResult.value);
+  const workspaceResult = await invokeExternalObserver(() =>
+    authenticated.value.getWorkspace(validatedRequest),
+  );
+  if (!workspaceResult.ok) {
+    return failure(sanitizedExternalObservationError(workspaceResult.error));
+  }
+  const workspace = snapshotWorkspace(workspaceResult.value);
+  if (workspace.name !== validatedRequest.target.plan.workspace) {
     return failure({
       kind: "schema",
       message: "OpenShell returned a workspace other than the explicitly configured workspace.",
     });
   }
-  const inventory = await authenticated.value.listSandboxes(request);
-  if (!inventory.ok) return failure(sanitizedExternalObservationError(inventory.error));
+  const inventoryResult = await invokeExternalObserver(() =>
+    authenticated.value.listSandboxes(validatedRequest),
+  );
+  if (!inventoryResult.ok) {
+    return failure(sanitizedExternalObservationError(inventoryResult.error));
+  }
+  const inventory = snapshotInventory(inventoryResult.value);
 
-  return {
+  return Object.freeze({
     ok: true,
-    value: {
-      target: request.target,
-      health: health.value,
-      identity: identity.value,
-      workspace: workspace.value,
-      inventory: inventory.value,
-    },
-  };
+    value: Object.freeze({
+      target: validatedRequest.target,
+      health,
+      identity,
+      workspace,
+      inventory,
+    }),
+  });
 }

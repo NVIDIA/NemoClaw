@@ -11,9 +11,9 @@ import {
   parseCliOpenShellSandboxInventory,
 } from "./sandbox-observer-cli";
 import {
-  externalOpenShellGateway,
   namedOpenShellGateway,
   selectedOpenShellGateway,
+  type OpenShellExternalGatewayTarget,
 } from "./sandbox-observer";
 
 function createCliOpenShellSandboxObserver(
@@ -227,11 +227,18 @@ describe("CLI OpenShell sandbox observer", () => {
     const capture = vi.fn(() => captured(0, "ambient Ready"));
     const observer = createCliOpenShellSandboxObserver({ capture });
     const lookup = createCliOpenShellSandboxLookup({ capture });
-    const target = externalOpenShellGateway(
-      "https://openshell.example.test:8443",
-      "research",
-      "configured-release",
-    );
+    const target: OpenShellExternalGatewayTarget = {
+      kind: "external",
+      plan: {
+        endpoint: "https://openshell.example.test:8443",
+        workspace: "research",
+        expected_release: "0.0.106",
+        lifecycle: "external",
+        authentication_source: "file",
+        ca_fingerprint: `sha256:${"a".repeat(64)}`,
+      },
+      allWorkspaces: false,
+    };
 
     await expect(observer.listSandboxes({ target })).resolves.toEqual({
       ok: false,

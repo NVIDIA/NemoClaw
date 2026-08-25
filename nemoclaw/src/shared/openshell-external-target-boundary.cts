@@ -32,13 +32,23 @@ export interface OpenShellCompatibilityRange {
   maxVersion: string;
 }
 
-export interface SanitizedExternalOpenShellTargetPlan {
+export type SanitizedExternalOpenShellTargetPlan = Readonly<{
   endpoint: string;
   workspace: string;
   expected_release: string;
   lifecycle: "external";
   authentication_source: "file";
   ca_fingerprint: string;
+}>;
+
+const validatedExternalOpenShellTargetPlans = new WeakSet<object>();
+
+export function isValidatedSanitizedExternalOpenShellTargetPlan(
+  value: unknown,
+): value is SanitizedExternalOpenShellTargetPlan {
+  return (
+    typeof value === "object" && value !== null && validatedExternalOpenShellTargetPlans.has(value)
+  );
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -327,12 +337,14 @@ export function buildSanitizedExternalOpenShellTargetPlan(
   for (const certificate of caCertificates) {
     caFingerprint.update(certificate);
   }
-  return {
+  const plan: SanitizedExternalOpenShellTargetPlan = Object.freeze({
     endpoint: target.endpoint,
     workspace: target.workspace,
     expected_release: target.expected_release,
     lifecycle: "external",
     authentication_source: "file",
     ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
-  };
+  });
+  validatedExternalOpenShellTargetPlans.add(plan);
+  return plan;
 }
