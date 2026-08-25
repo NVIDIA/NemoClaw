@@ -16,7 +16,7 @@ import {
   hasGnuBase64Decode,
   hasOpenssl,
   runDockerfileCorporateCaDecode,
-} from ".././helpers/corporate-ca-support";
+} from "../helpers/corporate-ca-support";
 
 // The extracted RUN block uses GNU `base64 --decode` (rejected by BSD/macOS
 // `base64`) and requires the `openssl` CLI to validate the bundle. The sandbox

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   dockerfileRunCommandPositions,
   requireSingleReviewedDockerfileRunCommand,
-} from "../.././helpers/dockerfile-run-commands";
+} from "../../helpers/dockerfile-run-commands";
 
 const command = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";

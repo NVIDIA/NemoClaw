@@ -23,7 +23,7 @@ import {
   resolveCaSetup,
   runMergeBlock,
   startTlsServer,
-} from ".././helpers/corporate-ca-support";
+} from "../helpers/corporate-ca-support";
 
 const OPENCLAW_START = path.join(import.meta.dirname, "../../scripts/nemoclaw-start.sh");
 const HERMES_START = path.join(import.meta.dirname, "../../agents/hermes/start.sh");

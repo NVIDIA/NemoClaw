@@ -11,7 +11,7 @@ import { detectVllmProfile, resolveVllmRuntimeProfile } from "../../../src/lib/i
 import {
   MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
   verifyMuseGlimmerVllmImageProvenance,
-} from "../.././support/muse-glimmer-vllm-image-provenance-test-support.js";
+} from "../../support/muse-glimmer-vllm-image-provenance-test-support.js";
 
 const ROOT = path.join(import.meta.dirname, "../../..");
 const RECORD_PATH = path.join(

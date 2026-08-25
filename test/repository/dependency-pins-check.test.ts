@@ -107,7 +107,7 @@ jobs:
       openshellVersion: credentialVersion,
     }),
     "src/lib/actions/sandbox/mcp-bridge-validation.ts": `
-import boundary from ".././openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
+import boundary from "../openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
 `,
     "src/lib/onboard/openshell-version.ts": `
 export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "${overrides.fallbackVersion ?? openshellMax}";

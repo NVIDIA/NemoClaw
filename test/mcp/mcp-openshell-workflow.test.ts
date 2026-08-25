@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { validateMcpOpenShellWorkflowBoundary } from "../tools/e2e/mcp-workflow-boundary.mts";
+import { validateMcpOpenShellWorkflowBoundary } from "../../tools/e2e/mcp-workflow-boundary.mts";
 
 describe("MCP OpenShell workflow boundary", () => {
   it("validates the unified stable and explicit-dev MCP workflow contract", () => {
