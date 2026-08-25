@@ -24,6 +24,8 @@ import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand } from "./process-recovery";
 
+export { McpBridgeError };
+
 export const MCPORTER_VERSION = "0.7.3";
 export { OPENCLAW_MCPORTER_ROOT } from "./mcp-bridge-adapter-status";
 

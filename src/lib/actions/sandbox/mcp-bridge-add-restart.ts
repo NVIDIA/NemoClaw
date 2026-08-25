@@ -19,7 +19,7 @@ import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
-  registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
@@ -49,7 +49,6 @@ import {
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
-import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import {
   assertMcpDestroyNotPending,
   assertNoDerivedResourceCollision,
@@ -62,7 +61,6 @@ import {
   writeBridgeEntry,
 } from "./mcp-bridge-state";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
-import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 import {
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
@@ -74,62 +72,6 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
-
-const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
-
-/** Register one adapter and converge it on the credential revision exposed by fresh execs. */
-export function registerAgentAdapterAtCurrentCredentialRevision(
-  sandboxName: string,
-  adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
-  envValues: Record<string, string>,
-  initialCredentialRevision: McpAttachedCredentialRevision,
-  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
-): McpAttachedCredentialRevision {
-  const timeoutSeconds = Number.parseInt(
-    process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
-    10,
-  );
-  let credentialRevision = initialCredentialRevision;
-  let replaceExisting = options.replaceExisting === true;
-  let registrationRequired = true;
-  let stableObservations = 0;
-  const converged = waitForMcpBridgeCondition(
-    () => {
-      if (registrationRequired) {
-        registerAgentAdapter(sandboxName, adapter, entry, envValues, {
-          replaceExisting,
-          teardownRollback: options.teardownRollback === true,
-          credentialRevision,
-        });
-        registrationRequired = false;
-      }
-      const observation = observeMcpCredentialRevision(sandboxName, entry);
-      if (observation === "absent" || observation === "canonical") {
-        throw new McpBridgeError(
-          `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${entry.server}'.`,
-        );
-      }
-      if (observation !== credentialRevision) {
-        credentialRevision = observation;
-        replaceExisting = true;
-        registrationRequired = true;
-        stableObservations = 0;
-        return false;
-      }
-      stableObservations += 1;
-      return stableObservations >= STABLE_CREDENTIAL_REVISION_OBSERVATIONS;
-    },
-    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
-    1_000,
-  );
-  if (!converged) {
-    throw new McpBridgeError(
-      `OpenShell credential revision did not stabilize while reconciling MCP adapter '${entry.server}'.`,
-    );
-  }
-  return credentialRevision;
-}
 
 function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): boolean {
   return (

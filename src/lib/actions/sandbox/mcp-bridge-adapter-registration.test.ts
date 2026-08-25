@@ -44,8 +44,8 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
 } from "./mcp-bridge-adapters";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-add-restart";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
 import { entryHeaders, mcporterHeadersMatchExpected } from "./mcp-bridge-adapter-status";
 
