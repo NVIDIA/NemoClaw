@@ -1365,7 +1365,7 @@ export function parseOpenClawExactChatReply(output: string): boolean {
     payload !== null &&
     "text" in payload &&
     typeof payload.text === "string" &&
-    payload.text.trim() === "CHAT_OK"
+    payload.text === "CHAT_OK"
   );
 }
 
