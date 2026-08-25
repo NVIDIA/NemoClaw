@@ -112,7 +112,10 @@ describe("OpenShell MCP provider profile", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toBe("Could not import the OpenShell OpenAI gateway provider profile.");
+    expect(message).toContain(
+      "OpenShell could not import the checked-in 'openai' inference provider profile.",
+    );
+    expect(message).toContain("retry this command");
     expect(message).not.toContain(secret);
     expect(message).not.toContain("import rejected");
     expect(runOpenshell).toHaveBeenCalledTimes(2);
@@ -171,7 +174,7 @@ describe("OpenShell MCP provider profile", () => {
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).toThrow(
-      /does not match NemoClaw's gateway-only endpointless credential contract/,
+      /does not match NemoClaw's endpointless inference contract/,
     );
     expect(runOpenshell).toHaveBeenCalledOnce();
     expect(runOpenshell).toHaveBeenLastCalledWith(
@@ -188,7 +191,7 @@ describe("OpenShell MCP provider profile", () => {
     });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).toThrow(/could not be exported for validation/);
+    expect(() => ensureMcpBridgeProviderProfile()).toThrow(/could not be read for validation/);
     expect(runOpenshell).toHaveBeenCalledOnce();
   });
 

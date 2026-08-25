@@ -21,7 +21,7 @@ import {
   ensureEndpointlessProviderProfile,
 } from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../onboard/inference-providers/provider-profile";
+import { checkOpenAiInferenceProviderProfile } from "../../onboard/inference-providers/provider-profile";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
@@ -68,25 +68,12 @@ export {
  * release classifies the `openai` inference credential as gateway-only itself.
  */
 function ensureOpenAiGatewayProviderProfile(): void {
-  const result = ensureEndpointlessProviderProfile({
-    profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
-    inferenceCapable: true,
-    profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
+  const result = checkOpenAiInferenceProviderProfile({
     runOpenshell: (args, options) =>
       runOpenshellProviderCommand(args, options) as OpenShellCommandResult,
   });
   if (result.ok) return;
-  if (result.reason === "import-failed") {
-    throw new McpBridgeError("Could not import the OpenShell OpenAI gateway provider profile.");
-  }
-  if (result.reason === "export-failed") {
-    throw new McpBridgeError(
-      `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be exported for validation. Refusing to classify gateway inference credentials with it.`,
-    );
-  }
-  throw new McpBridgeError(
-    `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's gateway-only endpointless credential contract. Refusing to classify gateway inference credentials with it.`,
-  );
+  throw new McpBridgeError(result.messages.join("\n"));
 }
 
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
