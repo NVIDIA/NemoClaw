@@ -16,6 +16,14 @@ const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
   ...OLLAMA_MODEL_REGISTRY.map((entry) => entry.requiredMemoryMB),
 );
 
+function emptyOllamaInventoryCapture(): () => string {
+  let call = 0;
+  return () => {
+    call += 1;
+    return call === 1 ? JSON.stringify({ models: [] }) : "";
+  };
+}
+
 import {
   buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
@@ -935,15 +943,11 @@ describe("local inference helpers", () => {
   });
 
   it("does not fall back to the CLI after a malformed Ollama inventory", () => {
-    let call = 0;
-    const mockCapture = () => {
-      call += 1;
-      return call === 1
-        ? JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] })
-        : "qwen3.5:9b  abc  8 GB  now";
-    };
-    expect(getOllamaModelOptions(mockCapture)).toEqual([]);
-    expect(call).toBe(1);
+    const mockCapture = vi.fn(() => JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] }));
+    expect(() => getOllamaModelOptions(mockCapture, () => {})).toThrow(
+      /Could not read Ollama models from 127\.0\.0\.1:11434 after 3 attempts/,
+    );
+    expect(mockCapture).toHaveBeenCalledTimes(3);
   });
 
   it("prefers Ollama /api/tags over parsing the CLI list output", () => {
@@ -959,7 +963,12 @@ describe("local inference helpers", () => {
   });
 
   it("returns no installed ollama models when list output is empty", () => {
-    expect(getOllamaModelOptions(() => "")).toEqual([]);
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1 ? JSON.stringify({ models: [] }) : "";
+    };
+    expect(getOllamaModelOptions(mockCapture)).toEqual([]);
   });
 
   it("prefers the default ollama model when present", () => {
@@ -1000,13 +1009,16 @@ describe("local inference helpers", () => {
         totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB,
       }),
     ).toEqual(["qwen3.5:9b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
-    expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 10_000 }, () => "")).toBe(
-      "qwen3.5:9b",
-    );
+    expect(
+      getDefaultOllamaModel(
+        { type: "nvidia", totalMemoryMB: 10_000 },
+        emptyOllamaInventoryCapture(),
+      ),
+    ).toBe("qwen3.5:9b");
     expect(
       getDefaultOllamaModel(
         { type: "nvidia", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB },
-        () => "",
+        emptyOllamaInventoryCapture(),
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
@@ -1026,7 +1038,7 @@ describe("local inference helpers", () => {
     expect(
       getDefaultOllamaModel(
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
-        () => "",
+        emptyOllamaInventoryCapture(),
       ),
     ).toBe("qwen3.5:9b");
   });
@@ -1036,7 +1048,10 @@ describe("local inference helpers", () => {
     // Even though nemotron-3-nano:30b is installed, it does not fit a host
     // with only 12 GiB available — the selector must downgrade to a fitting
     // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
-    const installed = () => "qwen3.5:9b  abc  7 GB  now\nnemotron-3-nano:30b  def  19 GB  now";
+    const installed = () =>
+      JSON.stringify({
+        models: [{ name: "qwen3.5:9b" }, { name: "nemotron-3-nano:30b" }],
+      });
     expect(
       gdom({ type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }, installed),
     ).toBe("qwen3.5:9b");
@@ -1070,16 +1085,18 @@ describe("local inference helpers", () => {
     ).toBe("some-custom:model");
     expect(messages).toEqual([]);
 
-    // No explicit choice → falls through to getDefaultOllamaModel.
+    // No explicit choice uses the inventory the caller already discovered.
+    const capture = vi.fn(() => "");
     expect(
       resolveNonInteractiveOllamaModel(
         null,
         null,
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
-        log,
-        () => "",
+        [],
+        capture,
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("resolveNonInteractiveOllamaModel surfaces the no-fit warning when even the smallest model exceeds available memory", async () => {
@@ -1108,7 +1125,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
         log,
-        () => "",
+        emptyOllamaInventoryCapture(),
       ),
     ).toBe("qwen3.5:9b");
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
@@ -1122,7 +1139,10 @@ describe("local inference helpers", () => {
       }),
     ).toEqual(["qwen3.5:9b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
     expect(
-      getDefaultOllamaModel({ type: "apple", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB }, () => ""),
+      getDefaultOllamaModel(
+        { type: "apple", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB },
+        emptyOllamaInventoryCapture(),
+      ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
@@ -1135,9 +1155,12 @@ describe("local inference helpers", () => {
     expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB })).toEqual([
       "qwen3.5:9b",
     ]);
-    expect(getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB }, () => "")).toBe(
-      "qwen3.5:9b",
-    );
+    expect(
+      getDefaultOllamaModel(
+        { totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB },
+        emptyOllamaInventoryCapture(),
+      ),
+    ).toBe("qwen3.5:9b");
     expect(
       getBootstrapOllamaModelOptions({
         type: "generic",
@@ -1147,7 +1170,7 @@ describe("local inference helpers", () => {
     expect(
       getDefaultOllamaModel(
         { type: "generic", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB * 4 },
-        () => "",
+        emptyOllamaInventoryCapture(),
       ),
     ).toBe("qwen3.5:9b");
   });

@@ -87,8 +87,8 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // body for any request (validation in selectAndValidateOllamaModel requires
   // a successful tool-call response). The /api/tags response is shaped like
   // ollama's daemon and is consulted by validation helpers in inference/local.
-  // For the "stopped" case, the runner.runCapture stub returns "" for tags,
-  // which is what gates the wizard — the curl stub itself stays permissive.
+  // The runner stub below returns a valid empty inventory for the "stopped"
+  // case so model discovery can distinguish no models from a failed probe.
   const toolCallBody =
     '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
   // /api/generate body — validateOllamaModel parses this and looks for an
@@ -210,7 +210,9 @@ runner.runCapture = (command) => {
     return cmd.includes("ollama") ? "/usr/bin/ollama" : "";
   }
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
-    return ollamaRunning ? JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] }) : "";
+    return ollamaRunning
+      ? JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] })
+      : JSON.stringify({ models: [] });
   }
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("ollama list")) {

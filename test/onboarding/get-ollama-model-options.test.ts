@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   getOllamaModelOptions,
@@ -30,9 +30,14 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     resetOllamaHostCache();
   });
 
-  it("returns [] when resolved host is non-loopback and /api/tags is empty (no CLI fallback)", () => {
+  it("returns no models when the Windows host reports an empty inventory", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeCapture([]);
+    const { capture, calls } = makeCapture([
+      {
+        match: /\/api\/tags/,
+        output: JSON.stringify({ models: [] }),
+      },
+    ]);
     const models = getOllamaModelOptions(capture);
     expect(models).toEqual([]);
     expect(calls).toHaveLength(1);
@@ -71,5 +76,34 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const models = getOllamaModelOptions(capture);
     expect(models).toEqual(["qwen3.5:9b", "gemma2:9b"]);
     expect(calls.some((c) => c.argv.includes("list"))).toBe(false);
+  });
+
+  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const outputs = [
+      "",
+      "<html>proxy response</html>",
+      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
+    ];
+    const capture = vi.fn(() => outputs.shift() ?? "");
+    const sleeps: number[] = [];
+
+    const models = getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds));
+
+    expect(models).toEqual(["qwen3.5:9b"]);
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([500, 1_000]);
+  });
+
+  it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = vi.fn(() => "");
+    const sleeps: number[] = [];
+
+    expect(() =>
+      getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds)),
+    ).toThrow(/Could not read Ollama models from host\.docker\.internal:11434 after 3 attempts/);
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([500, 1_000]);
   });
 });
