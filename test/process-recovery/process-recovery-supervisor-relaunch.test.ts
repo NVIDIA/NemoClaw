@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
 import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/process-recovery.ts";
 import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
@@ -24,6 +28,12 @@ const MISSING_MANAGED_SUPERVISOR = {
   stdout: "",
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
+const TEST_TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-relaunch-"));
+
+function testHome(): string {
+  return fs.mkdtempSync(path.join(TEST_TEMP_ROOT, "case-"));
+}
+
 function pinnedIdentityRefusal(sandboxName: string) {
   return {
     status: 1,
@@ -35,6 +45,10 @@ function pinnedIdentityRefusal(sandboxName: string) {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+afterAll(() => {
+  fs.rmSync(TEST_TEMP_ROOT, { recursive: true, force: true });
 });
 
 function mockOpenClawSandbox(sandboxName: string, healthTimeoutSeconds = 30) {
@@ -505,6 +519,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
           dockerRun,
           dockerStart,
           dockerStop,
+          homedir: testHome,
         }),
     );
     const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(

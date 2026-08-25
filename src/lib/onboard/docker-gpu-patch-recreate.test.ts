@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { createDockerGpuInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import {
   getDockerGpuPatchFailureContext,
@@ -12,6 +16,15 @@ const OLD_CONTAINER_ID = "a".repeat(64);
 const NEW_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_IMAGE_ID = `sha256:${"d".repeat(64)}`;
 const RESTORED_CONTAINER_ID = "e".repeat(64);
+const RECREATE_TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-recreate-"));
+
+afterAll(() => {
+  fs.rmSync(RECREATE_TEST_ROOT, { recursive: true, force: true });
+});
+
+function testHome(): string {
+  return fs.mkdtempSync(path.join(RECREATE_TEST_ROOT, "case-"));
+}
 
 function dockerCaptureFixture() {
   const responses: Record<string, string> = {
@@ -66,6 +79,7 @@ describe("Docker GPU recreate orchestration", () => {
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
+        homedir: testHome,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
         detectSandboxFallbackDns: vi.fn(() => null),
@@ -154,6 +168,7 @@ describe("Docker GPU recreate orchestration", () => {
           runOpenshell: vi.fn((args: readonly string[]) =>
             args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
           ),
+          homedir: testHome,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),
@@ -173,6 +188,7 @@ describe("Docker GPU recreate orchestration", () => {
       oldContainerId: OLD_CONTAINER_ID,
       newContainerId: NEW_CONTAINER_ID,
       rollbackImageId: ROLLBACK_IMAGE_ID,
+      rollbackRecordRemoved: true,
       lastSandboxPhase: "Deleting",
       rolledBack: true,
     });

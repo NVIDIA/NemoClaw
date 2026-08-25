@@ -26,6 +26,10 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
@@ -52,11 +56,6 @@ import {
 } from "./docker-gpu-supervisor-reconnect";
 import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
 
-export {
-  restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
-  rollbackToBackupContainer,
-} from "./docker-gpu-patch-rollback";
-
 export type DockerGpuPatchFinalizeOptions =
   | {
       result: DockerGpuPatchResult;
@@ -75,6 +74,8 @@ export type DockerGpuPatchFinalizeOutcome = {
   rolledBack: boolean;
   rollbackImageId?: string;
   rollbackImageRemoved?: boolean;
+  rollbackRecordPath?: string;
+  rollbackRecordRemoved?: boolean;
   replacementStoppedForCommit?: boolean;
   replacementRestarted?: boolean;
   lifecycleReleaseObserved?: boolean;
@@ -88,10 +89,13 @@ export type DockerGpuPatchFinalizeOutcome = {
 type PostCommitRollbackPlan = {
   imageId: string;
   oldContainerId: string;
+  recordPath: string;
   runArgs: string[];
 };
 
 const DOCKER_IMAGE_ID = /^sha256:[0-9a-f]{64}$/iu;
+const ROLLBACK_RECORD_VERSION = 1;
+const REDACTED_RUN_VALUE_FLAGS = new Set(["--env", "--label"]);
 
 function removeRollbackImage(
   imageId: string,
@@ -101,8 +105,82 @@ function removeRollbackImage(
   return hasZeroDockerExitStatus(deps.dockerRun(["image", "rm", "--force", imageId], options));
 }
 
+function recoveryRunArgs(runArgs: readonly string[], imageId: string): string[] {
+  const imageIndex = runArgs.indexOf(imageId);
+  if (imageIndex < 0)
+    throw new Error("Docker rollback arguments do not include the rollback image.");
+  const persisted: string[] = [];
+  for (let index = 0; index < imageIndex; index += 1) {
+    const value = runArgs[index];
+    if (REDACTED_RUN_VALUE_FLAGS.has(value)) {
+      if (index + 1 >= imageIndex) {
+        throw new Error(`Docker rollback argument '${value}' has no value.`);
+      }
+      index += 1;
+      continue;
+    }
+    persisted.push(value);
+  }
+  return [...persisted, imageId];
+}
+
+function writeRollbackRecord(
+  sandboxName: string,
+  oldContainerId: string,
+  imageId: string,
+  runArgs: readonly string[],
+  deps: DockerGpuPatchDeps,
+): string | null {
+  const directory = path.join(
+    (deps.homedir ?? os.homedir)(),
+    ".nemoclaw",
+    "recovery",
+    "docker-gpu",
+  );
+  const recordPath = path.join(
+    directory,
+    `${encodeURIComponent(sandboxName)}-${oldContainerId.slice(0, 12)}.json`,
+  );
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(directory, 0o700);
+    fs.writeFileSync(
+      recordPath,
+      `${JSON.stringify(
+        {
+          version: ROLLBACK_RECORD_VERSION,
+          sandboxName,
+          rollbackImageId: imageId,
+          recoveryAction: {
+            command: "docker",
+            args: ["run", "--detach", ...recoveryRunArgs(runArgs, imageId)],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    fs.chmodSync(recordPath, 0o600);
+    return recordPath;
+  } catch {
+    return null;
+  }
+}
+
+function removeRollbackRecord(recordPath: string): boolean {
+  try {
+    fs.rmSync(recordPath, { force: true });
+    return !fs.existsSync(recordPath);
+  } catch {
+    return false;
+  }
+}
+
 function preparePostCommitRollback(
   result: DockerGpuPatchResult,
+  sandboxName: string,
+  deps: DockerGpuPatchDeps,
   resolved: ResolvedDockerGpuPatchRollbackDeps,
   options: Record<string, unknown>,
 ): PostCommitRollbackPlan | null {
@@ -129,14 +207,23 @@ function preparePostCommitRollback(
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
     cloneOptions.containerName = result.originalName;
     cloneOptions.image = imageId;
+    const runArgs = buildDockerGpuCloneRunArgs(
+      inspect,
+      buildDockerGpuMode("startup-command"),
+      cloneOptions,
+    );
+    const recordPath = writeRollbackRecord(sandboxName, oldContainerId, imageId, runArgs, deps);
+    if (!recordPath) {
+      if (!removeRollbackImage(imageId, resolved, options)) {
+        console.warn(`  Could not remove temporary Docker rollback image ${imageId}.`);
+      }
+      return null;
+    }
     return {
       imageId,
       oldContainerId,
-      runArgs: buildDockerGpuCloneRunArgs(
-        inspect,
-        buildDockerGpuMode("startup-command"),
-        cloneOptions,
-      ),
+      recordPath,
+      runArgs,
     };
   } catch {
     if (!removeRollbackImage(imageId, resolved, options)) {
@@ -156,6 +243,8 @@ function restorePostCommitRollback(
   | "rolledBack"
   | "rollbackImageId"
   | "rollbackImageRemoved"
+  | "rollbackRecordPath"
+  | "rollbackRecordRemoved"
   | "replacementStopConfirmed"
   | "replacementRemovalConfirmed"
   | "replacementPresence"
@@ -166,6 +255,8 @@ function restorePostCommitRollback(
       rolledBack: false,
       rollbackImageId: plan.imageId,
       rollbackImageRemoved: false,
+      rollbackRecordPath: plan.recordPath,
+      rollbackRecordRemoved: false,
       replacementStopConfirmed: false,
       replacementRemovalConfirmed: false,
       replacementPresence: "unknown",
@@ -180,10 +271,15 @@ function restorePostCommitRollback(
     restored !== null && hasZeroDockerExitStatus(restored)
       ? fullDockerContainerId(String(restored.stdout ?? ""))
       : null;
+  const rollbackRecordRemoved =
+    restoredContainerId !== null && removeRollbackRecord(plan.recordPath);
   return {
     rolledBack: restoredContainerId !== null,
     rollbackImageId: plan.imageId,
     rollbackImageRemoved: false,
+    ...(rollbackRecordRemoved
+      ? { rollbackRecordRemoved: true }
+      : { rollbackRecordPath: plan.recordPath, rollbackRecordRemoved: false }),
     ...removal,
   };
 }
@@ -264,7 +360,13 @@ export function finalizeDockerGpuPatchBackup(
         replacementStoppedForCommit: false,
       };
     }
-    const rollbackPlan = preparePostCommitRollback(options.result, resolved, containerOpts);
+    const rollbackPlan = preparePostCommitRollback(
+      options.result,
+      options.sandboxName,
+      deps,
+      resolved,
+      containerOpts,
+    );
     if (!rollbackPlan) {
       const replacementRestarted = hasZeroDockerExitStatus(
         resolved.dockerStart(options.result.newContainerId, containerOpts),
@@ -286,6 +388,7 @@ export function finalizeDockerGpuPatchBackup(
         resolved,
         containerOpts,
       );
+      const rollbackRecordRemoved = removeRollbackRecord(rollbackPlan.recordPath);
       const replacementRestarted = hasZeroDockerExitStatus(
         resolved.dockerStart(options.result.newContainerId, containerOpts),
       );
@@ -295,6 +398,9 @@ export function finalizeDockerGpuPatchBackup(
         ...(rollbackImageRemoved
           ? { rollbackImageRemoved: true }
           : { rollbackImageId: rollbackPlan.imageId, rollbackImageRemoved: false }),
+        ...(rollbackRecordRemoved
+          ? { rollbackRecordRemoved: true }
+          : { rollbackRecordPath: rollbackPlan.recordPath, rollbackRecordRemoved: false }),
         replacementStoppedForCommit: true,
         replacementRestarted,
         finalHandoffAcknowledged: false,
@@ -398,8 +504,12 @@ export function finalizeDockerGpuPatchBackup(
       };
     }
     const rollbackImageRemoved = removeRollbackImage(rollbackPlan.imageId, resolved, containerOpts);
+    const rollbackRecordRemoved = removeRollbackRecord(rollbackPlan.recordPath);
     if (!rollbackImageRemoved) {
       console.warn(`  Could not remove temporary Docker rollback image ${rollbackPlan.imageId}.`);
+    }
+    if (!rollbackRecordRemoved) {
+      console.warn(`  Could not remove Docker rollback record ${rollbackPlan.recordPath}.`);
     }
     return {
       backupRemoved: true,
@@ -407,6 +517,9 @@ export function finalizeDockerGpuPatchBackup(
       ...(rollbackImageRemoved
         ? { rollbackImageRemoved: true }
         : { rollbackImageId: rollbackPlan.imageId, rollbackImageRemoved: false }),
+      ...(rollbackRecordRemoved
+        ? { rollbackRecordRemoved: true }
+        : { rollbackRecordPath: rollbackPlan.recordPath, rollbackRecordRemoved: false }),
       replacementStoppedForCommit: true,
       replacementRestarted: true,
       lifecycleReleaseObserved: true,

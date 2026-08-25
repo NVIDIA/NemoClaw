@@ -25,7 +25,7 @@
 
 import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS, sleepSeconds } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
 
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
@@ -111,7 +111,7 @@ export function waitForOpenShellSandboxLifecycleRelease(
   deps: DockerLifecycleReleaseDeps,
 ): boolean {
   if (!deps.runOpenshell) return false;
-  const sleep = deps.sleep ?? defaultSleep;
+  const sleep = deps.sleep ?? sleepSeconds;
   const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
   const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
 
@@ -178,7 +178,7 @@ export function waitForOpenShellFinalHandoff(
   timeoutSecs: number,
   deps: DockerFinalHandoffDeps,
 ): DockerFinalHandoffAcknowledgement {
-  const sleep = deps.sleep ?? defaultSleep;
+  const sleep = deps.sleep ?? sleepSeconds;
   const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
   const deadline = Date.now() + boundedTimeoutSecs * 1000;
   const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
@@ -244,10 +244,6 @@ export function waitForOpenShellFinalHandoff(
   return { acknowledged: false, lastSandboxPhase };
 }
 
-function defaultSleep(seconds: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
-}
-
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function parseSandboxListFailurePhase(output: string, sandboxName: string): string | null {
@@ -283,7 +279,7 @@ export function waitForOpenShellSupervisorReconnect(
   deps: DockerGpuSupervisorReconnectDeps,
 ): boolean {
   if (!deps.runOpenshell) return false;
-  const sleep = deps.sleep ?? defaultSleep;
+  const sleep = deps.sleep ?? sleepSeconds;
   const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
   const errorPhaseDebouncePolls =
     deps.errorPhaseDebouncePolls == null || !Number.isFinite(deps.errorPhaseDebouncePolls)

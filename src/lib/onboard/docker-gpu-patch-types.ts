@@ -82,6 +82,8 @@ export type DockerGpuPatchFailureContext = {
   backupRemoved?: boolean;
   rollbackImageId?: string | null;
   rollbackImageRemoved?: boolean;
+  rollbackRecordPath?: string | null;
+  rollbackRecordRemoved?: boolean;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;

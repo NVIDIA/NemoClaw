@@ -529,6 +529,10 @@ export function createDockerGpuSandboxCreatePatch(
                     finalizeOutcome.rollbackImageId
                       ? ` Docker retained rollback image ${finalizeOutcome.rollbackImageId}.`
                       : ""
+                  }${
+                    finalizeOutcome.rollbackRecordPath
+                      ? ` Recovery action record: ${finalizeOutcome.rollbackRecordPath}.`
+                      : ""
                   }`
                 : ""
           }`,
@@ -543,6 +547,8 @@ export function createDockerGpuSandboxCreatePatch(
             backupRemoved: finalizeOutcome.backupRemoved,
             rollbackImageId: finalizeOutcome.rollbackImageId,
             rollbackImageRemoved: finalizeOutcome.rollbackImageRemoved,
+            rollbackRecordPath: finalizeOutcome.rollbackRecordPath,
+            rollbackRecordRemoved: finalizeOutcome.rollbackRecordRemoved,
             lastSandboxPhase: finalizeOutcome.lastSandboxPhase,
             replacementStopConfirmed: finalizeOutcome.replacementStopConfirmed,
             replacementRemovalConfirmed: finalizeOutcome.replacementRemovalConfirmed,

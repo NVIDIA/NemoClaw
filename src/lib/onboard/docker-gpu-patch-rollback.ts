@@ -13,7 +13,7 @@ import {
 import { retryUntil } from "../core/retry";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { fullDockerContainerId } from "./docker-gpu-patch-clone";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS, sleepSeconds } from "./docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 type DockerRunResult = {
@@ -34,12 +34,6 @@ type DockerRunFn = (args: readonly string[], opts?: DockerRunOptions) => DockerR
 
 const REPLACEMENT_PRESENCE_ATTEMPTS = 3;
 const REPLACEMENT_PRESENCE_RETRY_MS = 500;
-
-function sleepBeforeReplacementPresenceRetry(seconds: number): void {
-  if (seconds <= 0 || !Number.isFinite(seconds)) return;
-  const buffer = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buffer, 0, 0, seconds * 1000);
-}
 
 export type DockerGpuPatchRollbackOutcome = {
   rolledBack: boolean;
@@ -72,7 +66,7 @@ export function resolveDockerGpuPatchRollbackDeps(
     dockerRm: deps.dockerRm ?? defaultDockerRm,
     dockerRename: deps.dockerRename ?? defaultDockerRename,
     dockerStart: deps.dockerStart ?? defaultDockerStart,
-    sleep: deps.sleep ?? sleepBeforeReplacementPresenceRetry,
+    sleep: deps.sleep ?? sleepSeconds,
   };
 }
 

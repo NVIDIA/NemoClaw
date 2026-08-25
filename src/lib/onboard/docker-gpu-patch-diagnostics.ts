@@ -246,6 +246,13 @@ export function collectDockerGpuPatchDiagnostics(
     `backup_removed=${confirmationValue(context?.backupRemoved)}`,
     `rollback_image_id=${redactor.redactText(context?.rollbackImageId ?? "none")}`,
     `rollback_image_removed=${confirmationValue(context?.rollbackImageRemoved)}`,
+    `rollback_record_path=${redactor.redactText(context?.rollbackRecordPath ?? "none")}`,
+    `rollback_record_removed=${confirmationValue(context?.rollbackRecordRemoved)}`,
+    ...(context?.rollbackRecordPath
+      ? [
+          "rollback_recovery_action=After confirming the replacement container is absent, run the Docker recoveryAction from rollback_record_path.",
+        ]
+      : []),
     `last_openshell_phase=${redactor.redactText(context?.lastSandboxPhase ?? "unknown")}`,
     `rolled_back=${cleanupPendingRollback ? "pending" : context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     ...(context?.replacementStopConfirmed !== undefined

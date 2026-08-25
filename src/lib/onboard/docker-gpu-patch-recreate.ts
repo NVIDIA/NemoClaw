@@ -25,6 +25,7 @@ import {
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
+  sleepSeconds,
 } from "./docker-gpu-patch-constants";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
@@ -72,9 +73,7 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     dockerRm,
     dockerStart,
     dockerStop,
-    sleep: (seconds: number) => {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
-    },
+    sleep: sleepSeconds,
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
     probeContainerDns: (options) => probeContainerDns(options),
@@ -409,6 +408,8 @@ export function recreateOpenShellDockerSandboxContainer(
     context.backupRemoved = finalization.backupRemoved;
     context.rollbackImageId = finalization.rollbackImageId;
     context.rollbackImageRemoved = finalization.rollbackImageRemoved;
+    context.rollbackRecordPath = finalization.rollbackRecordPath;
+    context.rollbackRecordRemoved = finalization.rollbackRecordRemoved;
     context.replacementStopConfirmed = finalization.replacementStopConfirmed;
     context.replacementRemovalConfirmed = finalization.replacementRemovalConfirmed;
     context.replacementPresence = finalization.replacementPresence;
@@ -427,6 +428,10 @@ export function recreateOpenShellDockerSandboxContainer(
         ? ` Automatic rollback failed.${
             finalization.rollbackImageId
               ? ` Docker retained rollback image ${finalization.rollbackImageId}.`
+              : ""
+          }${
+            finalization.rollbackRecordPath
+              ? ` Recovery action record: ${finalization.rollbackRecordPath}.`
               : ""
           }`
         : "";
