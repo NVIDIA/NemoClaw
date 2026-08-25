@@ -227,7 +227,7 @@ describe("test registration boundary module selection", () => {
 
   it("selects an orphan suite module but exempts one imported by a test", () => {
     expect(isScannedModule("test/orphan-suite.ts")).toBe(true);
-    expect(isScannedModule("test/local-credential-helper-suite.ts", true)).toBe(false);
+    expect(isScannedModule("test/credentials/local-credential-helper-suite.ts", true)).toBe(false);
     expect(isScannedModule("test/openclaw-integrity-pin-suite.ts", true)).toBe(false);
   });
 

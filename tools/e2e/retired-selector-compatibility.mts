@@ -114,7 +114,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
         project: "cli",
       },
       {
-        files: ["test/rebuild-stale-recovery.test.ts"],
+        files: ["test/process-recovery/rebuild-stale-recovery.test.ts"],
         project: "integration",
       },
     ],

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
-} from ".././helpers/host-local-inference-receipt";
+} from "../helpers/host-local-inference-receipt";
 import { createSandboxHostLocalInferenceProvenance } from "../../src/lib/state/registry/host-local-inference";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-local-registry-test-"));

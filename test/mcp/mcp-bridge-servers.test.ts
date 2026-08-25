@@ -12,7 +12,7 @@ import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { MCP_BRIDGE_ALLOWED_METHODS } from "../../src/lib/actions/sandbox/mcp-bridge-policy";
-import { startTestProgress } from "./e2e/fixtures/progress.ts";
+import { startTestProgress } from "../e2e/fixtures/progress.ts";
 import {
   buildCloudflaredQuickTunnelArgs,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
@@ -21,7 +21,7 @@ import {
   startCompatibleMock,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
-} from "./e2e/live/mcp-bridge-servers";
+} from "../e2e/live/mcp-bridge-servers";
 
 const servers: StartedHttpServer[] = [];
 function progressProbe() {

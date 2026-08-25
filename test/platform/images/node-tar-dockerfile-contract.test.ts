@@ -14,7 +14,7 @@ import {
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
-} from "../.././helpers/dockerfile-run-commands";
+} from "../../helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const dockerfiles = [

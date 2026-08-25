@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { OwnedTestResources } from ".././helpers/owned-test-resources";
+import { OwnedTestResources } from "../helpers/owned-test-resources";
 
 function listen(server: net.Server, port = 0): Promise<number> {
   return new Promise((resolve) => {

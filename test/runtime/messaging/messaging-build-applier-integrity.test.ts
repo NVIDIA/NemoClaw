@@ -14,7 +14,7 @@ import {
   reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "../../helpers/timeouts";
-import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const original =
