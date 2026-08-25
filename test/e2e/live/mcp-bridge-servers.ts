@@ -788,7 +788,6 @@ export async function startFakeMcpHttpsServer(options: {
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
     const legacySession = legacySessionId ? legacySessions.get(legacySessionId) : undefined;
-    const body = await readRequestBody(req);
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
       : (req.headers.authorization ?? "");
@@ -798,6 +797,19 @@ export async function startFakeMcpHttpsServer(options: {
     const protocolVersion = Array.isArray(req.headers["mcp-protocol-version"])
       ? req.headers["mcp-protocol-version"].join(",")
       : (req.headers["mcp-protocol-version"] ?? "");
+    const recordedObservation: FakeMcpRequest = {
+      method: req.method ?? "",
+      path: requestPath,
+      auth,
+      body: "",
+      sessionId,
+      protocolVersion,
+      ...(legacySessionId ? { legacySessionId } : {}),
+      ...(legacySession ? { legacyPhase: legacySession.phase } : {}),
+    };
+    observations.push(recordedObservation);
+    const body = await readRequestBody(req);
+    recordedObservation.body = body;
     let parsedPayload: McpRequestPayload | null = null;
     try {
       parsedPayload = JSON.parse(body) as McpRequestPayload;
@@ -805,19 +817,10 @@ export async function startFakeMcpHttpsServer(options: {
       // The protocol error below handles malformed JSON after recording it.
     }
     const observedRequestId = jsonRpcId(parsedPayload?.id);
-    const recordedObservation: FakeMcpRequest = {
-      method: req.method ?? "",
-      path: requestPath,
-      auth,
-      body,
-      sessionId,
-      protocolVersion,
-      ...(legacySessionId ? { legacySessionId } : {}),
-      ...(legacySession ? { legacyPhase: legacySession.phase } : {}),
-      ...(observedRequestId !== undefined ? { rpcId: observedRequestId } : {}),
-      ...(typeof parsedPayload?.method === "string" ? { rpcMethod: parsedPayload.method } : {}),
-    };
-    observations.push(recordedObservation);
+    if (observedRequestId !== undefined) recordedObservation.rpcId = observedRequestId;
+    if (typeof parsedPayload?.method === "string") {
+      recordedObservation.rpcMethod = parsedPayload.method;
+    }
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
     // assertions continue to measure only attempted MCP traffic.

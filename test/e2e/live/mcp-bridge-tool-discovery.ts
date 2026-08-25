@@ -37,8 +37,8 @@ export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
   // The caller captures its observation offset after public-tunnel readiness.
-  // Every later request, including HEAD or malformed JSON without an
-  // rpcMethod, is a terminal product observation.
+  // Every later request arrival is terminal, including an incomplete body,
+  // HEAD, or malformed JSON without an rpcMethod.
   return requestsSinceAttempt.length === 0;
 }
 

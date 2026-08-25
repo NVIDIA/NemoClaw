@@ -607,10 +607,65 @@ describe("authenticated MCP discovery restart retry", () => {
 
     expect(restart).toHaveBeenCalledOnce();
     expect(assertDiscovery).toHaveBeenCalledTimes(2);
-    expect(artifacts.writeJson).toHaveBeenCalledWith(
-      DISCOVERY_RETRY_ARTIFACT,
-      expect.objectContaining({ finalOutcome: "failed-after-restart" }),
-    );
+    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attempt: 1,
+          requestCount: 0,
+          classification: "no-request-observed",
+          restartDecision: "restart-once",
+          outcome: "retrying",
+        },
+        {
+          attempt: 2,
+          requestCount: 0,
+          classification: "discovery-incomplete-after-restart",
+          restartDecision: "no-restart",
+          outcome: "failed",
+        },
+      ],
+      finalOutcome: "failed-after-restart",
+    });
+  });
+
+  it("records a restart failure without attempting a second restart", async () => {
+    const fakeMcp = fakeDiscoveryServer();
+    const restartFailure = new Error("bridge restart failed");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(new Error("first discovery failed"));
+    const restart = vi.fn().mockRejectedValueOnce(restartFailure);
+    const artifacts = discoveryArtifacts();
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        discoveryRestartOptions(restart, artifacts),
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(restartFailure);
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledOnce();
+    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attempt: 1,
+          requestCount: 0,
+          classification: "no-request-observed",
+          restartDecision: "restart-once",
+          outcome: "retrying",
+        },
+        {
+          attempt: 2,
+          requestCount: 0,
+          classification: "restart-failed",
+          restartDecision: "no-restart",
+          outcome: "failed",
+        },
+      ],
+      finalOutcome: "restart-failed",
+    });
   });
 });
 

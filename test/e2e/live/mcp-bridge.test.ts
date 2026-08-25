@@ -56,6 +56,7 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
@@ -668,19 +669,6 @@ async function rotateBridgeCredential(
   expectExitZero(restart, `${artifactPrefix} mcp credential rotation`);
 }
 
-async function restartBridgeWithoutHostSecret(
-  host: HostCliClient,
-  sandboxName: string,
-  artifactPrefix: string,
-): Promise<void> {
-  const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
-    artifactName: `${artifactPrefix}-mcp-restart-provider-reuse`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 12 * 60_000,
-  });
-  expectExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
-}
-
 async function rebuildWithoutMcpHostSecret(
   host: HostCliClient,
   sandboxName: string,
@@ -1148,7 +1136,9 @@ mcpBridgeShardTest("hermes")(
           artifacts,
           artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
           restart: async () => {
-            progress.event("Hermes MCP discovery did not reach the fixture; restarting once");
+            progress.event(
+              "Hermes initial MCP discovery classified no-request-observed after the post-tunnel offset; restarting once",
+            );
             await restartBridgeWithoutHostSecret(
               host,
               HERMES_SANDBOX_NAME,
