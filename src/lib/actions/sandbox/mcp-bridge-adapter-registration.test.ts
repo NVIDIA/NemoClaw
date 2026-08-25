@@ -9,6 +9,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
+  getSandbox: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
 }));
 
@@ -22,16 +23,18 @@ vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
+  getSandbox: mocks.getSandbox,
+}));
+
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   registerAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
-import {
-  entryHeaders,
-  mcporterHeadersMatchExpected,
-} from "./mcp-bridge-adapter-status";
+import { entryHeaders, mcporterHeadersMatchExpected } from "./mcp-bridge-adapter-status";
 
 const baseEntry: McpBridgeEntry = {
   server: "github",
@@ -93,6 +96,7 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     mocks.executeSandboxCommand.mockReset();
     mocks.executeGatewaySupervisorAction.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
+    mocks.getSandbox.mockReset();
   });
 
   it("re-reads the persisted definition before registration succeeds", () => {
@@ -124,6 +128,7 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
 describe("OpenClaw MCP adapter registration", () => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
+    mocks.getSandbox.mockReset();
   });
 
   it("rejects a v11 post-write observation after registering the readiness-proven v12", () => {
@@ -152,6 +157,75 @@ describe("OpenClaw MCP adapter registration", () => {
     );
     expect(mocks.executeSandboxCommand.mock.calls[2]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+  });
+});
+
+describe("Deep Agents MCP adapter credential revision", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+    mocks.getSandbox.mockReset();
+  });
+
+  it("writes and verifies the readiness-proven revision", () => {
+    const entry: McpBridgeEntry = {
+      ...baseEntry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config",
+    };
+    mocks.executeSandboxCommand.mockReturnValueOnce(commandSuccess).mockReturnValueOnce(registered);
+
+    expect(() =>
+      registerAgentAdapter(
+        "alpha",
+        "deepagents-config",
+        entry,
+        { GITHUB_TOKEN: "host-only-secret" },
+        { credentialRevision: "v12" },
+      ),
+    ).not.toThrow();
+
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(JSON.stringify(mocks.executeSandboxCommand.mock.calls)).not.toContain(
+      "host-only-secret",
+    );
+  });
+});
+
+describe("Hermes MCP adapter credential revision", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+    mocks.runOpenshellProviderCommand.mockReset();
+    mocks.getSandbox.mockReset();
+  });
+
+  it("writes and verifies the readiness-proven revision", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
+    mocks.executeSandboxCommand.mockReturnValue(registered);
+
+    expect(() =>
+      registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        { GITHUB_TOKEN: "host-only-secret" },
+        { credentialRevision: "v12" },
+      ),
+    ).not.toThrow();
+
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0])).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
+      "host-only-secret",
     );
   });
 });
