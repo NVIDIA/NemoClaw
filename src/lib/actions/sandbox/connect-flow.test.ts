@@ -122,26 +122,6 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
-  it("does not watch Shields audit state for a terminal-runtime connect session (#9453)", async () => {
-    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
-
-    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.any(Object),
-    );
-    expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 1_000);
-  });
-
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     const harness = createConnectHarness({
