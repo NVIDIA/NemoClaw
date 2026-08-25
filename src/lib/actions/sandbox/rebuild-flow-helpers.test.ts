@@ -202,6 +202,10 @@ describe("rebuild agent base image preflight", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-rebuild-test-"));
     let buildContext = root;
     vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/");
+    vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/");
+    vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/");
+    vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
     vi.stubEnv(cuaOverrideEnvVar, mutableRef);
     vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agent);
     vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
