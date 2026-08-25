@@ -137,7 +137,7 @@ export function qualifySandboxPolicyAuthority(
 type ProviderPolicyRequirements = {
   readonly gatewayName: string;
   readonly sandboxName: string | null;
-  readonly agent: AgentDefinition;
+  readonly agent: AgentDefinition | null;
   readonly selectedMessagingChannels: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly gpuPassthrough: boolean;
@@ -221,8 +221,8 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
   ) => void;
 } {
   const preflightPolicyRequirements = (requirements: ProviderPolicyRequirements): void => {
-    const sandboxName =
-      requirements.sandboxName ?? getDefaultSandboxNameForAgent(requirements.agent);
+    const agent = requirements.agent ?? runtime.agentDefs.loadAgent("openclaw");
+    const sandboxName = requirements.sandboxName ?? getDefaultSandboxNameForAgent(agent);
     const observed = runtime.inspectSandboxForCreate(sandboxName);
     qualifySandboxPolicyAuthority(
       {
@@ -236,7 +236,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         operation: requirements.operation,
         prepareRequiredPolicy: () =>
           prepareInitialSandboxCreatePolicy(
-            runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
+            runtime.agentOnboard.getAgentPolicyPath(agent) ??
               path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
             [...requirements.selectedMessagingChannels],
             {
@@ -246,10 +246,10 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
                 provider: requirements.provider,
                 hostLocalInferenceRouteOnly: requirements.hostLocalInferenceRouteOnly,
                 webSearchConfig: requirements.webSearchConfig,
-                agentName: requirements.agent.name,
+                agentName: agent.name,
                 observabilityEnabled: requirements.observabilityEnabled,
               }),
-              agentName: requirements.agent.name,
+              agentName: agent.name,
               policyTier: observed.existingEntry?.policyTier ?? policyTier,
               baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
             },

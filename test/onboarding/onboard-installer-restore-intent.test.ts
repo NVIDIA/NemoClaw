@@ -94,7 +94,7 @@ runner.runCapture = (command) => {
 registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false, policyAuthority: "nemoclaw-managed",
-  toolDisclosure: "progressive",
+  policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive",
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -292,9 +292,9 @@ const mutations = [];
 const sourceEntry = {
   name: "my-assistant",
   agent: "openclaw",
-  gpuEnabled: false,
+  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
   imageTag: "nemoclaw/my-assistant:1",
-  policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive",
+  toolDisclosure: "progressive",
 };
 const racedEntry =
   process.env.NEMOCLAW_TEST_REGISTRY_RACE === "removed"
@@ -423,7 +423,7 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({
   name: "my-assistant",
-  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
+  gpuEnabled: false,
   toolDisclosure: "progressive",
 });
 sandboxState.getLatestBackup = () => {

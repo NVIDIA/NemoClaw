@@ -10,11 +10,7 @@ import { describe, expect, it } from "vitest";
 // `unknown`-shaped so their runtime guards type-narrow correctly. Switching to
 // a named ESM import would break those neighbouring tests' narrowing.
 type OnboardRollbackInternals = {
-  buildOrphanedSandboxRollbackMessage: (
-    sandboxName: string,
-    err: unknown,
-    deleteSucceeded: boolean,
-  ) => string[];
+  buildOrphanedSandboxRollbackMessage: (sandboxName: string, err: unknown) => string[];
 };
 
 function isOnboardRollbackInternals(value: object | null): value is OnboardRollbackInternals {
@@ -35,35 +31,28 @@ if (!isOnboardRollbackInternals(onboardInternals)) {
 const { buildOrphanedSandboxRollbackMessage } = onboardInternals;
 
 describe("ghost-sandbox rollback message (#2174)", () => {
-  it("reports successful cleanup when delete returns 0", () => {
+  it("reports the surviving sandbox and manual identity-checked cleanup", () => {
     const lines = buildOrphanedSandboxRollbackMessage(
       "alpha",
       new Error("All dashboard ports in range 18789-18798 are occupied"),
-      true,
     );
     expect(lines[0]).toBe("");
     expect(lines).toContain("  Could not allocate a dashboard port for 'alpha'.");
     expect(lines).toContain("  All dashboard ports in range 18789-18798 are occupied");
     expect(lines).toContain(
-      "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
     );
-    expect(lines.some((l: string) => l.includes("Manual cleanup"))).toBeFalsy();
-  });
-
-  it("falls back to manual-cleanup guidance when delete fails", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("beta", new Error("range exhausted"), false);
-    expect(lines).toContain("  Could not remove the orphaned sandbox. Manual cleanup:");
-    expect(lines).toContain('    openshell sandbox delete "beta"');
-    expect(lines.some((l: string) => l.includes("orphaned sandbox has been removed"))).toBeFalsy();
+    expect(lines).toContain("  Verify the sandbox identity, then clean up manually:");
+    expect(lines).toContain('    openshell sandbox delete "alpha"');
   });
 
   it("renders non-Error throwables via String coercion", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("gamma", "raw string failure", true);
+    const lines = buildOrphanedSandboxRollbackMessage("gamma", "raw string failure");
     expect(lines).toContain("  raw string failure");
   });
 
   it("escapes the sandbox name into the manual-cleanup command exactly", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("weird-name_42", new Error("oops"), false);
+    const lines = buildOrphanedSandboxRollbackMessage("weird-name_42", new Error("oops"));
     expect(lines).toContain('    openshell sandbox delete "weird-name_42"');
   });
 });

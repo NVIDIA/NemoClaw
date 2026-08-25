@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { qualifySandboxPolicyAuthority, requiredOnboardPolicyPresets } from "./preflight";
+import { loadAgent } from "../../agent/defs";
+import {
+  createOnboardPolicyAuthorityBindings,
+  qualifySandboxPolicyAuthority,
+  requiredOnboardPolicyPresets,
+} from "./preflight";
 
 const requiredPolicy = {
   policyPath: "/tmp/unused.yaml",
@@ -14,6 +19,52 @@ const requiredPolicy = {
 };
 
 describe("sandbox policy authority preflight", () => {
+  it("normalizes the default OpenClaw agent at the production policy binding (#9833)", () => {
+    const inspectSandboxForCreate = vi.fn(() => ({ existingEntry: null, liveExists: false }));
+    const loadDefaultAgent = vi.fn((name: string) => loadAgent(name));
+    const bindings = createOnboardPolicyAuthorityBindings(
+      {
+        GATEWAY_NAME: "nemoclaw-18080",
+        ROOT: "/unused",
+        agentDefs: { loadAgent: loadDefaultAgent },
+        agentOnboard: { getAgentPolicyPath: vi.fn(() => null) },
+        inspectSandboxForCreate,
+        onboardSession: {
+          loadSession: () => null,
+          updateSession: (mutator) => {
+            const session: { policyAuthority?: "nemoclaw-managed" | "externally-managed" } = {};
+            mutator(session);
+            return session;
+          },
+        },
+      },
+      null,
+      {
+        inspectGlobalPolicyAuthority: () => ({
+          authority: "nemoclaw-managed",
+          effectivePolicy: {},
+        }),
+      },
+    );
+
+    expect(() =>
+      bindings.preflightPolicyRequirements({
+        gatewayName: "nemoclaw-18080",
+        sandboxName: null,
+        agent: null,
+        selectedMessagingChannels: [],
+        hermesToolGateways: [],
+        gpuPassthrough: false,
+        provider: null,
+        webSearchConfig: null,
+        observabilityEnabled: false,
+        operation: "select an inference provider",
+      }),
+    ).not.toThrow();
+    expect(loadDefaultAgent).toHaveBeenCalledExactlyOnceWith("openclaw");
+    expect(inspectSandboxForCreate).toHaveBeenCalledExactlyOnceWith("my-assistant");
+  });
+
   it("includes every final selected policy requirement (#9833)", () => {
     expect(
       requiredOnboardPolicyPresets({

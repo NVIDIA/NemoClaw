@@ -157,7 +157,7 @@ describe("shields policy transition", () => {
     });
 
     expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
-      /does not match.*canonical JSON SHA-256 [a-f0-9]{64}; network policy keys: test/su,
+      /does not match.*canonical JSON SHA-256 [a-f0-9]{64}; network policy keys: "test"/su,
     );
     expect(runSpy).not.toHaveBeenCalled();
 
@@ -179,7 +179,7 @@ describe("shields policy transition", () => {
         inspection: { ...matchingExternalAuthority.inspection, authority: "nemoclaw-managed" },
       });
     expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
-      /Policy authority changed.*canonical JSON SHA-256 [a-f0-9]{64}/su,
+      /Policy authority changed.*canonical JSON SHA-256 [a-f0-9]{64}.*Stop without applying.*Restore the recorded externally managed authority.*NemoClaw will not change policy authority/su,
     );
   });
 

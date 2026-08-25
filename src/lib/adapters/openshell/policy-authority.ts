@@ -20,7 +20,7 @@ import {
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../policy/merge";
-import { captureResolvedOpenshellCommand } from "./runtime";
+import { runCaptureEx } from "./runtime";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -153,7 +153,7 @@ function capturePolicyQuery(
 export function inspectSandboxPolicyAuthority({
   sandboxName,
   gatewayName,
-  runCaptureEx = captureResolvedOpenshellCommand,
+  runCaptureEx: capture = runCaptureEx,
 }: SandboxPolicyAuthorityInspectionOptions): SandboxPolicyAuthorityInspection {
   const validatedSandboxName = validatePolicyAuthorityName(sandboxName, "sandbox name");
   const validatedGatewayName =
@@ -162,7 +162,7 @@ export function inspectSandboxPolicyAuthority({
       : validatePolicyAuthorityName(gatewayName, "gateway name");
   const { stdout: raw } = capturePolicyQuery(
     buildPolicyGetFullJsonCommand(validatedSandboxName, validatedGatewayName),
-    runCaptureEx,
+    capture,
     "sandbox",
     "machine-readable policy",
   );
@@ -179,7 +179,7 @@ export function inspectSandboxPolicyAuthority({
 /** Inspect whether an active global policy will manage a sandbox created next. */
 export function inspectGlobalPolicyAuthority({
   gatewayName,
-  runCaptureEx = captureResolvedOpenshellCommand,
+  runCaptureEx: capture = runCaptureEx,
 }: GlobalPolicyAuthorityInspectionOptions = {}): SandboxPolicyAuthorityInspection {
   const validatedGatewayName =
     gatewayName === undefined
@@ -187,7 +187,7 @@ export function inspectGlobalPolicyAuthority({
       : validatePolicyAuthorityName(gatewayName, "gateway name");
   const { stdout: history } = capturePolicyQuery(
     buildGlobalPolicyListCommand(validatedGatewayName),
-    runCaptureEx,
+    capture,
     "global",
     "policy history",
   );
@@ -196,7 +196,7 @@ export function inspectGlobalPolicyAuthority({
   }
   const { stdout: raw } = capturePolicyQuery(
     buildGlobalPolicyGetFullJsonCommand(validatedGatewayName),
-    runCaptureEx,
+    capture,
     "global",
     "machine-readable policy",
   );

@@ -127,8 +127,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Result>(input: {
   readonly captureCreatedSandboxLiveIdentity: (created: Result) => string;
   readonly observeCreatedSandbox: () => SandboxRecreateObservation;
   readonly cleanupTemporarySources: () => void;
-  readonly deleteCreatedSandbox: () => void | Promise<void>;
-  readonly waitForCreatedSandboxAbsence: () => boolean | Promise<boolean>;
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   const created = await input.create();
@@ -173,32 +171,9 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Result>(input: {
               `Cannot safely remove sandbox '${input.sandboxName}' after policy authority validation failed because its live identity changed. NemoClaw left the replacement in place.`,
             );
           }
-          await input.deleteCreatedSandbox();
-          let absenceProven: boolean;
-          try {
-            absenceProven = await input.waitForCreatedSandboxAbsence();
-          } catch (error) {
-            throw new Error(
-              `OpenShell accepted deletion of sandbox '${input.sandboxName}', but exact absence remained ambiguous.`,
-              { cause: error },
-            );
-          }
-          if (!absenceProven) {
-            const afterDelete = input.observeCreatedSandbox();
-            if (afterDelete.state !== "missing") {
-              if (
-                afterDelete.liveIdentityFingerprint &&
-                afterDelete.liveIdentityFingerprint !== createdLiveIdentityFingerprint
-              ) {
-                throw new Error(
-                  `OpenShell accepted deletion of sandbox '${input.sandboxName}', but the name now identifies a replacement. NemoClaw left the replacement in place.`,
-                );
-              }
-              throw new Error(
-                `OpenShell accepted deletion of sandbox '${input.sandboxName}', but exact absence was not proven. NemoClaw left the remaining sandbox in place.`,
-              );
-            }
-          }
+          throw new Error(
+            `Cannot safely remove sandbox '${input.sandboxName}' after policy authority validation failed because OpenShell deletion targets its mutable name rather than the captured identity. NemoClaw left the created sandbox in place for manual identity-checked cleanup.`,
+          );
         }
       } catch (error) {
         compensationErrors.push(error);
@@ -447,7 +422,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       validateName,
       verifyDirectSandboxGpu,
       waitForSandboxRecreateDeleteAbsence,
-      wasSandboxDefault,
       updateReusedSandboxMetadata,
       getSandboxInferenceConfig,
       redact,
@@ -711,27 +685,32 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
-      onboardSession,
-      createIntent?.recreateTransaction,
-      sandboxName,
-      GATEWAY_NAME,
-      existingEntry,
-      getSandboxRecreateObservation,
-      note,
-    );
-    applyAbsentSandboxRebuildPolicyCarryForward(
-      {
-        sandboxName,
-        liveExists,
-        policyAuthority: resolvedPolicyAuthority,
-        nonInteractive: isNonInteractive(),
-        note,
-        rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-        revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
-      },
-      policyPresetCarry.applyRecreatePolicyCarryForward,
-    );
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            policyAuthority: resolvedPolicyAuthority,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+            revalidatePolicyAuthority: (operation) =>
+              revalidatePolicyAuthority(false, operation),
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
@@ -751,15 +730,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         releaseDashboardPort: dashboardPortReservationScope.release,
         revalidatePolicyRequirements: (operation) => revalidatePolicyAuthority(true, operation),
       }));
+      note(`  [reuse] Skipping sandbox (${sandboxName})`);
     };
     if (recreateRuntime.acceptedTarget) {
       await restoreReusedSandboxDashboard(true);
       return sandboxName;
     }
-    // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
-    const sandboxWasLiveDefault =
-      liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
-
     let pendingStateRestore: BackupResult | null = null;
     let notReadyRecreateInProgress = false;
     const customOpenClawImage =
@@ -940,9 +916,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   "  [non-interactive] Set NEMOCLAW_RECREATE_SANDBOX=1 (or --recreate-sandbox) to force recreation.",
                 );
               } else {
-                note(
-                  `  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`,
-                );
                 note(
                   "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
                 );
@@ -1365,24 +1338,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             .lifecycleLiveIdentityFingerprint,
         observeCreatedSandbox: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        deleteCreatedSandbox: () => {
-          const deleteResult = hermesPortableReadyRunner
-            ? hermesPortableReadyRunner(["sandbox", "delete", sandboxName], {
-                ignoreError: true,
-                suppressOutput: true,
-              })
-            : runOpenshell(["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName], {
-                ignoreError: true,
-                suppressOutput: true,
-              });
-          if (deleteResult.status !== 0) {
-            throw new Error(
-              `OpenShell did not remove sandbox '${sandboxName}' after final policy authority validation failed.`,
-            );
-          }
-        },
-        waitForCreatedSandboxAbsence: () =>
-          waitForSandboxRecreateDeleteAbsence(sandboxName, GATEWAY_NAME, note),
         create: () =>
           sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
@@ -1493,6 +1448,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesDashboardForwarding.ensureForState,
       managedWorkloadRuntime,
       preparedSandboxWorkload,
+      inferenceRouteReservationAuthority?.sessionId ?? null,
       note,
     );
     const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
@@ -1618,13 +1574,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     return completeOrdinaryOnboardSandboxCreation(
       {
         sandboxName,
-        sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
         liveExists,
       },
       {
-        setDefault: registry.setDefault,
         runFile,
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,

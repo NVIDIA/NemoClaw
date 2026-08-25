@@ -13,7 +13,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -23,8 +30,10 @@ import YAML from "yaml";
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
+import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
+import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-external-target-boundary.cjs";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -61,6 +70,14 @@ const {
   parseSandboxPolicyAuthorityMetadata,
   withoutProviderComposedPolicies,
 } = sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
+
+const sourceOrGeneratedOpenShellExternalTargetBoundary =
+  importedOpenShellExternalTargetBoundary as typeof importedOpenShellExternalTargetBoundary & {
+    default?: typeof importedOpenShellExternalTargetBoundary;
+  };
+const { buildSanitizedExternalOpenShellTargetPlan } =
+  sourceOrGeneratedOpenShellExternalTargetBoundary.default ??
+  sourceOrGeneratedOpenShellExternalTargetBoundary;
 
 // sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
@@ -349,7 +366,12 @@ function isBlueprint(value: unknown): value is Blueprint {
   if (!isOptionalString(value.version)) {
     return false;
   }
-
+  if (
+    !isOptionalString(value.min_openshell_version) ||
+    !isOptionalString(value.max_openshell_version)
+  ) {
+    return false;
+  }
   const components = value.components;
   if (components === undefined) {
     return true;
@@ -499,6 +521,11 @@ type InferenceProfileMap = { [profileName: string]: InferenceProfile };
 
 interface Blueprint {
   version?: string;
+  min_openshell_version?: string;
+  max_openshell_version?: string;
+  min_openclaw_version?: unknown;
+  profiles?: unknown;
+  openshell_target?: unknown;
   components?: {
     inference?: {
       profiles?: InferenceProfileMap;
@@ -889,6 +916,12 @@ export interface RunPlan {
   dry_run: boolean;
 }
 
+export interface ExternalOpenShellTargetRunPlan {
+  run_id: string;
+  openshell_target: SanitizedExternalOpenShellTargetPlan;
+  dry_run: boolean;
+}
+
 interface SafeInferencePlan {
   provider_type: string | undefined;
   provider_name: string | undefined;
@@ -1169,6 +1202,11 @@ export async function actionPlan(
   blueprint: Blueprint,
   options?: { dryRun?: boolean; endpointUrl?: string },
 ): Promise<RunPlan> {
+  if (blueprint.openshell_target !== undefined) {
+    throw new Error(
+      "External OpenShell targets use the target-only plan path until typed readiness and inventory are available.",
+    );
+  }
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
@@ -1201,6 +1239,43 @@ export async function actionPlan(
   return plan;
 }
 
+export function actionExternalOpenShellTargetPlan(
+  blueprint: Blueprint,
+  options?: { dryRun?: boolean },
+): ExternalOpenShellTargetRunPlan {
+  if (blueprint.openshell_target === undefined) {
+    throw new Error("blueprint does not declare an external OpenShell target");
+  }
+  if (
+    blueprint.min_openshell_version === undefined ||
+    blueprint.max_openshell_version === undefined
+  ) {
+    throw new Error(
+      "External OpenShell target planning requires blueprint min_openshell_version and max_openshell_version.",
+    );
+  }
+  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
+    if (blueprint[field] !== undefined) {
+      throw new Error(`External OpenShell target planning does not accept '${field}'.`);
+    }
+  }
+
+  const rid = emitRunId();
+  progress(10, "Validating external OpenShell target");
+  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(blueprint.openshell_target, {
+    minVersion: blueprint.min_openshell_version,
+    maxVersion: blueprint.max_openshell_version,
+  });
+  const plan: ExternalOpenShellTargetRunPlan = {
+    run_id: rid,
+    openshell_target: targetPlan,
+    dry_run: options?.dryRun ?? false,
+  };
+  progress(100, "External target plan complete");
+  log(JSON.stringify(plan, null, 2));
+  return plan;
+}
+
 export async function actionApply(
   profile: string,
   blueprint: Blueprint,
@@ -1214,6 +1289,12 @@ export async function actionApply(
   if (options?.planPath) {
     throw new Error(
       "--plan is not yet implemented. Run apply without --plan to use the live blueprint.",
+    );
+  }
+
+  if (blueprint.openshell_target !== undefined) {
+    throw new Error(
+      "External OpenShell target apply is not available until typed readiness and inventory are implemented.",
     );
   }
 
@@ -1714,31 +1795,55 @@ export function actionStatus(rid?: string): void {
   }
 
   const name = runDir.split("/").pop() ?? "unknown";
-  try {
-    const planData = readFileSync(join(runDir, "plan.json"), "utf-8");
-    const parsedPlan: unknown = JSON.parse(planData);
-    const safePlan = buildStatusRunPlan(parsedPlan, name);
-    if (!safePlan) {
-      throw new Error("plan.json must contain a JSON object");
-    }
-    log(JSON.stringify(safePlan, null, 2));
-  } catch (error) {
+  const planFile = join(runDir, "plan.json");
+  const unknownStatus = (
+    receiptErrorKind: "corrupt" | "inaccessible" | "invalid" | "missing",
+    error: unknown,
+  ): void => {
     const detail = boundedCommandError(error instanceof Error ? error.message : String(error));
     log(
       JSON.stringify(
         {
           run_id: name,
           status: "unknown",
+          receipt_error_kind: receiptErrorKind,
           receipt_error: detail,
           run_directory: runDir,
           recovery:
-            "Restore a complete plan.json receipt in this run directory before running reconcile or rollback.",
+            "Do not reconstruct plan.json. Reconcile and rollback remain disabled. Recover the original receipt from a trusted copy produced by this exact run, then ask a NemoClaw maintainer to validate its run ID, sandbox ownership, provider ownership, and policy transition before using it. If no trusted copy exists, stop and ask a NemoClaw maintainer for recovery direction.",
         },
         null,
         2,
       ),
     );
+  };
+
+  if (!existsSync(planFile)) {
+    unknownStatus("missing", new Error("plan.json is missing"));
+    return;
   }
+  let planData: string;
+  try {
+    planData = readFileSync(planFile, "utf-8");
+  } catch (error) {
+    const code = isPlainObject(error) && typeof error.code === "string" ? error.code : undefined;
+    unknownStatus(code === "ENOENT" ? "missing" : "inaccessible", error);
+    return;
+  }
+
+  let parsedPlan: unknown;
+  try {
+    parsedPlan = JSON.parse(planData);
+  } catch (error) {
+    unknownStatus("corrupt", error);
+    return;
+  }
+  const safePlan = buildStatusRunPlan(parsedPlan, name);
+  if (!safePlan) {
+    unknownStatus("invalid", new Error("plan.json must contain a valid run receipt"));
+    return;
+  }
+  log(JSON.stringify(safePlan, null, 2));
 }
 
 export async function actionReconcile(rid: string): Promise<void> {
@@ -1930,6 +2035,7 @@ export async function main(
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
+  let profileProvided = false;
   let planPath: string | undefined;
   let runId: string | undefined;
   let dryRun = false;
@@ -1954,6 +2060,7 @@ export async function main(
     switch (argv[i]) {
       case "--profile":
         profile = requireValue("--profile", ++i);
+        profileProvided = true;
         break;
       case "--plan":
         planPath = requireValue("--plan", ++i);
@@ -1973,7 +2080,21 @@ export async function main(
   switch (action) {
     case "plan": {
       const blueprint = loadBlueprint();
-      await actionPlan(profile, blueprint, { dryRun, endpointUrl });
+      if (blueprint.openshell_target !== undefined) {
+        if (profileProvided) {
+          throw new Error(
+            "--profile configures managed inference and is not accepted by external target-only planning.",
+          );
+        }
+        if (endpointUrl !== undefined) {
+          throw new Error(
+            "--endpoint-url configures inference and is not accepted by external target-only planning.",
+          );
+        }
+        actionExternalOpenShellTargetPlan(blueprint, { dryRun });
+      } else {
+        await actionPlan(profile, blueprint, { dryRun, endpointUrl });
+      }
       break;
     }
     case "apply": {

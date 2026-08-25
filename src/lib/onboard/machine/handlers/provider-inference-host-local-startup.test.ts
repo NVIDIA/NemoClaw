@@ -502,7 +502,7 @@ describe("provider inference host-local startup selection", () => {
         expect.objectContaining({
           provider,
           hostLocalInferenceRouteOnly: true,
-          operation: "finish successful inference configuration",
+          operation: "record successful inference configuration",
         }),
       );
       expect(result).toMatchObject({

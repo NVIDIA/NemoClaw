@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
@@ -23,6 +24,7 @@ import {
 } from "../adapters/openshell/policy-authority";
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
+import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -53,11 +55,7 @@ import {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
-import {
-  inspectGatewayPresetNames,
-  inspectPresetContentGatewayState,
-  policyValuesEqual,
-} from "./gateway-state";
+import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
@@ -419,7 +417,7 @@ function getPresetValidationWarning(presetName: string): string | null {
   if (!label) return null;
   const lines = [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
-    `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
+    `To actually enable ${label} messaging, re-run '${CLI_NAME} onboard' and select ${label}`,
     "in the messaging channels step. Channel setup, pairing, and runtime",
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
@@ -498,7 +496,7 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 // whyNotSourceFix: NemoClaw supports CLI releases whose process output is the
 // only available boundary, including versionless network_policies bodies.
 // regressionTest: nemoclaw/src/shared/openshell-policy-boundary.test.ts and
-// test/policy-mutation-read-failure.test.ts.
+// test/runtime/policy/policy-mutation-read-failure.test.ts.
 // removalCondition: remove this fail-soft adapter when every caller consumes a
 // typed OpenShell policy API.
 function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
@@ -678,11 +676,7 @@ export function inspectPolicyMutationAuthority(
   const { gatewayName, inspection } = live.authority;
   if (sandbox?.policyAuthority !== undefined) {
     try {
-      assertRecordedPolicyAuthority(
-        sandbox.policyAuthority,
-        inspection.authority,
-        operation,
-      );
+      assertRecordedPolicyAuthority(sandbox.policyAuthority, inspection.authority, operation);
     } catch (error) {
       if (
         sandbox.policyAuthority === "externally-managed" ||
@@ -785,9 +779,6 @@ export function rejectFinalPolicySetResult(
   }
 }
 
-const inspectPolicyAuthority = inspectPolicyMutationAuthority;
-type PolicyAuthorityContext = PolicyMutationAuthority;
-
 function reportPolicyAuthorityFailure(error: unknown): false {
   console.error(`  ${policyAuthorityError(error)}`);
   return false;
@@ -797,9 +788,9 @@ function inspectNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
   gatewayName?: string,
-): PolicyAuthorityContext | null {
+): PolicyMutationAuthority | null {
   try {
-    const context = inspectPolicyAuthority(sandboxName, operation, gatewayName);
+    const context = inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
     assertNemoClawManagedPolicy(context, operation);
     return context;
   } catch (error) {
@@ -812,7 +803,7 @@ function inspectNemoClawManagedPolicy(
 function recheckNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
-  authority: PolicyAuthorityContext,
+  authority: PolicyMutationAuthority,
 ): boolean {
   try {
     recheckPolicyMutationAuthority(sandboxName, operation, authority);
@@ -909,12 +900,16 @@ function setPolicyDocument(
     gatewayName?: string;
   } = {},
 ): boolean {
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, "set the sandbox policy", options.gatewayName);
+    authority = inspectPolicyMutationAuthority(
+      sandboxName,
+      "set the sandbox policy",
+      options.gatewayName,
+    );
     assertNemoClawManagedPolicy(authority, "set the sandbox policy");
     if (authority.authorityRecordedNow) {
-      authority = inspectPolicyAuthority(
+      authority = inspectPolicyMutationAuthority(
         sandboxName,
         "set the sandbox policy",
         authority.gatewayName,
@@ -1058,7 +1053,7 @@ function normalizePersonalOpenInternetPolicy(policyContent: string): string {
   if (
     !isPolicyObject(personalEntry) ||
     !isPolicyObject(reviewedEntry) ||
-    !policyValuesEqual(personalEntry, reviewedEntry)
+    !isDeepStrictEqual(personalEntry, reviewedEntry)
   ) {
     throw new Error(
       `Cannot compose Personal policy: reserved network policy key '${PERSONAL_OPEN_INTERNET_POLICY_KEY}' does not match the reviewed built-in preset.`,
@@ -1127,7 +1122,7 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
     const presentEntries = expectedEntries.filter(([key]) => Object.hasOwn(current, key));
     if (presentEntries.length === 0) return "absent";
     return expectedEntries.every(
-      ([key, value]) => Object.hasOwn(current, key) && policyValuesEqual(current[key], value),
+      ([key, value]) => Object.hasOwn(current, key) && isDeepStrictEqual(current[key], value),
     )
       ? "match"
       : "drift";
@@ -1138,7 +1133,7 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
 
 function policyDocumentsMatch(left: string, right: string): boolean {
   try {
-    return policyValuesEqual(YAML.parse(left), YAML.parse(right));
+    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
   } catch {
     return false;
   }
@@ -1269,12 +1264,12 @@ function activateOpenClawNpmCompatibility(
   const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
   const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, reviewed.preset);
   const currentNpmEntry = networkPolicies[OPENCLAW_NPM_PRESET_KEY];
-  if (!isPolicyObject(currentNpmEntry) || !policyValuesEqual(currentNpmEntry, reviewed.preset)) {
+  if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
     throw new Error(
       `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': the resulting entry differs from the reviewed npm preset.`,
     );
   }
-  if (policyValuesEqual(currentBaselineEntry, compatibilityEntry)) {
+  if (isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
     if (!npmWasActive) {
       throw new Error(
         `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': found a compatibility overlay without an active npm preset.`,
@@ -1282,7 +1277,7 @@ function activateOpenClawNpmCompatibility(
     }
     return { policy: policyContent, widenedBaseline: false };
   }
-  if (!policyValuesEqual(currentBaselineEntry, reviewed.baseline)) {
+  if (!isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) {
     throw new Error(
       `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from the reviewed baseline.`,
     );
@@ -1314,7 +1309,7 @@ function restoreOpenClawNpmCompatibility(
   }
 
   const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
-  if (policyValuesEqual(currentBaselineEntry, reviewed.baseline)) return updatedPolicy;
+  if (isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) return updatedPolicy;
 
   const currentNpmEntry = current.network_policies[OPENCLAW_NPM_PRESET_KEY];
   if (!isPolicyObject(currentNpmEntry)) {
@@ -1323,7 +1318,7 @@ function restoreOpenClawNpmCompatibility(
     );
   }
   const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
-  if (!policyValuesEqual(currentBaselineEntry, compatibilityEntry)) {
+  if (!isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
     throw new Error(
       `Cannot remove '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from both the reviewed baseline and active compatibility overlay.`,
     );
@@ -1386,14 +1381,14 @@ function getOpenClawNpmCompatibilityState(
     if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) return null;
     const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
     const currentNpmEntry = parsed.network_policies[OPENCLAW_NPM_PRESET_KEY];
-    if (!isPolicyObject(currentNpmEntry) || !policyValuesEqual(currentNpmEntry, reviewed.preset)) {
+    if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
       return "drift";
     }
-    if (policyValuesEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], reviewed.baseline)) {
+    if (isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], reviewed.baseline)) {
       return "repair";
     }
     const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
-    return policyValuesEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], compatibilityEntry)
+    return isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], compatibilityEntry)
       ? "match"
       : "drift";
   } catch {
@@ -1943,7 +1938,7 @@ function reconcileBaselineExclusionTransition(
     const committed = registry
       .getBaselineExclusions(sandboxName)
       .find((entry) => entry.key === transition.exclusion.key);
-    if (!committed || !policyValuesEqual(committed, transition.exclusion)) {
+    if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
       console.error(
         `  The durable exclusion for '${key}' changed during the pending restore. The journal was preserved; inspect registry intent before retrying.`,
       );
@@ -2032,7 +2027,7 @@ function restoreTransitionCanFinalize(
   const committed = registry
     .getBaselineExclusions(sandboxName)
     .find((entry) => entry.key === transition.exclusion.key);
-  if (!committed || !policyValuesEqual(committed, transition.exclusion)) {
+  if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
     console.error(
       `  The durable exclusion for '${transition.exclusion.key}' no longer matches the pending restore. The journal was preserved; rebuild remains blocked.`,
     );
@@ -2601,9 +2596,9 @@ function applyPresetContent(
     return false;
   }
   const operation = `apply policy preset '${presetName}'`;
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -2880,9 +2875,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   const operation = "apply policy presets";
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -3318,7 +3313,7 @@ async function selectFromList(
     // path (`policy add <preset>`) re-applies edited presets (#7323).
     process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
     process.stderr.write(
-      `  If its preset file changed, run 'nemoclaw <sandbox> policy add ${item.name}' to re-apply it.\n`,
+      `  If its preset file changed, run '${CLI_NAME} <sandbox> policy add ${item.name}' to re-apply it.\n`,
     );
     return null;
   }
@@ -3364,7 +3359,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   const operation = "apply the permissive sandbox policy";
-  const authority = inspectPolicyAuthority(sandboxName, operation);
+  const authority = inspectPolicyMutationAuthority(sandboxName, operation);
   assertNemoClawManagedPolicy(authority, operation);
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
@@ -3381,7 +3376,12 @@ function applyPermissivePolicy(sandboxName: string): void {
   assertOpenshellResolvable();
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
   setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
-  const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
+  const observed = inspectPolicyMutationAuthority(
+    sandboxName,
+    operation,
+    authority.gatewayName,
+    true,
+  );
   assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
   assertNemoClawManagedPolicy(observed, operation);
   console.log("  Applied permissive policy.");

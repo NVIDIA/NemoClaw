@@ -108,6 +108,37 @@ describe("provider inference policy authority", () => {
     ).rejects.toThrow(/external policy authority must supply/u);
 
     expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.any(Object));
+    expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
+  });
+
+  it("withholds inference success when authority changes after deferred selection (#9833)", async () => {
+    const session = createSession({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "failed";
+    const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
+      requirements.operation === "record successful inference configuration"
+        ? refuseExternalPolicy()
+        : undefined,
+    );
+    const { deps, calls } = createDeps({ preflightPolicyRequirements });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
     expect(calls.complete).toHaveBeenCalledWith("provider_selection", expect.any(Object));
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });

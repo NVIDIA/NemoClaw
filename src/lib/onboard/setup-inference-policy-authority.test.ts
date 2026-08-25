@@ -18,7 +18,15 @@ function createSetupDeps(): SetupInferenceDeps {
       await operation(),
     step: vi.fn(),
     getGatewayName: () => "nemoclaw",
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    runOpenshell: vi.fn((args: string[]) =>
+      args.includes("export")
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "Error: status: 'NotFound', message: \"provider profile not found\"",
+          }
+        : { status: 0, stdout: "", stderr: "" },
+    ),
     updateSandbox: vi.fn(() => true),
     upsertProvider: vi.fn(() => ({ ok: true as const })),
     verifyInferenceRoute: vi.fn(),

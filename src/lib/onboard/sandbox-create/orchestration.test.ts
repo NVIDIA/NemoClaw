@@ -215,8 +215,6 @@ describe("sandbox create policy authority checks", () => {
         captureCreatedSandboxLiveIdentity: vi.fn(() => CREATED_IDENTITY),
         observeCreatedSandbox: vi.fn(() => createdObservation),
         cleanupTemporarySources: vi.fn(),
-        deleteCreatedSandbox: vi.fn(),
-        waitForCreatedSandboxAbsence: vi.fn(() => true),
       }),
     ).rejects.toThrow(/external policy authority must supply/u);
     expect(create).not.toHaveBeenCalled();
@@ -237,8 +235,6 @@ describe("sandbox create policy authority checks", () => {
       },
       observeCreatedSandbox: vi.fn(() => createdObservation),
       cleanupTemporarySources: vi.fn(),
-      deleteCreatedSandbox: vi.fn(),
-      waitForCreatedSandboxAbsence: vi.fn(() => true),
     });
     events.push("register");
 
@@ -252,7 +248,7 @@ describe("sandbox create policy authority checks", () => {
     ]);
   });
 
-  it("removes create sources and the live sandbox when final authority validation fails (#9833)", async () => {
+  it("removes create sources and reports the surviving sandbox when final validation fails (#9833)", async () => {
     const events: string[] = [];
     const validationError = new Error("external policy authority changed");
     const revalidate = vi
@@ -282,15 +278,8 @@ describe("sandbox create policy authority checks", () => {
         cleanupTemporarySources: () => {
           events.push("cleanup-sources");
         },
-        deleteCreatedSandbox: () => {
-          events.push("delete-created");
-        },
-        waitForCreatedSandboxAbsence: () => {
-          events.push("prove-absence");
-          return true;
-        },
       }),
-    ).rejects.toBe(validationError);
+    ).rejects.toThrow("cleanup did not complete");
 
     expect(events).toEqual([
       "create-check",
@@ -299,13 +288,10 @@ describe("sandbox create policy authority checks", () => {
       "ready-check",
       "cleanup-sources",
       "observe-created",
-      "delete-created",
-      "prove-absence",
     ]);
   });
 
-  it("attempts sandbox deletion when temporary source cleanup fails (#9833)", async () => {
-    const deleteCreatedSandbox = vi.fn();
+  it("reports both source cleanup failure and the surviving sandbox (#9833)", async () => {
     const revalidate = vi
       .fn()
       .mockImplementationOnce(() => undefined)
@@ -323,16 +309,11 @@ describe("sandbox create policy authority checks", () => {
         cleanupTemporarySources: () => {
           throw new Error("temporary source cleanup failed");
         },
-        deleteCreatedSandbox,
-        waitForCreatedSandboxAbsence: () => true,
       }),
     ).rejects.toThrow("cleanup did not complete");
-
-    expect(deleteCreatedSandbox).toHaveBeenCalledOnce();
   });
 
-  it("reports incomplete cleanup when an accepted delete leaves the created identity live (#9833)", async () => {
-    const deleteCreatedSandbox = vi.fn();
+  it("does not delete a matching identity through its mutable name (#9833)", async () => {
     const observeCreatedSandbox = vi.fn(() => createdObservation);
     const revalidate = vi
       .fn()
@@ -348,25 +329,20 @@ describe("sandbox create policy authority checks", () => {
       captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
       observeCreatedSandbox,
       cleanupTemporarySources: vi.fn(),
-      deleteCreatedSandbox,
-      waitForCreatedSandboxAbsence: () => false,
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: expect.stringContaining("exact absence was not proven"),
+          message: expect.stringContaining("deletion targets its mutable name"),
         }),
       ]),
     );
-    expect(deleteCreatedSandbox).toHaveBeenCalledOnce();
-    expect(observeCreatedSandbox).toHaveBeenCalledTimes(2);
+    expect(observeCreatedSandbox).toHaveBeenCalledOnce();
   });
 
   it("does not delete a replacement observed before cleanup (#9833)", async () => {
-    const deleteCreatedSandbox = vi.fn();
-    const waitForCreatedSandboxAbsence = vi.fn(() => true);
     const revalidate = vi
       .fn()
       .mockImplementationOnce(() => undefined)
@@ -384,8 +360,6 @@ describe("sandbox create policy authority checks", () => {
         liveIdentityFingerprint: REPLACEMENT_IDENTITY,
       }),
       cleanupTemporarySources: vi.fn(),
-      deleteCreatedSandbox,
-      waitForCreatedSandboxAbsence,
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -394,50 +368,9 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({ message: expect.stringContaining("live identity changed") }),
       ]),
     );
-    expect(deleteCreatedSandbox).not.toHaveBeenCalled();
-    expect(waitForCreatedSandboxAbsence).not.toHaveBeenCalled();
-  });
-
-  it("does not delete a replacement observed after an accepted delete (#9833)", async () => {
-    const deleteCreatedSandbox = vi.fn();
-    const observeCreatedSandbox = vi
-      .fn()
-      .mockReturnValueOnce(createdObservation)
-      .mockReturnValueOnce({
-        state: "ready" as const,
-        liveIdentityFingerprint: REPLACEMENT_IDENTITY,
-      });
-    const revalidate = vi
-      .fn()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("external policy authority changed");
-      });
-
-    const error = await runSandboxCreateWithPolicyAuthorityChecks({
-      sandboxName: "alpha",
-      revalidate,
-      create: async () => "created",
-      captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
-      observeCreatedSandbox,
-      cleanupTemporarySources: vi.fn(),
-      deleteCreatedSandbox,
-      waitForCreatedSandboxAbsence: () => false,
-    }).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(AggregateError);
-    expect((error as AggregateError).errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.stringContaining("now identifies a replacement"),
-        }),
-      ]),
-    );
-    expect(deleteCreatedSandbox).toHaveBeenCalledOnce();
   });
 
   it("leaves the named sandbox in place when its created identity was not captured (#9833)", async () => {
-    const deleteCreatedSandbox = vi.fn();
     const observeCreatedSandbox = vi.fn(() => createdObservation);
     const revalidate = vi
       .fn()
@@ -455,8 +388,6 @@ describe("sandbox create policy authority checks", () => {
       },
       observeCreatedSandbox,
       cleanupTemporarySources: vi.fn(),
-      deleteCreatedSandbox,
-      waitForCreatedSandboxAbsence: vi.fn(() => true),
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -466,6 +397,5 @@ describe("sandbox create policy authority checks", () => {
       ]),
     );
     expect(observeCreatedSandbox).not.toHaveBeenCalled();
-    expect(deleteCreatedSandbox).not.toHaveBeenCalled();
   });
 });

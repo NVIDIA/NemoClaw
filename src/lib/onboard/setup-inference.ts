@@ -36,6 +36,10 @@ import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
+import {
+  type RoutedProviderDeps,
+  upsertRoutedProvider as upsertRoutedInferenceProvider,
+} from "./routed-inference";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -284,9 +288,11 @@ export function bindGatewayUpsertProvider(
   revalidatePolicyRequirements?: (operation: string) => void,
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
-    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
-      revalidatePolicyRequirements,
-    });
+    revalidatePolicyRequirements
+      ? upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
+          revalidatePolicyRequirements,
+        })
+      : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
 export function bindOpenAiProviderProfile(
@@ -304,6 +310,37 @@ export function bindOpenAiProviderProfile(
       });
     }
     return upsertProvider(name, type, ...rest);
+  };
+}
+
+export function createRoutedResumeProviderUpsert(deps: {
+  upsertProvider: SetupInferenceDeps["upsertProvider"];
+  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
+  hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
+  error?: CommonDeps["error"];
+  exitProcess?: CommonDeps["exitProcess"];
+}) {
+  return (
+    gatewayName: string,
+    provider: string,
+    endpointUrl: string | null,
+    credentialEnv: string | null,
+  ) => {
+    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+      upsertProvider: bindOpenAiProviderProfile(
+        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+        deps.runGatewayOpenshell,
+        deps.error ?? console.error,
+        deps.exitProcess ?? ((code) => process.exit(code)),
+      ),
+      hydrateCredentialEnv: deps.hydrateCredentialEnv,
+    });
+    return {
+      ok: result.ok,
+      endpointUrl: result.endpointUrl,
+      message: result.result.message,
+      status: result.result.status,
+    };
   };
 }
 

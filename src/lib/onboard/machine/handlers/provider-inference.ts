@@ -1933,12 +1933,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     endpointUrl = hostLocalRoute.endpointUrl;
     endpointSource = hostLocalRoute.endpointSource;
     onboardEndpointUrl = hostLocalRoute.onboardEndpointUrl;
-    revalidatePolicyRequirements("record successful inference configuration");
+    revalidatePolicyRequirements("record inference runtime metadata");
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
     if (deferProviderSelectionUntilInference) {
       // Provider selection remains in progress until its inference route has
       // configured successfully. This retains the selected provider/model for
       // interruption recovery without claiming a usable route prematurely.
+      revalidatePolicyRequirements("record successful deferred provider selection");
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -1957,8 +1958,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
-      revalidatePolicyRequirements("record successful deferred provider selection");
     }
+    revalidatePolicyRequirements("record successful inference configuration");
     session = await deps.recordStepComplete(
       "inference",
       deps.toSessionUpdates({
@@ -1975,7 +1976,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
-    revalidatePolicyRequirements("finish successful inference configuration");
     break;
   }
 
