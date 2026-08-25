@@ -45,7 +45,7 @@
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/protected-managed-image-contract.test.ts"
+        "test/platform/images/protected-managed-image-contract.test.ts"
       ]
     },
     {
@@ -74,7 +74,7 @@
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
-        "test/pi-candidate-runtime-artifacts.test.ts"
+        "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
       ]
     },
     {
@@ -123,7 +123,7 @@
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
-        "test/blueprint-runtime-identity-lifecycle.test.ts",
+        "test/onboarding/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts"
@@ -151,13 +151,13 @@
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
-        "test/launch-readiness-forward-observation.test.ts"
+        "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
       "fast": [
-        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -165,13 +165,13 @@
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/install/installer-hash-check.test.ts",
-        "test/runner.test.ts"
+        "test/e2e-runtime/runner.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/launchable-smoke.test.ts",
       "fast": [
-        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -179,7 +179,7 @@
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/install/installer-hash-check.test.ts",
-        "test/runner.test.ts"
+        "test/e2e-runtime/runner.test.ts"
       ]
     },
     {
@@ -197,7 +197,7 @@
     {
       "live": "test/e2e/live/network-policy.test.ts",
       "fast": [
-        "test/validate-blueprint.test.ts",
+        "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -209,7 +209,7 @@
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
-        "test/openshell-credential-generation-window.test.ts",
+        "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
         "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts"
