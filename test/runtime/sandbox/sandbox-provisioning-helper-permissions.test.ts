@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 
 describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {

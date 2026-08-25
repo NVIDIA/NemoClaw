@@ -15,7 +15,7 @@ import {
   readMessagingBuildPlanFromEnv,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts";
-import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 const { remediateReviewedArchive } = vi.hoisted(() => ({
   remediateReviewedArchive: vi.fn(({ archivePath }: { archivePath: string }) => ({
@@ -40,7 +40,7 @@ beforeEach(() => {
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
-  "../..",
+  "../../..",
   "src",
   "lib",
   "messaging",
@@ -50,7 +50,7 @@ const SCRIPT_PATH = path.join(
 );
 const GENERATOR_PATH = path.join(
   import.meta.dirname,
-  "../..",
+  "../../..",
   "scripts",
   "generate-openclaw-config.mts",
 );

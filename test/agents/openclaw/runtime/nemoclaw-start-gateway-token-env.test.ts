@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { safeTmpHelpers } from "./nemoclaw-start-gateway.test-helpers";
+import { safeTmpHelpers } from "../../../nemoclaw-start-gateway.test-helpers";
 import { extractShellFunctionFromSource } from "../../../support/shell-function-extractor";
 
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");

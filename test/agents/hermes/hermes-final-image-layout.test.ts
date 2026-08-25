@@ -206,6 +206,28 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
+  it.each(HERMES_INTEGRITY_FILES)(
+    "pins $source to its current bytes at $target",
+    ({ arg, source, target }) => {
+      const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+      const declarationPrefix = `ARG ${arg}=`;
+      const declarations = dockerfile
+        .split("\n")
+        .filter((line) => line.startsWith(declarationPrefix));
+      expect(declarations, arg).toHaveLength(1);
+
+      const integrityChecks = dockerfile
+        .split("\n")
+        .filter((line) => line.trim() === `"$${arg}" ${target} \\`);
+      expect(integrityChecks, `${arg} must verify ${target}`).toHaveLength(1);
+
+      const digest = createHash("sha256")
+        .update(fs.readFileSync(path.join(ROOT, source)))
+        .digest("hex");
+      expect(declarations[0]?.slice(declarationPrefix.length), source).toBe(digest);
+    },
+  );
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
