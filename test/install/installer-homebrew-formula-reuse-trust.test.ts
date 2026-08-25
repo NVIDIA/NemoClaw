@@ -17,6 +17,7 @@ const TRUSTED_V00106_TEMPLATE_DIGESTS = [
   "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
   "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
   "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
+  "18175cf47a0fece8ce75e5d523185062c7a7c913a3f4ceafbba4a7ca4df7c69b",
 ] as const;
 const tempDirs: string[] = [];
 
@@ -59,6 +60,13 @@ command -v strings >/dev/null 2>&1 \\
   );
 }
 
+function restoreFlatInstallTestPaths(source: string): string {
+  return source.replaceAll(
+    "test/install/install-openshell-version-check.test.ts",
+    "test/install-openshell-version-check.test.ts",
+  );
+}
+
 function runTrustCheck(source: string) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-homebrew-reuse-trust-"));
   const installer = path.join(tempDir, "install-openshell.sh");
@@ -85,11 +93,13 @@ function runTrustCheck(source: string) {
 }
 
 describe("installer Homebrew formula reuse trust", () => {
-  const baseTemplate = removeHomebrewFormulaReuseRepair(INSTALLER_SOURCE);
+  const previousTemplate = restoreFlatInstallTestPaths(INSTALLER_SOURCE);
+  const baseTemplate = removeHomebrewFormulaReuseRepair(previousTemplate);
   const templates = [
     ["downstream", TRUSTED_V00106_TEMPLATE_DIGESTS[0], baseTemplate],
     ["strings preflight", TRUSTED_V00106_TEMPLATE_DIGESTS[1], addStringsPreflight(baseTemplate)],
-    ["formula repair", TRUSTED_V00106_TEMPLATE_DIGESTS[2], INSTALLER_SOURCE],
+    ["formula repair", TRUSTED_V00106_TEMPLATE_DIGESTS[2], previousTemplate],
+    ["grouped install tests", TRUSTED_V00106_TEMPLATE_DIGESTS[3], INSTALLER_SOURCE],
   ] as const;
 
   it.each(templates)("accepts the %s template with digest %s", (_label, digest, source) => {
