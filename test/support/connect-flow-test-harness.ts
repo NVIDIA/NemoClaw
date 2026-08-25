@@ -459,8 +459,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const writeSandboxConfigSpy = vi
     .spyOn(sandboxConfig, "writeSandboxConfig")
     .mockImplementation(() => undefined);
+  // - `getSessionAgent` returns null for OpenClaw, which `??` alone turned into `{ name: "openclaw" }`.
+  // - Distinguish "not supplied" from an explicit null so a test can model that production shape.
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
-    (options.sessionAgent ?? { name: "openclaw" }) as never,
+    (Object.hasOwn(options, "sessionAgent")
+      ? options.sessionAgent
+      : { name: "openclaw" }) as never,
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   const runAutoPairSpy = vi

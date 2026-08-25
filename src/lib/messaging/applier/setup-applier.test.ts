@@ -1072,6 +1072,11 @@ describe("MessagingSetupApplier", () => {
     });
     const files: Record<string, string> = {
       "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          "openclaw-weixin": {
+            enabled: false,
+          },
+        },
         plugins: {
           entries: {
             acpx: {
@@ -1127,6 +1132,7 @@ describe("MessagingSetupApplier", () => {
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.plugins.entries.acpx.enabled).toBe(false);
     expect(openclawConfig.plugins.entries["openclaw-weixin"].enabled).toBe(true);
+    expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
     expect(openclawConfig.plugins.allow).toEqual(["openclaw-weixin"]);
     expect(openclawConfig.plugins.installs["openclaw-weixin"].spec).toBe(
       "@tencent-weixin/openclaw-weixin@2.4.3",
