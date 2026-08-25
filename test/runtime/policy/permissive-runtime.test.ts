@@ -205,7 +205,9 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           endpoint.host === "slack.com" &&
           endpoint.credential_binding?.provider === "openclaw-box-slack-app",
       ),
-    ).toMatchObject({ path: "/api/apps.connections.open" });
+    ).toMatchObject({
+      rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+    });
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
