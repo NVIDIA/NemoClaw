@@ -15,6 +15,7 @@ import {
 import { requireInferenceSetRuntimeAuthority } from "../../actions/inference-set-provider";
 import { removeSandboxImage } from "../../actions/sandbox/destroy";
 import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
+import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { loadAgent } from "../../agent/defs";
@@ -1060,7 +1061,9 @@ describe("socket-free MXC action contract", () => {
       expect(registerSandbox).toHaveBeenCalledWith(entry);
       expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
         ignoreError: true,
+        killSignal: "SIGKILL",
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
       });
       const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
       expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);

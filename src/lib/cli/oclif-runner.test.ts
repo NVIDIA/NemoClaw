@@ -29,6 +29,7 @@ vi.mock("@oclif/core", async (importOriginal) => {
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
 import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
+import { PUBLIC_HELP_SANDBOX_NAME_PROPERTY } from "./public-help";
 
 function makeConfig() {
   const rootPlugin = {
@@ -166,7 +167,10 @@ describe("runOclifArgv", () => {
       ]);
     });
 
-    await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
+    await runOclifArgv(["sandbox", "channels", "start", "--help"], {
+      rootDir: "/repo",
+      publicSandboxName: "alpha",
+    });
 
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
 
@@ -180,6 +184,14 @@ describe("runOclifArgv", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+    expect(
+      (config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY],
+    ).toBe("alpha");
+    expect(
+      (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
+        PUBLIC_HELP_SANDBOX_NAME_PROPERTY
+      ],
+    ).toBe("alpha");
   });
 
   it("delegates ordinary native-route failures to oclif's handler and restores argv", async () => {
@@ -290,7 +302,10 @@ describe("runOclifCommandById", () => {
       expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list", "--json"]);
     });
 
-    await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
+    await runOclifCommandById("list", ["--json"], {
+      rootDir: "/repo",
+      publicSandboxName: "alpha",
+    });
 
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
     expect(loadMock).toHaveBeenCalledWith("/repo");
@@ -299,6 +314,14 @@ describe("runOclifCommandById", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+    expect(
+      (config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY],
+    ).toBe("alpha");
+    expect(
+      (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
+        PUBLIC_HELP_SANDBOX_NAME_PROPERTY
+      ],
+    ).toBe("alpha");
   });
 
   it("formats oclif flag parse errors and exits with the oclif exit code", async () => {
