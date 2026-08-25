@@ -356,7 +356,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
                 `${STORAGE_GRAPH_ROOT}/overlay-containers/${ORIGINAL_RUNTIME_ID}` +
                 "/userdata/overlay/example/merge",
               Destination: "/opt/openshell/bin",
-              RW: false,
+              RW: true,
             },
           ],
         },
@@ -408,7 +408,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
                 `${STORAGE_GRAPH_ROOT}/overlay-containers/${"f".repeat(64)}` +
                 "/userdata/overlay/example/merge",
               Destination: "/opt/openshell/bin",
-              RW: false,
+              RW: true,
             },
           ],
         },

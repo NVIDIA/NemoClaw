@@ -305,7 +305,7 @@ function createContainerStateMutationHarness(
                       `${DOCKER_STATE_MUTATION_RUNTIME_ID}/userdata/overlay/example/merge`,
                     Destination: "/opt/openshell/bin",
                     Mode: "",
-                    RW: false,
+                    RW: true,
                     Propagation: "rprivate",
                   },
                 ]

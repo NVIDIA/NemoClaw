@@ -62,7 +62,7 @@ function isMaterializedPodmanImageBind(
   storageGraphRoot: string,
   containerId: string,
 ): boolean {
-  if (value?.Type !== "bind" || value.RW !== false) return false;
+  if (value?.Type !== "bind" || value.RW !== true) return false;
   const source = String(value.Source ?? "");
   if (!path.isAbsolute(source) || path.normalize(source) !== source) return false;
   const relative = path.relative(storageGraphRoot, source);
