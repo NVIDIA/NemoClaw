@@ -7,13 +7,6 @@ import {
   type EndpointlessProviderProfileRunner,
 } from "../adapters/openshell/provider-profile";
 
-export {
-  endpointlessProviderProfilePath,
-  ensureEndpointlessProviderProfile,
-  type EndpointlessProviderProfileResult,
-  type EndpointlessProviderProfileRunner,
-} from "../adapters/openshell/provider-profile";
-
 export const MESSAGING_CREDENTIAL_PROVIDER_TYPE = "nemoclaw-mcp-v1"; // gitleaks:allow
 
 export function messagingCredentialProviderProfilePath(root: string): string {
