@@ -10,7 +10,11 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractCatalog,
 } from "../../src/lib/onboard/managed-image/contract.ts";
-import { githubRequest, parseBaseImagePushPaths } from "./base-image-publication.mts";
+import {
+  baseImageInputsChanged,
+  githubRequest,
+  parseBaseImagePushPaths,
+} from "./base-image-publication.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const BASE_IMAGE_WORKFLOW_PATH = ".github/workflows/base-image.yaml";
@@ -18,7 +22,6 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -40,55 +43,6 @@ function positiveInteger(value: unknown, label: string): number {
 
 function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
-}
-
-function compileManagedImagePath(pattern: string): RegExp {
-  if (
-    !SAFE_PATH_PATTERN.test(pattern) ||
-    pattern.startsWith("/") ||
-    pattern.includes("//") ||
-    pattern.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
-    throw new Error(`managed-image input path '${pattern}' is invalid`);
-  }
-  const stars = [...pattern.matchAll(/\*/gu)].map((match) => match.index);
-  if (stars.length === 0) {
-    return new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u");
-  }
-  if (pattern.endsWith("/**") && stars.length === 2) {
-    const prefix = pattern.slice(0, -3).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    return new RegExp(`^${prefix}/.+$`, "u");
-  }
-  if (stars.length === 1) {
-    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replaceAll("*", "[^/]*");
-    return new RegExp(`^${escaped}$`, "u");
-  }
-  throw new Error(`managed-image input path '${pattern}' uses an unsupported glob`);
-}
-
-/** Determine whether the PR changes a reviewed base- or managed-image input. */
-export function managedImageInputsChanged(
-  changedFiles: readonly string[],
-  patterns: readonly string[],
-): boolean {
-  if (changedFiles.length > MAX_CHANGED_FILES * 2) {
-    throw new Error(`PR changed-path count exceeds ${MAX_CHANGED_FILES * 2}`);
-  }
-  const matchers = patterns.map(compileManagedImagePath);
-  for (const file of changedFiles) {
-    if (
-      file.length === 0 ||
-      file.length > 4_096 ||
-      /[\0\r\n]/u.test(file) ||
-      file.startsWith("/") ||
-      file.includes("//") ||
-      file.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-    ) {
-      throw new Error("PR changed-file path is invalid");
-    }
-    if (matchers.some((matcher) => matcher.test(file))) return true;
-  }
-  return false;
 }
 
 /** Assemble one all-agent catalog for the managed-image workflow's activation check. */
@@ -234,7 +188,7 @@ export async function resolvePrManagedImageSource(
   );
   const changedFiles = await readChangedFiles(input.prNumber, changedCount, request);
   const patterns = parseBaseImagePushPaths(input.workflowSource);
-  return managedImageInputsChanged(changedFiles, patterns) ? "local-dockerfile" : "managed-image";
+  return baseImageInputsChanged(changedFiles, patterns) ? "local-dockerfile" : "managed-image";
 }
 
 function requiredInteger(value: string | undefined, label: string): number {

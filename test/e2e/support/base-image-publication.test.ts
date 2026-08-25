@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
   type FirstParentHistory,
@@ -33,6 +34,11 @@ const RUN_ID = 29891942278;
 const WORKFLOW_ID = 251475843;
 const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
 const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
+const BASE_IMAGE_WORKFLOW_SOURCE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+  "utf8",
+);
+const BASE_IMAGE_PUSH_PATHS = parseBaseImagePushPaths(BASE_IMAGE_WORKFLOW_SOURCE);
 const WORKFLOW_SOURCE = `on:
   push:
     branches: [main]
@@ -175,12 +181,7 @@ describe("base-image publication evidence", () => {
   );
 
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
-    const source = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-      "utf8",
-    );
-
-    expect(parseBaseImagePushPaths(source)).toEqual(
+    expect(BASE_IMAGE_PUSH_PATHS).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         ".github/workflows/base-image.yaml",
@@ -200,6 +201,29 @@ describe("base-image publication evidence", () => {
       ]),
     );
   });
+
+  it.each(BASE_IMAGE_PUSH_PATHS)(
+    "matches reviewed literal or wildcard path %s with one predicate (#7372)",
+    (reviewedPath) => {
+      const changedPath = reviewedPath.endsWith("/**")
+        ? `${reviewedPath.slice(0, -3)}/fixture.ts`
+        : reviewedPath.replace("*", "fixture");
+      expect(baseImageInputsChanged([changedPath], BASE_IMAGE_PUSH_PATHS)).toBe(true);
+    },
+  );
+
+  it("does not match a path outside the reviewed image inputs (#7372)", () => {
+    expect(baseImageInputsChanged(["docs/guide.mdx"], BASE_IMAGE_PUSH_PATHS)).toBe(false);
+  });
+
+  it.each(["../Dockerfile", "/Dockerfile", "Dockerfile\nother", "agents//Dockerfile"])(
+    "rejects invalid changed-file path %j before matching (#7372)",
+    (changedPath) => {
+      expect(() => baseImageInputsChanged([changedPath], ["Dockerfile"])).toThrow(
+        "PR changed-file path is invalid",
+      );
+    },
+  );
 
   it.each([
     [
