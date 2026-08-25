@@ -12,6 +12,8 @@ import {
 } from "../credentials/command-support";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
+import { ensureEndpointlessProviderProfile } from "../messaging/provider-profile";
+import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../onboard/inference-providers/provider-profile";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
 import {
@@ -120,6 +122,32 @@ function bundledProviderProfilePath(type: string): string {
 function ensureBundledProviderProfile(type: string): CredentialsAddResult | null {
   const profilePath = bundledProviderProfilePath(type);
   if (!fs.existsSync(profilePath)) return null;
+
+  if (type.toLowerCase() === OPENAI_GATEWAY_PROVIDER_TYPE) {
+    const result = ensureEndpointlessProviderProfile({
+      profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
+      inferenceCapable: true,
+      profilePath,
+      runOpenshell: runOpenshellProviderCommand,
+    });
+    if (result.ok) return null;
+    if (result.reason === "import-failed") {
+      return fail([
+        `  Could not import bundled provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}'.`,
+        "  Update OpenShell with scripts/install-openshell.sh and retry.",
+      ]);
+    }
+    if (result.reason === "export-failed") {
+      return fail([
+        `  Could not read OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' for validation.`,
+        "  Repair or remove that profile, then retry.",
+      ]);
+    }
+    return fail([
+      `  OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
+      "  Remove the conflicting profile, then retry.",
+    ]);
+  }
 
   const result = runOpenshellProviderCommand(
     ["provider", "profile", "import", "--file", profilePath],

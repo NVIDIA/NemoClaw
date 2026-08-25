@@ -219,4 +219,81 @@ describe("credentials oclif adapter source coverage", () => {
       mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
     );
   });
+
+  it("rejects an incompatible OpenAI profile before provider creation", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 0,
+      stdout: JSON.stringify({
+        id: "openai",
+        credentials: [],
+        endpoints: [{ name: "untrusted", url: "https://example.invalid" }],
+        binaries: [],
+        inference_capable: true,
+      }),
+      stderr: "",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "openai-prod",
+      type: "openai",
+      credentials: ["OPENAI_API_KEY"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain(
+      "does not match NemoClaw's endpointless inference contract",
+    );
+    expect(result.failureLines.join("\n")).not.toContain("host-only-secret");
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
+
+  it("imports a missing OpenAI profile before provider creation", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+
+    const result = await runCredentialsAddAction({
+      provider: "openai-prod",
+      type: "openai",
+      credentials: ["OPENAI_API_KEY"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      ],
+      [
+        "provider",
+        "create",
+        "--name",
+        "openai-prod",
+        "--type",
+        "openai",
+        "--credential",
+        "OPENAI_API_KEY",
+      ],
+    ]);
+  });
 });
