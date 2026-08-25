@@ -24,7 +24,7 @@ export interface SessionIndexEntry {
 //     legacy shape, and NemoClaw cannot rev the upstream CLI from this side.
 //   - Regression-test coverage: `session-index.test.ts > parseSessionIndex`
 //     covers each accepted shape plus the log-noise prefix; CLI-level
-//     coverage in `test/sandbox-sessions-export-cli.test.ts` exercises the
+//     coverage in `test/runtime/sandbox/sandbox-sessions-export-cli.test.ts` exercises the
 //     array and wrapped-object forms via the stub openshell.
 //   - Removal condition: once OpenClaw documents a single stable JSON
 //     contract for `sessions list --json` in its release notes, this

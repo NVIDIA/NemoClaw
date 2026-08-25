@@ -463,7 +463,7 @@ function trustedRelease(version: string): OpenShellReleaseTrust {
 // paths point into the mutable PR tree. Reject links and special files before
 // reading, verify that the opened file is still the one inspected, and cap the
 // bytes consumed so PR-authored input cannot redirect or exhaust the verifier.
-// Regression coverage lives in test/installer-hash-check.test.ts.
+// Regression coverage lives in test/install/installer-hash-check.test.ts.
 function readInstallerInput(inputPath: string, sourceLabel: string): string {
   let parentStats: fs.Stats;
   try {
@@ -532,7 +532,7 @@ function readInstallerInput(inputPath: string, sourceLabel: string): string {
 // code; the PR-head installer and Brev script remain inert input data.
 // whyNotSourceFix: OpenShell can attest what it publishes but cannot determine
 // which exact downstream assets NemoClaw consumes.
-// regressionTest: test/installer-hash-check.test.ts substitutes official but
+// regressionTest: test/install/installer-hash-check.test.ts substitutes official but
 // unexpected assets while keeping valid upstream digests and record counts.
 // removalCondition: remove this set check only when one base-trusted canonical
 // dependency manifest directly drives both installer consumers.
@@ -562,7 +562,7 @@ function assertExactAssetSet(
 // single release extracted from the static hash tables.
 // whyNotSourceFix: OpenShell can attest its release but cannot keep NemoClaw's
 // blueprint, installer selector, Brev selector, and embedded tables coherent.
-// regressionTest: test/installer-hash-check.test.ts moves all runtime consumers
+// regressionTest: test/install/installer-hash-check.test.ts moves all runtime consumers
 // to 0.0.85 while leaving both valid pin tables at 0.0.72 and requires failure.
 // removalCondition: remove these comparisons only when one base-trusted,
 // machine-readable pin manifest directly drives every runtime consumer.
@@ -1185,7 +1185,7 @@ function normalizeTrustedInstallerTemplate(
 // changes which release, URL, checksum verifier, archive validator, or install
 // path actually executes. sourceBoundary: the expected hashes and normalizer
 // execute from the base-trusted checkout; PR installer files are inert input.
-// regressionTest: test/installer-hash-check.test.ts mutates comments, control
+// regressionTest: test/install/installer-hash-check.test.ts mutates comments, control
 // flow, indirect selectors, SHA commands, and alternate download/extract paths.
 // removalCondition: remove this template lock only when a base-trusted,
 // machine-readable manifest directly drives every installer operation.
@@ -1308,7 +1308,7 @@ function staticPinFromArm(
 // whyNotSourceFix: the bootstrap installers need self-contained shell lookup
 // functions before package dependencies are available, so JSON is not their
 // runtime source of truth.
-// regressionTest: test/installer-hash-check.test.ts covers whitespace, comments,
+// regressionTest: test/install/installer-hash-check.test.ts covers whitespace, comments,
 // continuations, quote styles, mixed indentation, missing pins, and ambiguity.
 // removalCondition: remove shell parsing when both installers and this verifier
 // consume one canonical machine-readable pin manifest directly.

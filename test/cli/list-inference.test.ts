@@ -179,6 +179,7 @@ describe("CLI dispatch", () => {
         recoveredFromGateway: 0,
       },
       lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
       sandboxes: [],
     });
   });
@@ -237,6 +238,7 @@ describe("CLI dispatch", () => {
         recoveredFromGateway: 0,
       },
       lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
       sandboxes: [
         {
           name: "alpha",
@@ -256,6 +258,93 @@ describe("CLI dispatch", () => {
         },
       ],
     });
+  });
+
+  it("list and global status report a resumable inference-route reservation separately (#10097)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-incomplete-onboard-"));
+    const localBin = path.join(home, "bin");
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          "sandbox-d": {
+            name: "sandbox-d",
+            provider: "nvidia-prod",
+            model: "nvidia/model",
+            pendingRouteReservation: true,
+            reservationSessionId: "session-d",
+          },
+        },
+        defaultSandbox: null,
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-d",
+        resumable: true,
+        status: "failed",
+        sandboxName: "sandbox-d",
+        lastStepStarted: "inference",
+        lastCompletedStep: "inference",
+        failure: {
+          step: "inference",
+          message: null,
+          recordedAt: "2026-08-24T10:00:00.000Z",
+          interrupted: true,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(path.join(localBin, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+
+    try {
+      const listText = runWithEnv("list", env);
+      expect(listText.code).toBe(0);
+      expect(listText.out).toContain("Incomplete onboarding:");
+      expect(listText.out).toContain("sandbox-d  interrupted at inference");
+      expect(listText.out).toContain("nemoclaw onboard --resume");
+      expect(listText.out).not.toContain("Sandboxes:");
+
+      const listJson = runWithEnv("list --json", env);
+      expect(listJson.code).toBe(0);
+      expect(JSON.parse(listJson.out)).toMatchObject({
+        incompleteOnboarding: {
+          name: "sandbox-d",
+          status: "failed",
+          step: "inference",
+          interrupted: true,
+          resumable: true,
+        },
+        sandboxes: [],
+      });
+
+      const statusText = runWithEnv("status", env);
+      expect(statusText.code).toBe(0);
+      expect(statusText.out).toContain("Incomplete onboarding:");
+      expect(statusText.out).toContain("sandbox-d  interrupted at inference");
+
+      const statusJson = runWithEnv("status --json", env);
+      expect(statusJson.code).toBe(0);
+      expect(JSON.parse(statusJson.out)).toMatchObject({
+        incompleteOnboarding: {
+          name: "sandbox-d",
+          status: "failed",
+          step: "inference",
+          interrupted: true,
+          resumable: true,
+        },
+        sandboxes: [],
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("list forwards oclif parse errors for unknown options", () => {

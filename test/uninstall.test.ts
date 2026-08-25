@@ -57,12 +57,25 @@ exit 0
     return stateDir;
   }
 
+  function seedManagedHermesStateVolume(tmp: string): string {
+    return seedCompletedDefaultAuthority(tmp, "standalone", {
+      agent: "hermes",
+      name: "hermes",
+      workload: { kind: "managed-image" },
+    });
+  }
+
   function seedCompletedDefaultAuthority(
     tmp: string,
     source: "packaged-service" | "standalone" = "standalone",
+    sandbox: {
+      agent: "hermes" | "openclaw";
+      name: string;
+      workload?: { kind: "managed-image" };
+    } = { agent: "openclaw", name: "ordinary-authority" },
   ): string {
     const stateDir = path.join(tmp, ".nemoclaw");
-    const sandboxName = "ordinary-authority";
+    const sandboxName = sandbox.name;
     const gateway = {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
@@ -76,7 +89,7 @@ exit 0
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     fs.chmodSync(stateDir, 0o700);
     const session = createSession({
-      agent: "openclaw",
+      agent: sandbox.agent,
       sandboxName,
       metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
     });
@@ -85,7 +98,10 @@ exit 0
     session.machine = { ...session.machine, state: "complete", revision: 1 };
     session.checkpoint = {
       ...deriveCheckpointFromSession(session, { profile: "default" }),
-      sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
+      sandboxIdentity: {
+        kind: "selected",
+        value: { name: sandboxName, agent: sandbox.agent },
+      },
       gatewayAuthority: { kind: "selected", value: gateway },
     };
     fs.writeFileSync(path.join(stateDir, "onboard-session.json"), `${JSON.stringify(session)}\n`, {
@@ -98,12 +114,13 @@ exit 0
         sandboxes: {
           [sandboxName]: {
             name: sandboxName,
-            agent: null,
+            agent: sandbox.agent === "openclaw" ? null : sandbox.agent,
             dashboardPort: null,
             gatewayName: gateway.gatewayName,
             gatewayPort: gateway.gatewayPort,
-            lifecycleGeneration: "ordinary-authority-generation",
+            lifecycleGeneration: `${sandboxName}-generation`,
             openshellDriver: "docker",
+            ...(sandbox.workload ? { workload: sandbox.workload } : {}),
           },
         },
       })}\n`,
@@ -137,6 +154,46 @@ exit 0
         ...extraEnv,
       },
     });
+  }
+
+  function writeManagedHermesVolumeDocker(fakeBin: string, tmp: string) {
+    const callsPath = path.join(tmp, "docker-calls");
+    const volumeName = "nemoclaw-hermes-state-v1-hermes";
+    const volumePath = path.join(tmp, "managed-hermes-volume");
+    const volume = JSON.stringify({
+      Labels: {
+        "io.nvidia.nemoclaw.hermes-state.managed": "true",
+        "io.nvidia.nemoclaw.hermes-state.sandbox": "hermes",
+        "io.nvidia.nemoclaw.hermes-state.schema": "1",
+        "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+      },
+      Name: volumeName,
+    });
+    fs.writeFileSync(volumePath, "present\n");
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${callsPath}'
+case "$*" in
+  "volume inspect --format {{json .}} ${volumeName}") printf '%s\\n' '${volume}' ;;
+  "volume rm ${volumeName}") rm -f '${volumePath}' ;;
+  "volume inspect openshell-cluster-nemoclaw") exit 1 ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    return { callsPath, volumeName, volumePath };
+  }
+
+  function writeHostedFallbackCli(fakeBin: string): void {
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "nemoclaw.js")}' "$@"
+`,
+      { mode: 0o755 },
+    );
   }
 
   function writeManagedGatewayConfig(tmp: string): string {
@@ -336,6 +393,41 @@ esac
       expect(result.status, output).toBe(0);
       expect(output).toMatch(/--destroy-user-data set; purging user data under ~\/\.nemoclaw\//);
       expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.each([
+    {
+      environment: (_fakeBin: string, _tmp: string): NodeJS.ProcessEnv => ({}),
+      label: "local packaged script",
+    },
+    {
+      environment: (fakeBin: string, tmp: string): NodeJS.ProcessEnv => {
+        writeHostedFallbackCli(fakeBin);
+        return { NEMOCLAW_CLI_JS: path.join(tmp, "missing-cli.js") };
+      },
+      label: "hosted-script fallback",
+    },
+  ])("removes managed Hermes state volume through $label", ({ environment }) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-volume-"));
+    const fakeBin = path.join(tmp, "bin");
+    writeFakeTools(fakeBin);
+    seedManagedHermesStateVolume(tmp);
+    const volume = writeManagedHermesVolumeDocker(fakeBin, tmp);
+    const entrypointEnv = environment(fakeBin, tmp);
+    try {
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
+        NEMOCLAW_AGENT: "hermes",
+        ...entrypointEnv,
+      });
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
+      expect(fs.existsSync(volume.volumePath)).toBe(false);
+      expect(fs.readFileSync(volume.callsPath, "utf8")).toContain(`volume rm ${volume.volumeName}`);
+      expect(output).toContain("Removed managed Hermes state volume for 'hermes'.");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

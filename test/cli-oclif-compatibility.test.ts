@@ -95,7 +95,7 @@ describe("oclif compatibility dispatch", () => {
       expect(validateName).toHaveBeenCalledWith("missing-sandbox", "sandbox name");
       expect(recoverRegistryEntries).not.toHaveBeenCalled();
       expect(stdout.join("\n")).toContain(
-        "$ nemoclaw sandbox channels start <name> <channel> [--dry-run]",
+        "$ nemoclaw missing-sandbox channels start <channel> [--dry-run]",
       );
       expect(stderr).toEqual([]);
     } finally {
@@ -601,7 +601,7 @@ describe("oclif compatibility dispatch", () => {
     ]);
   });
 
-  it("uses the alias binary name in native oclif help", () => {
+  it("shows the alias binary name in sandbox-first help", () => {
     const result = spawnSync(
       process.execPath,
       ["bin/nemohermes.js", "sandbox", "channels", "start", "--help"],
@@ -616,11 +616,11 @@ describe("oclif compatibility dispatch", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("$ nemohermes sandbox channels start <name> <channel>");
-    expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+    expect(result.stdout).toContain("$ nemohermes <name> channels start <channel>");
+    expect(result.stdout).not.toContain("$ nemoclaw <name> channels start <channel>");
   });
 
-  it("uses the Deep Agents alias binary name in native oclif help", () => {
+  it("shows the Deep Agents alias binary name in sandbox-first help", () => {
     const aliasDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-oclif-bin-"));
     const alias = path.join(aliasDir, "nemo-deepagents");
     fs.symlinkSync(path.join(process.cwd(), "bin", "nemoclaw.js"), alias);
@@ -639,8 +639,8 @@ describe("oclif compatibility dispatch", () => {
       );
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("$ nemo-deepagents sandbox channels start <name> <channel>");
-      expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+      expect(result.stdout).toContain("$ nemo-deepagents <name> channels start <channel>");
+      expect(result.stdout).not.toContain("$ nemoclaw <name> channels start <channel>");
     } finally {
       fs.rmSync(aliasDir, { force: true, recursive: true });
     }
