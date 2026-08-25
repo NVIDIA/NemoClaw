@@ -19,6 +19,7 @@ export interface ReviewedNpmArchivePin {
 
 export type ReviewedNpmArchiveDownloader = (archive: ReviewedNpmArchivePin) => Promise<Uint8Array>;
 
+/** Validate one immutable registry archive pin. */
 function validatePin(pin: ReviewedNpmArchivePin): ReviewedNpmArchivePin {
   if (!/^[a-f0-9]{64}$/u.test(pin.sha256)) {
     throw new Error("reviewed npm archive SHA-256 must be 64 lowercase hexadecimal characters");
@@ -41,6 +42,7 @@ function validatePin(pin: ReviewedNpmArchivePin): ReviewedNpmArchivePin {
   return pin;
 }
 
+/** Validate the archive set and reject duplicate source or destination names. */
 function validatePins(pins: readonly ReviewedNpmArchivePin[]): ReviewedNpmArchivePin[] {
   if (pins.length === 0) throw new Error("at least one reviewed npm archive is required");
   const validated = pins.map(validatePin);
@@ -52,6 +54,7 @@ function validatePins(pins: readonly ReviewedNpmArchivePin[]): ReviewedNpmArchiv
   return validated;
 }
 
+/** Resolve a normalized output parent without traversing a symlink. */
 async function exactOutputParent(output: string): Promise<string> {
   if (!path.isAbsolute(output) || path.resolve(output) !== output || output.includes("\n")) {
     throw new Error("reviewed npm archive output must be one normalized absolute path");
@@ -64,6 +67,7 @@ async function exactOutputParent(output: string): Promise<string> {
   return realpath(parent);
 }
 
+/** Download one registry archive while enforcing redirect, time, and size limits. */
 async function defaultDownloadArchive(pin: ReviewedNpmArchivePin): Promise<Uint8Array> {
   const response = await fetch(pin.url, {
     redirect: "manual",
@@ -111,6 +115,7 @@ async function defaultDownloadArchive(pin: ReviewedNpmArchivePin): Promise<Uint8
   return bytes;
 }
 
+/** Apply an asynchronous operation with bounded concurrency. */
 async function mapConcurrent<T>(
   values: readonly T[],
   limit: number,
@@ -128,6 +133,7 @@ async function mapConcurrent<T>(
   );
 }
 
+/** Download, verify, and atomically publish a reviewed npm archive set. */
 export async function downloadReviewedNpmArchives(options: {
   downloadArchive?: ReviewedNpmArchiveDownloader;
   output: string;
@@ -164,6 +170,7 @@ export async function downloadReviewedNpmArchives(options: {
   }
 }
 
+/** Parse triples of digest, URL, and archive name from the command line. */
 function parseArguments(argv: string[]): {
   output: string;
   pins: ReviewedNpmArchivePin[];
@@ -185,6 +192,7 @@ function parseArguments(argv: string[]): {
   return { output, pins };
 }
 
+/** Run the reviewed archive downloader from its command-line entrypoint. */
 async function main(): Promise<void> {
   await downloadReviewedNpmArchives(parseArguments(process.argv.slice(2)));
 }

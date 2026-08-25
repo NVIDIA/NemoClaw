@@ -653,6 +653,7 @@ function runOptionalOpenClawPluginBlock(
 
 export type OpenClawIntegrityPinTestGroup = "base" | "contract" | "plugin-install";
 
+/** Register integrity-pin contracts for one OpenClaw build area. */
 export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTestGroup): void {
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {

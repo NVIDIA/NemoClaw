@@ -201,6 +201,7 @@ function stageLegacySandboxBuildContext(
   };
 }
 
+/** Stage the minimal build context used by NemoClaw's managed sandbox image. */
 function stageOptimizedSandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),

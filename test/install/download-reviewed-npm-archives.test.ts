@@ -13,6 +13,7 @@ import {
   type ReviewedNpmArchivePin,
 } from "../../scripts/checks/download-reviewed-npm-archives.mts";
 
+/** Build a reviewed archive pin for fixture bytes. */
 function pin(name: string, bytes: Buffer): ReviewedNpmArchivePin {
   return {
     archive: `${name}-1.0.0.tgz`,
@@ -78,18 +79,7 @@ describe("reviewed npm archive downloads", () => {
     const archive = pin("alpha", bytes);
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                for (const chunk of chunks) controller.enqueue(chunk);
-                controller.close();
-              },
-            }),
-            { status: 200 },
-          ),
-      ),
+      vi.fn(async () => new Response(new Blob(chunks).stream(), { status: 200 })),
     );
     const output = path.join(testRoot, "archives");
 
@@ -103,18 +93,7 @@ describe("reviewed npm archive downloads", () => {
     const archive = pin("alpha", Buffer.from("unused digest"));
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                for (const chunk of chunks) controller.enqueue(chunk);
-                controller.close();
-              },
-            }),
-            { status: 200 },
-          ),
-      ),
+      vi.fn(async () => new Response(new Blob(chunks).stream(), { status: 200 })),
     );
     const output = path.join(testRoot, "archives");
 
