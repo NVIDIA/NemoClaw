@@ -284,7 +284,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/sandbox-images-and-e2e\.yaml$/,
+    pattern: /(?:^|\/)\.github\/workflows\/(?:pr-self-hosted|sandbox-images-and-e2e)\.yaml$/,
     testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
   },
   {

@@ -3426,7 +3426,7 @@ const runner = require(${runnerPath});
 
 // Mock nim module before onboard.js requires it
 const nimMod = require(${nimPath});
-nimMod.listModels = () => [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }];
+nimMod.getNimModelOptions = () => ({ models: [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }], usableMemoryMB: 16000 });
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";

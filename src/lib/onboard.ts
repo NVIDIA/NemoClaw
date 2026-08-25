@@ -1890,9 +1890,9 @@ async function handleNimLocalSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
   const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
-  const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
+  const { models, usableMemoryMB } = nim.getNimModelOptions(localGpu);
   if (models.length === 0) {
-    console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    console.log(`  No NIM model fits ${usableMemoryMB} MB. Falling back to cloud API.`);
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
     return "selected";
@@ -1906,7 +1906,7 @@ async function handleNimLocalSelection(
       sel = models.find((m) => m.name === targetModel);
       if (!sel) {
         const label = args.requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
-        console.error(`  Unsupported ${label}: ${targetModel}`);
+        console.error(nim.nimModelSelectionError(targetModel, label, localGpu));
         process.exit(1);
       }
     } else {
@@ -1915,7 +1915,7 @@ async function handleNimLocalSelection(
     note(`  [non-interactive] NIM model: ${sel.name}`);
   } else {
     console.log("");
-    console.log("  Models that fit your GPU:");
+    console.log(`  Models that fit ${usableMemoryMB} MB of usable GPU memory:`);
     models.forEach((m, i) => {
       console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
     });
@@ -1980,7 +1980,6 @@ async function handleNimLocalSelection(
 
   console.log(`  Pulling NIM image for ${catalogModel}...`);
   nim.pullNimImage(catalogModel);
-
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
@@ -1989,6 +1988,7 @@ async function handleNimLocalSelection(
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+    nim.stopNimContainerByNameOrThrow(nimContainerNameLocal);
     console.error("  NIM failed to start. Falling back to cloud API.");
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
