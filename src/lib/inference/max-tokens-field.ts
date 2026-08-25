@@ -29,9 +29,10 @@
  */
 export const MIN_PROBE_REPLY_TOKENS = 16;
 
-// Gemini 2.5 can spend part of the output budget on reasoning before it emits
-// visible content. Match the established compatible-endpoint smoke budget so
-// a healthy route has room to return the requested acknowledgement (#10260).
+/**
+ * Gemini probe budget with room for reasoning before visible content.
+ * Matches the established compatible-endpoint smoke budget (#10260).
+ */
 export const GEMINI_PROBE_REPLY_TOKENS = 256;
 
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
