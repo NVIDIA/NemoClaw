@@ -1472,6 +1472,16 @@ export async function observeWindowsMxcForwardHealthReadiness(input: {
       delayMs,
       sleep: input.sleep,
       probe: async (attempt) => {
+        if (input.forwardActive?.() === false) {
+          const command = {
+            exitCode: 1,
+            stderr: "OpenShell forward exited before the health probe",
+            stdout: "",
+          };
+          const outcome = "terminal" as const;
+          attempts.push({ attempt, outcome });
+          return { command, outcome };
+        }
         const command = await input.probe(attempt);
         let outcome = classifyWindowsMxcForwardHealthObservation(command);
         if (outcome === "relay-not-ready" && input.forwardActive?.() === false) {

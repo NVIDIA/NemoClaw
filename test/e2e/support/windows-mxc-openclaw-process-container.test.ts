@@ -661,27 +661,56 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
   });
 
   it("stops forwarded health observations after the owned forward exits (#8178)", async () => {
+    let probes = 0;
     const observed = await observeWindowsMxcForwardHealthReadiness({
       attempts: 3,
       delayMs: 0,
       forwardActive: () => false,
-      probe: async () => ({
-        exitCode: 1,
-        stderr: "",
-        stdout: JSON.stringify({
-          ok: false,
-          error: {
-            type: "gateway_transport_error",
-            kind: "closed",
-            code: 1006,
-            reason: "no close reason",
-          },
-        }),
-      }),
+      probe: async () => {
+        probes += 1;
+        return { exitCode: 0, stderr: "", stdout: JSON.stringify({ ok: true }) };
+      },
     });
 
     expect(observed.evidence.outcome).toBe("terminal");
     expect(observed.evidence.attempts).toEqual([{ attempt: 1, outcome: "terminal" }]);
+    expect(probes).toBe(0);
+  });
+
+  it("does not probe again when the owned forward exits during the retry delay (#8178)", async () => {
+    let forwardActive = true;
+    let probes = 0;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 25,
+      forwardActive: () => forwardActive,
+      probe: async () => {
+        probes += 1;
+        return {
+          exitCode: 1,
+          stderr: "",
+          stdout: JSON.stringify({
+            ok: false,
+            error: {
+              type: "gateway_transport_error",
+              kind: "closed",
+              code: 1006,
+              reason: "no close reason",
+            },
+          }),
+        };
+      },
+      sleep: async () => {
+        forwardActive = false;
+      },
+    });
+
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([
+      { attempt: 1, outcome: "relay-not-ready" },
+      { attempt: 2, outcome: "terminal" },
+    ]);
+    expect(probes).toBe(1);
   });
 
   it.each([
