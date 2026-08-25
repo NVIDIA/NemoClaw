@@ -5181,7 +5181,7 @@ Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemoc
 | `NEMOCLAW_CUA_TERMINAL_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the terminal service that NemoClaw projects through `host.openshell.internal`. |
 | `NEMOCLAW_CUA_FIXTURE_ENDPOINT` | loopback HTTP URL with an explicit port | Selects the synthetic fixture service that NemoClaw projects through `host.openshell.internal`. |
 
-NemoClaw requires four distinct service ports from `1024` through `65535`. Each URL must use `localhost`, `127.0.0.1`, or `[::1]` and must not contain credentials, a query string, or a fragment. NemoClaw appends the sandbox-facing URLs to `/app/config/config.toml` and limits the NemoCUA Python clients to those ports. Keep each host service bound to loopback; NemoClaw owns the sandbox bridge mapping and OpenShell policy.
+All four endpoint variables are required. NemoClaw requires distinct service ports from `1024` through `65535`. Each URL must use `localhost`, `127.0.0.1`, or `[::1]` and must not contain credentials, a query string, or a fragment. NemoClaw appends the sandbox-facing URLs to `/app/config/config.toml`. The generated policy permits the NemoCUA Python clients to use only `GET` and `POST` at each configured path and its descendants. Each configured path must contain every route that its service requires. Keep each host service bound to loopback; NemoClaw owns the sandbox bridge mapping and OpenShell policy.
 
 ### Onboarding Behavior Flags
 
