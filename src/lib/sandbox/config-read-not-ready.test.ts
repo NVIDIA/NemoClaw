@@ -36,7 +36,10 @@ function stubFailedExec(stderr: string, status = 1): void {
   });
 }
 
-function loadReadSandboxConfig(): (name: string, target: { agentName: string; configPath: string; format: string }) => unknown {
+function loadReadSandboxConfig(): (
+  name: string,
+  target: { agentName: string; configPath: string; format: string },
+) => unknown {
   delete require.cache[configModulePath];
   const mod = require(configModulePath) as {
     readSandboxConfig: (name: string, target: unknown) => unknown;
