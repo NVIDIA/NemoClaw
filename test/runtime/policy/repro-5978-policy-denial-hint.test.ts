@@ -18,7 +18,7 @@
  * covers every tool and every connect path without regressing tool output.
  *
  * These tests execute the actual emitted stanza shell rather than asserting on
- * source text, mirroring test/repro-4538-raw-doctor-perms.test.ts.
+ * source text, mirroring test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts.
  *
  * Accepted contract: the supported behavior is this proactive connect-shell
  * reminder, NOT a denial-time rewrite of the tool error — the OpenShell proxy
@@ -41,7 +41,7 @@ const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 // sandbox base image — the image's own /etc/profile.d + /etc/bash.bashrc hooks
 // source /tmp/nemoclaw-proxy-env.sh, and a real curl is denied by a 403-on-
 // CONNECT proxy (the OpenShell L7 signature). Gated like the docker E2E in
-// test/repro-4538-raw-doctor-perms.test.ts because it needs Docker and the
+// test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts because it needs Docker and the
 // pulled base image. Run with:
 //   NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E=1 vitest run \
 //     test/repro-5978-policy-denial-hint.test.ts --project integration

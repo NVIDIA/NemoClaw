@@ -4016,7 +4016,7 @@ openclaw() {
 # which lives in a separate codebase/release cycle, so the denial response
 # cannot be made self-describing from this repo. This proactive breadcrumb is
 # the NemoClaw-owned surface that points at the denial reason in the logs.
-# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# Regression coverage: test/runtime/policy/repro-5978-policy-denial-hint.test.ts. Removal
 # condition: drop this stanza once the OpenShell proxy returns a structured,
 # actionable denial (naming the rule / a logs pointer) at the tunnel-failure
 # site, at which point the breadcrumb is redundant.

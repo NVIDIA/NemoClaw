@@ -23,7 +23,7 @@
  * The `share mount` *bad remote path* diagnostic (#3414) needs both a live
  * sandbox and a host `sshfs` binary to reach, so it cannot run hermetically
  * here; that branch is covered by the unit tests in
- * `src/lib/share-command.test.ts` and `test/share-command-remote-path.test.ts`.
+ * `src/lib/share-command.test.ts` and `test/cli/share-command-remote-path.test.ts`.
  * This matrix locks the nonexistent-sandbox share/upload surfaces instead.
  *
  * Issue instance 3 (onboard dashboard-port exhaustion) is locked by its own
