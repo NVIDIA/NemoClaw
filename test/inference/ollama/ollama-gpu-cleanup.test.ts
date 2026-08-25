@@ -3,8 +3,9 @@
 
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+const localModulePath = path.join(import.meta.dirname, "../../..", "src", "lib", "inference", "local.ts");
 const modulePath = path.join(
   import.meta.dirname,
   "../../..",
@@ -88,6 +89,31 @@ function unloadOf(model: string) {
 }
 
 describe("Ollama GPU cleanup", () => {
+  afterEach(() => {
+    const { setResolvedOllamaHost } = require(localModulePath);
+    setResolvedOllamaHost("127.0.0.1");
+  });
+
+  it("uses the resolved local Ollama host for discovery, release, and verification (#10074)", () => {
+    withMockedSpawnSync(respondWithLoadedModels("llama3.2:1b"), (calls) => {
+      const { setResolvedOllamaHost } = require(localModulePath);
+      setResolvedOllamaHost("host.docker.internal");
+      const { unloadOllamaModels } = require(modulePath);
+      const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+      expect(result).toMatchObject({
+        ok: true,
+        outcome: "released",
+        endpoint: "http://host.docker.internal:11434",
+      });
+      expect(calls.filter(({ command }) => command === "curl").map(({ args }) => args.at(-1))).toEqual([
+        "http://host.docker.internal:11434/api/ps",
+        "http://host.docker.internal:11434/api/generate",
+        "http://host.docker.internal:11434/api/ps",
+      ]);
+    });
+  });
+
   it("calls curl synchronously to unload every running model via /api/generate", () => {
     withMockedSpawnSync(
       respondWithLoadedModels("llama3.1:8b", "qwen:7b"),

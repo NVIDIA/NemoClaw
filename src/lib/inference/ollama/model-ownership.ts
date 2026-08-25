@@ -29,6 +29,21 @@ export type OllamaModelOwnershipDecision =
  * runtime probe found in Ready or Running phase. A matching registry row that
  * is not in that set is evidence to report, not an owner that blocks release.
  */
+export function matchingOllamaModelPeers<T extends OllamaModelHolder>(
+  sandbox: OllamaModelHolder,
+  peers: readonly T[],
+): T[] {
+  const model = sandbox.model?.trim();
+  if (!model) return [];
+  return peers.filter(
+    (peer) =>
+      peer.name !== sandbox.name &&
+      !!peer.provider?.includes("ollama") &&
+      !!peer.model &&
+      ollamaModelRefsMatch(peer.model, model),
+  );
+}
+
 export function decideOllamaModelOwnership(
   sandbox: OllamaModelHolder,
   peers: readonly OllamaModelHolder[],
@@ -37,13 +52,7 @@ export function decideOllamaModelOwnership(
   const model = sandbox.model?.trim();
   if (!model) return { kind: "missing-model" };
 
-  const matchingPeers = peers.filter(
-    (peer) =>
-      peer.name !== sandbox.name &&
-      !!peer.provider?.includes("ollama") &&
-      !!peer.model &&
-      ollamaModelRefsMatch(peer.model, model),
-  );
+  const matchingPeers = matchingOllamaModelPeers(sandbox, peers);
   const activePeers = matchingPeers
     .filter((peer) => activeSandboxNames.has(peer.name))
     .map((peer) => peer.name)

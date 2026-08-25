@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
-import { ollamaModelRefsMatch } from "../../inference/ollama/model-discovery";
-import { decideOllamaModelOwnership } from "../../inference/ollama/model-ownership";
+import {
+  decideOllamaModelOwnership,
+  matchingOllamaModelPeers,
+} from "../../inference/ollama/model-ownership";
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -63,21 +65,6 @@ type OllamaOwnershipDiscoveryDeps = {
   readonly parseLiveSandboxEntries?: typeof parseLiveSandboxEntries;
   readonly resolvePersistedSandboxOwnershipGateway?: typeof resolvePersistedSandboxOwnershipGateway;
 };
-
-function matchingOllamaPeers(
-  sandbox: registry.SandboxEntry,
-  sandboxes: readonly registry.SandboxEntry[],
-): registry.SandboxEntry[] {
-  const model = sandbox.model?.trim();
-  if (!model) return [];
-  return sandboxes.filter(
-    (peer) =>
-      peer.name !== sandbox.name &&
-      !!peer.provider?.includes("ollama") &&
-      !!peer.model &&
-      ollamaModelRefsMatch(peer.model, model),
-  );
-}
 
 export function discoverActiveOllamaSandboxNames(
   peers: readonly registry.SandboxEntry[],
@@ -161,7 +148,7 @@ function releaseStoppedSandboxOllamaModel(
         .withOllamaModelOwnershipLock;
     return withOwnershipLock(() => {
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
-      const matchingPeers = matchingOllamaPeers(sandbox, sandboxes);
+      const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes);
       const discovery = (
         deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
       )(matchingPeers, deps.environment ?? process.env);
@@ -312,7 +299,18 @@ function stopSandboxWithinLifecycleFence(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
-  if ("hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true) {
+  const hermesPortableVerified =
+    "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
+  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
+  if (!hermesPortableVerified) {
+    teardownDashboardForwardBestEffort(
+      sandboxName,
+      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+      warn,
+    );
+  }
+  if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"
         ? `  Sandbox '${sandboxName}' is already stopped.`
@@ -321,14 +319,6 @@ function stopSandboxWithinLifecycleFence(
     log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
     return { exitCode: 0 };
   }
-
-  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
-  teardownDashboardForwardBestEffort(
-    sandboxName,
-    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-    warn,
-  );
-  if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);

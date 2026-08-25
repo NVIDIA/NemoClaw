@@ -970,16 +970,20 @@ function normalizeOllamaPullModel(model: string): string {
   return value;
 }
 
-function buildLocalOllamaPullUrl(): string {
+function buildLocalOllamaEndpoint(): string {
   const host = getResolvedOllamaHost();
   const allowedHosts = new Set(["127.0.0.1", "localhost", "::1", OLLAMA_HOST_DOCKER_INTERNAL]);
   if (!allowedHosts.has(host)) {
-    throw new Error(`Refusing to pull from unexpected Ollama host: ${host}`);
+    throw new Error(`Refusing to contact unexpected Ollama host: ${host}`);
   }
-  const url = new URL("http://127.0.0.1/api/pull");
+  const url = new URL("http://127.0.0.1");
   url.hostname = host;
   url.port = String(OLLAMA_PORT);
-  return url.toString();
+  return url.origin;
+}
+
+function buildLocalOllamaPullUrl(): string {
+  return `${buildLocalOllamaEndpoint()}/api/pull`;
 }
 
 function pullOllamaModelViaCli(model: string): boolean {
@@ -1287,7 +1291,6 @@ async function prepareOllamaModel(
   return { ...result, allowToolsIncompatible };
 }
 
-const OLLAMA_RELEASE_ENDPOINT = `http://127.0.0.1:${OLLAMA_PORT}`;
 const OLLAMA_RELEASE_MAX_ATTEMPTS = 3;
 const OLLAMA_RELEASE_RETRY_DELAY_MS = 250;
 const OLLAMA_RELEASE_VERIFY_DELAY_MS = 100;
@@ -1347,9 +1350,10 @@ function defaultReleaseSleep(milliseconds: number): void {
 function discoverResidentOllamaModels(
   attempt: number,
   selectedModels: readonly string[] | null,
+  releaseEndpoint: string,
   spawnSyncImpl: typeof spawnSync,
 ): OllamaModelDiscoveryEvidence {
-  const endpoint = `${OLLAMA_RELEASE_ENDPOINT}/api/ps`;
+  const endpoint = `${releaseEndpoint}/api/ps`;
   let result;
   try {
     result = spawnSyncImpl(
@@ -1438,6 +1442,7 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
+  const releaseEndpoint = buildLocalOllamaEndpoint();
   const spawnSyncImpl = options.spawnSync ?? spawnSync;
   const sleepImpl = options.sleep ?? defaultReleaseSleep;
   const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
@@ -1448,7 +1453,7 @@ function unloadOllamaModels(
   let lastMatchedModels: readonly string[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const discovery = discoverResidentOllamaModels(attempt, selectedModels, spawnSyncImpl);
+    const discovery = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
     discoveries.push(discovery);
     if (discovery.error) {
       if (attempt < maxAttempts && transientCurlFailure(discovery.status)) {
@@ -1458,7 +1463,7 @@ function unloadOllamaModels(
       return {
         ok: false,
         outcome: "discovery-failed",
-        endpoint: OLLAMA_RELEASE_ENDPOINT,
+        endpoint: releaseEndpoint,
         selectedModels: selectedModels ?? [],
         discoveries,
         requests,
@@ -1472,7 +1477,7 @@ function unloadOllamaModels(
       return {
         ok: true,
         outcome: requests.length ? "released" : "not-resident",
-        endpoint: OLLAMA_RELEASE_ENDPOINT,
+        endpoint: releaseEndpoint,
         selectedModels,
         discoveries,
         requests,
@@ -1481,7 +1486,7 @@ function unloadOllamaModels(
 
     let retryRequest = false;
     for (const model of lastMatchedModels) {
-      const endpoint = `${OLLAMA_RELEASE_ENDPOINT}/api/generate`;
+      const endpoint = `${releaseEndpoint}/api/generate`;
       let result;
       try {
         result = spawnSyncImpl(
@@ -1527,7 +1532,7 @@ function unloadOllamaModels(
         return {
           ok: false,
           outcome: "unload-request-failed",
-          endpoint: OLLAMA_RELEASE_ENDPOINT,
+          endpoint: releaseEndpoint,
           selectedModels,
           discoveries,
           requests,
@@ -1541,7 +1546,7 @@ function unloadOllamaModels(
     }
 
     sleepImpl(OLLAMA_RELEASE_VERIFY_DELAY_MS);
-    const verification = discoverResidentOllamaModels(attempt, selectedModels, spawnSyncImpl);
+    const verification = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
     discoveries.push(verification);
     if (verification.error) {
       if (attempt < maxAttempts && transientCurlFailure(verification.status)) {
@@ -1551,7 +1556,7 @@ function unloadOllamaModels(
       return {
         ok: false,
         outcome: "discovery-failed",
-        endpoint: OLLAMA_RELEASE_ENDPOINT,
+        endpoint: releaseEndpoint,
         selectedModels,
         discoveries,
         requests,
@@ -1563,7 +1568,7 @@ function unloadOllamaModels(
       return {
         ok: true,
         outcome: "released",
-        endpoint: OLLAMA_RELEASE_ENDPOINT,
+        endpoint: releaseEndpoint,
         selectedModels,
         discoveries,
         requests,
@@ -1575,7 +1580,7 @@ function unloadOllamaModels(
   return {
     ok: false,
     outcome: "still-resident",
-    endpoint: OLLAMA_RELEASE_ENDPOINT,
+    endpoint: releaseEndpoint,
     selectedModels: selectedModels ?? [],
     discoveries,
     requests,

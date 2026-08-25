@@ -436,6 +436,7 @@ describe("stopSandbox", () => {
         gatewayName: "nemoclaw",
         lifecycleGeneration: "generation-alpha",
         lifecycleLiveIdentityFingerprint: "identity-alpha",
+        model: "qwen2.5:7b",
         openshellDriver: "docker",
         provider: "ollama/qwen3-vl:4b",
       }),
@@ -450,6 +451,27 @@ describe("stopSandbox", () => {
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
     expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
+  });
+
+  it("keeps a shared Ollama model loaded after a verified Hermes stop (#10074)", () => {
+    const unloadOllamaModels = vi.fn(() => successfulUnload());
+    const hermesSandbox = sandbox({
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-alpha",
+      lifecycleLiveIdentityFingerprint: "identity-alpha",
+      model: "qwen2.5:7b",
+      openshellDriver: "docker",
+      provider: "ollama/qwen3-vl:4b",
+    });
+    const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
+    const h = harness({ listSandboxes: () => ({ sandboxes: [hermesSandbox, peer], defaultSandbox: null }), unloadOllamaModels });
+    h.getSandbox.mockReturnValue(hermesSandbox);
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
