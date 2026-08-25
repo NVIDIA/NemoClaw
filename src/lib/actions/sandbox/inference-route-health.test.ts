@@ -232,6 +232,21 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     },
   );
 
+  it.each([302, 400, 405, 410, 429])(
+    "fails closed for HTTP %s when an inference request succeeds",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        { ok: true },
+        { agentName: "openclaw", provider: "openrouter-api" },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.failureLabel).toBe("unreachable");
+    },
+  );
+
   it("leaves a strictly healthy 2xx route unaffected for any agent", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(200),

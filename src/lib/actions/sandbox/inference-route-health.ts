@@ -246,7 +246,7 @@ function routeStatusAccepted(
   if (gateway.httpStatus === 404) {
     return isDcodeOpenRouterModelsRoute404(context, gateway.httpStatus) && invocation?.ok === true;
   }
-  return invocation?.ok === true;
+  return (gateway.httpStatus === 401 || gateway.httpStatus === 403) && invocation?.ok === true;
 }
 
 export function buildSandboxInferenceRouteHealth(
