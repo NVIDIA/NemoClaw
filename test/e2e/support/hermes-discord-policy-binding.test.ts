@@ -183,7 +183,7 @@ describe("Hermes Discord E2E policy binding", () => {
     });
   });
 
-  it("refreshes one attachment while preserving its original credential bindings", async () => {
+  it("reattaches one provider without advancing its credential generation", async () => {
     const providerName = "e2e-hermes-discord-discord-bridge";
     const originalPolicy = {
       version: 1,
@@ -209,7 +209,7 @@ describe("Hermes Discord E2E policy binding", () => {
         },
       },
     };
-    const appliedPolicies: typeof originalPolicy[] = [];
+    const appliedPolicies: (typeof originalPolicy)[] = [];
     const recordAppliedPolicy = (args: string[]) => {
       const file = args.at(args.indexOf("--policy") + 1);
       expect(file).toBeTruthy();
@@ -223,8 +223,7 @@ describe("Hermes Discord E2E policy binding", () => {
       .mockResolvedValueOnce(successfulProbe())
       .mockResolvedValueOnce(successfulProbe())
       .mockResolvedValueOnce(successfulProbe(providerName))
-      .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args))
-      .mockResolvedValueOnce(successfulProbe("updated"));
+      .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args));
     const host = {
       command,
       openshellCommandPath: "/usr/local/bin/openshell",
@@ -249,35 +248,10 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(command.mock.calls.map(([, args]) => args)).toEqual([
       ["policy", "get", "--base", "e2e-hermes-discord"],
       ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
-      [
-        "sandbox",
-        "provider",
-        "detach",
-        "-g",
-        "nemoclaw",
-        "e2e-hermes-discord",
-        providerName,
-      ],
-      [
-        "sandbox",
-        "provider",
-        "attach",
-        "-g",
-        "nemoclaw",
-        "e2e-hermes-discord",
-        providerName,
-      ],
+      ["sandbox", "provider", "detach", "-g", "nemoclaw", "e2e-hermes-discord", providerName],
+      ["sandbox", "provider", "attach", "-g", "nemoclaw", "e2e-hermes-discord", providerName],
       ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
       ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
-      [
-        "provider",
-        "update",
-        "-g",
-        "nemoclaw",
-        providerName,
-        "--credential",
-        "DISCORD_BOT_TOKEN",
-      ],
     ]);
     expect(appliedPolicies).toHaveLength(2);
 

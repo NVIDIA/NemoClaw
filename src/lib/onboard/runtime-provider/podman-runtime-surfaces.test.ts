@@ -250,7 +250,10 @@ describe("current Podman runtime provider", () => {
       stdout: expect.stringContaining("10.89.0.0/24"),
     });
     expect(capture).toHaveBeenCalledWith(["network", "inspect", "openshell"], 7_500);
-    expect(runtime.network.sandboxSourceCidrs()).toEqual(["10.89.0.0/24"]);
+    expect(runtime.network.sandboxSourceCidrs()).toEqual([
+      "10.89.0.0/24",
+      `${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS}/32`,
+    ]);
     expect(capture).toHaveBeenCalledWith(["network", "inspect", "openshell-docker"], 30_000);
   });
 });

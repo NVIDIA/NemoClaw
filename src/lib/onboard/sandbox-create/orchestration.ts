@@ -119,9 +119,7 @@ export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
-  return Boolean(
-    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
-  );
+  return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
 }
 
 function shouldRefuseManagedMcpRecreate(
@@ -1321,7 +1319,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1330,7 +1327,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,

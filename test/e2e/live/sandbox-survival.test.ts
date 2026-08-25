@@ -155,7 +155,7 @@ async function captureSurvivalDiagnostics(
 ): Promise<void> {
   const invocation = runtimeProvider.hostInvocation([]);
   await host.command(
-    "sh",
+    "bash",
     [
       "-lc",
       SURVIVAL_DIAGNOSTICS_SCRIPT,

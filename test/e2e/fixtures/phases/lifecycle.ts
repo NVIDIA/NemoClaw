@@ -441,7 +441,7 @@ export class LifecyclePhaseFixture {
         ["container", "rename", originalName, backupName],
         {
           artifactName: `lifecycle-post-reboot-runtime-rename-${originalName}`,
-        env: buildAvailabilityProbeEnv(),
+          env: buildAvailabilityProbeEnv(),
           timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
         },
       );
@@ -456,7 +456,7 @@ export class LifecyclePhaseFixture {
           ["container", "rename", backupName, originalName],
           {
             artifactName: `lifecycle-cleanup-runtime-rename-back-${backupName}`,
-          env: buildAvailabilityProbeEnv(),
+            env: buildAvailabilityProbeEnv(),
             timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
           },
         );
@@ -482,7 +482,7 @@ export class LifecyclePhaseFixture {
       ["container", "start", bootContainerName],
       {
         artifactName: `lifecycle-post-reboot-runtime-start-${bootContainerName}`,
-      env: buildAvailabilityProbeEnv(),
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
       },
     );
@@ -628,12 +628,12 @@ export class LifecyclePhaseFixture {
     if (gatewayHandles[0]) {
       const containerStop = await runtimeProvider.command(
         ["container", "stop", gatewayHandles[0]],
-      {
-        artifactName: "lifecycle-gateway-container-stop",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      },
-    );
+        {
+          artifactName: "lifecycle-gateway-container-stop",
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 60_000,
+        },
+      );
       assertExitZero(containerStop, "stop OpenShell gateway runtime resource");
     }
     return runtime;
@@ -643,6 +643,13 @@ export class LifecyclePhaseFixture {
     previousRuntime: HostGatewayRuntime | null,
     options: { requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<ShellProbeResult> {
+    if (options.sandboxName && options.requireUserService !== true) {
+      return await this.host.nemoclaw([options.sandboxName, "status"], {
+        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
     const userServiceStart = await this.startOpenShellGatewayUserService({
       requireAvailable: options.requireUserService,
     });

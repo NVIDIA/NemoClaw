@@ -25,9 +25,9 @@ const fixtures: string[] = [];
 
 describe("ordinary managed sandbox completion", () => {
   it.each(["docker", "podman"] as const)(
-    "republishes attached provider state after %s recreation without credential flags",
+    "does not mutate attached provider generations after %s sandbox startup",
     (openshellDriver) => {
-      const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+      const providerExistsInGateway = vi.fn(() => true);
 
       expect(
         completeOrdinaryOnboardSandboxCreation(
@@ -36,7 +36,6 @@ describe("ordinary managed sandbox completion", () => {
             sandboxWasLiveDefault: false,
             runtimeFields: { openshellDriver } as SandboxEntry,
             messagingProviders: ["alpha-slack", "alpha-slack"],
-            inferenceProvider: "compatible-endpoint",
             liveExists: true,
           },
           {
@@ -44,19 +43,14 @@ describe("ordinary managed sandbox completion", () => {
             runFile: vi.fn(),
             scriptsDir: "/tmp/scripts",
             gatewayName: "nemoclaw",
-            providerExistsInGateway: () => true,
-            runOpenshell,
+            providerExistsInGateway,
             armCancelRollback: vi.fn(),
             dockerInfoFormat: vi.fn(() => "true"),
             runCapture: vi.fn(() => ""),
           },
         ),
       ).toBe("alpha");
-      expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-        ["provider", "update", "-g", "nemoclaw", "compatible-endpoint"],
-        ["provider", "update", "-g", "nemoclaw", "alpha-slack"],
-      ]);
-      expect(runOpenshell.mock.calls.flat(2)).not.toContain("--credential");
+      expect(providerExistsInGateway).toHaveBeenCalledTimes(2);
     },
   );
 });

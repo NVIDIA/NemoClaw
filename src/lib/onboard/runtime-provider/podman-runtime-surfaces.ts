@@ -161,7 +161,10 @@ export function prepareNativePodmanGatewayHostRuntime(
     network: Object.freeze({
       sandboxSourceCidrs: () => {
         const network = inspectNetwork(resolveDockerDriverNetworkName(input.environment));
-        return network?.subnet ? [network.subnet] : [];
+        return [
+          ...(network?.subnet ? [network.subnet] : []),
+          `${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS}/32`,
+        ];
       },
       inspect: inspectNetwork,
       usesHostGatewayRoute: () => false,

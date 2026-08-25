@@ -493,7 +493,6 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
 
   it("can recover a PID runtime through sandbox-specific status", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(75, "")); // no user service available
     runner.enqueue(shellResult(0, "status recovered\n"));
     const cleanup = new FakeCleanup();
 
@@ -507,7 +506,6 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      expect.stringContaining("sh -lc set -eu"),
       "nemoclaw e2e-survival status",
     ]);
   });

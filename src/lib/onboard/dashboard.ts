@@ -20,9 +20,12 @@ import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixe
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
+  captureLiveSiblingDashboardForwards,
   createSandboxForwardStopper,
   type DashboardForwardOptions,
   normalizeDashboardForwardOptions,
+  type PreservedDashboardForward,
+  reconcileSiblingDashboardForwards,
 } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
@@ -325,6 +328,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       });
     const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+    const preservedSiblingForwards = captureLiveSiblingDashboardForwards(
+      existingForwards,
+      sandboxName,
+    );
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
       preferredEntry &&
@@ -432,6 +439,73 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
       }
     }
+    if (fwdOk && preservedSiblingForwards.length > 0) {
+      const targetForward: PreservedDashboardForward = {
+        sandboxName,
+        bind: actualTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1",
+        port: String(actualPort),
+      };
+      const siblingResult = reconcileSiblingDashboardForwards({
+        preserved: preservedSiblingForwards,
+        target: targetForward,
+        fetch: () =>
+          deps.runCaptureOpenshell(["forward", "list"], {
+            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          }),
+        restore: (forward) => {
+          const port = Number(forward.port);
+          if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+            return { ok: false, diagnostic: "recorded port is invalid" };
+          }
+          if (forward.bind !== "127.0.0.1" && forward.bind !== "0.0.0.0") {
+            return { ok: false, diagnostic: `recorded bind '${forward.bind}' is unsupported` };
+          }
+          const makeSiblingStopper = () =>
+            createSandboxForwardStopper({
+              runOpenshell: deps.runOpenshell,
+              runCaptureOpenshell: deps.runCaptureOpenshell,
+              sandboxName: forward.sandboxName,
+            });
+          const stopResult = makeSiblingStopper()(port);
+          if (stopResult === "list-failed" || stopResult === "owned-other") {
+            return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
+          }
+          waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
+            sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
+          });
+          const forwardTarget =
+            forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
+          return runDetachedForwardStartWithRetries(
+            buildDetachedForwardStartSpawn(
+              deps.openshellArgv([
+                "forward",
+                "start",
+                "--background",
+                forwardTarget,
+                forward.sandboxName,
+              ]),
+            ),
+            () =>
+              deps.runCaptureOpenshell(["forward", "list"], {
+                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+              }),
+            { port, sandboxName: forward.sandboxName },
+            () => {
+              deps.sleep(1);
+              makeSiblingStopper()(port);
+            },
+            { onProgress: buildForwardStartProgressLogger(port) },
+          );
+        },
+      });
+      if (!siblingResult.ok) {
+        const error = new Error(
+          `Starting the dashboard forward for '${sandboxName}' disrupted a live sibling: ${siblingResult.diagnostic}`,
+        );
+        if (rollbackSandboxOnFailure) rollbackSandboxAndExit(sandboxName, error);
+        throw error;
+      }
+    }
     if (fwdOk && rollbackSandboxOnFailure) {
       ensureMessagingHostForwardForSandbox({
         sandboxName,
@@ -463,7 +537,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    */
   function ensureFinalizationDashboardForward(sandboxName: string): number {
     const envUrl = process.env.CHAT_UI_URL;
-    const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, deps.listSandboxes);
+    const persistedPort = envUrl
+      ? null
+      : getPersistedDashboardPort(sandboxName, deps.listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(
