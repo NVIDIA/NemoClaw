@@ -1001,6 +1001,48 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
   });
 
+  it("keeps polling a recreated OpenClaw gateway beyond its ordinary health timeout (#10153)", () => {
+    mockOpenClawSandbox("slow-recreated-box", 30);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    let pinnedProbeCalls = 0;
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
+      pinnedProbeCalls += 1;
+      return pinnedProbeCalls <= 31
+        ? { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" }
+        : ACCEPTED_MANAGED_PROBE;
+    });
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name, options) => options.beforeProbe?.(1000) === true,
+    );
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output:
+        "SANDBOX  BIND  PORT  PID  STATUS\nslow-recreated-box  127.0.0.1  18789  12345  running",
+    });
+
+    const result = checkAndRecoverSandboxProcesses("slow-recreated-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
+    expect(pinnedProbeCalls).toBeGreaterThan(31);
+    expect(finalize).toHaveBeenCalledWith(true);
+  });
+
   it("uses the shared recreate-readiness budget after a longer gateway health wait", () => {
     mockOpenClawSandbox("unready-box", 600);
     setImmediateRecoveryPolling();
