@@ -5197,7 +5197,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.scenario == 'native' && 'e2e-hgpu-native' || matrix.scenario == 'fallback' && 'e2e-hgpu-fallback' || 'e2e-hgpu-compat' }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

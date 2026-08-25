@@ -164,8 +164,7 @@ export function validateHermesGpuStartupWorkflow(
     NEMOCLAW_GATEWAY_RUNTIME: "${{ matrix.runtime_provider }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME:
-      "${{ matrix.scenario == 'native' && 'e2e-hgpu-native' || matrix.scenario == 'fallback' && 'e2e-hgpu-fallback' || 'e2e-hgpu-compat' }}",
+    NEMOCLAW_SANDBOX_NAME: "${{ matrix.scenario }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {
