@@ -19,6 +19,7 @@ import {
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   assertExactSandboxImage,
+  assertOpenClawHeartbeatStart,
   assertFailedBootstrapOwnerCleanupRetention,
   assertFailedSandboxOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
@@ -88,6 +89,27 @@ function createManagedImageCommandRunner(
 }
 
 describe("protected managed-image runtime contract", () => {
+  it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10244)", () => {
+    const containerId = "a".repeat(64);
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 0,
+      stdout: "",
+      stderr: '{\"msg\":\"heartbeat: started\",\"intervalMs\":120000}\n',
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
+    expect(runCommand).toHaveBeenCalledWith(["docker", "logs", containerId], {}, 15_000);
+
+    runCommand.mockReturnValue({
+      status: 0,
+      stdout: "heartbeat: started intervalMs=1800000\n",
+      stderr: "",
+    });
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "managed OpenClaw did not start with the requested 120000 ms heartbeat",
+    );
+  });
+
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
     const journalRoot = path.join(stateRoot, "managed-bootstrap");

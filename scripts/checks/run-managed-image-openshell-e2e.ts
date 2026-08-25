@@ -51,6 +51,7 @@ import {
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
@@ -397,6 +398,26 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
   }
 }
 
+export function assertOpenClawHeartbeatStart(
+  containerId: string,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): void {
+  if (!/^[a-f0-9]{64}$/u.test(containerId)) {
+    throw new Error("OpenClaw heartbeat check requires one exact container ID");
+  }
+  const result = runCommand(["docker", "logs", containerId], env, 15_000);
+  if (result.status !== 0 || result.error) {
+    throw new Error(`could not read managed OpenClaw startup logs: ${commandDetail(result)}`);
+  }
+  const heartbeatStart = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
+    .split(/\r?\n/u)
+    .find((line) => line.includes("heartbeat: started"));
+  if (!heartbeatStart || !/intervalMs["'\s:=]+120000(?:\D|$)/u.test(heartbeatStart)) {
+    throw new Error("managed OpenClaw did not start with the requested 120000 ms heartbeat");
+  }
+}
+
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
@@ -419,6 +440,15 @@ export function managedImageOpenShellProbe(
       : agent === "hermes"
         ? "Hermes health endpoint"
         : "LangChain Deep Agents Code version command";
+  const heartbeatProbe = [
+    "/usr/local/bin/node",
+    "-e",
+    JSON.stringify(
+      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(c?.agents?.defaults?.heartbeat?.every!==process.argv[2])process.exit(1);",
+    ),
+    JSON.stringify(managedConfigPath("openclaw")),
+    JSON.stringify(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
+  ].join(" ");
   const probeStep = (label: string, command: string) =>
     `if ! {\n${command}\n}; then\n  printf '%s\\n' ${JSON.stringify(
       `managed-image startup probe failed: ${label}`,
@@ -439,6 +469,15 @@ export function managedImageOpenShellProbe(
       `${agent} managed model configuration`,
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
+    ...(agent === "openclaw"
+      ? [
+          probeStep("OpenClaw managed heartbeat interval", heartbeatProbe),
+          probeStep(
+            "OpenClaw managed configuration hash",
+            "cd /sandbox/.openclaw && sha256sum --check .config-hash >/dev/null",
+          ),
+        ]
+      : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
       "test ! -L /run/nemoclaw/managed-startup-runtime.env",
@@ -1106,6 +1145,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      if (input.agent === "openclaw") {
+        assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
+      }
       if (input.localProvider && !afterLocalInference) {
         assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       }

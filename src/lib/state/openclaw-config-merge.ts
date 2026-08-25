@@ -43,6 +43,8 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /** Fresh rebuild owns the configured heartbeat, including its absence. */
+  agentHeartbeatPath: ["agents", "defaults", "heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -499,6 +501,29 @@ function reconcileAgentPrimaryModel(
   updateMainAgentListModel(agents, freshPrimary);
 }
 
+/**
+ * Keep the managed-startup profile's heartbeat selection across restore.
+ *
+ * The backup owns durable agent settings, but its heartbeat can predate the
+ * current profile or omit the setting entirely. A generated `agents.defaults`
+ * object establishes ownership: copy its heartbeat when present and remove a
+ * stale backed-up heartbeat when the current profile omits it.
+ */
+function reconcileAgentHeartbeat(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const currentAgents = currentConfig.agents;
+  if (!isPlainObject(currentAgents)) return;
+  const currentDefaults = currentAgents.defaults;
+  if (!isPlainObject(currentDefaults)) return;
+
+  const agents = ensureMergedObject(merged, "agents");
+  const defaults = ensureMergedObject(agents, "defaults");
+  if ("heartbeat" in currentDefaults) defaults.heartbeat = cloneJson(currentDefaults.heartbeat);
+  else delete defaults.heartbeat;
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -537,6 +562,7 @@ export function mergeOpenClawRestoredConfig(
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentHeartbeat(merged, currentConfig);
 
   return merged;
 }

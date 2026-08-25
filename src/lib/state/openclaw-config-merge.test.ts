@@ -99,6 +99,56 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect(merged.agents.list[0].model).toBe("inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
   });
 
+  it("keeps the managed-startup heartbeat over a stale backup during rebuild (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m" },
+            thinkingDefault: "off",
+          },
+        },
+      },
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "2m" },
+          },
+        },
+      },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults).toEqual({
+      heartbeat: { every: "2m" },
+      thinkingDefault: "off",
+    });
+  });
+
+  it("does not restore a heartbeat omitted by the current managed-startup profile (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m" },
+            thinkingDefault: "off",
+          },
+        },
+      },
+      { agents: { defaults: {} } },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults).toEqual({ thinkingDefault: "off" });
+  });
+
+  it("preserves a backed-up heartbeat when the current config has no generated agent defaults", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { agents: { defaults: { heartbeat: { every: "15m" } } } },
+      { gateway: { auth: { token: "fresh" } } },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "15m" });
+  });
+
   it("updates the first default agent with a string model when no main agent exists (#7210)", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
