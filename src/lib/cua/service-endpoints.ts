@@ -17,7 +17,6 @@ export const CUA_SERVICE_ENDPOINT_ENV = {
 
 export interface CuaServiceEndpoint {
   role: CuaServiceRole;
-  sandboxUrl: string;
   path: string;
   port: number;
 }
@@ -51,15 +50,13 @@ function parseServiceEndpoint(role: CuaServiceRole, raw: string): CuaServiceEndp
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
     throw new Error(`${CUA_SERVICE_ENDPOINT_ENV[role]} must use a port from 1024 through 65535`);
   }
-  const sandbox = new URL(parsed.href);
-  sandbox.hostname = OPENSHELL_SANDBOX_HOST_BRIDGE;
   const endpointPath = parsed.pathname.replace(/\/+$/u, "") || "/";
   if (role !== "fixture" && endpointPath !== "/") {
     throw new Error(
       `${CUA_SERVICE_ENDPOINT_ENV[role]} must use the root path required by the pinned NVLumina tool-server contract`,
     );
   }
-  return { role, sandboxUrl: sandbox.href, path: endpointPath, port };
+  return { role, path: endpointPath, port };
 }
 
 /** Read the closed four-service host adapter contract when NemoCUA is enabled. */

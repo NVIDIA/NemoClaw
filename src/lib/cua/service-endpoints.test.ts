@@ -39,29 +39,25 @@ network_policies:
 `;
 
 describe("NemoCUA service endpoint projection", () => {
-  it("maps exactly four loopback services to the OpenShell host bridge (#10289)", () => {
+  it("parses exactly four loopback service roles for projection (#10289)", () => {
     expect(requireCuaServiceEndpoints(serviceEnv)).toEqual([
       {
         role: "browser",
-        sandboxUrl: "http://host.openshell.internal:18001/",
         path: "/",
         port: 18001,
       },
       {
         role: "computer",
-        sandboxUrl: "http://host.openshell.internal:18002/",
         path: "/",
         port: 18002,
       },
       {
         role: "terminal",
-        sandboxUrl: "http://host.openshell.internal:18003/",
         path: "/",
         port: 18003,
       },
       {
         role: "fixture",
-        sandboxUrl: "http://host.openshell.internal:18004/fixture",
         path: "/fixture",
         port: 18004,
       },
