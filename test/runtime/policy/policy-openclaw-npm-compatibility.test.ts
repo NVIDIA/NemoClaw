@@ -139,6 +139,12 @@ function runLiveScenario({ initialPolicy, childScript, setMode = "success" }: Li
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
+  sandbox=""
+  for sandbox in "$@"; do :; done
+  printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\n' "$sandbox"
+  exit 0
+fi
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\n'

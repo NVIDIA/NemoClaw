@@ -493,14 +493,13 @@ export function createDockerGpuSandboxCreatePatch(
         const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
           options.timeoutSecs,
         );
-        const finalHandoffDeadlineMs = Date.now() + supervisorReconnectTimeoutSecs * 1000;
         const finalizeOutcome = result
           ? finalizeBackup(
               {
                 result,
                 supervisorReady: true,
                 sandboxName: options.sandboxName,
-                lifecycleReleaseTimeoutSecs: supervisorReconnectTimeoutSecs,
+                finalHandoffTimeoutSecs: supervisorReconnectTimeoutSecs,
               },
               options.deps,
             )
@@ -513,35 +512,31 @@ export function createDockerGpuSandboxCreatePatch(
         if (
           finalizeOutcome.backupRemoved &&
           finalizeOutcome.replacementRestarted &&
-          finalizeOutcome.lifecycleReleaseObserved === true
+          finalizeOutcome.finalHandoffAcknowledged === true
         ) {
-          const remainingReconnectTimeoutSecs = Math.max(
-            0,
-            Math.ceil((finalHandoffDeadlineMs - Date.now()) / 1000),
-          );
-          console.log(
-            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${remainingReconnectTimeoutSecs}s)...`,
-          );
-          if (
-            remainingReconnectTimeoutSecs > 0 &&
-            waitForSupervisor(options.sandboxName, remainingReconnectTimeoutSecs, {
-              runOpenshell: options.deps.runOpenshell,
-              runCaptureOpenshell: options.deps.runCaptureOpenshell,
-              sleep: options.deps.sleep,
-            })
-          ) {
-            return;
-          }
+          return;
         }
         const failure = new Error(
-          "Managed startup passed Ready, but its final runtime handoff did not converge.",
+          `Managed startup passed Ready, but its final runtime handoff did not converge.${
+            finalizeOutcome.lastSandboxPhase
+              ? ` Last OpenShell phase: ${finalizeOutcome.lastSandboxPhase}.`
+              : ""
+          }${
+            finalizeOutcome.backupRemoved
+              ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+              : ""
+          }`,
         );
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
-          context: failureContext(),
+          context: {
+            ...failureContext(),
+            backupRemoved: finalizeOutcome.backupRemoved,
+            lastSandboxPhase: finalizeOutcome.lastSandboxPhase,
+          },
         });
         throw failure;
       })();

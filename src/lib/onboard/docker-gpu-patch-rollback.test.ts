@@ -177,8 +177,9 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     const runByCommand: Record<string, () => { status: number; stdout: string }> = {
       ps: () => ({
         status: 0,
-        stdout: replacementPresent ? `${replacementId}\n` : "",
+        stdout: `${alphaContainerIds().join("\n")}\n`,
       }),
+      inspect: () => ({ status: 0, stdout: "true\n" }),
     };
     const dockerRun = vi.fn(
       (args: readonly string[]) =>
@@ -227,6 +228,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       return successfulRemoval();
     };
     removalHandlers.set(restoredName, removeRestored);
+    removalHandlers.set(restoredId, removeRestored);
     const dockerRm = vi.fn((target: string) => {
       removeTargets.push(target);
       return removalHandlers.get(target)?.() ?? successfulRemoval();
@@ -271,8 +273,10 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       dockerRename,
       dockerStart,
       dockerLogs: vi.fn(() => ""),
-      runOpenshell: vi.fn(() => ({ status: 0 })),
-      runCaptureOpenshell: vi.fn(() => "alpha Ready\n"),
+      runOpenshell: vi.fn((args: readonly string[]) =>
+        args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
+      ),
+      runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
       sleep: vi.fn(),
       homedir: () => tmpDir,
       now: () => new Date("2026-07-03T00:00:00Z"),

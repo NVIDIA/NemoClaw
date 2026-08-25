@@ -6,37 +6,42 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellFinalHandoff,
   waitForOpenShellSandboxLifecycleRelease,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
 
 describe("Docker GPU final lifecycle release", () => {
-  it.each([
-    ["an explicit empty list", "No sandboxes found.\n"],
-    ["another phase-bearing sandbox", "beta  2026-08-21 05:53:18  Ready\n"],
-  ])("accepts %s as a release receipt (#9531)", (_receipt, stdout) => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout }));
+  it("requires corroboration for a retiring lifecycle row (#9962)", () => {
+    const corroborate = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
+    }));
 
     expect(
       waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
         runOpenshell,
         sleep: vi.fn(),
+        soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
       }),
     ).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(corroborate).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
   });
 
-  it.each([
-    ["a header", "NAME  CREATED  PHASE\n"],
-    ["a gateway error", "Error: gateway unavailable\n"],
-    ["a phase-free row", "beta  2026-08-21 05:53:18\n"],
-    ["an unrecognized phase", "beta  2026-08-21 05:53:18  Retiring\n"],
-    ["the selected sandbox in Ready", "alpha  2026-08-21 05:53:18  Ready\n"],
-    ["the selected sandbox in Provisioning", "alpha  2026-08-21 05:53:18  Provisioning\n"],
-    ["the selected sandbox in Error", "alpha  2026-08-21 05:53:18  Error\n"],
-    ["the selected sandbox in Failed", "alpha  2026-08-21 05:53:18  Failed\n"],
-  ])("rejects %s as a release receipt (#9531)", (_case, stdout) => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout }));
+  it("does not accept an uncorroborated retiring lifecycle row (#9962)", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "alpha  2026-08-23 01:40:35  Error\n",
+    }));
 
     expect(
       waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
@@ -44,69 +49,140 @@ describe("Docker GPU final lifecycle release", () => {
         sleep: vi.fn(),
       }),
     ).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["Error", "Deleting"])(
-    "accepts a corroborated stopped replacement in %s",
-    (phase) => {
-      const corroborate = vi.fn(() => true);
-      const runOpenshell = vi.fn(() => ({
-        status: 0,
-        stdout: `alpha  2026-08-23 01:40:35  ${phase}\n`,
-      }));
-
-      expect(
-        waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-          runOpenshell,
-          sleep: vi.fn(),
-          soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
-        }),
-      ).toBe(true);
-      expect(corroborate).toHaveBeenCalledOnce();
-    },
-  );
-
-  it.each([
-    ["a failed probe", { status: 1, stderr: "gateway unavailable" }],
-    ["a probe without an exit status", { status: null, stderr: "timed out" }],
-  ])("rejects %s as a release receipt (#9531)", (_case, result) => {
-    const runOpenshell = vi.fn(() => result);
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell,
-        sleep: vi.fn(),
-      }),
-    ).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  it("does not report reconnect without an OpenShell execution boundary (#9531)", () => {
+    expect(waitForOpenShellSupervisorReconnect("alpha", 1, { sleep: vi.fn() })).toBe(false);
   });
+});
 
-  it("does not start Error corroboration after the lifecycle-release deadline (#9962)", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    const corroborate = vi.fn(() => true);
+describe("Docker GPU final handoff acknowledgement", () => {
+  it("accepts the exact running replacement only after OpenShell reports Ready (#9531)", () => {
+    const events: string[] = [];
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        events.push("observe provisioning");
+        return "alpha  2026-08-23 10:00:00  Provisioning\n";
+      })
+      .mockImplementationOnce(() => {
+        events.push("observe ready");
+        return "alpha  2026-08-23 10:00:02  Ready\n";
+      });
     const runOpenshell = vi.fn(() => {
-      vi.setSystemTime(1000);
-      return {
-        status: 0,
-        stdout: "alpha  2026-08-23 01:40:35  Error\n",
-      };
+      events.push("exec ready");
+      return { status: 0 };
+    });
+    const replacementIsExactAndRunning = vi.fn(() => {
+      events.push("confirm exact replacement");
+      return true;
     });
 
-    try {
-      expect(
-        waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-          runOpenshell,
-          sleep: vi.fn(),
-          soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
-        }),
-      ).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+    const acknowledgement = waitForOpenShellFinalHandoff("alpha", 60, {
+      runCaptureOpenshell,
+      runOpenshell,
+      replacementIsExactAndRunning,
+      sleep: vi.fn(),
+    });
+
+    expect(acknowledgement).toEqual({ acknowledged: true, lastSandboxPhase: "Ready" });
+    expect(events).toEqual([
+      "observe provisioning",
+      "confirm exact replacement",
+      "observe ready",
+      "exec ready",
+      "confirm exact replacement",
+    ]);
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-n", "alpha", "--", "true"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
+  });
+
+  it("treats Deleting after the replacement start as terminal (#9531)", () => {
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Deleting\n");
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const replacementIsExactAndRunning = vi.fn(() => true);
+    const sleep = vi.fn();
+
+    expect(
+      waitForOpenShellFinalHandoff("alpha", 60, {
+        runCaptureOpenshell,
+        runOpenshell,
+        replacementIsExactAndRunning,
+        sleep,
+      }),
+    ).toEqual({ acknowledged: false, lastSandboxPhase: "Deleting" });
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(replacementIsExactAndRunning).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("continues through Error only while the exact replacement is running (#9531)", () => {
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Error\n");
+    const replacementIsExactAndRunning = vi.fn(() => false);
+
+    expect(
+      waitForOpenShellFinalHandoff("alpha", 60, {
+        runCaptureOpenshell,
+        runOpenshell: vi.fn(() => ({ status: 1 })),
+        replacementIsExactAndRunning,
+        sleep: vi.fn(),
+      }),
+    ).toEqual({ acknowledged: false, lastSandboxPhase: "Error" });
+    expect(replacementIsExactAndRunning).toHaveBeenCalledOnce();
+  });
+
+  it("allows a running replacement to progress from Error to Ready (#9531)", () => {
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce("alpha  2026-08-23 10:00:00  Error\n")
+      .mockReturnValueOnce("alpha  2026-08-23 10:00:02  Ready\n");
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const replacementIsExactAndRunning = vi.fn(() => true);
+
+    expect(
+      waitForOpenShellFinalHandoff("alpha", 60, {
+        runCaptureOpenshell,
+        runOpenshell,
+        replacementIsExactAndRunning,
+        sleep: vi.fn(),
+      }),
+    ).toEqual({ acknowledged: true, lastSandboxPhase: "Ready" });
+    expect(replacementIsExactAndRunning).toHaveBeenCalledTimes(2);
     expect(runOpenshell).toHaveBeenCalledOnce();
-    expect(corroborate).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a stale Ready phase after the sandbox row disappears (#9531)", () => {
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce("alpha  2026-08-23 10:00:00  Ready\n")
+      .mockReturnValue("");
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const replacementIsExactAndRunning = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+
+    expect(
+      waitForOpenShellFinalHandoff("alpha", 60, {
+        runCaptureOpenshell,
+        runOpenshell,
+        replacementIsExactAndRunning,
+        sleep: vi.fn(),
+      }),
+    ).toEqual({ acknowledged: false, lastSandboxPhase: "Ready" });
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 });
 
