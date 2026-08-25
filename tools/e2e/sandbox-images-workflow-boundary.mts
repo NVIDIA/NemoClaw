@@ -40,6 +40,8 @@ const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
 const GLIBC_PROBE_RUN =
   "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
+const GLIBC_PROBE_ENABLE_ENV = "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E";
+const GLIBC_PROBE_IMAGE_ENV = "NEMOCLAW_TEST_IMAGE";
 const REMOVED_GLIBC_PROBE_TEST_PATH = "test/image-compatibility-docker-lifecycle.test.ts";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
@@ -1136,6 +1138,15 @@ export function validateGlibcProbeLifecycleWorkflowPaths(
       containsRemovedRun
     ) {
       errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
+    }
+    if (
+      matchingSteps.length === 1 &&
+      (matchingSteps[0]?.env?.[GLIBC_PROBE_ENABLE_ENV] !== "1" ||
+        matchingSteps[0]?.env?.[GLIBC_PROBE_IMAGE_ENV] !== "nemoclaw-production")
+    ) {
+      errors.push(
+        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
+      );
     }
   }
   return errors;

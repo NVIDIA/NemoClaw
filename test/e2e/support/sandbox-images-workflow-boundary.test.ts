@@ -96,6 +96,83 @@ describe("sandbox image workflow boundary", () => {
     ]);
   });
 
+  it.each([
+    [
+      "missing enable flag",
+      "PR self-hosted workflow",
+      "prWorkflow",
+      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
+      undefined,
+    ],
+    [
+      "changed enable flag",
+      "PR self-hosted workflow",
+      "prWorkflow",
+      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
+      "true",
+    ],
+    [
+      "missing image",
+      "PR self-hosted workflow",
+      "prWorkflow",
+      "NEMOCLAW_TEST_IMAGE",
+      undefined,
+    ],
+    [
+      "changed image",
+      "PR self-hosted workflow",
+      "prWorkflow",
+      "NEMOCLAW_TEST_IMAGE",
+      "other-image",
+    ],
+    [
+      "missing enable flag",
+      "sandbox image workflow",
+      "imageWorkflow",
+      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
+      undefined,
+    ],
+    [
+      "changed enable flag",
+      "sandbox image workflow",
+      "imageWorkflow",
+      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
+      "true",
+    ],
+    [
+      "missing image",
+      "sandbox image workflow",
+      "imageWorkflow",
+      "NEMOCLAW_TEST_IMAGE",
+      undefined,
+    ],
+    [
+      "changed image",
+      "sandbox image workflow",
+      "imageWorkflow",
+      "NEMOCLAW_TEST_IMAGE",
+      "other-image",
+    ],
+  ] as const)(
+    "rejects the %s in the %s glibc probe lifecycle step (#10155)",
+    (_, label, key, envName, value) => {
+      const { imageWorkflow, prWorkflow } = readWorkflows();
+      const workflow = { imageWorkflow, prWorkflow }[key];
+      const step = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
+        (candidate) => candidate.name === "Run glibc probe lifecycle regression",
+      )!;
+      const mutateEnv =
+        value === undefined
+          ? () => Reflect.deleteProperty(step.env!, envName)
+          : () => Reflect.set(step.env!, envName, value);
+      mutateEnv();
+
+      expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
+        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
+      ]);
+    },
+  );
+
   it("accepts the production-image handoff and focused metadata probe", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
 
