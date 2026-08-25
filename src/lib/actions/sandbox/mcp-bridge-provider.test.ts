@@ -617,28 +617,35 @@ alpha-mcp-slack   generic  1                 0
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("waits past an intermediate credential revision for the final provider revision (#10300)", () => {
-    const entry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://mcp.example.test/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github-0123456789abcdef",
-      providerId: "11111111-2222-4333-8444-555555555555",
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
-    };
-    const exec = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
+  it.each([
+    ["openclaw", "mcporter"],
+    ["hermes", "hermes-config"],
+    ["langchain-deepagents-code", "deepagents-config"],
+  ] as const)(
+    "waits past an intermediate credential revision for the final %s provider revision (#10300)",
+    (agent, adapter) => {
+      const entry = {
+        server: "github",
+        agent,
+        adapter,
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      };
+      const exec = vi
+        .spyOn(processRecovery, "executeSandboxExecCommand")
+        .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
+        .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
 
-    expect(waitForAttachedMcpCredential("alpha", entry, { expectedRevision: "v12" })).toBe(
-      "v12",
-    );
-    expect(exec).toHaveBeenCalledTimes(2);
-  });
+      expect(waitForAttachedMcpCredential("alpha", entry, { expectedRevision: "v12" })).toBe(
+        "v12",
+      );
+      expect(exec).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("derives a bounded positive credential revision from provider metadata", () => {
     expect(mcpAttachedCredentialRevisionForProviderVersion(12)).toBe("v12");

@@ -449,14 +449,12 @@ async function addMcpBridgeUnlocked(
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
-      if (adapter === "mcporter") {
-        // A fresh exec can briefly expose the pre-republish revision. Mcporter
-        // must bind to the final acknowledged provider mutation, not that
-        // intermediate credential identity.
-        expectedCredentialRevision = mcpAttachedCredentialRevisionForProviderVersion(
-          republished.inspection.resourceVersion,
-        );
-      }
+      // A fresh exec can briefly expose the pre-republish revision. Every
+      // credential-bearing adapter must bind to the final acknowledged provider
+      // mutation, not that intermediate credential identity.
+      expectedCredentialRevision = mcpAttachedCredentialRevisionForProviderVersion(
+        republished.inspection.resourceVersion,
+      );
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
@@ -490,9 +488,7 @@ async function addMcpBridgeUnlocked(
           republished.action === "updated"
             ? republished.inspection
             : refreshMcpProviderEnvironment(entry);
-        return adapter === "mcporter"
-          ? mcpAttachedCredentialRevisionForProviderVersion(synchronized.resourceVersion)
-          : undefined;
+        return mcpAttachedCredentialRevisionForProviderVersion(synchronized.resourceVersion);
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a

@@ -13,7 +13,6 @@ import {
 
 describe("managed MCP provider rewrite probe", () => {
   it.each([
-    "openshell:resolve:env:FAKE_MCP_SECRET",
     "openshell:resolve:env:v0_FAKE_MCP_SECRET",
     "openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
@@ -26,6 +25,7 @@ describe("managed MCP provider rewrite probe", () => {
   it.each([
     undefined,
     "raw-secret",
+    "openshell:resolve:env:FAKE_MCP_SECRET",
     "openshell:resolve:env:v_FAKE_MCP_SECRET",
     "openshell:resolve:env:v144298782728593258901_FAKE_MCP_SECRET",
     "openshell:resolve:env:v1_OTHER_MCP_SECRET",

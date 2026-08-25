@@ -10,7 +10,7 @@ export function buildMcpProviderRewriteAuthorization(
   }
   const escapedCredentialKey = credentialKey.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const placeholderPattern = new RegExp(
-    `^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedCredentialKey}$`,
+    `^openshell:resolve:env:v[0-9]{1,20}_${escapedCredentialKey}$`,
     "u",
   );
   return placeholderPattern.test(runtimeValue) ? `Bearer ${runtimeValue}` : null;
