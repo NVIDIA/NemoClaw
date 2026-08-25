@@ -172,7 +172,17 @@ function verifyAuthority(
   if (!fs.readFileSync(boundary.registryFile).equals(registryBytes))
     throw new Error("Completed onboarding registry changed while normalizing");
   const row = registry.sandboxes[sandboxName];
-  const expectedAgent = identity?.agent === "openclaw" ? null : identity?.agent;
+  const matchesRegistryAgent = (agent: unknown) =>
+    agent === identity?.agent || (identity?.agent === "openclaw" && agent === null);
+  if (
+    identity &&
+    rawEntry &&
+    row &&
+    (rawEntry.agent !== row.agent || !matchesRegistryAgent(row.agent))
+  )
+    throw new Error(
+      `Completed onboarding registry field "agent" does not match trusted onboarding for sandbox ${JSON.stringify(sandboxName)}. Restore the registry entry from trusted completed-onboarding state, then retry uninstall.`,
+    );
   if (
     !identity ||
     !gateway ||
@@ -182,8 +192,6 @@ function verifyAuthority(
     row?.name !== sandboxName ||
     rawEntry.name !== sandboxName ||
     row.pendingRouteReservation === true ||
-    row.agent !== expectedAgent ||
-    rawEntry.agent !== expectedAgent ||
     row.openshellDriver !== "docker" ||
     rawEntry.openshellDriver !== "docker" ||
     row.gatewayName !== gateway.gatewayName ||
