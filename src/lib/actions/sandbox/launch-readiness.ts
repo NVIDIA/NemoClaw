@@ -171,11 +171,14 @@ export type PortableOpenClawPairingSettlementResult =
 
 export interface OpenClawPairingSettlementTarget {
   readonly gatewayName: string;
-  readonly openshellDriver: string;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly stateDirectory: string;
   readonly version: string;
+}
+
+export interface OrdinaryOpenClawPairingSettlementTarget extends OpenClawPairingSettlementTarget {
+  readonly openshellDriver: string;
 }
 
 type LaunchReadinessPublicationValidationCategory = Extract<
@@ -951,27 +954,23 @@ function resolveOpenClawPairingSettlementTarget(
   // command shape, so its caller may preserve that unknown value as the empty
   // string while retaining the exact registry and live-lifecycle checks.
   const customDockerfile = normalizedString(entry.fromDockerfile);
-  const version =
-    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
+  const version = recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
-  const openshellDriver = normalizedString(entry.openshellDriver);
   if (
     version === null ||
     !expectedVersion ||
     !stateDirectory ||
     !lifecycleGeneration ||
     !lifecycleLiveIdentityFingerprint ||
-    !openshellDriver ||
     (requiredGeneration !== undefined && lifecycleGeneration !== requiredGeneration)
   ) {
     return null;
   }
   return {
     gatewayName,
-    openshellDriver,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint,
     stateDirectory,
@@ -983,16 +982,19 @@ function resolveOpenClawPairingSettlementTarget(
 export function resolveOrdinaryOpenClawPairingTarget(
   sandboxName: string,
   deps: LaunchReadinessDeps = {},
-): OpenClawPairingSettlementTarget | null {
+): OrdinaryOpenClawPairingSettlementTarget | null {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
-    return resolveOpenClawPairingSettlementTarget(
+    const entry = getSandbox(sandboxName);
+    const target = resolveOpenClawPairingSettlementTarget(
       sandboxName,
-      getSandbox(sandboxName),
+      entry,
       deps,
       undefined,
       true,
     );
+    const openshellDriver = normalizedString(entry?.openshellDriver);
+    return target && openshellDriver ? { ...target, openshellDriver } : null;
   } catch {
     return null;
   }
@@ -1023,12 +1025,7 @@ async function waitForPortablePairingObservation(
     const remaining = deadline - now();
     if (remaining <= 0) return { kind: "timeout" };
     try {
-      const value = observe(
-        sandboxName,
-        target.gatewayName,
-        target.version,
-        target.stateDirectory,
-      );
+      const value = observe(sandboxName, target.gatewayName, target.version, target.stateDirectory);
       if (deadline - now() <= 0) return { kind: "timeout" };
       const decision = decide(value);
       if (deadline - now() <= 0) return { kind: "timeout" };
@@ -1065,7 +1062,8 @@ export async function settlePortableOpenClawPairing(
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
   const now = deps.now ?? (() => performance.now());
   const sleep =
-    deps.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    deps.sleep ??
+    ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
   return withSandboxLock(sandboxName, async () => {
     let firstEntry = getSandbox(sandboxName);

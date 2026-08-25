@@ -8,7 +8,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
-import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
+import type { OrdinaryOpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
 
 export {
@@ -58,7 +58,7 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
 };
 
 interface OrdinaryOpenClawPairingSettlementDeps {
-  getTarget(name: string): OpenClawPairingSettlementTarget | null;
+  getTarget(name: string): OrdinaryOpenClawPairingSettlementTarget | null;
   observePairing(
     name: string,
     gatewayName: string,
@@ -93,9 +93,9 @@ export const finalizationHandlerRuntime = {
 };
 
 function samePairingTarget(
-  left: OpenClawPairingSettlementTarget,
-  right: OpenClawPairingSettlementTarget | null,
-): right is OpenClawPairingSettlementTarget {
+  left: OrdinaryOpenClawPairingSettlementTarget,
+  right: OrdinaryOpenClawPairingSettlementTarget | null,
+): right is OrdinaryOpenClawPairingSettlementTarget {
   return (
     right !== null &&
     left.gatewayName === right.gatewayName &&
@@ -108,9 +108,9 @@ function samePairingTarget(
 }
 
 function samePairingRuntimeSurface(
-  left: OpenClawPairingSettlementTarget,
-  right: OpenClawPairingSettlementTarget | null,
-): right is OpenClawPairingSettlementTarget {
+  left: OrdinaryOpenClawPairingSettlementTarget,
+  right: OrdinaryOpenClawPairingSettlementTarget | null,
+): right is OrdinaryOpenClawPairingSettlementTarget {
   return (
     right !== null &&
     left.gatewayName === right.gatewayName &&
@@ -127,12 +127,12 @@ type PairingWaitResult =
 
 type PairingWaitWithTargetResult = {
   readonly result: PairingWaitResult;
-  readonly target: OpenClawPairingSettlementTarget;
+  readonly target: OrdinaryOpenClawPairingSettlementTarget;
 };
 
 async function waitForPairingObservation(
   name: string,
-  target: OpenClawPairingSettlementTarget,
+  target: OrdinaryOpenClawPairingSettlementTarget,
   deadline: number,
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
@@ -169,7 +169,7 @@ async function waitForPairingObservation(
  */
 async function waitForPairingObservationAfterWarmup(
   name: string,
-  initialTarget: OpenClawPairingSettlementTarget,
+  initialTarget: OrdinaryOpenClawPairingSettlementTarget,
   deadline: number,
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
@@ -205,9 +205,7 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
     runWarmup: (name, gatewayName) =>
-      finalizationHandlerRuntime
-        .loadAutoPairWarmup()
-        .runSandboxScopeWarmupRun(name, gatewayName),
+      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name, gatewayName),
     runApproval: (name, gatewayName) => {
       finalizationHandlerRuntime.loadAutoPairApproval().runSandboxAutoPairApprovalPass(name, {
         budget: {
@@ -328,10 +326,7 @@ export async function settleOrdinaryOpenClawPairing(
               reason: sawCanonicalPairing ? "scope-upgrade-incomplete" : "pairing-unavailable",
             };
           }
-          if (
-            initial &&
-            baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256
-          ) {
+          if (initial && baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (baseline.value.state === "settled") return { kind: "settled" };
