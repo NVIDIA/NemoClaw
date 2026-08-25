@@ -9,9 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DISCORD_GATEWAY_CLIENT_SOURCE } from "../live/messaging-providers-helpers.ts";
 import {
   assertDiscordGatewayCapture,
+  DISCORD_GATEWAY_CLIENT_SOURCE,
+} from "../live/messaging-providers-helpers.ts";
+import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,

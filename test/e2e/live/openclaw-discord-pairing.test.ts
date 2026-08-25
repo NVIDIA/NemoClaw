@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
 import {
   applyFakePolicy,
   approveAndAssertPairing,
-  assertDiscordGatewayCapture,
   assertOpenClawStateRoot,
   cleanupPairingSandbox,
   DISCORD_DM_CHANNEL,

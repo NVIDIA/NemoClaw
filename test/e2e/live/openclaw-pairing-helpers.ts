@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -35,23 +34,6 @@ export const PAIRING_USER = {
 };
 
 export const DISCORD_DM_CHANNEL = process.env.NEMOCLAW_DISCORD_DM_CHANNEL ?? "1199988877766655554";
-
-export function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify).not.toHaveProperty("token");
-  expect(JSON.stringify(rows), "fake Discord Gateway capture persisted raw token").not.toContain(
-    expectedToken,
-  );
-  expect(identify?.tokenMatchesExpected, "Discord token rewrite").toBe(true);
-  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
-}
 
 export function pairingEnv(options: {
   sandboxName: string;
