@@ -131,7 +131,7 @@
     "test/e2e/support/portable-profile-systemctl-shim.test.ts": 10124,
     "test/e2e/support/shared-e2e-workflow-boundary.test.ts": 5690,
     "test/e2e/support/workflow-plan.test.ts": 39886,
-    "test/effective-policy-contracts.test.ts": 7870,
+    "test/onboarding/effective-policy-contracts.test.ts": 7870,
     "test/exit-code-user-error-surfaces.test.ts": 13250,
     "test/generation/generate-managed-startup-profile-fixture.test.ts": 5664,
     "test/inference/managed/managed-bootstrap-trampoline.test.ts": 14561,

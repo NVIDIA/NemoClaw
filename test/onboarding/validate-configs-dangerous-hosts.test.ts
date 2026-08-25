@@ -17,12 +17,12 @@ import {
   isDangerousHost,
   ROUTER_API_BASE_HOST_ALLOWLIST,
   runConfigSemanticChecks,
-} from "../scripts/validate-configs.mts";
+} from "../../scripts/validate-configs.mts";
 import {
   DANGEROUS_HOST_CHECK,
   runSemanticChecks,
   splitSemanticFindings,
-} from "../src/lib/policy/semantic-validation";
+} from "../../src/lib/policy/semantic-validation";
 
 describe("isDangerousHost", () => {
   it.each([

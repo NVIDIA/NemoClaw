@@ -6,12 +6,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { parseGatewayInference } from "../src/lib/inference/config.js";
-import { resolveOnboardManagedBootstrapLaunch } from "../src/lib/onboard/managed-workload/onboard-orchestration.js";
-import { pinnedOpenShellSandboxBuildVersion } from "../src/lib/onboard/openshell-feature-gate.js";
-import { validateName } from "../src/lib/runner.js";
+import { parseGatewayInference } from "../../src/lib/inference/config.js";
+import { resolveOnboardManagedBootstrapLaunch } from "../../src/lib/onboard/managed-workload/onboard-orchestration.js";
+import { pinnedOpenShellSandboxBuildVersion } from "../../src/lib/onboard/openshell-feature-gate.js";
+import { validateName } from "../../src/lib/runner.js";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../..");
 const review = fs.readFileSync(
   path.join(repoRoot, "internal", "security-reviews", "openshell-0.0.99-migration-review.md"),
   "utf8",

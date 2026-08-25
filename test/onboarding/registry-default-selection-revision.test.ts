@@ -10,7 +10,7 @@ import type {
   SandboxEntry,
   SandboxRegistry,
   SandboxRemovalReceipt,
-} from "../src/lib/state/registry";
+} from "../../src/lib/state/registry";
 
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
@@ -21,16 +21,16 @@ const restoreOriginalHome =
       };
 let home: string;
 let registryFile: string;
-let registry: typeof import("../src/lib/state/registry");
-let useCommand: typeof import("../src/lib/use-command-deps");
+let registry: typeof import("../../src/lib/state/registry");
+let useCommand: typeof import("../../src/lib/use-command-deps");
 
 beforeEach(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-default-selection-revision-"));
   process.env.HOME = home;
   vi.resetModules();
   [registry, useCommand] = await Promise.all([
-    import("../src/lib/state/registry"),
-    import("../src/lib/use-command-deps"),
+    import("../../src/lib/state/registry"),
+    import("../../src/lib/use-command-deps"),
   ]);
   registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
 });

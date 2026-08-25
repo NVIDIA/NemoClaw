@@ -7,10 +7,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildDockerDriverGatewayConfigToml } from "../src/lib/onboard/docker-driver-gateway-config.js";
-import { PORTABLE_HOST_GATEWAY_IP } from "../src/lib/onboard/experimental/portable-profile.js";
+import { buildDockerDriverGatewayConfigToml } from "../../src/lib/onboard/docker-driver-gateway-config.js";
+import { PORTABLE_HOST_GATEWAY_IP } from "../../src/lib/onboard/experimental/portable-profile.js";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../..");
 const review = fs.readFileSync(
   path.join(repoRoot, "internal", "security-reviews", "openshell-0.0.101-migration-review.md"),
   "utf8",

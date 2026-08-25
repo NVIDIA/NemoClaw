@@ -9,7 +9,7 @@ import {
   OLLAMA_LOCALHOST,
   resetOllamaHostCache,
   setResolvedOllamaHost,
-} from "../src/lib/inference/local.js";
+} from "../../src/lib/inference/local.js";
 
 type CapturedCall = { argv: readonly string[] };
 

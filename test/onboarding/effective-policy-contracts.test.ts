@@ -4,9 +4,9 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { loadManagedToolGatewayMatrix } from "../agents/hermes/config/managed-tool-gateway.ts";
-import { loadAgent } from "../src/lib/agent/defs.ts";
-import * as policies from "../src/lib/policy";
+import { loadManagedToolGatewayMatrix } from "../../agents/hermes/config/managed-tool-gateway.ts";
+import { loadAgent } from "../../src/lib/agent/defs.ts";
+import * as policies from "../../src/lib/policy";
 
 type AllowRule = {
   allow?: {

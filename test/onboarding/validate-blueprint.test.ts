@@ -13,19 +13,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy";
-import * as policies from "../src/lib/policy";
+import { prepareInitialSandboxCreatePolicy } from "../../src/lib/onboard/initial-policy";
+import * as policies from "../../src/lib/policy";
 
-const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const BLUEPRINT_PATH = new URL("../../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
 const BASE_POLICY_PATH = new URL(
-  "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+  "../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
 const PERMISSIVE_POLICY_PATH = new URL(
-  "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+  "../../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
-const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
+const HERMES_POLICY_PATH = new URL("../../agents/hermes/policy-additions.yaml", import.meta.url);
 
 type Blueprint = {
   digest?: string;

@@ -11,7 +11,7 @@
 import type { ValidateFunction } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { compileConfigSchema, discoverTargets } from "../scripts/validate-configs.mts";
+import { compileConfigSchema, discoverTargets } from "../../scripts/validate-configs.mts";
 
 type LooseScalar = string | number | boolean | null;
 type LooseValue = LooseScalar | LooseObject | LooseValue[];
@@ -1440,7 +1440,7 @@ describe("model-specific-setup/schema.json", () => {
 
   it.each([
     ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
-    ["../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["../../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
     ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
     ["openclaw-plugins/fixture", "/etc/passwd"],
     ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],

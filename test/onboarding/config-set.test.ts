@@ -23,8 +23,8 @@ const {
   buildRecomputeSandboxConfigHashScript,
   hermesCompatHashRecoveryError,
   isHermesCompatHashRecoveryError,
-} = require("../src/lib/sandbox/config");
-const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
+} = require("../../src/lib/sandbox/config");
+const { selectDirectSandboxContainer } = require("../../src/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];

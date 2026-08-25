@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createPolicySelectionPromptHelpers,
   type PolicySelectionPromptDeps,
-} from "../src/lib/onboard/policy-selection-prompts";
+} from "../../src/lib/onboard/policy-selection-prompts";
 
 type Preset = {
   name: string;

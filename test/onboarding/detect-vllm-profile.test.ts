@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildHfTokenDockerArgs,
   buildHfTokenForwardEnv,
-} from "../src/lib/inference/model-acquisition/hugging-face.js";
-import { detectVllmProfile } from "../src/lib/inference/vllm.js";
+} from "../../src/lib/inference/model-acquisition/hugging-face.js";
+import { detectVllmProfile } from "../../src/lib/inference/vllm.js";
 
 describe("detectVllmProfile", () => {
   it("returns the Spark profile when gpu.platform === 'spark'", () => {
@@ -77,7 +77,7 @@ describe("detectVllmProfile", () => {
       Object.defineProperty(process, "arch", { configurable: true, value: arch });
       vi.resetModules();
       const { detectVllmProfile: detectVllmProfileForArch } = await import(
-        "../src/lib/inference/vllm.js"
+        "../../src/lib/inference/vllm.js"
       );
 
       const profile = detectVllmProfileForArch({ type: "nvidia" });

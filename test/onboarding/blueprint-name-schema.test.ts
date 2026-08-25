@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compileConfigSchema } from "../scripts/validate-configs.mts";
+import { compileConfigSchema } from "../../scripts/validate-configs.mts";
 
 interface BlueprintFixture {
   version: string;

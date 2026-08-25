@@ -17,7 +17,7 @@ import {
   type RuntimeIdentityDeps,
   type RuntimeIdentityReceipt,
   removeRuntimeIdentity,
-} from "../nemoclaw/src/blueprint/runtime-identity.ts";
+} from "../../nemoclaw/src/blueprint/runtime-identity.ts";
 
 interface FakeOpenShellCall {
   args: string[];

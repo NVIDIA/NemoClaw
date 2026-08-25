@@ -7,8 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { assessHost } from "../src/lib/onboard/preflight";
-import { createHostReadinessReport } from "../src/lib/readiness/host";
+import { assessHost } from "../../src/lib/onboard/preflight";
+import { createHostReadinessReport } from "../../src/lib/readiness/host";
 
 const NOW = new Date("2026-07-30T12:00:00Z");
 const SOURCE_REVISION = "a".repeat(40);

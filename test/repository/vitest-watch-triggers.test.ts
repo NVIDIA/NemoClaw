@@ -211,7 +211,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
     ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/claude-code.yaml")).toEqual([
-      "test/effective-policy-contracts.test.ts",
+      "test/onboarding/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",

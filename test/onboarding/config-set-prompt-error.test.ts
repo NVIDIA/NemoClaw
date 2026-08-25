@@ -29,16 +29,16 @@ function restoreOwnProperty(
 }
 
 async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
-  const configPath = require.resolve("../src/lib/sandbox/config");
-  const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
-  const registryPath = require.resolve("../src/lib/state/registry");
-  const shieldsPath = require.resolve("../src/lib/shields");
-  const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
-  const timerBoundLockPath = require.resolve("../src/lib/shields/timer-bound-lock");
-  const lifecycleLockPath = require.resolve("../src/lib/state/mcp-lifecycle-lock");
-  const configLockPath = require.resolve("../src/lib/shields/openclaw-config-lock");
-  const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
-  const credentialStorePath = require.resolve("../src/lib/credentials/store");
+  const configPath = require.resolve("../../src/lib/sandbox/config");
+  const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+  const registryPath = require.resolve("../../src/lib/state/registry");
+  const shieldsPath = require.resolve("../../src/lib/shields");
+  const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+  const timerBoundLockPath = require.resolve("../../src/lib/shields/timer-bound-lock");
+  const lifecycleLockPath = require.resolve("../../src/lib/state/mcp-lifecycle-lock");
+  const configLockPath = require.resolve("../../src/lib/shields/openclaw-config-lock");
+  const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
+  const credentialStorePath = require.resolve("../../src/lib/credentials/store");
   const modulePaths = [
     configPath,
     openshellPath,
@@ -113,7 +113,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     vi.stubEnv("NEMOCLAW_CONFIG_ACCEPT_NEW_PATH", undefined);
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", undefined);
 
-    const { configSet } = require("../src/lib/sandbox/config");
+    const { configSet } = require("../../src/lib/sandbox/config");
     try {
       await configSet("prompt-test", { key: "new.path", value: "1" });
     } catch (caught) {
