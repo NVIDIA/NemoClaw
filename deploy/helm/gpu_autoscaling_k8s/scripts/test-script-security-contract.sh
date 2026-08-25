@@ -153,6 +153,20 @@ grep -Fq -- '--set autoscaling.maxGpus="${max}"' "${SCRIPT_DIR}/hpa-common.sh" \
   || fail "normal HPA upgrades do not synchronize the GPU cap with the requested maximum"
 grep -Fq -- '--set autoscaling.maxGpus="${TARGET_PODS}"' "${SCRIPT_DIR}/hpa-load-test.sh" \
   || fail "load tests do not synchronize the GPU cap with the requested target"
+grep -Fq 'hpa_wait_for_one_replica_baseline || exit 1' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "load test does not require a clean one-replica HPA baseline before creating load"
+grep -Fq 'HPA_BASELINE_WAIT_SEC="${HPA_BASELINE_WAIT_SEC:-240}"' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "load test does not provide a bounded HPA baseline wait"
+grep -Fq 'HPA_TEST_DEFAULT_SCALE_UP_PODS=2' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "DGX H100 profile does not apply its faster temporary scale-up policy"
+grep -Fq 'HPA_TEST_DEFAULT_SCALE_DOWN_STABILIZATION_SEC=20' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "DGX H100 profile does not apply its faster temporary scale-down policy"
+grep -Fq 'HPA_TEST_DEFAULT_GPU_TARGET=30' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "DGX H100 profile does not apply its temporary GPU target during DCGM label warm-up"
+grep -Fq 'HPA_LOAD_DEFAULT_SCALE_UP_WAIT_LOOPS=90' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "DGX H100 profile does not allow enough observation time for cold GPU pods"
+grep -Fq 'Restoring the configured HPA scale behavior' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "DGX H100 test does not restore the configured HPA behavior"
 grep -Fq 'hpa_common_verify_envoy_least_request_distribution' "${SCRIPT_DIR}/hpa-load-test.sh" \
   || fail "hpa-load-test.sh must verify Envoy LeastRequest distribution after scale-up"
 grep -Fq 'hpa_common_verify_envoy_least_request_distribution()' "${SCRIPT_DIR}/hpa-common.sh" \
@@ -299,6 +313,14 @@ ALLOW_INSECURE_HTTP=0 NIM_NGC_API_KEY_SECRET=pre-created-ngc-secret \
   hpa_common_gpu_helm_upgrade test-release /tmp/test-chart test-namespace /tmp/test-values.yaml
 grep -Fq -- '--set-string nim.ngcApiKey.existingSecret=pre-created-ngc-secret' "${HELM_LOG}" \
   || fail "GPU Helm upgrade did not forward NIM_NGC_API_KEY_SECRET to nim.ngcApiKey.existingSecret"
+
+: >"${HELM_LOG}"
+ALLOW_INSECURE_HTTP=0 VLLM_IMAGE_PULL_SECRET=ngc-registry VLLM_HF_TOKEN_SECRET=hf-token \
+  hpa_common_gpu_helm_upgrade test-release /tmp/test-chart test-namespace /tmp/test-values.yaml
+grep -Fq -- '--set-string vllm.imagePullSecret.existingSecret=ngc-registry' "${HELM_LOG}" \
+  || fail "GPU Helm upgrade did not forward VLLM_IMAGE_PULL_SECRET"
+grep -Fq -- '--set-string vllm.huggingFaceToken.existingSecret=hf-token' "${HELM_LOG}" \
+  || fail "GPU Helm upgrade did not forward VLLM_HF_TOKEN_SECRET"
 
 [[ "$(ENABLE_ENVOY_LB=0 hpa_common_envoy_lb_helm_value)" == "false" ]] \
   || fail "ENABLE_ENVOY_LB=0 did not map to helm false"

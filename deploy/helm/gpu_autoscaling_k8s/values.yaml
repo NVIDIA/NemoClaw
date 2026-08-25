@@ -58,6 +58,18 @@ vllm:
     tag: latest
     digest: "sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773"
     pullPolicy: IfNotPresent
+  # Optional existing kubernetes.io/dockerconfigjson Secret for nvcr.io. The vLLM
+  # server does not use NGC_API_KEY, but a registry policy can still require kubelet
+  # to authenticate before it can pull the vLLM image. Reuse `ngc-registry` created
+  # by scripts/create-nim-ngc-secrets.sh when it already exists in this namespace.
+  imagePullSecret:
+    existingSecret: ""
+  # Optional existing Opaque Secret for a gated Hugging Face model repository. The
+  # Secret key defaults to HF_TOKEN; leave empty for public models, including the
+  # recipe default unless its upstream access policy changes.
+  huggingFaceToken:
+    existingSecret: ""
+    existingSecretKey: HF_TOKEN
   port: 8000
   maxModelLen: 32768
   gpuMemoryUtilization: 0.85

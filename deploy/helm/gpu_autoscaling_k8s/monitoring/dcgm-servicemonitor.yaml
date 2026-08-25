@@ -6,13 +6,13 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: nvidia-dcgm-exporter
-  namespace: gpu-operator-resources
+  namespace: __DCGM_NAMESPACE__
   labels:
-    release: kube-prometheus
+    release: __PROM_RELEASE__
 spec:
   namespaceSelector:
     matchNames:
-      - gpu-operator-resources
+      - __DCGM_NAMESPACE__
   selector:
     matchLabels:
       app: nvidia-dcgm-exporter

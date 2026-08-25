@@ -46,9 +46,15 @@ spec:
       {{- if .Values.runtimeClassName }}
       runtimeClassName: {{ .Values.runtimeClassName | quote }}
       {{- end }}
-      {{- if and (eq $runtime "nim") (or .Values.nim.imagePullSecret.existingSecret .Values.nim.imagePullSecret.create) }}
+      {{- if or
+            (and (eq $runtime "nim") (or .Values.nim.imagePullSecret.existingSecret .Values.nim.imagePullSecret.create))
+            (and (eq $runtime "vllm") .Values.vllm.imagePullSecret.existingSecret) }}
       imagePullSecrets:
+        {{- if eq $runtime "nim" }}
         - name: {{ include "nemoclaw-gpu.nimImagePullSecretName" . | quote }}
+        {{- else }}
+        - name: {{ .Values.vllm.imagePullSecret.existingSecret | quote }}
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -150,6 +156,13 @@ spec:
                   key: INFERENCE_MODEL
             - name: HF_HOME
               value: {{ include "nemoclaw-gpu.runtimeMountPath" . }}
+            {{- if .Values.vllm.huggingFaceToken.existingSecret }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.vllm.huggingFaceToken.existingSecret | quote }}
+                  key: {{ .Values.vllm.huggingFaceToken.existingSecretKey | default "HF_TOKEN" | quote }}
+            {{- end }}
           volumeMounts:
             - name: inference-data
               mountPath: {{ include "nemoclaw-gpu.runtimeMountPath" . }}

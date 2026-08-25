@@ -14,6 +14,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 const DURATION_SEC = Number(process.env.DURATION_SEC || 720);
 const TARGET_PODS = Number(process.env.TARGET_PODS || 4);
 const HPA_TARGET_GPU = Number(process.env.HPA_TARGET_GPU || 40);
+const HPA_LOAD_PROFILE = process.env.HPA_LOAD_PROFILE || "portable";
+const HPA_LOAD_PROFILE_REQUESTED = process.env.HPA_LOAD_PROFILE_REQUESTED || HPA_LOAD_PROFILE;
 const JOB_PARALLELISM = Number(process.env.JOB_PARALLELISM || 1);
 const METRICS_PROXY_PORT = Number(process.env.METRICS_PROXY_PORT || 8081);
 const INFLIGHT_PER_GPU = Number(process.env.INFLIGHT_PER_GPU || 384);
@@ -568,6 +570,8 @@ async function main() {
     JSON.stringify({
       targetPods: TARGET_PODS,
       hpaTargetGpu: HPA_TARGET_GPU,
+      hpaLoadProfile: HPA_LOAD_PROFILE,
+      hpaLoadProfileRequested: HPA_LOAD_PROFILE_REQUESTED,
       jobParallelism: JOB_PARALLELISM,
       perPodPeak: PER_POD_PEAK,
       loadMultiplier: LOAD_MULTIPLIER,

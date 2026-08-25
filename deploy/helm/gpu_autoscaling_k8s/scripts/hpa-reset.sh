@@ -46,6 +46,7 @@ require_cmd kubectl
 
 if [[ "${SKIP_HELM}" != "1" ]] || [[ "${RUN_LOAD_TEST}" == "1" ]]; then
   require_cmd helm
+  hpa_common_require_nim_credentials "${INFERENCE_RUNTIME}" "${NAMESPACE}" || exit 1
 fi
 
 namespace_exists() {

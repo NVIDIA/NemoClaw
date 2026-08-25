@@ -13,10 +13,10 @@ Kubernetes HPA scales only those GPU inference pods (1 GPU each) using a Pods **
 
 **Envoy Gateway is optional.** When enabled (default), Envoy sits in front of the GPU replicas and load-balances with **LeastRequest**: each new request is sent to a Ready backend that currently has the fewest outstanding requests, so busy GPUs get less new traffic than idle ones. Skip Envoy when the metrics-proxy ClusterIP Service is enough (round-robin / kube-proxy only — no LeastRequest):
 
-| Choice | Install command |
-|--------|-----------------|
-| With Envoy LeastRequest (default) | `./scripts/install-hpa.sh` |
-| Without Envoy (metrics-proxy Service only) | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
+| Choice | Required setup | Install command |
+|--------|----------------|-----------------|
+| With Envoy LeastRequest (default) | Create a TLS Secret in `nemoclaw-gpu` and configure `ingress.tls`; see [TLS values](#tls-values). | `./scripts/install-hpa.sh` |
+| Without Envoy (metrics-proxy Service only) | No Gateway or TLS Secret. Protect the in-cluster Service with a NetworkPolicy and the inference API key. | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
 
 **New here?** Start with [Quick start](#quick-start). Teardown: [Uninstall](#uninstall).
 
@@ -111,13 +111,17 @@ export TARGET_PODS=8    # hpa-load-test.sh
 - Metrics Server (MicroK8s: installer can enable)
 - OpenShell path only: Docker Buildx + a registry nodes can pull (MicroK8s: [local registry](#microk8s-local-registry) on `:32000`); OpenShell CLI matching `versions.env`; Agent Sandbox CRDs (apply the pinned manifest yourself); OIDC **or** the unauthenticated eval exception
 
+The DCGM Exporter namespace defaults to `gpu-operator-resources`, which MicroK8s uses. Set `DCGM_NAMESPACE=gpu-operator` before you run the installer when the standard NVIDIA GPU Operator manages DCGM Exporter in `gpu-operator`. The installer creates the DCGM ServiceMonitor in the same namespace.
+
 Cluster baseline matches the [NemoClaw GPU autoscaling chart](https://github.com/NVIDIA/NemoClaw/tree/main/deploy/helm/gpu_autoscaling_k8s). For host CLI / Docker when working with NemoClaw images locally, see NemoClaw's [Prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/docs/get-started/prerequisites.mdx).
 
 ```bash
+# Standard NVIDIA GPU Operator only:
+# export DCGM_NAMESPACE=gpu-operator
 kubectl get nodes \
   -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
 kubectl get nodes -l nvidia.com/gpu.present=true
-kubectl get pods -n gpu-operator-resources -l app=nvidia-dcgm-exporter
+kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
 Do not paste kubeconfig, registry credentials, OIDC secrets, or inference API keys into issues or PRs.
@@ -140,28 +144,57 @@ openshell --version
 ### 2. Confirm GPUs and DCGM
 
 ```bash
+# Standard NVIDIA GPU Operator only:
+# export DCGM_NAMESPACE=gpu-operator
 kubectl get nodes \
   -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
-kubectl get pods -n gpu-operator-resources -l app=nvidia-dcgm-exporter
+kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
 ### 3. Install GPU inference + Kubernetes HPA
 
-TLS is required by default when Envoy is on (see [TLS values](#tls-values)). Isolated eval only: `ALLOW_INSECURE_HTTP=1`.
+Choose the request distribution path before you install:
 
-**Cluster-local settings:** copy `local.env.example` → `local.env` (gitignored) and point `HPA_VALUES` at your TLS overlay. Scripts auto-source `local.env` from the recipe directory, so you can run them from any cwd without re-exporting. Already-exported env vars still win.
+- **Envoy LeastRequest (default):** Configure the TLS Secret and values overlay in [TLS values](#tls-values). The installer requires TLS when Envoy is enabled.
+- **metrics-proxy Service only:** Set `ENABLE_ENVOY_LB=0`. This path creates no Gateway and requires no TLS Secret. It does not use Envoy LeastRequest.
+
+`ALLOW_INSECURE_HTTP=1` is only for an isolated evaluation cluster. It is not a substitute for `ENABLE_ENVOY_LB=0`.
+
+**Envoy cluster-local settings:** copy `local.env.example` → `local.env` (gitignored) and point `HPA_VALUES` at your TLS overlay. Scripts auto-source `local.env` from the recipe directory, so you can run them from any cwd without re-exporting. Already-exported env vars still win.
 
 ```bash
-# Once per cluster clone — see [TLS values](#tls-values)
+# Envoy LeastRequest (default): once per cluster clone — see [TLS values](#tls-values)
 cp local.env.example local.env
 cp values.yaml ./hpa-tls-values.yaml
 # Edit hpa-tls-values.yaml (ingress.host + ingress.tls) and local.env (INGRESS_HOST)
 
 # Optional: export NEMOCLAW_TARGET_NODE=<gpu-node-name>
 # Optional: export INFERENCE_MODEL=<ollama-tag>  # default llama3.2:3b; use nemotron-3-nano:30b to switch to Nemotron on L40S
+# Standard NVIDIA GPU Operator only: export DCGM_NAMESPACE=gpu-operator
 # MAX_REPLICAS defaults to allocatable GPU count N
 ./scripts/install-hpa.sh
-# Or without Envoy: ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
+```
+
+The default runtime is **Ollama**. It pulls public Ollama models on first start and needs no NVIDIA/NGC API key. If you select **NVIDIA NIM**, set up its NGC credential **before** the install; the installer now stops immediately with this instruction when it is missing:
+
+```bash
+# One time per target namespace. The key is prompted for without echoing it.
+NAMESPACE=nemoclaw-gpu ./scripts/create-nim-ngc-secrets.sh
+
+# Put Secret names—not the NGC key—in gitignored local.env, then install.
+export INFERENCE_RUNTIME=nim
+export INFERENCE_MODEL=nvidia/nemotron-3-nano
+export NIM_NGC_API_KEY_SECRET=nim-ngc-key
+export NIM_IMAGE_PULL_SECRET=ngc-registry
+./scripts/install-hpa.sh
+```
+
+`create-nim-ngc-secrets.sh` creates both required namespace-scoped Secrets: the `NGC_API_KEY` the NIM container uses to download a model profile and an `nvcr.io` `imagePullSecret` kubelet uses before the container starts. Do not send, commit, or put the NGC key in `local.env`.
+
+For the metrics-proxy Service-only path, a TLS Secret and values overlay are not required. Run this command instead:
+
+```bash
+ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
 ```
 
 Wait for the first Ollama model pull (`ROLLOUT_TIMEOUT` if needed). The metrics-proxy Service listens on **port 8081**. Then:
@@ -261,29 +294,85 @@ When finished: [Uninstall](#uninstall).
 
 ## Install details
 
-Installer side effects: may install/upgrade Prometheus (if missing), Prometheus Adapter (always, with this recipe’s GPU/latency custom-metric rules), Envoy Gateway (when `ENABLE_ENVOY_LB=1`), DCGM ServiceMonitor, and MicroK8s GPU/Metrics add-ons. Review shared-cluster impact before reuse of release names.
+Installer side effects: by default installs Prometheus when the configured release is missing; when configured to reuse monitoring, it configures the selected Prometheus Adapter with this recipe’s GPU/latency custom-metric rules. It also installs Envoy Gateway when `ENABLE_ENVOY_LB=1`, creates the DCGM ServiceMonitor, and may enable MicroK8s GPU/Metrics add-ons. Review shared-cluster impact before reuse of release names.
 
 Static checks (no cluster):
 
 ```bash
 ./scripts/test-render-contract.sh
 ./scripts/test-script-security-contract.sh
+./scripts/test-dcgm-servicemonitor-contract.sh
 node ./scripts/test-inference-auth-contract.mjs
 node ./scripts/test-metrics-proxy-metrics-contract.mjs
 ./scripts/test-nemoclaw-k8s-contract.sh
 ```
 
+### Reuse an existing Prometheus stack
+
+The default remains the Brev-tested behavior: use the configured `kube-prometheus` release
+in `monitoring`, installing it only when that release is absent. To discover and reuse
+exactly one deployed Helm-managed `kube-prometheus-stack` resource across all namespaces
+instead of creating a second stack (two node-exporter DaemonSets conflict on host ports),
+opt in with:
+
+```bash
+export USE_EXISTING_PROMETHEUS=auto
+```
+
+If discovery finds no stack, it falls back to the normal compact `kube-prometheus` release.
+This opt-in is for shared/on-prem clusters; leave it unset on the Brev AWS environment for
+identical monitoring behavior to the validated path.
+
+To require a particular existing release instead of relying on discovery, set:
+
+```bash
+export USE_EXISTING_PROMETHEUS=1
+export MONITORING_NS=prometheus
+export PROM_RELEASE=kube-prometheus-stack
+export ADAPTER_RELEASE=prometheus-adapter
+```
+
+For the cluster above, add the same four exports to the gitignored `local.env`. If discovery
+finds multiple stacks, the installer stops rather than guessing; use these values to select
+one. It verifies the selected Prometheus release, waits for it to be ready, and labels the
+DCGM ServiceMonitor with `release=${PROM_RELEASE}` so that stack selects it. When the named
+adapter already exists, it retains that release's installed chart version and Helm values
+while applying this recipe's GPU and latency custom-metric rules. Review and merge any
+pre-existing `rules.custom` configuration first, because the recipe replaces that list.
+
+### Aggregated metrics API health
+
+The installer requires both the Metrics Server API and Prometheus Adapter custom-metrics API
+to be consistently reachable, not merely to display `True` once. Before retrying a failed
+install, verify each endpoint several times:
+
+```bash
+for endpoint in /apis/metrics.k8s.io/v1beta1 /apis/custom.metrics.k8s.io/v1beta1; do
+  for attempt in 1 2 3; do
+    kubectl get --raw "${endpoint}" >/dev/null && echo "${endpoint}: ok" || echo "${endpoint}: failed"
+  done
+done
+```
+
+If either endpoint is intermittent or returns `401`, repair the control plane's aggregated
+API request-header/front-proxy client certificate on every control-plane node, restarting
+one API server at a time. The certificate path and renewal procedure are distribution- and
+cluster-specific; the recipe does not manage control-plane certificates.
+
 ### TLS values
 
 When Envoy is enabled (`ENABLE_ENVOY_LB=1`, the default), **every** `helm upgrade` from the recipe scripts needs a values overlay that sets `ingress.tls`. Chart `values.yaml` alone is not enough.
 
-1. Create the TLS Secret (once).
+1. Create the TLS Secret in the chart namespace (once).
 2. Copy/edit an overlay that points at that Secret (`./hpa-tls-values.yaml`).
 3. Copy `local.env.example` → `local.env` so scripts pick up `HPA_VALUES` / `INGRESS_HOST` automatically (any cwd).
+
+The TLS Secret must be in `nemoclaw-gpu`. Its certificate must include the `ingress.host` value in a Subject Alternative Name. Your certificate authority or certificate-management system supplies the PEM certificate and private-key files; do not add those files to this repository.
 
 ```bash
 # Run from the recipe directory (or any cwd — scripts resolve the recipe via their own path)
 kubectl create namespace nemoclaw-gpu --dry-run=client -o yaml | kubectl apply -f -
+# Use a certificate and private key issued for ingress.host.
 kubectl create secret tls nemoclaw-example-tls \
   --namespace nemoclaw-gpu \
   --cert=/path/to/tls.crt --key=/path/to/tls.key \
@@ -316,6 +405,16 @@ If you see `ingress.tls is empty and ingress.allowInsecureHttp is false`, `local
 
 The chart does not create, rotate, or delete the TLS Secret.
 
+To install without Envoy, a TLS Secret and `ingress.tls` are not required. Set `ENABLE_ENVOY_LB=0` for every recipe script that manages the release:
+
+```bash
+ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
+ENABLE_ENVOY_LB=0 ./scripts/hpa-reset.sh
+ENABLE_ENVOY_LB=0 ./scripts/hpa-load-test.sh
+```
+
+This path creates no Gateway objects. Clients use the metrics-proxy Service. Add a NetworkPolicy for the Service and retain the inference API key authentication.
+
 ### Scheduling
 
 - Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable persistence for the selected runtime — see [Persistence](#persistence)); default `values.yaml` hostPath is single-node only.
@@ -340,13 +439,15 @@ When Envoy is disabled (`ENABLE_ENVOY_LB=0`): no Gateway objects; clients use th
 
 `inference.runtime` (Helm field) / no dedicated env var beyond `INFERENCE_RUNTIME` for the scripts below selects which container the chart renders for GPU inference: **`ollama`** (default), **`vllm`**, or **`nim`**. All three keep the same **1 GPU → 1 pod → local OpenAI-compatible `/v1` server** pattern, so the metrics-proxy, HPA, and Envoy layers are unchanged — only the `values.yaml` block matching the runtime name (`ollama:`, `vllm:`, `nim:`) applies.
 
-| Runtime | Best for | Default model | Image | Min VRAM (default model) |
-|---------|----------|----------------|-------|---------------------------|
-| **Ollama** (default) | Fast pulls, small demo models, simplest quantized-GGUF workflow | `llama3.2:3b` | `ollama/ollama` | ~2 GB |
-| **vLLM** | Higher-throughput OpenAI-compatible serving, Hugging Face model catalog | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | `nvcr.io/nvidia/vllm` | ~5.3 GB |
-| **NIM** | Prebuilt, NVIDIA-optimized inference microservice, no serving flags to tune | `nvidia/nemotron-3-nano` | `nvcr.io/nim/nvidia/nemotron-3-nano` | ~8 GB |
+| Runtime | Best for | Default model | Image | Credentials for image/model | Min VRAM (default model) |
+|---------|----------|----------------|-------|-----------------------------|---------------------------|
+| **Ollama** (default) | Fast pulls, small demo models, simplest quantized-GGUF workflow | `llama3.2:3b` | `ollama/ollama` | **None.** The public image and model pull on first start. | ~2 GB |
+| **vLLM** | Higher-throughput OpenAI-compatible serving, Hugging Face model catalog | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | `nvcr.io/nvidia/vllm` | **No NIM/NGC model key.** Set `VLLM_IMAGE_PULL_SECRET` only if your `nvcr.io` registry requires authentication; set `VLLM_HF_TOKEN_SECRET` only for a gated Hugging Face model. | ~5.3 GB |
+| **NIM** | Prebuilt, NVIDIA-optimized inference microservice, no serving flags to tune | `nvidia/nemotron-3-nano` | `nvcr.io/nim/nvidia/nemotron-3-nano` | **Required.** Run `create-nim-ngc-secrets.sh`; then set `NIM_NGC_API_KEY_SECRET` and `NIM_IMAGE_PULL_SECRET`. The NGC key authenticates both image pull and model-profile download. | ~8 GB |
 
 Every default here fits comfortably on a single L40S (48 GB) or H100 (80 GB) with room for a much larger `inference.maxModelLen`/context if you raise `vllm.maxModelLen` or switch models.
+
+These are registry/model credentials, not the chart-generated **inference API key** clients use to call `/v1`. Never place any credential value in `local.env` or Git—only the pre-created Secret names belong there.
 
 #### Agent and runtime support
 
@@ -362,6 +463,47 @@ The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime`
 - The recipe supports Deep Agents Code + Ollama through the same OpenAI-compatible route, but current NemoClaw guidance does not offer local Ollama for Deep Agents Code. `try-it.sh` allows that pairing with a warning.
 - Static contracts do not replace live GPU validation. Treat combinations not listed under [Validated hardware](#validated-hardware) as experimental until tested on your cluster.
 
+#### Recommended validation matrix
+
+`./scripts/test-agent-runtime-matrix-contract.sh` renders and checks all nine agent × runtime combinations without a cluster, GPU, or real credential. For live testing, run the following sequentially after the baseline is healthy; each row covers a distinct documented path, and together they cover every agent harness and runtime without spending time on the currently undocumented Deep Agents Code + Ollama pairing.
+
+| Order | Agent × runtime | Why include it | Credential setup |
+|---|---|---|---|
+| 1 | OpenClaw + Ollama | Baseline/default path; this is the initial install. | None |
+| 2 | Hermes + vLLM | High-throughput OpenAI-compatible server plus a gateway-style agent. | Normally none; set `VLLM_IMAGE_PULL_SECRET` if `nvcr.io` requires it. |
+| 3 | OpenClaw + NIM | NVIDIA-managed inference path plus the default/exercised agent. | `create-nim-ngc-secrets.sh`, then `NIM_NGC_API_KEY_SECRET` and `NIM_IMAGE_PULL_SECRET`. |
+| 4 | Deep Agents Code + vLLM | Terminal-style agent with a documented local high-throughput runtime. | Same vLLM conditions as row 2. |
+
+For each live row, first install or switch the runtime, then build/create/verify the selected agent sandbox, and finally run one HPA scale-up, Envoy distribution, and scale-down test. Test them one at a time: each HPA run can claim all available GPUs. See [HPA and Envoy check](#6-hpa-and-envoy-check) and [Agent Sandbox, image, OpenShell](#4-agent-sandbox-image-openshell).
+
+The load test uses `HPA_LOAD_PROFILE=auto` by default. `TARGET_PODS` still defaults to the allocatable GPU count: eight GPUs select the 8-pod test rather than hard-coding eight on a 4-GPU cluster. The selected profile is printed at test start and in every generator log.
+
+| Effective profile | Selected by `auto` | Default test target | Per-GPU synthetic load | Purpose |
+|---|---|---:|---:|---|
+| `dgx-8xh100` | Eight target pods and an H100 GPU product label | 8 | 200 (cap 640/pod) | Uses a temporary 30% GPU target (the configured 40% target is restored on exit) so a just-created H100 pod's short DCGM `0%` label-mapping window does not block further scale-up. It may add 2 pods/10s and remove 2 pods/15s after 20s stabilization. Cold pods are allowed up to 15 minutes before the test reports an incomplete scale-up. |
+| `brev-4xl40s` | Four target pods and an L40S GPU product label | 4 | 64 | Preserves the Brev AWS 4×L40S-tested behavior. |
+| `portable` | Any other hardware/count | Allocatable GPU count | 64 | Conservative fallback; override explicitly after measuring your hardware. |
+
+You can pin `HPA_LOAD_PROFILE=dgx-8xh100` or `HPA_LOAD_PROFILE=brev-4xl40s` in gitignored `local.env`. The profiles use the same load-generator code and OpenAI-compatible request workload; only their concurrency settings differ, so coverage and safety logic remain consistent.
+
+Before creating a load Job, the test waits for a clean HPA baseline of **1 current / 1 desired** Ready replica (up to 240 seconds). This prevents a new test from inheriting replicas or the 60-second scale-down stabilization window from a prior test. It does not force a scale-down, so it cannot disrupt real traffic; wait for existing traffic to drain, then rerun. Set `HPA_BASELINE_WAIT_SEC` only if a longer wait is appropriate for your cluster.
+
+Use the named wrappers when you want the hardware/count to be explicit:
+
+```bash
+# Prioritized on-prem DGX test: exactly 8 GPU replicas with H100 load settings.
+export MAX_REPLICAS=8
+./scripts/install-hpa.sh
+./scripts/hpa-load-test-dgx-8xh100.sh
+
+# Existing Brev AWS behavior: exactly 4 GPU replicas with the original L40S settings.
+export MAX_REPLICAS=4
+./scripts/install-hpa.sh
+./scripts/hpa-load-test-brev-4xl40s.sh
+```
+
+The wrappers reject a conflicting `TARGET_PODS` value. The DGX wrapper temporarily uses the faster policy shown above only for its test, then restores the policy from `HPA_VALUES`; it does not change the Brev/portable behavior. To test another capacity, use the generic `hpa-load-test.sh`, whose default remains the allocatable GPU count.
+
 #### Switching runtimes
 
 ```bash
@@ -371,9 +513,12 @@ export INFERENCE_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
 ./scripts/install-hpa.sh
 
 # NIM — requires an NGC API key (see below)
+# Preferred: run ./scripts/create-nim-ngc-secrets.sh once, then put only the two
+# Secret names in gitignored local.env (shown in Quick start above).
 export INFERENCE_RUNTIME=nim
 export INFERENCE_MODEL=nvidia/nemotron-3-nano
-export NIM_NGC_API_KEY=nvapi-...
+export NIM_NGC_API_KEY_SECRET=nim-ngc-key
+export NIM_IMAGE_PULL_SECRET=ngc-registry
 ./scripts/install-hpa.sh
 
 # Sandbox must use the same model id OpenShell will request (AGENT_NAME from step 4; see AGENT-SELECTION.md)
@@ -384,6 +529,7 @@ export NIM_NGC_API_KEY=nvapi-...
 Notes:
 
 - `install-hpa.sh` / `hpa-reset.sh` / `hpa-load-test.sh` all forward `NIM_NGC_API_KEY` (plaintext, `--set-string nim.ngcApiKey.value=...`) or `NIM_NGC_API_KEY_SECRET` (name of a pre-created `Secret` with key `NGC_API_KEY`, `--set-string nim.ngcApiKey.existingSecret=...`) when set. Prefer `NIM_NGC_API_KEY_SECRET` in a real deployment, since plaintext `--set` values are visible in `helm get values` / shell history. See [NVIDIA NIM registry access](#nvidia-nim-registry-access) for the related `imagePullSecret` — a clean node needs both, not just `NGC_API_KEY`.
+- **vLLM needs no NIM `NGC_API_KEY`** to download model weights. Its default Hugging Face model is public. If your `nvcr.io` registry policy requires authentication for the vLLM image, set `VLLM_IMAGE_PULL_SECRET=ngc-registry` (the registry Secret created by `create-nim-ngc-secrets.sh` can be reused). For a gated Hugging Face model, create an existing Opaque Secret with key `HF_TOKEN` and set `VLLM_HF_TOKEN_SECRET=<secret-name>`; the chart injects it as `HF_TOKEN` only into the vLLM container.
 - vLLM's default `extraArgs` (`--trust-remote-code --async-scheduling --kv-cache-dtype=fp8`) are specific to the Nemotron-3-Nano-4B-FP8 family — clear or replace `vllm.extraArgs` when switching to a different Hugging Face model.
 - NIM env vars (`NGC_API_KEY`, `NIM_CACHE_PATH`, `NIM_HTTP_API_PORT`) follow NVIDIA's generic NIM container contract; verify against the specific NIM image's own docs if you swap in a different catalog entry, and use `nim.extraEnv` for anything image-specific.
 - The `ollama`/`vllm`/`nim` container security contexts are separate values (`ollamaSecurityContext`, `vllmSecurityContext`, `nimSecurityContext`) in case one runtime's image tolerates stricter settings than another.
@@ -404,7 +550,7 @@ export NIM_NGC_API_KEY=nvapi-...   # https://ngc.nvidia.com → Setup → API Ke
 
 This sets `nim.ngcApiKey.value`, which the chart uses to render **two** Secrets: an `Opaque` Secret for `NGC_API_KEY` ([`nim-ngc-secret.yaml`](templates/nim-ngc-secret.yaml)) and a `kubernetes.io/dockerconfigjson` Secret referenced as the pod's `imagePullSecrets` ([`nim-ngc-registry-secret.yaml`](templates/nim-ngc-registry-secret.yaml)) — no separate registry login step needed. **Never commit an NGC API key to Git**; only ever pass it as an env var or a pre-created Secret, and this recipe's tests only ever use a throwaway placeholder value.
 
-If you'd rather manage `NGC_API_KEY` as a pre-created `Secret` (`NIM_NGC_API_KEY_SECRET`, → `nim.ngcApiKey.existingSecret`), the chart can't read that Secret's data at template time to also derive the `imagePullSecret` — create one yourself and point the chart at it:
+For production, use the Secret-first helper shown in [Quick start](#quick-start). It prompts for the NGC key without echoing it and creates the required `NGC_API_KEY` and `imagePullSecret` pair. If you already manage the `NGC_API_KEY` as a pre-created Secret (`NIM_NGC_API_KEY_SECRET`, → `nim.ngcApiKey.existingSecret`), the chart cannot read that Secret's data at template time to also derive the `imagePullSecret`; create or supply the registry Secret too:
 
 ```bash
 kubectl create secret docker-registry ngc-registry \

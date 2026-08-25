@@ -69,6 +69,11 @@ RUN_LOAD_TEST="${RUN_LOAD_TEST:-1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${CHART_DIR}"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
+hpa_common_load_local_env "${CHART_DIR}"
+NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
+DCGM_NAMESPACE="${DCGM_NAMESPACE:-gpu-operator-resources}"
 # shellcheck source=versions.env
 source versions.env
 # shellcheck source=agent-common.sh
@@ -92,7 +97,7 @@ case "${INFERENCE_RUNTIME}" in
     ;;
   nim)
     INFERENCE_MODEL="${INFERENCE_MODEL:-nvidia/nemotron-3-nano}"
-    : "${NIM_NGC_API_KEY:?export NIM_NGC_API_KEY=nvapi-... before running (NIM needs an NGC key)}"
+    hpa_common_require_nim_credentials "${INFERENCE_RUNTIME}" "${NAMESPACE}" || exit 1
     ;;
   *)
     echo "ERROR: INFERENCE_RUNTIME must be ollama, vllm, or nim (got '${INFERENCE_RUNTIME}')." >&2
@@ -121,7 +126,7 @@ fi
 echo "=== 1/7: GPU + DCGM sanity check ==="
 kubectl get nodes \
   -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
-kubectl get pods -n gpu-operator-resources -l app=nvidia-dcgm-exporter
+kubectl get pods -n "${DCGM_NAMESPACE}" -l app=nvidia-dcgm-exporter
 
 echo "=== 2/7: Install GPU inference (${INFERENCE_RUNTIME}) + HPA ==="
 ./scripts/install-hpa.sh

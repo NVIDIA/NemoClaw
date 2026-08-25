@@ -417,8 +417,9 @@ if ! helm template hostpath-policy-check "${CHART_DIR}" \
 fi
 
 VLLM_RENDERED_FILE="$(mktemp)"
+VLLM_SECRETS_RENDERED_FILE="$(mktemp)"
 NIM_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${NIM_RENDERED_FILE}"' EXIT
+trap 'rm -f "${TLS_RENDERED_FILE}" "${EIGHT_GPU_RENDERED_FILE}" "${TARGET_NODE_RENDERED_FILE}" "${VLLM_RENDERED_FILE}" "${VLLM_SECRETS_RENDERED_FILE}" "${NIM_RENDERED_FILE}"' EXIT
 
 helm template vllm-runtime-check "${CHART_DIR}" \
   "${AUTH_HELM_SETS[@]}" \
@@ -426,6 +427,15 @@ helm template vllm-runtime-check "${CHART_DIR}" \
   --set inference.runtime=vllm \
   --set-string inference.model=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8 \
   >"${VLLM_RENDERED_FILE}"
+
+helm template vllm-runtime-secret-check "${CHART_DIR}" \
+  "${AUTH_HELM_SETS[@]}" \
+  --set ingress.allowInsecureHttp=true \
+  --set inference.runtime=vllm \
+  --set-string inference.model=org/gated-model \
+  --set-string vllm.imagePullSecret.existingSecret=ngc-registry \
+  --set-string vllm.huggingFaceToken.existingSecret=hf-token \
+  >"${VLLM_SECRETS_RENDERED_FILE}"
 
 helm template nim-runtime-check "${CHART_DIR}" \
   "${AUTH_HELM_SETS[@]}" \
@@ -460,6 +470,24 @@ volumes = deploy["spec"]["template"]["spec"]["volumes"]
 if any(v.get("name") == "scripts" for v in volumes):
     sys.exit(f"FAIL: {runtime} render should not mount the ollama-only 'scripts' volume")
 print(f"OK: {runtime} render contract holds (container/image/port/metrics-proxy env)")
+PYEOF
+
+python3 - "${VLLM_SECRETS_RENDERED_FILE}" <<'PYEOF'
+import sys
+import yaml
+
+with open(sys.argv[1]) as f:
+    docs = [d for d in yaml.safe_load_all(f) if d]
+deploy = next(d for d in docs if d.get("kind") == "Deployment")
+pod_spec = deploy["spec"]["template"]["spec"]
+if pod_spec.get("imagePullSecrets") != [{"name": "ngc-registry"}]:
+    sys.exit(f"FAIL: vLLM imagePullSecrets not wired to ngc-registry: {pod_spec.get('imagePullSecrets')!r}")
+vllm = next(c for c in pod_spec["containers"] if c["name"] == "vllm")
+env = {item["name"]: item for item in vllm.get("env", [])}
+token = env.get("HF_TOKEN", {}).get("valueFrom", {}).get("secretKeyRef", {})
+if token != {"name": "hf-token", "key": "HF_TOKEN"}:
+    sys.exit(f"FAIL: vLLM HF_TOKEN Secret wiring wrong: {token!r}")
+print("OK: vLLM render wires optional nvcr.io and Hugging Face credential Secrets")
 PYEOF
 
 python3 - "${NIM_RENDERED_FILE}" <<'PYEOF'

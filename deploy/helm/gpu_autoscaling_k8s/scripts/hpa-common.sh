@@ -18,6 +18,40 @@ hpa_common_load_local_env() {
   source "${env_file}"
 }
 
+# NIM needs a credential for two separate operations: kubelet's nvcr.io image pull and
+# the NIM container's model-profile download. Keep the credential out of Helm values by
+# preferring the pre-created Secret pair made by create-nim-ngc-secrets.sh.
+hpa_common_require_nim_credentials() {
+  local runtime="${1:?runtime}"
+  local namespace="${2:?namespace}"
+
+  [[ "${runtime}" == "nim" ]] || return 0
+
+  if [[ -n "${NIM_NGC_API_KEY:-}" && -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
+    echo "Set only one of NIM_NGC_API_KEY or NIM_NGC_API_KEY_SECRET for NIM, not both." >&2
+    return 1
+  fi
+  if [[ -n "${NIM_NGC_API_KEY:-}" || -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
+    return 0
+  fi
+
+  cat >&2 <<EOF
+NIM requires an NGC API key before this command can run.
+
+Preferred one-time setup (the key is prompted for without echoing and is stored only in Kubernetes Secrets):
+  NAMESPACE=${namespace} ./scripts/create-nim-ngc-secrets.sh
+
+Then add these names—not the key itself—to gitignored local.env:
+  export INFERENCE_RUNTIME=nim
+  export NIM_NGC_API_KEY_SECRET=nim-ngc-key
+  export NIM_IMAGE_PULL_SECRET=ngc-registry
+
+For a short-lived evaluation only, export NIM_NGC_API_KEY=nvapi-... before running instead.
+See README.md#nvidia-nim-registry-access.
+EOF
+  return 1
+}
+
 # Print the effective inference Secret name and key as a tab-separated pair.
 # Reading Helm's computed values keeps operational scripts aligned with either
 # the chart-generated Secret or an operator-managed Secret configured in values.
@@ -1321,6 +1355,14 @@ hpa_common_gpu_helm_upgrade() {
   # at a pre-created `kubernetes.io/dockerconfigjson` Secret for nvcr.io instead.
   if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
     helm_args+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
+  fi
+  # vLLM does not need NGC_API_KEY for model download. Its nvcr.io image may still
+  # need registry authentication, and gated Hugging Face models need a separate token.
+  if [[ -n "${VLLM_IMAGE_PULL_SECRET:-}" ]]; then
+    helm_args+=(--set-string "vllm.imagePullSecret.existingSecret=${VLLM_IMAGE_PULL_SECRET}")
+  fi
+  if [[ -n "${VLLM_HF_TOKEN_SECRET:-}" ]]; then
+    helm_args+=(--set-string "vllm.huggingFaceToken.existingSecret=${VLLM_HF_TOKEN_SECRET}")
   fi
 
   helm "${helm_args[@]}" >/dev/null
