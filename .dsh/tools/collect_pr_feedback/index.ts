@@ -55,11 +55,16 @@ export default async function collect_pr_feedback(input: {
     for (let page = 1; page <= pageLimit; page += 1) {
       const text = await run([
         "api",
+        "--include",
         "repos/" + repo + "/" + path + "?per_page=" + pageSize + "&page=" + page,
         "--jq",
         projection,
       ]);
-      const values = text ? JSON.parse(text) : [];
+      const boundary = text.indexOf("\n\n");
+      if (boundary < 0) throw new Error("GitHub REST projection response omitted headers");
+      const headers = text.slice(0, boundary);
+      const body = text.slice(boundary + 2);
+      const values = body ? JSON.parse(body) : [];
       if (
         !Array.isArray(values) ||
         values.some((item) => item === null || typeof item !== "object" || Array.isArray(item))
@@ -67,7 +72,8 @@ export default async function collect_pr_feedback(input: {
         throw new Error("GitHub REST projection must be an array of objects");
       items.push(...values);
       if (items.length > 100) throw new Error("GitHub REST projection exceeded 100 items");
-      if (values.length < pageSize) return { items, truncated: false };
+      const hasNext = /^link:.*rel="next"/imu.test(headers);
+      if (!hasNext) return { items, truncated: false };
       if (page === pageLimit) return { items, truncated: true };
     }
     throw new Error("GitHub REST projection did not terminate");
