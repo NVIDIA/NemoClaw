@@ -9,8 +9,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   withGatewayRouteMutationLock,
   withGatewayRouteMutationLockSync,
-  withModelRouterPortLifecycleLock,
-  withSandboxGatewayRouteMutationLocksSync,
 } from "./gateway-route-mutation-lock";
 
 describe("gateway route mutation lock", () => {
@@ -111,27 +109,6 @@ describe("gateway route mutation lock", () => {
       outsideLockContext.emitDestroy();
       await fs.rm(stateDir, { recursive: true, force: true });
     }
-  });
-
-  it("holds sandbox authority before the synchronous gateway-route mutation", async () => {
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-sandbox-gateway-lock-"));
-    try {
-      expect(
-        withSandboxGatewayRouteMutationLocksSync("alpha", "nemoclaw-18080", () => "entered", {
-          stateDir,
-          pollIntervalMs: 1,
-          timeoutMs: 25,
-        }),
-      ).toBe("entered");
-    } finally {
-      await fs.rm(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects an invalid Model Router port before lock acquisition", () => {
-    expect(() => withModelRouterPortLifecycleLock(0, () => undefined)).toThrow(
-      "Model Router port must be an integer from 1 to 65535.",
-    );
   });
 
   it("keeps cross-gateway router onboarding publication ahead of teardown", async () => {

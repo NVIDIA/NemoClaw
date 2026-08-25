@@ -10,7 +10,7 @@ import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
-import { withSandboxGatewayRouteMutationLocksSync } from "../inference/gateway-route-mutation-lock";
+import { withGatewayRouteMutationLockSync } from "../inference/gateway-route-mutation-lock";
 import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
@@ -463,63 +463,59 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         revalidateLive: (forward, snapshot) =>
           revalidatePreservedDashboardForward(forward, snapshot, deps.getSandbox as never),
         restore: (forward) => {
-          return withSandboxGatewayRouteMutationLocksSync(
-            forward.sandboxName,
-            forward.gatewayName,
-            () => {
-              const ownership = deps.runCaptureOpenshell(["forward", "list"], {
-                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          return withGatewayRouteMutationLockSync(forward.gatewayName, () => {
+            const ownership = deps.runCaptureOpenshell(["forward", "list"], {
+              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+            });
+            if (
+              !revalidatePreservedDashboardForward(forward, ownership, deps.getSandbox as never)
+            ) {
+              return { ok: false, diagnostic: "recorded forward ownership changed" };
+            }
+            const port = Number(forward.port);
+            const makeSiblingStopper = () =>
+              createSandboxForwardStopper({
+                runOpenshell: deps.runOpenshell,
+                runCaptureOpenshell: deps.runCaptureOpenshell,
+                sandboxName: forward.sandboxName,
               });
-              if (
-                !revalidatePreservedDashboardForward(forward, ownership, deps.getSandbox as never)
-              ) {
-                return { ok: false, diagnostic: "recorded forward ownership changed" };
-              }
-              const port = Number(forward.port);
-              const makeSiblingStopper = () =>
-                createSandboxForwardStopper({
-                  runOpenshell: deps.runOpenshell,
-                  runCaptureOpenshell: deps.runCaptureOpenshell,
-                  sandboxName: forward.sandboxName,
-                });
-              const stopResult = makeSiblingStopper()(port);
-              if (stopResult === "list-failed" || stopResult === "owned-other") {
-                return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
-              }
-              waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
-                sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
-              });
-              if (!revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)) {
-                return { ok: false, diagnostic: "sandbox owner changed before forward restart" };
-              }
-              const forwardTarget =
-                forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
-              const restarted = runDetachedForwardStartWithRetries(
-                buildDetachedForwardStartSpawn(
-                  deps.openshellArgv([
-                    "forward",
-                    "start",
-                    "--background",
-                    forwardTarget,
-                    forward.sandboxName,
-                  ]),
-                ),
-                () =>
-                  deps.runCaptureOpenshell(["forward", "list"], {
-                    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-                  }),
-                { port, sandboxName: forward.sandboxName },
-                () => {
-                  deps.sleep(1);
-                  makeSiblingStopper()(port);
-                },
-                { onProgress: buildForwardStartProgressLogger(port) },
-              );
-              return revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)
-                ? restarted
-                : { ok: false, diagnostic: "sandbox owner changed after forward restart" };
-            },
-          );
+            const stopResult = makeSiblingStopper()(port);
+            if (stopResult === "list-failed" || stopResult === "owned-other") {
+              return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
+            }
+            waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
+              sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
+            });
+            if (!revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)) {
+              return { ok: false, diagnostic: "sandbox owner changed before forward restart" };
+            }
+            const forwardTarget =
+              forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
+            const restarted = runDetachedForwardStartWithRetries(
+              buildDetachedForwardStartSpawn(
+                deps.openshellArgv([
+                  "forward",
+                  "start",
+                  "--background",
+                  forwardTarget,
+                  forward.sandboxName,
+                ]),
+              ),
+              () =>
+                deps.runCaptureOpenshell(["forward", "list"], {
+                  timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+                }),
+              { port, sandboxName: forward.sandboxName },
+              () => {
+                deps.sleep(1);
+                makeSiblingStopper()(port);
+              },
+              { onProgress: buildForwardStartProgressLogger(port) },
+            );
+            return revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)
+              ? restarted
+              : { ok: false, diagnostic: "sandbox owner changed after forward restart" };
+          });
         },
       });
       if (!siblingResult.ok) {

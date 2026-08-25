@@ -51,20 +51,6 @@ export function withGatewayRouteMutationLockSync<T>(
   );
 }
 
-/** Hold the sandbox lifecycle authority before its gateway-route authority. */
-export function withSandboxGatewayRouteMutationLocksSync<T>(
-  sandboxName: string,
-  gatewayName: string,
-  operation: () => T,
-  options: McpLifecycleLockOptions = {},
-): T {
-  return withMcpLifecycleLockSync(
-    sandboxName,
-    () => withGatewayRouteMutationLockSync(gatewayName, operation, options),
-    options,
-  );
-}
-
 /** Serialize current-user lifecycle changes for one Model Router port across gateways. */
 export function withModelRouterPortLifecycleLock<T>(
   port: number,
