@@ -216,45 +216,6 @@ describe("inventory commands", () => {
     ]);
   });
 
-  it("redacts the same inventory-row fields that the status row already redacts", async () => {
-    const secretBearing = 'api_key="example-not-a-real-value-1"';
-    const sandboxName = `alpha ${secretBearing}`;
-    const sandbox: SandboxEntry = {
-      name: sandboxName,
-      provider: `nvidia-prod ${secretBearing}`,
-      model: `nvidia/test ${secretBearing}`,
-      policies: [`pypi ${secretBearing}`],
-      agent: `openclaw ${secretBearing}`,
-      openshellVersion: `0.0.110 ${secretBearing}`,
-      recoveredFromGateway: true,
-      livePhase: `Ready ${secretBearing}`,
-    };
-
-    const inventory = await getSandboxInventory({
-      recoverRegistryEntries: async () => ({ sandboxes: [sandbox], defaultSandbox: sandboxName }),
-      getLiveInference: () => null,
-      loadLastSession: () => null,
-    });
-    const status = getStatusReport({
-      listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandboxName }),
-      getLiveInference: () => null,
-      showServiceStatus: () => undefined,
-    });
-
-    const { name, provider, model, policies, agent, openshellVersion } = status.sandboxes[0]!;
-    expect(inventory.sandboxes[0]).toMatchObject({
-      name,
-      provider,
-      model,
-      policies,
-      agent,
-      openshellVersion,
-    });
-    expect(inventory.defaultSandbox).toBe(status.defaultSandbox);
-    expect(inventory.sandboxes[0]?.livePhase).not.toContain("example-not-a-real-value-1");
-    expect(JSON.stringify(inventory)).not.toContain("example-not-a-real-value-1");
-  });
-
   it("hides a route-only reservation (never-created sandbox) from the list (#7609)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({

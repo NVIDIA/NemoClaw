@@ -361,8 +361,13 @@ export async function getSandboxInventory(
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox,
-    incompleteOnboarding,
+    lastOnboardedSandbox: safeStatusString(lastOnboardedSandbox),
+    incompleteOnboarding: incompleteOnboarding
+      ? {
+          ...incompleteOnboarding,
+          name: safeStatusString(incompleteOnboarding.name) || incompleteOnboarding.name,
+        }
+      : null,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
     sandboxes: recovery.sandboxes
