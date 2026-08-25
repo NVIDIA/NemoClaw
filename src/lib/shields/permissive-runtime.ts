@@ -22,6 +22,7 @@ import type {
 } from "../actions/sandbox/mcp-bridge-policy";
 import { composeCredentialBoundMessagingPolicies } from "../messaging/channels/policy";
 import type { MessagingAgentId } from "../messaging/manifest";
+import type { EnabledPlanSelection } from "../messaging/post-agent-install-selection";
 
 function canonicalPolicyValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalPolicyValue);
@@ -129,6 +130,8 @@ export interface PermissiveRuntimeDeps {
   sandboxName?: string;
   // Manifest metadata owns the policy keys and provider names for this agent.
   messagingAgent?: MessagingAgentId;
+  // The registry plan owns which configured channels are currently active.
+  messagingPlan?: EnabledPlanSelection | null;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -139,8 +142,11 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  if (deps.sandboxName !== undefined && deps.messagingAgent === undefined) {
-    throw new Error("Cannot compose messaging bindings without an agent identity");
+  if (
+    deps.sandboxName !== undefined &&
+    (deps.messagingAgent === undefined || deps.messagingPlan === undefined)
+  ) {
+    throw new Error("Cannot compose messaging bindings without agent and channel state");
   }
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -187,6 +193,7 @@ export function buildRuntimePermissivePolicy(
       deps.livePolicyYaml,
       deps.sandboxName,
       deps.messagingAgent,
+      deps.messagingPlan ?? null,
     );
     base = safeYamlObject(materialized);
     if (!base) {

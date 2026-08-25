@@ -48,6 +48,7 @@ const {
   inspectPolicyRecoveryAuthority,
   isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,
+  readMessagingPolicyPlan,
   recheckPolicyMutationAuthority,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
@@ -5784,7 +5785,11 @@ function shieldsDownWithoutHostLock(
         managedMcpPolicies,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
         ...(target.agentName === "hermes" || target.agentName === "openclaw"
-          ? { messagingAgent: target.agentName, sandboxName }
+          ? {
+              messagingAgent: target.agentName,
+              messagingPlan: readMessagingPolicyPlan(sandboxName),
+              sandboxName,
+            }
           : {}),
       });
       policyFileIsTemp = policyFile !== basePath;

@@ -9,6 +9,7 @@ import {
   listMessagingPolicyPresetMetadata,
 } from "./metadata";
 import {
+  composeCredentialBoundMessagingPolicies,
   createMessagingChannelPolicyResolver,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
@@ -162,6 +163,46 @@ describe("messaging channel policy presets", () => {
       ).toBeNull();
     },
   );
+
+  it("omits a disabled channel even when its live providers still match (#10153)", () => {
+    const sandboxName = "disabled-slack";
+    const composed = composeCredentialBoundMessagingPolicies(
+      YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: [
+              {
+                host: "slack.com",
+                credential_binding: { provider: "{sandboxName}-slack-app" },
+              },
+              {
+                host: "api.slack.com",
+                credential_binding: { provider: "{sandboxName}-slack-bridge" },
+              },
+            ],
+          },
+        },
+      }),
+      YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-slack-app` } },
+              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
+            ],
+          },
+        },
+      }),
+      sandboxName,
+      "openclaw",
+      {
+        channels: [{ channelId: "slack", active: false, disabled: true }],
+        disabledChannels: ["slack"],
+      },
+    );
+
+    expect(YAML.parse(composed).network_policies.slack).toBeUndefined();
+  });
 
   it("ships a policy file for every manifest-supported agent and preset", () => {
     const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>

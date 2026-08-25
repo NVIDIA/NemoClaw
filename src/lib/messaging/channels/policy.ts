@@ -12,6 +12,11 @@ import {
   listMessagingPolicyPresetMetadata,
   listMessagingProviderNamesForChannel,
 } from "./metadata";
+import {
+  enabledPlanChannelIds,
+  type EnabledPlanSelection,
+  normalizeMessagingChannelId,
+} from "../post-agent-install-selection";
 
 type PolicyPresetLocator = {
   readonly channelId: string;
@@ -71,6 +76,7 @@ export function materializeMessagingPolicySandboxName(
 }
 
 interface CredentialBoundMessagingPolicy {
+  readonly channelId: string;
   readonly livePolicyKeys: readonly string[];
   readonly permissivePolicyKey: string;
   readonly providerNames: readonly string[];
@@ -99,6 +105,7 @@ function listCredentialBoundMessagingPolicies(
     if (providerNames.length === 0) return [];
     return [
       {
+        channelId: policy.channelId,
         livePolicyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
         permissivePolicyKey: policy.presetName,
         providerNames,
@@ -140,24 +147,28 @@ function networkPoliciesUseExactCredentialProviders(
 
 /**
  * Keep credential-bound messaging routes only when the live policy proves the
- * complete provider set for that channel. Missing, partial, or mismatched
- * provider state omits the route instead of submitting unresolved bindings.
+ * complete provider set for an enabled channel. Disabled channels and missing,
+ * partial, or mismatched provider state omit the route instead of submitting
+ * unresolved bindings.
  */
 export function composeCredentialBoundMessagingPolicies(
   targetPolicyYaml: string,
   livePolicyYaml: string,
   sandboxName: string,
   agent: MessagingAgentId,
+  messagingPlan: EnabledPlanSelection | null,
 ): string {
   const target = parsePolicyMapping(targetPolicyYaml);
   if (!target) throw new Error("Credential-bound messaging target policy must be a YAML mapping");
   const live = parsePolicyMapping(livePolicyYaml);
+  const enabledChannels = enabledPlanChannelIds(messagingPlan ?? { channels: [] });
   const messagingPolicies = listCredentialBoundMessagingPolicies(sandboxName, agent);
   const targetPolicies = target.network_policies;
   if (targetPolicies && typeof targetPolicies === "object" && !Array.isArray(targetPolicies)) {
     const networkPolicies = targetPolicies as Record<string, unknown>;
     for (const policy of messagingPolicies) {
       if (
+        !enabledChannels.has(normalizeMessagingChannelId(policy.channelId)) ||
         !networkPoliciesUseExactCredentialProviders(
           live,
           policy.livePolicyKeys,

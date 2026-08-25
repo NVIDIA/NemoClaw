@@ -3351,6 +3351,16 @@ function resolvePermissivePolicyPath(sandboxName: string): string {
   return PERMISSIVE_POLICY_PATH;
 }
 
+function readMessagingPolicyPlan(
+  sandboxName: string,
+): ReturnType<typeof registry.getHydratedMessagingPlanFromEntry> {
+  try {
+    return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
+  } catch {
+    return null;
+  }
+}
+
 function applyPermissivePolicy(sandboxName: string): void {
   if (!isValidName(sandboxName)) {
     throw new Error(
@@ -3376,6 +3386,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   } catch {
     // Unregistered or unreadable legacy state uses the OpenClaw fallback.
   }
+  const messagingPlan = readMessagingPolicyPlan(sandboxName);
   const livePolicy = readCurrentSandboxPolicy(sandboxName, authority.gatewayName);
   if (!livePolicy) {
     console.warn(
@@ -3388,6 +3399,7 @@ function applyPermissivePolicy(sandboxName: string): void {
     livePolicy ?? "",
     sandboxName,
     messagingAgent,
+    messagingPlan,
   );
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
   setPolicyDocument(sandboxName, composedPolicy, { gatewayName: authority.gatewayName });
@@ -3448,6 +3460,7 @@ export {
   parsePresetPolicyKeys,
   prepareTrustedPrivatePolicyPresets,
   presetContentMatchesGateway,
+  readMessagingPolicyPlan,
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,

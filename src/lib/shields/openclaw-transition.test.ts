@@ -542,6 +542,38 @@ describe("OpenClaw shields flow rollback and recovery", () => {
         },
       }),
       processStartIdentity: "issue-10153-openclaw-owner",
+      sandboxEntry: {
+        name: sandboxName,
+        agent: "openclaw",
+        openshellDriver: "docker",
+        messaging: {
+          schemaVersion: 1,
+          plan: {
+            schemaVersion: 1,
+            sandboxName,
+            agent: "openclaw",
+            workflow: "onboard",
+            channels: ["telegram", "slack"].map((channelId) => ({
+              channelId,
+              displayName: channelId,
+              authMode: "token-paste" as const,
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+            })),
+            disabledChannels: [],
+            credentialBindings: [],
+            networkPolicy: { presets: [], entries: [] },
+            agentRender: [],
+            buildSteps: [],
+            stateUpdates: [],
+            healthChecks: [],
+          },
+        },
+      },
       sandboxName,
     });
     fs.writeFileSync(

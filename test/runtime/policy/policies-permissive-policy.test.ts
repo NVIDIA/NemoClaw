@@ -23,6 +23,7 @@ function parseResultPayload(stdout: string): { error: string } {
 
 function runPermissivePolicy(options: {
   agent?: "hermes" | "openclaw";
+  enabledChannels?: string[];
   livePolicy?: string;
   livePolicyStatus?: number;
   policySetStatus: number;
@@ -59,6 +60,32 @@ function runPermissivePolicy(options: {
         name: options.sandboxName,
         agent: options.agent,
         policies: [],
+        ...(options.enabledChannels
+          ? {
+              messaging: {
+                schemaVersion: 1,
+                plan: {
+                  schemaVersion: 1,
+                  sandboxName: options.sandboxName,
+                  agent: options.agent,
+                  workflow: "onboard",
+                  channels: options.enabledChannels.map((channelId) => ({
+                    channelId,
+                    configured: true,
+                    active: true,
+                    disabled: false,
+                  })),
+                  disabledChannels: [],
+                  credentialBindings: [],
+                  networkPolicy: { presets: [], entries: [] },
+                  agentRender: [],
+                  buildSteps: [],
+                  stateUpdates: [],
+                  healthChecks: [],
+                },
+              },
+            }
+          : {}),
       })});`
     : "";
   const script = String.raw`
@@ -116,10 +143,9 @@ exit 1
       NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
     },
   });
-  expect(
-    fs.existsSync(stagedRecord),
-    `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-  ).toBe(true);
+  expect(fs.existsSync(stagedRecord), `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(
+    true,
+  );
   const [stagedPath, stagedMode] = fs.readFileSync(stagedRecord, "utf-8").trim().split("\n");
   return {
     result,
@@ -139,12 +165,11 @@ describe("applyPermissivePolicy", () => {
     (_case, policySetStatus) => {
       const observed = runPermissivePolicy({
         agent: "hermes",
+        enabledChannels: ["discord"],
         livePolicy: YAML.stringify({
           network_policies: {
             discord: {
-              endpoints: [
-                { credential_binding: { provider: "hermes-sandbox-discord-bridge" } },
-              ],
+              endpoints: [{ credential_binding: { provider: "hermes-sandbox-discord-bridge" } }],
             },
           },
         }),
@@ -228,12 +253,11 @@ describe("applyPermissivePolicy", () => {
     const sandboxName = "configured-openclaw";
     const observed = runPermissivePolicy({
       agent: "openclaw",
+      enabledChannels: ["telegram", "slack"],
       livePolicy: YAML.stringify({
         network_policies: {
           telegram_bot: {
-            endpoints: [
-              { credential_binding: { provider: `${sandboxName}-telegram-bridge` } },
-            ],
+            endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
           },
           slack: {
             endpoints: [

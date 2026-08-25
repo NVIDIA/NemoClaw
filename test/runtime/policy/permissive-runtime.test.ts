@@ -105,6 +105,13 @@ type SlackEndpoint = {
   rules?: Array<{ allow?: { method?: string; path?: string } }>;
 };
 
+function enabledMessagingSelection(...channelIds: string[]) {
+  return {
+    channels: channelIds.map((channelId) => ({ channelId, active: true, disabled: false })),
+    disabledChannels: [],
+  };
+}
+
 function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): void {
   expect(
     endpoints.map((endpoint) => ({
@@ -209,6 +216,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         },
       }),
       messagingAgent: "openclaw",
+      messagingPlan: enabledMessagingSelection("telegram", "slack"),
       readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
@@ -249,6 +257,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
       livePolicyYaml: YAML.stringify({ network_policies: {} }),
       messagingAgent: "openclaw",
+      messagingPlan: enabledMessagingSelection("telegram"),
       readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
@@ -277,6 +286,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         },
       }),
       messagingAgent: "hermes",
+      messagingPlan: enabledMessagingSelection("discord"),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -315,6 +325,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: "",
       messagingAgent: "hermes",
+      messagingPlan: enabledMessagingSelection("discord"),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -348,6 +359,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         },
       }),
       messagingAgent: "hermes",
+      messagingPlan: enabledMessagingSelection("slack"),
       readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -387,6 +399,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         },
       }),
       messagingAgent: "hermes",
+      messagingPlan: enabledMessagingSelection("discord", "slack"),
       readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -415,6 +428,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         }),
         messagingAgent: agent,
+        messagingPlan: enabledMessagingSelection("slack"),
         readBasePolicy: () => MESSAGING_PERMISSIVE_BY_AGENT[agent],
         sandboxName,
         writeTempPolicy: (yaml) => {
@@ -446,6 +460,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         }),
         messagingAgent: "hermes",
+        messagingPlan: enabledMessagingSelection("slack"),
         readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,
@@ -475,6 +490,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         }),
         messagingAgent: "hermes",
+        messagingPlan: enabledMessagingSelection("discord"),
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,
