@@ -369,7 +369,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     redactionValues: [credentialCanary],
     timeoutMs: 240_000,
   });
-  await host.command(
+  const restartControlNonce = randomBytes(32).toString("hex");
+  const restartManagedControl = await host.command(
     "docker",
     [
       "exec",
@@ -382,7 +383,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       originalContainerId,
       "/usr/local/bin/nemoclaw-gateway-control",
       "probe",
-      randomBytes(32).toString("hex"),
+      restartControlNonce,
     ],
     {
       artifactName: "restart-managed-control-after-recovery",
@@ -390,13 +391,31 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       timeoutMs: 30_000,
     },
   );
-  await host.command("docker", ["top", originalContainerId, "-eo", "pid,ppid,stat,user,comm"], {
-    artifactName: "restart-process-state-after-recovery",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
+  const restartProcessState = await host.command(
+    "docker",
+    ["top", originalContainerId, "-eo", "pid,ppid,stat,user,comm"],
+    {
+      artifactName: "restart-process-state-after-recovery",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
+  expect(restartManagedControl.timedOut, resultText(restartManagedControl)).toBe(false);
+  expect(restartManagedControl.exitCode, resultText(restartManagedControl)).toBe(0);
+  expect(restartManagedControl.stderr, resultText(restartManagedControl)).toBe("");
+  expect(restartManagedControl.stdout).toMatch(
+    new RegExp(
+      `^v1 ${restartControlNonce} complete already-running ([1-9][0-9]*) \\1\\r?\\nGATEWAY_PID=\\1\\r?\\n?$`,
+    ),
+  );
+  expect(restartProcessState.timedOut, resultText(restartProcessState)).toBe(false);
+  expect(restartProcessState.exitCode, resultText(restartProcessState)).toBe(0);
+  expect(restartProcessState.stdout).toMatch(/^\s*PID\s+PPID\s+STAT\s+USER\s+COMMAND\s*$/m);
+  expect(restartProcessState.stdout).toMatch(
+    /^\s*[0-9]+\s+[0-9]+\s+\S+\s+\S+\s+(?:bash|nemoclaw-start)\s*$/m,
+  );
   const restartStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
