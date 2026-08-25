@@ -294,6 +294,34 @@ describe("platform helpers", () => {
       ).toBe(null);
     });
 
+    it("skips an earlier reachable-but-unidentifiable socket and selects a later valid candidate (#10248)", () => {
+      // A stale Colima socket that answers but can't be classified must not
+      // abort detection of the Docker Desktop socket that follows it.
+      const home = "/tmp/test-home";
+      const staleColimaSocket = path.join(home, ".colima/default/docker.sock");
+      const dockerDesktopSocket = path.join(home, ".docker/run/docker.sock");
+      const sockets = new Set([staleColimaSocket, dockerDesktopSocket]);
+
+      expect(
+        detectDockerHost({
+          env: {},
+          platform: "darwin",
+          home,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) =>
+            !dockerHost
+              ? { reachable: false, identity: "unknown" }
+              : dockerHost === `unix://${dockerDesktopSocket}`
+                ? { reachable: true, identity: "docker" }
+                : { reachable: true, identity: "unknown" },
+        }),
+      ).toEqual({
+        dockerHost: `unix://${dockerDesktopSocket}`,
+        source: "socket",
+        socketPath: dockerDesktopSocket,
+      });
+    });
+
     it("preserves a reachable Docker context and config before local socket fallbacks (#8816)", () => {
       const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
       try {

@@ -22,6 +22,102 @@ function safeTmpHelpers(src: string): string {
 describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("captures Portable OpenClaw timestamps with a fixed numeric locale", () => {
+    const captureEpoch = extractShellFunctionFromSource(
+      src,
+      "_nemoclaw_capture_epoch_realtime",
+    );
+    const script = [
+      "set -euo pipefail",
+      captureEpoch,
+      'printf() { _CAPTURED_LOCALE="$LC_NUMERIC"; builtin printf -v "$2" "%s" "$4"; }',
+      "unset EPOCHREALTIME",
+      "EPOCHREALTIME=1700000000.123456",
+      "LC_NUMERIC=de_DE.UTF-8",
+      "_CAPTURED_LOCALE=",
+      "_nemoclaw_capture_epoch_realtime _CAPTURED_EPOCH",
+      'builtin printf "%s|%s|%s\\n" "$_CAPTURED_LOCALE" "$_CAPTURED_EPOCH" "$LC_NUMERIC"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("C|1700000000.123456|de_DE.UTF-8\n");
+  });
+
+  it("writes one bounded credential-free Portable OpenClaw startup timing record", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-timing-"));
+    const timingPath = path.join(tmpDir, "gateway-startup-timing");
+    const recordTiming = extractShellFunctionFromSource(
+      src,
+      "record_portable_openclaw_gateway_startup_timing",
+    );
+    const timestampVariables = [
+      "_NEMOCLAW_GATEWAY_STARTUP_ENTRY_EPOCH",
+      "_NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH",
+      "_NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH",
+      "_NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH",
+      "_NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH",
+      "_NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH",
+      "_NEMOCLAW_GATEWAY_WORKSPACE_FINISHED_EPOCH",
+      "_NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH",
+    ];
+
+    try {
+      const assignments = timestampVariables.map(
+        (name, index) => `${name}=1700000000.${String(index).padStart(6, "0")}`,
+      );
+      const script = [
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        recordTiming,
+        `_PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PATH=${JSON.stringify(timingPath)}`,
+        ...assignments,
+        "record_portable_openclaw_gateway_startup_timing",
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status, result.stderr).toBe(0);
+      const record = fs.readFileSync(timingPath, "utf-8");
+      expect(Buffer.byteLength(record, "utf8")).toBeLessThanOrEqual(512);
+      expect(record).toMatch(
+        /^schema=1 entry=\d+\.\d+ configStart=\d+\.\d+ configEnd=\d+\.\d+ providerEnd=\d+\.\d+ tokenEnd=\d+\.\d+ messagingEnd=\d+\.\d+ workspaceEnd=\d+\.\d+ spawnEnd=\d+\.\d+\n$/u,
+      );
+      expect(record).not.toContain("credential");
+      expect(record).not.toContain("endpoint");
+      expect((fs.statSync(timingPath).mode & 0o777).toString(8)).toBe("600");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fail startup when the Portable OpenClaw timing record cannot be written", () => {
+    const recordTiming = extractShellFunctionFromSource(
+      src,
+      "record_portable_openclaw_gateway_startup_timing",
+    );
+    const script = [
+      "set -euo pipefail",
+      "_nemoclaw_safe_replace_tmp_file() { return 1; }",
+      recordTiming,
+      "_PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PATH=/unwritable/timing",
+      "_NEMOCLAW_GATEWAY_STARTUP_ENTRY_EPOCH=1700000000.000000",
+      "_NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH=1700000000.000001",
+      "_NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH=1700000000.000002",
+      "_NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH=1700000000.000003",
+      "_NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH=1700000000.000004",
+      "_NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH=1700000000.000005",
+      "_NEMOCLAW_GATEWAY_WORKSPACE_FINISHED_EPOCH=1700000000.000006",
+      "_NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH=1700000000.000007",
+      "record_portable_openclaw_gateway_startup_timing",
+      "printf '%s\\n' continued",
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("continued\n");
+  });
+
   it.each([
     ["root parent after CAP_DAC_OVERRIDE drop", "0", "3|/tmp/auto-pair.log 600 root:root"],
     ["non-root parent", "998", "2|/tmp/auto-pair.log 600"],

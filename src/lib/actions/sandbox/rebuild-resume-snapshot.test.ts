@@ -216,8 +216,8 @@ describe("rebuild resume snapshot repair", () => {
         postRemovalDefaultSelectionRevision: 1,
       }),
       vi.spyOn(registry, "restoreSandboxEntryIfMissing").mockReturnValue(true),
-      vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
-      vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
+      vi.spyOn(nim, "stopNimContainer").mockReturnValue(true),
+      vi.spyOn(nim, "stopNimContainerByName").mockReturnValue(true),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")

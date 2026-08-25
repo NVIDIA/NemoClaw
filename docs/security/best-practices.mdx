@@ -26,11 +26,12 @@ NemoClaw enforces security at five layers.
 NemoClaw locks some controls when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
-The following diagram shows the default posture immediately after onboarding, before you approve any endpoints or apply any presets.
+The following diagram shows the five protection layers.
+It does not show onboarding tier presets, optional web search, or endpoints that you approve later.
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Your Machine: default posture after onboarding"]
+    subgraph HOST["Your Machine: five protection layers"]
         direction TB
 
         YOU["👤 Operator"]
@@ -347,11 +348,15 @@ The following profiles describe how to configure NemoClaw for different use case
 These are not separate policy files.
 They provide guidance on which controls to keep tight or relax.
 
-### Locked-Down (Default)
+### Locked-Down
 
 Use for always-on assistants with minimal external access.
 
-- Keep all defaults and do not add presets.
+- Select the Restricted tier during onboarding.
+  Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew` presets.
+- Choose no web search when prompted.
+  Enabling web search adds the selected `brave` or `tavily` preset even with the Restricted tier.
+- Keep the remaining defaults and do not add other presets.
 - Use operator approval for any endpoint the agent requests.
 - Use NVIDIA Endpoints or local Ollama for inference.
 - Monitor the TUI for unexpected network requests.

@@ -55,6 +55,47 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "profile") return null;
+  const profileActionIndex = providerIndex + 2;
+  const profileAction =
+    args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
+  if (profileAction === "export") {
+    const requestedProfile = args[args.indexOf("export") + 1];
+    if (requestedProfile !== profileId) return null;
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        id: profileId,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inference_capable: inferenceCapable,
+      }),
+      stderr: "",
+    };
+  }
+  const fileIndex = args.indexOf("--file");
+  if (
+    profileAction === "import" &&
+    (fileIndex < 0 || !String(args[fileIndex + 1] ?? "").endsWith(`/${profileId}.yaml`))
+  ) {
+    return null;
+  }
+  return profileAction === "import"
+    ? { status: 0, stdout: "", stderr: "" }
+    : { status: 1, stdout: "", stderr: "unsupported provider profile command" };
+}
+
+function mockManagedEndpointlessProviderProfileRun(command) {
+  return (
+    mockEndpointlessProviderProfileRun(command, "openai", true) ??
+    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
 function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
@@ -63,6 +104,14 @@ function createStatefulMessagingProviderRunner({
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
+  const messagingProfile = JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  });
+  let messagingProfileImported = false;
   let lifecycleReleased = false;
   return (command, options = {}) => {
     const normalized = normalizeCommand(command);
@@ -77,10 +126,17 @@ function createStatefulMessagingProviderRunner({
         args[profileActionIndex] === "-g"
           ? args[profileActionIndex + 2]
           : args[profileActionIndex];
+      if (profileAction === "export") {
+        return messagingProfileImported
+          ? { status: 0, stdout: messagingProfile, stderr: "" }
+          : { status: 1, stdout: "", stderr: "provider profile not found" };
+      }
       const fileIndex = args.indexOf("--file");
-      return profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]
-        ? { status: 0 }
-        : { status: 1, stderr: "unsupported provider profile command" };
+      if (profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]) {
+        messagingProfileImported = true;
+        return { status: 0 };
+      }
+      return { status: 1, stderr: "unsupported provider profile command" };
     }
     if (
       args[providerIndex - 1] === "sandbox" &&
@@ -574,6 +630,8 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  mockEndpointlessProviderProfileRun,
+  mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
