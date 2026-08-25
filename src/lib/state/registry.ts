@@ -18,6 +18,7 @@ import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
+  normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
   type QualifiedSandboxInferenceRouteReservation,
 } from "./registry/route-reservation";
@@ -162,8 +163,8 @@ export function registerSandbox(
         reserved.reservationSessionId !== options.reservationSessionId ||
         reserved.gatewayName !== entry.gatewayName ||
         !isDeepStrictEqual(
-          normalizeInferenceSelection(reserved),
-          normalizeInferenceSelection(entry),
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(reserved)),
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
         )
       ) {
         throw new Error("Cannot stage a sandbox after its inference route reservation changed");
