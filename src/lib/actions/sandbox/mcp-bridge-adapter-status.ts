@@ -13,6 +13,8 @@ import {
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
+export const HERMES_MCP_TRANSACTION_HELPER =
+  "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
 /** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
 export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
@@ -159,17 +161,25 @@ export function buildHermesMcpStatusCommand(
   const payload = {
     server: entry.server,
     expected: hermesManagedServerConfig(entry, credentialRevision),
+    allowRevisioned: credentialRevision === undefined,
   };
   return [
     "/opt/hermes/.venv/bin/python - <<'PY'",
-    "import json, pathlib, yaml",
+    "import importlib.util, json, pathlib, sys, yaml",
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
+    `module_path = ${JSON.stringify(HERMES_MCP_TRANSACTION_HELPER)}`,
+    "spec = importlib.util.spec_from_file_location('nemoclaw_hermes_mcp_transaction_inspect', module_path)",
+    "if spec is None or spec.loader is None:",
+    "    raise RuntimeError('Hermes MCP transaction helper could not be loaded')",
+    "transaction = importlib.util.module_from_spec(spec)",
+    "sys.modules[spec.name] = transaction",
+    "spec.loader.exec_module(transaction)",
     'config_path = pathlib.Path("/sandbox/.hermes/config.yaml")',
     "data = yaml.safe_load(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}",
     "servers = data.get('mcp_servers') if isinstance(data, dict) else None",
     "present = isinstance(servers, dict) and payload['server'] in servers",
     "server = servers.get(payload['server']) if present else None",
-    "ok = server == payload['expected']",
+    "ok = transaction._managed_candidate_matches(server, payload['expected'], payload['allowRevisioned'])",
     "print('registered' if ok else ('mismatch' if present else 'absent'))",
     "PY",
   ].join("\n");

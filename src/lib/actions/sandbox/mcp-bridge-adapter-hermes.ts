@@ -14,13 +14,16 @@ import {
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
-import { buildHermesMcpStatusCommand, entryHeaders } from "./mcp-bridge-adapter-status";
+import {
+  buildHermesMcpStatusCommand,
+  entryHeaders,
+  HERMES_MCP_TRANSACTION_HELPER,
+} from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
-const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
@@ -40,9 +43,6 @@ export function buildHermesMcpRegisterCommand(
     url: entry.url,
     headers: entryHeaders(entry, credentialRevision),
     replace_existing: replaceExisting,
-    ...(credentialRevision
-      ? { credential_name: entry.env[0], credential_revision: credentialRevision }
-      : {}),
   };
   return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }
