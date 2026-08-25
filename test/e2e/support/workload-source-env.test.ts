@@ -15,6 +15,7 @@ describe("live E2E workload source environment", () => {
     ["openclaw", "Dockerfile"],
     ["hermes", "agents/hermes/Dockerfile"],
     ["langchain-deepagents-code", "agents/langchain-deepagents-code/Dockerfile"],
+    ["pi", "agents/pi/Dockerfile"],
   ])("uses the candidate Dockerfile for %s", (agent, dockerfile) => {
     expect(
       resolveLiveE2eWorkloadSourceEnv({

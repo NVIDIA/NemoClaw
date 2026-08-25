@@ -18,10 +18,6 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../../../src/lib/onboard/managed-image/contract";
 import {
-  baseImageInputsChanged,
-  parseBaseImagePushPaths,
-} from "../../../tools/e2e/base-image-publication.mts";
-import {
   assembleManagedImageCatalog,
   resolvePrManagedImageSource,
   writeManagedImageCatalog,
@@ -101,25 +97,6 @@ describe("PR managed-image source selection", () => {
     await expect(
       resolvePrManagedImageSource(selectorInput(), requestFor([{ filename: "docs/guide.mdx" }])),
     ).resolves.toBe("managed-image");
-  });
-
-  it("uses the trusted base-image workflow path families", () => {
-    const patterns = parseBaseImagePushPaths(
-      fs.readFileSync(".github/workflows/base-image.yaml", "utf8"),
-    );
-
-    expect(baseImageInputsChanged(["agents/hermes/Dockerfile.base"], patterns)).toBe(true);
-    expect(baseImageInputsChanged(["src/lib/onboard/managed-startup/profile.ts"], patterns)).toBe(
-      true,
-    );
-    expect(baseImageInputsChanged(["test/e2e/fixtures/workload-source-env.ts"], patterns)).toBe(
-      true,
-    );
-    expect(baseImageInputsChanged(["test/e2e/fixtures/progress.ts"], patterns)).toBe(false);
-    expect(baseImageInputsChanged(["docs/guide.mdx"], patterns)).toBe(false);
-    expect(() => baseImageInputsChanged(["Dockerfile.base\nother"], patterns)).toThrow(
-      "changed-file path is invalid",
-    );
   });
 
   it("rejects PR identity drift before selecting a source", async () => {

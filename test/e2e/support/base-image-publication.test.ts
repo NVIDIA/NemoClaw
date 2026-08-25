@@ -207,7 +207,7 @@ describe("base-image publication evidence", () => {
     (reviewedPath) => {
       const changedPath = reviewedPath.endsWith("/**")
         ? `${reviewedPath.slice(0, -3)}/fixture.ts`
-        : reviewedPath.replace("*", "fixture");
+        : reviewedPath.replaceAll("*", "fixture");
       expect(baseImageInputsChanged([changedPath], BASE_IMAGE_PUSH_PATHS)).toBe(true);
     },
   );

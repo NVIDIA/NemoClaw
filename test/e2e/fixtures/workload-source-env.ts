@@ -9,6 +9,7 @@ const LOCAL_DOCKERFILE_BY_AGENT = {
   openclaw: "Dockerfile",
   hermes: "agents/hermes/Dockerfile",
   "langchain-deepagents-code": "agents/langchain-deepagents-code/Dockerfile",
+  pi: "agents/pi/Dockerfile",
 } as const;
 
 type LocalDockerfileAgent = keyof typeof LOCAL_DOCKERFILE_BY_AGENT;
