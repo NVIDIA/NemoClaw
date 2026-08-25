@@ -9,6 +9,8 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
+
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
@@ -28,20 +30,18 @@ function runBinding(policyFile: string, protocol?: string) {
       "43117",
       ...(protocol ? [protocol] : []),
     ],
-    { encoding: "utf8", timeout: 15_000 },
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
   );
 }
 
 describe("Hermes Discord E2E policy binding", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
       timeout: 15_000,
     });
-    expect(
-      result.status,
-      result.stderr || result.stdout || result.error?.message || "Policy boundary build failed",
-    ).toBe(0);
+    await requireSuccessfulPolicyBoundaryBuild(result);
   });
 
   afterEach(() => {

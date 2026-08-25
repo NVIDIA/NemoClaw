@@ -67,6 +67,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
+  "nemoclaw/tsconfig.shared.json",
   "scripts/setup-jetson.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
@@ -151,8 +152,11 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it("maps the policy parser to its spawned fixture contract (#10016)", () => {
-    expect(triggeredBy("nemoclaw/src/shared/openshell-policy-boundary.cts")).toEqual([
+  it.each([
+    "nemoclaw/src/shared/openshell-policy-boundary.cts",
+    "nemoclaw/tsconfig.shared.json",
+  ])("maps each policy compiler input to its spawned fixture contract [%s] (#10016)", (inputPath) => {
+    expect(triggeredBy(inputPath)).toEqual([
       "test/e2e/support/hermes-discord-policy-binding.test.ts",
     ]);
   });
