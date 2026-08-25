@@ -11,7 +11,7 @@ import {
   agentVariants,
   findGeneratedNavigationTargets,
   renderAgentVariantPage,
-} from "../scripts/sync-agent-variant-docs.mts";
+} from "../../scripts/sync-agent-variant-docs.mts";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -210,7 +210,7 @@ Use <AgentCli /> for the current variant.
     const runtimeImport = `---
 title: "Example"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
+import { AgentOnly } from "../../_components/AgentGuide";
 `;
 
     expect(() => renderAgentVariantPage(runtimeImport, "deepagents")).toThrow(
@@ -220,7 +220,7 @@ import { AgentOnly } from "../_components/AgentGuide";
 
   it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
-      `${source}\nimport { Example } from "../_components/Example";\n\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
+      `${source}\nimport { Example } from "../../_components/Example";\n\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
       "hermes",
       {
         outputPath:
@@ -229,7 +229,7 @@ import { AgentOnly } from "../_components/AgentGuide";
       },
     );
 
-    expect(rendered).toContain('import { Example } from "../../../_components/Example";');
+    expect(rendered).toContain('import { Example } from "../../../../_components/Example";');
     expect(rendered).toContain("[Commands](../reference/commands#nemohermes-list)");
     expect(rendered).toContain("[Backup](backup-restore)");
     expect(rendered).toContain("![Diagram](../../../manage-sandboxes/images/diagram.png)");

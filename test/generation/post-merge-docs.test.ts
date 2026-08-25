@@ -12,10 +12,10 @@ import YAML from "yaml";
 import {
   nextPatchReleaseTag,
   validatePostMergeDocsWorkflowBoundary,
-} from "../tools/post-merge-docs/contract.mts";
-import { publishDocumentation, type Request } from "../tools/post-merge-docs/publish.mts";
-import { configurePostMergeDocs, executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
-import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
+} from "../../tools/post-merge-docs/contract.mts";
+import { publishDocumentation, type Request } from "../../tools/post-merge-docs/publish.mts";
+import { configurePostMergeDocs, executePostMergeDocs } from "../../tools/post-merge-docs/run.mts";
+import type { OpenShellTools } from "../../tools/openshell-agent/runtime.mts";
 
 const directories: string[] = [];
 const repository = "NVIDIA/NemoClaw";
@@ -773,7 +773,7 @@ describe("post-merge documentation runner", () => {
 });
 
 describe("post-merge documentation workflow boundary", () => {
-  const root = path.resolve(import.meta.dirname, "..");
+  const root = path.resolve(import.meta.dirname, "../..");
   const workflow = YAML.parse(
     fs.readFileSync(path.join(root, ".github/workflows/post-merge-docs.yaml"), "utf8"),
   ) as Record<string, any>;

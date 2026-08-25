@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PORTABLE_CPU_DELEGATION_PROOF_CONTRACT } from "../scripts/checks/run-portable-cpu-delegation-proof.mts";
+import { PORTABLE_CPU_DELEGATION_PROOF_CONTRACT } from "../../scripts/checks/run-portable-cpu-delegation-proof.mts";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 const troubleshootingPath = path.join(repoRoot, "docs", "reference", "troubleshooting.mdx");
 const temporaryDirectories: string[] = [];
 

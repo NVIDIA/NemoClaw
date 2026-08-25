@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts/sync-agent-variant-docs.mts");

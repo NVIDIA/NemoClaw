@@ -20,7 +20,7 @@ import {
   findMissingDirectLegacyReleaseNotesRedirects,
   renderPublishedPageBodies,
   resolvePublishedRoute,
-} from "../scripts/check-docs-published-routes.mts";
+} from "../../scripts/check-docs-published-routes.mts";
 
 const navYaml = `
 navigation:
@@ -66,7 +66,7 @@ navigation:
             slug: release-notes
 `;
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 const fernYaml = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8");
 const fernRedirects = (
   parse(fernYaml) as {
@@ -218,7 +218,7 @@ See [Commands](../reference/commands).
 
   it("resolves relative routes from the published URL route", () => {
     expect(
-      resolvePublishedRoute("/user-guide/openclaw/reference/commands", "../inference/foo"),
+      resolvePublishedRoute("/user-guide/openclaw/reference/commands", "../../inference/foo"),
     ).toBe("/user-guide/openclaw/inference/foo");
     expect(
       resolvePublishedRoute("/user-guide/openclaw/reference/commands", "/user-guide/hermes/foo"),

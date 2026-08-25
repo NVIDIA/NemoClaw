@@ -112,11 +112,11 @@ describe("check-docs link validation", () => {
     const slugAliasResult = runCheckDocs(slugAliasPage);
 
     expect(`${routeRelativeResult.stdout}${routeRelativeResult.stderr}`).not.toContain(
-      "../quickstart",
+      "../../quickstart",
     );
     expect(routeRelativeResult.status).toBe(0);
     expect(`${slugAliasResult.stdout}${slugAliasResult.stderr}`).not.toContain(
-      "../manage-sandboxes/configure-sandboxes/review-sandbox-hardening",
+      "../../manage-sandboxes/configure-sandboxes/review-sandbox-hardening",
     );
     expect(slugAliasResult.status).toBe(0);
   });
@@ -204,7 +204,7 @@ describe("check-docs link validation", () => {
 
       const result = runCheckDocs(sourcePath, { CHECK_DOCS_FERN_NAV_YML: navPath });
 
-      expect(`${result.stdout}${result.stderr}`).not.toContain("../release-notes");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("../../release-notes");
       expect(result.status).toBe(0);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

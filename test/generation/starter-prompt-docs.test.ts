@@ -16,14 +16,14 @@ import {
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
   STARTER_PROMPT_SOURCE_PATH,
-} from "../scripts/generate-starter-prompt.mts";
+} from "../../scripts/generate-starter-prompt.mts";
 import {
   createGitRunner,
   type GitRunner,
   readPinnedPromptAssetBlob,
   requireExpectedPromptAssetRoutes,
   resolvePromptAssetRevision,
-} from "./helpers/starter-prompt-asset-contract";
+} from ".././helpers/starter-prompt-asset-contract";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -462,7 +462,7 @@ describe("starter prompt docs CTA", () => {
       expect(prompt).not.toMatch(/<https?:\/\//);
       expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
       expect(read("docs/index.mdx")).toContain(
-        'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
+        'import { CommandTerminal } from ".././_components/CommandTerminal";\n\n<BadgeLinks',
       );
 
       const content = read(page);

@@ -6,9 +6,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
 const STATION_PREPARATION = path.join(
@@ -154,8 +154,8 @@ describe("DGX Station documentation ownership", () => {
     );
     expect(quickstart).toContain("additional-setup/dgx-station-preparation");
     expect(quickstart).toContain("additional-setup/windows-preparation");
-    expect(quickstart).toContain("../inference/local-inference/set-up-vllm");
-    expect(quickstart).toContain("../reference/platform-support");
+    expect(quickstart).toContain("../../inference/local-inference/set-up-vllm");
+    expect(quickstart).toContain("../../reference/platform-support");
     expect(quickstart).toContain("switches the remaining onboarding to non-interactive mode");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).not.toContain("DGX Station is Tested with limitations");

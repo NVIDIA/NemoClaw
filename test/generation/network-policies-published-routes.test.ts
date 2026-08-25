@@ -9,8 +9,8 @@ import {
   buildPublishedRouteIndex,
   findBrokenPublishedRoutes,
   resolvePageLinksByText,
-} from "../scripts/check-docs-published-routes.mts";
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+} from "../../scripts/check-docs-published-routes.mts";
+import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
 
 const NETWORK_POLICIES_SOURCE = "reference/network-policies.mdx";
 const APPROVAL_SOURCE = "network-policy/approve-network-requests.mdx";
@@ -118,19 +118,19 @@ describe("shared Network Policies published routes", () => {
         fromRoute: "/user-guide/deepagents/reference/network-policies",
         published: true,
         resolved: "/user-guide/deepagents/network-policy/approve-network-requests",
-        target: "../network-policy/approve-network-requests",
+        target: "../../network-policy/approve-network-requests",
       },
       {
         fromRoute: "/user-guide/hermes/reference/network-policies",
         published: true,
         resolved: "/user-guide/hermes/network-policy/approve-network-requests",
-        target: "../network-policy/approve-network-requests",
+        target: "../../network-policy/approve-network-requests",
       },
       {
         fromRoute: "/user-guide/openclaw/reference/network-policies",
         published: true,
         resolved: "/user-guide/openclaw/network-policy/approve-network-requests",
-        target: "../network-policy/approve-network-requests",
+        target: "../../network-policy/approve-network-requests",
       },
     ]);
   });
