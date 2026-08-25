@@ -161,7 +161,7 @@ describe("base-image manifest publication", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.114\n");
     expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:eeeeeeee\n");
-    expect(result.output).not.toContain("sandbox-base:latest");
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n");
   });
 
   it("rejects a malformed publication revision", () => {

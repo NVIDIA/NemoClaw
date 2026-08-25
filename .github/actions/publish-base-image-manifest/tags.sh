@@ -18,6 +18,7 @@ if [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 tags=()
+publish_release_latest=false
 case "$REF" in
   refs/heads/main)
     tags+=("$IMAGE:latest")
@@ -30,6 +31,7 @@ case "$REF" in
       exit 1
     fi
     tags+=("$IMAGE:$tag")
+    publish_release_latest=true
     ;;
   *)
     echo "ERROR: base-image publication ref is invalid." >&2
@@ -37,6 +39,9 @@ case "$REF" in
     ;;
 esac
 tags+=("$IMAGE:${REVISION:0:8}")
+if [ "$publish_release_latest" = true ]; then
+  tags+=("$IMAGE:latest")
+fi
 
 {
   echo "tags<<NEMOCLAW_BASE_IMAGE_TAGS"
