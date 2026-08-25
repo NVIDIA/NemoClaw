@@ -7,6 +7,7 @@ import {
   createPortableLifecycleTimingRecorder,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECONCILIATION_TOLERANCE_MS,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_MAX_LINE_LENGTH,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX,
 } from "./portable-demo-lifecycle-timing";
@@ -155,7 +156,8 @@ describe("portable lifecycle timing recorder", () => {
   });
 
   it.each([
-    ["missing", { status: 1, stdout: "" }],
+    ["missing", { status: PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS }],
+    ["error", { status: 1 }],
     ["malformed", { status: 0, stdout: `${startupRecord().trim()} extra=secret-value\n` }],
     ["malformed", { status: 0, stdout: startupRecord({ configStart: 40 }) }],
     [

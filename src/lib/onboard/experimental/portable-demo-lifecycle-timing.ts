@@ -45,6 +45,7 @@ export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_MAX_LINE_LENGTH = 512;
 export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH =
   "/tmp/nemoclaw-openclaw-gateway-startup-timing";
 export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES = 512;
+export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS = 44;
 // Nine non-overlapping startup phases partition launchToFirstHealth. Probe and
 // sleep are overlapping diagnostics and are excluded. The phases and total are
 // rounded independently to milliseconds, so emitted values may differ by 5 ms.
@@ -88,7 +89,7 @@ export type PortableLifecycleTimingRecorder = {
   readOpenClawGatewayStartupTiming(
     operation: () => PortableOpenClawGatewayTimingReadResult,
     maxCorrelationWindowMs: number,
-  ): void;
+  ): PortableOpenClawGatewayTimingReadOutcome;
   incrementOllamaAttempts(): void;
   setContainerAction(action: PortableLifecycleContainerAction): void;
   setGatewayAction(action: PortableLifecycleGatewayAction): void;
@@ -339,11 +340,11 @@ export function createPortableLifecycleTimingRecorder(
     readOpenClawGatewayStartupTiming(
       operation: () => PortableOpenClawGatewayTimingReadResult,
       maxCorrelationWindowMs: number,
-    ): void {
-      if (!gatewayLaunchAttempted) return;
+    ): PortableOpenClawGatewayTimingReadOutcome {
+      if (!gatewayLaunchAttempted) return "not-applicable";
       if (gatewayLaunchEpochMs === null || gatewayFirstHealthEpochMs === null) {
         gatewayTimingReadOutcome = "clock-error";
-        return;
+        return gatewayTimingReadOutcome;
       }
       const startedAt = safeNow();
       try {
@@ -351,20 +352,24 @@ export function createPortableLifecycleTimingRecorder(
         const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ETIMEDOUT") {
           gatewayTimingReadOutcome = "timeout";
-          return;
+          return gatewayTimingReadOutcome;
         }
         if (result.error) {
           gatewayTimingReadOutcome = "error";
-          return;
+          return gatewayTimingReadOutcome;
+        }
+        if (result.status === PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS) {
+          gatewayTimingReadOutcome = "missing";
+          return gatewayTimingReadOutcome;
         }
         if (result.status !== 0) {
-          gatewayTimingReadOutcome = "missing";
-          return;
+          gatewayTimingReadOutcome = "error";
+          return gatewayTimingReadOutcome;
         }
         const record = parsePortableOpenClawGatewayStartupRecord(String(result.stdout ?? ""));
         if (!record) {
           gatewayTimingReadOutcome = "malformed";
-          return;
+          return gatewayTimingReadOutcome;
         }
         if (
           record.entry < gatewayLaunchEpochMs ||
@@ -373,7 +378,7 @@ export function createPortableLifecycleTimingRecorder(
           gatewayFirstHealthEpochMs - gatewayLaunchEpochMs > maxCorrelationWindowMs
         ) {
           gatewayTimingReadOutcome = "stale";
-          return;
+          return gatewayTimingReadOutcome;
         }
         gatewayPhaseDurations = {
           launchToEntry: record.entry - gatewayLaunchEpochMs,
@@ -388,8 +393,10 @@ export function createPortableLifecycleTimingRecorder(
           launchToFirstHealth: gatewayFirstHealthEpochMs - gatewayLaunchEpochMs,
         };
         gatewayTimingReadOutcome = "recorded";
+        return gatewayTimingReadOutcome;
       } catch {
         gatewayTimingReadOutcome = "error";
+        return gatewayTimingReadOutcome;
       } finally {
         gatewayDiagnosticReadMs += safeElapsed(startedAt, safeNow());
       }

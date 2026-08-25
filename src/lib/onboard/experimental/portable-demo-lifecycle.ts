@@ -37,6 +37,7 @@ import {
 import {
   createPortableLifecycleTimingRecorder,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
   type PortableLifecycleAttemptOutcome,
   type PortableLifecycleTimingRecorder,
@@ -63,7 +64,11 @@ const EXEC_READY_TIMEOUT_MS = 90_000;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
-const GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS = 250;
+const GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS = 1_000;
+const GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS = 2_000;
+const GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS = 100;
+const GATEWAY_STARTUP_TIMING_READ_COMMAND =
+  'if [ ! -e "$1" ]; then exit "$3"; fi\nexec head -c "$2" "$1"';
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
 const PORTABLE_OLLAMA_REENROLL_ENV = "NEMOCLAW_PORTABLE_OLLAMA_REENROLL";
 const MANAGED_EXECUTABLE_CHILD_FD = 3;
@@ -965,6 +970,7 @@ function waitFor(
     PortableLifecycleTimingRecorder,
     "measureOpenClawGatewayProbe" | "measureOpenClawGatewaySleep"
   >,
+  pollIntervalMs = POLL_INTERVAL_MS,
 ): boolean {
   const deadline = deps.now() + timeoutMs;
   do {
@@ -974,7 +980,7 @@ function waitFor(
       : probe(remaining);
     if (ready) return true;
     if (deps.now() >= deadline) return false;
-    const sleep = (): void => deps.sleep(Math.min(POLL_INTERVAL_MS, deadline - deps.now()));
+    const sleep = (): void => deps.sleep(Math.min(pollIntervalMs, deadline - deps.now()));
     if (gatewayTiming) {
       gatewayTiming.measureOpenClawGatewaySleep(sleep);
     } else {
@@ -1465,18 +1471,28 @@ export function recoverPortableDemoSandboxLifecycle(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
     );
   }
-  lifecycleTiming.readOpenClawGatewayStartupTiming(
-    () =>
-      capture(
-        openshellExecArgs(gatewayName, sandboxName, [
-          "head",
-          "-c",
-          String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES + 1),
-          PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
-        ]),
-        GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS,
-      ),
-    STARTUP_TIMEOUT_MS + PROBE_TIMEOUT_MS,
+  waitFor(
+    GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS,
+    timing,
+    (remainingMs) =>
+      lifecycleTiming.readOpenClawGatewayStartupTiming(
+        () =>
+          capture(
+            openshellExecArgs(gatewayName, sandboxName, [
+              "sh",
+              "-c",
+              GATEWAY_STARTUP_TIMING_READ_COMMAND,
+              "nemoclaw-gateway-startup-timing-read",
+              PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
+              String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES + 1),
+              String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS),
+            ]),
+            Math.min(GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS, remainingMs),
+          ),
+        STARTUP_TIMEOUT_MS + PROBE_TIMEOUT_MS,
+      ) !== "missing",
+    undefined,
+    GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS,
   );
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
   lifecycleTiming.finish("recovered");

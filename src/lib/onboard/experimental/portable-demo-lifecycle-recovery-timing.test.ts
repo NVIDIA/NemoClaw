@@ -13,7 +13,10 @@ import {
   type PortableDemoLifecycleDeps,
   recoverPortableDemoSandboxLifecycle,
 } from "./portable-demo-lifecycle";
-import { PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX } from "./portable-demo-lifecycle-timing";
+import {
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX,
+} from "./portable-demo-lifecycle-timing";
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
@@ -193,19 +196,21 @@ afterEach(() => {
 });
 
 describe("portable lifecycle recovery timing output", () => {
-  it("emits one recovered timing line from the lifecycle caller (#9200)", () => {
+  it("waits for the startup record before emitting recovered timing (#9200)", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(false);
     const launchOpenshell = vi.fn();
     const log = vi.fn();
+    let deadlineNow = 0;
     let epochNow = EPOCH_BASE_MS;
+    let timingReadAttempts = 0;
     installReceipt(stateDir, podman);
 
     expect(
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "head"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -216,19 +221,26 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow = launched ? EPOCH_BASE_MS + 2_110 : epochNow;
               return { status: 0, stdout: launched ? "200" : "000" };
             }
-            case "head":
-              return { status: 0, stdout: startupTimingRecord() };
+            case "sh":
+              timingReadAttempts += 1;
+              return timingReadAttempts === 1
+                ? { status: PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS }
+                : { status: 0, stdout: startupTimingRecord() };
             default:
               throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
           }
         },
         launchOpenshell,
         log,
-        now: () => 0,
+        now: () => deadlineNow,
         timingNow: () => 0,
         gatewayStartupEpochNow: () => epochNow,
+        sleep: (milliseconds) => {
+          deadlineNow += milliseconds;
+        },
       }),
     ).toEqual({ kind: "recovered" });
+    expect(timingReadAttempts).toBe(2);
     expect(timingLines(log)).toEqual([
       "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=started gatewayAction=started ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=2 gatewayNotReady=1 gatewayTimeouts=0 gatewayErrors=0 result=recovered",
     ]);
@@ -274,7 +286,7 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "head"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -285,7 +297,7 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow += launched ? 1_000 : 0;
               return { status: 0, stdout: launched ? "200" : "000" };
             }
-            case "head":
+            case "sh":
               throw new Error("credential-bearing diagnostic failure");
             default:
               throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
@@ -319,7 +331,7 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "head"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "sh"].includes(arg));
           switch (command) {
             case "true":
               return { status: 0 };
@@ -332,7 +344,7 @@ describe("portable lifecycle recovery timing output", () => {
               epochNow = ready ? EPOCH_BASE_MS + 2_110 : epochNow;
               return { status: 0, stdout: ready ? "200" : "000" };
             }
-            case "head":
+            case "sh":
               diagnosticNow += 20;
               return { status: 0, stdout: startupTimingRecord() };
             default:
