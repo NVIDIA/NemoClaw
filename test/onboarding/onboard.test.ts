@@ -672,6 +672,9 @@ startGateway(null).catch((error) => {
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const onboardScriptMocksPath = JSON.stringify(
+      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -686,6 +689,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -782,10 +787,10 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile import + provider get + provider update + inference set
-      assert.match(
+      // openai provider profile validation + provider get + provider update + inference set
+      assert.equal(
         harness.commands[0].command,
-        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+        "provider profile -g nemoclaw export openai --output json",
       );
       assert.equal(harness.commands.length, 4);
     });
@@ -821,10 +826,10 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile import + provider get + provider update + inference set
-      assert.match(
+      // openai provider profile validation + provider get + provider update + inference set
+      assert.equal(
         harness.commands[0].command,
-        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+        "provider profile -g nemoclaw export openai --output json",
       );
       assert.equal(harness.commands.length, 4);
     });

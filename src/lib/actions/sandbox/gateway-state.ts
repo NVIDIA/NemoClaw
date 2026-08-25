@@ -21,6 +21,7 @@ import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
   getKnownSandboxTargetGatewayName,
+  getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
 
@@ -115,6 +116,26 @@ type SandboxGatewayStateLookup = (
 function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   if (!gatewayName) return args;
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
+}
+
+/** Resolve the authoritative gateway for a persisted sibling ownership row. */
+export function resolvePersistedSandboxOwnershipGateway(sandbox: SandboxEntry): string {
+  return getPersistedSandboxTargetGatewayName(sandbox);
+}
+
+/** Capture one gateway's live sandbox phases for host-global model ownership. */
+export function captureSandboxOwnershipPhases(
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+): { readonly output: string; readonly status: number | null } {
+  const result = captureOpenshell(gatewayScopedArgs(["sandbox", "list"], gatewayName), {
+    env: environment,
+    ignoreError: true,
+    includeStderr: true,
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  return { output: result.output, status: result.status };
 }
 
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */

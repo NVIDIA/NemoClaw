@@ -144,6 +144,8 @@ const sourceSandbox = {
 };
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
   if (cmd.includes("sandbox list")) {
@@ -283,6 +285,8 @@ const { EventEmitter } = require("node:events");
 const events = [];
 runner.run = (command) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox list")) {
@@ -446,6 +450,8 @@ const { EventEmitter } = require("node:events");
 const events = [];
 runner.run = (command) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox list")) {
@@ -580,6 +586,8 @@ const events = [];
 let sandboxDeleted = false;
 runner.run = (command) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
@@ -740,6 +748,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
   if (cmd.includes("sandbox list")) {
@@ -872,6 +882,8 @@ const path = require("node:path");
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
@@ -1013,6 +1025,8 @@ const path = require("node:path");
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
@@ -1166,6 +1180,8 @@ const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
   if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
@@ -1331,6 +1347,8 @@ let registeredSandbox = null;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
   if (cmd.includes("sandbox list")) {
