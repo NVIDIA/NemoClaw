@@ -133,7 +133,7 @@ The main prompt should tell the coding agent when to load each asset and should 
 Use one shared immutable commit SHA for every platform-asset URL in a starter-prompt revision.
 The contributor who changes any platform asset owns the corresponding pin update.
 First commit the updated assets, starter-prompt behavior, and related tests without changing the existing URLs, `promptAssetRevision`, or pinned SHA-256 values.
-Then use that commit's SHA in every platform-asset URL, update `promptAssetRevision` and every pinned SHA-256 value in `test/starter-prompt-docs.test.ts`, and commit the repin as one atomic follow-up.
+Then use that commit's SHA in every platform-asset URL, update `promptAssetRevision` and every pinned SHA-256 value in `test/generation/starter-prompt-docs.test.ts`, and commit the repin as one atomic follow-up.
 Never mix asset URLs from different revisions or point an asset URL at a commit that predates its content.
 The asset test compares each local file byte-for-byte with its Git blob at `promptAssetRevision`, so the intermediate content commit intentionally fails until the atomic repin follow-up points every URL, revision, and digest at that content commit.
 Updating only a local digest does not prove what the pinned revision contains.
