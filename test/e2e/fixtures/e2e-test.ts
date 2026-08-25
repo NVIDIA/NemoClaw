@@ -43,6 +43,7 @@ import { ShellProbe } from "./shell-probe.ts";
 declare module "vitest" {
   interface TaskMeta {
     e2eArtifactRootId?: string;
+    e2eCleanupTimeoutMs?: number;
     e2ePhases?: readonly string[];
   }
 }
@@ -234,9 +235,10 @@ export const test = base.extend<E2ETargetFixtures>({
     );
     await use(new DockerPrerequisite(probe, skip));
   },
-  cleanup: async ({ artifacts, progress, secrets, signal }, use) => {
+  cleanup: async ({ artifacts, progress, secrets, signal, task }, use) => {
     const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress, {
       testSignal: signal,
+      timeoutMs: task.meta.e2eCleanupTimeoutMs,
     });
     try {
       await use(cleanup);

@@ -23,6 +23,7 @@ import {
   resolveConfiguredRuntimeProvider,
   resolveRegisteredRuntimeProvider,
 } from "./runtime-provider/selection";
+import { noteOnboardResumeHintShown } from "./resume-hint";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -77,6 +78,27 @@ function resolveGatewayRuntimeProjection(
     platform: process.platform,
     socketPath: gatewayEnv.OPENSHELL_PODMAN_SOCKET,
   });
+}
+
+function alternateGatewayRuntimeProjection(
+  runtime: RuntimeProviderGatewayHostRuntime,
+  driver: string,
+  driverConfig: Record<string, unknown>,
+): RuntimeProviderGatewayHostRuntime {
+  const namespace = driverConfig.sandbox_namespace;
+  const hostGatewayIp = driverConfig.host_gateway_ip;
+  const socketPath = driverConfig.socket_path;
+  return {
+    ...runtime,
+    openShellDriver: driver,
+    socketPath: isNonEmptyString(socketPath) ? socketPath : null,
+    gatewayConfig: {
+      ...runtime.gatewayConfig,
+      sandboxNamespace: isNonEmptyString(namespace) ? "scoped" : "omitted",
+      hostGatewayIp: isNonEmptyString(hostGatewayIp) ? hostGatewayIp : null,
+      includeSupervisorBin: isNonEmptyString(driverConfig.supervisor_bin),
+    },
+  };
 }
 
 interface LegacyGatewayIdentity {
@@ -295,6 +317,37 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
   );
 }
 
+/**
+ * The gateway state directory is shared by port, not by driver (#10071): a
+ * Docker-driver gateway and the portable profile's Podman-driver gateway
+ * resolve to the same default state directory when they use the same port.
+ * A well-formed NemoClaw config generated for the other driver is not
+ * evidence of tampering or corruption — it is the ordinary result of
+ * switching profiles on a host that already onboarded with the other
+ * driver. Distinguish that case from a genuinely ambiguous config so the
+ * error names a concrete recovery path instead of a generic schema
+ * complaint, and so the suggested recovery does not just repeat the exact
+ * command that failed.
+ */
+class CrossDriverGatewayConflictError extends Error {}
+
+function crossDriverGatewayConflict(
+  configPath: string,
+  stateDir: string,
+  requestedDriver: string,
+  configuredDriver: string,
+): Error {
+  return new CrossDriverGatewayConflictError(
+    `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
+      `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
+      `share one gateway state directory between driver types. To switch drivers for NemoClaw-managed state, ` +
+      `run the applicable \`nemoclaw uninstall\` path, then retry. Uninstall preserves externally managed ` +
+      `or supervised state; resolve that state through its lifecycle authority instead. To run both drivers ` +
+      `concurrently, select an unused port with NEMOCLAW_GATEWAY_PORT=<port> and a separate state ` +
+      `directory with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>. State directory: ${stateDir}`,
+  );
+}
+
 function tomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -379,8 +432,8 @@ function existingGatewayIdentityFromConfig(
   runtime: RuntimeProviderGatewayHostRuntime,
   allowOpenShell0044PreAuthDatabase = false,
 ): DockerDriverGatewayIdentity | null {
-  const driver = runtime.openShellDriver;
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  const driver = runtime.openShellDriver;
   let configFile: OpenRegularFile | null = null;
   let configProof: ExistingConfigProof | null = null;
   let state: fs.Stats;
@@ -482,6 +535,35 @@ function existingGatewayIdentityFromConfig(
     const gatewayJwt = asTomlTable(gateway?.gateway_jwt);
     const drivers = asTomlTable(openshell?.drivers);
     const driverConfig = asTomlTable(drivers?.[driver]);
+    if (!driverConfig && parsed && openshell && gateway && gatewayJwt && drivers) {
+      const configuredDriver = Object.entries(drivers).find(
+        ([candidate, config]) => candidate !== driver && asTomlTable(config) !== null,
+      );
+      if (configuredDriver) {
+        const [otherDriver, otherDriverConfigValue] = configuredDriver;
+        const otherDriverConfig = asTomlTable(otherDriverConfigValue);
+        if (!otherDriverConfig) throw new Error("unreachable gateway driver classification");
+        let otherIdentity: DockerDriverGatewayIdentity | null = null;
+        try {
+          const otherRuntime = alternateGatewayRuntimeProjection(
+            runtime,
+            otherDriver,
+            otherDriverConfig,
+          );
+          otherIdentity = existingGatewayIdentityFromConfig(
+            stateDir,
+            otherRuntime,
+            allowOpenShell0044PreAuthDatabase,
+          );
+          if (otherIdentity) {
+            throw crossDriverGatewayConflict(configPath, stateDir, driver, otherDriver);
+          }
+        } finally {
+          if (otherIdentity?.kind === "legacy") closeLegacyJwtBundleProof(otherIdentity.jwtProof);
+          if (otherIdentity?.configProof) closeRegularFileProof(otherIdentity.configProof);
+        }
+      }
+    }
     if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
       throw ambiguousGatewayConfig(configPath, "the config does not match NemoClaw's schema");
     }
@@ -818,12 +900,24 @@ export function prepareDockerDriverGatewayConfigEnv(
   } = {},
 ): Record<string, string> {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, options.gatewayRuntime);
-  const identity = resolveDockerDriverGatewayIdentity(
-    stateDir,
-    gatewayEnv,
-    runtime,
-    options.allowOpenShell0044PreAuthDatabase === true,
-  );
+  let identity: DockerDriverGatewayIdentity;
+  try {
+    identity = resolveDockerDriverGatewayIdentity(
+      stateDir,
+      gatewayEnv,
+      runtime,
+      options.allowOpenShell0044PreAuthDatabase === true,
+    );
+  } catch (error) {
+    if (error instanceof CrossDriverGatewayConflictError) {
+      // The generic "onboard --resume" catch-all would repeat this exact
+      // command and hit the identical conflict again. Mark the latch only at
+      // the onboarding boundary that surfaces the tailored recovery error;
+      // ownership probes intentionally swallow config-classification errors.
+      noteOnboardResumeHintShown();
+    }
+    throw error;
+  }
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,

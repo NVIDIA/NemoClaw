@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   expectAbsentSandboxMcpFinalize,
   expectActiveTimerDestroyOrder,
@@ -81,6 +82,12 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
+  it("loads the destroy flow from TypeScript source (#10106)", () => {
+    const harness = createDestroyHarness();
+
+    expect(harness.destroySourcePath).toBe(path.join(import.meta.dirname, "destroy.ts"));
+  });
+
   it("selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state", async () => {
     const harness = createDestroyHarness();
 
@@ -93,6 +100,67 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
     );
+  });
+
+  it.each([false, true])(
+    "sets a 60-second delete timeout and preserves a registered sandbox with force=%s (#10106)",
+    async (force) => {
+      const deleteError = Object.assign(new Error("OpenShell delete exceeded its deadline"), {
+        code: "ETIMEDOUT",
+      });
+      const harness = createDestroyHarness({
+        deleteError,
+        deleteStatus: null,
+        dockerRunResult: { status: 0, stdout: "" },
+        registeredSandboxCount: 1,
+      });
+
+      await expect(harness.destroySandbox("alpha", { force, yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({
+          killSignal: "SIGKILL",
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        }),
+      );
+      expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+        "OpenShell sandbox delete timed out after 60 seconds",
+      );
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("stops when workspace cleanup times out for a sandbox with no Docker container (#10106)", async () => {
+    const wipeError = Object.assign(new Error("OpenShell exec exceeded its deadline"), {
+      code: "ETIMEDOUT",
+    });
+    const harness = createDestroyHarness({
+      dockerRunResult: { status: 0, stdout: "" },
+      mcpServers: ["github"],
+      registeredSandboxCount: 1,
+      wipeError,
+      wipeStatus: null,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "exec", "--name", "alpha"]),
+      expect.objectContaining({
+        killSignal: "SIGKILL",
+        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+      }),
+    );
+    expect(harness.events).toEqual(["mcp-prepare", "wipe", "mcp-restore"]);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    const errorOutput = harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+    expect(errorOutput).toContain("OpenShell workspace cleanup timed out after 60 seconds");
+    expect(errorOutput).toContain("Start the recorded OpenShell gateway, then retry destroy");
   });
 
   it.each([
