@@ -97,8 +97,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/platform/images/base-image-resolver-helper.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
+    pattern: /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test/platform/images/protected-managed-image-contract.test.ts",
@@ -168,6 +167,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,
     testsToRun: runTests("test/e2e/support/hosted-inference.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)nemoclaw\/(?:src\/shared\/openshell-policy-boundary\.cts|tsconfig\.shared\.json)$/,
+    testsToRun: runTests("test/e2e/support/hermes-discord-policy-binding.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
@@ -280,7 +284,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/sandbox-images-and-e2e\.yaml$/,
+    pattern: /(?:^|\/)\.github\/workflows\/(?:pr-self-hosted|sandbox-images-and-e2e)\.yaml$/,
     testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
   },
   {
@@ -289,7 +293,9 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
-    testsToRun: runTests("test/automation/pull-requests/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-merge-conflict-fixer-workflow-boundary.test.ts",
+    ),
   },
   {
     pattern:
@@ -305,11 +311,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
-    testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,
-    testsToRun: runTests("test/automation/e2e/e2e-main-retry-workflow.test.ts"),
+    testsToRun: runTests("test/e2e/support/main-run-retry.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,

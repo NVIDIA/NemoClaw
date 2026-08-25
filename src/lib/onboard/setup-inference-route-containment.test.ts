@@ -55,7 +55,19 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      runOpenshell: vi.fn((args: string[]) => ({
+        status: 0,
+        stdout: args.includes("export")
+          ? JSON.stringify({
+              id: "openai",
+              credentials: [],
+              endpoints: [],
+              binaries: [],
+              inference_capable: true,
+            })
+          : "",
+        stderr: "",
+      })),
       updateSandbox: vi.fn(() => true),
       upsertProvider: vi.fn(() => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),

@@ -146,8 +146,20 @@ export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarnes
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
   expect(errorOutput).toContain("shields could not be re-locked before delete");
-  expect(errorOutput).toContain("--force cannot safely discard a record whose config lock");
+  expect(errorOutput).toContain("--force cannot safely discard a record while shields recovery");
   expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
+  expect(errorOutput).toContain("seven-attempt auto-restore recovery can continue");
+  expect(errorOutput).toContain("durable containment blocks sandbox mutations");
+  expectShieldsRecoveryOrder(errorOutput);
+}
+
+export function expectShieldsRecoveryOrder(errorOutput: string): void {
+  const gatewayStatusIndex = errorOutput.indexOf("nemoclaw alpha status");
+  const shieldsStatusIndex = errorOutput.indexOf("nemoclaw alpha shields status");
+  const retryDestroyIndex = errorOutput.indexOf("Retry destroy only after recovery permits it");
+  expect(gatewayStatusIndex).toBeGreaterThanOrEqual(0);
+  expect(shieldsStatusIndex).toBeGreaterThan(gatewayStatusIndex);
+  expect(retryDestroyIndex).toBeGreaterThan(shieldsStatusIndex);
 }
 
 export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
