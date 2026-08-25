@@ -16,6 +16,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
+import { assertDiscordGatewayCapture } from "./openclaw-pairing-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   dockerInfo,
@@ -196,22 +197,6 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
     },
   );
   expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
-}
-
-function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify?.tokenMatchesExpected, "Discord host-side token rewrite").toBe(true);
-  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked to fake Gateway").toBe(false);
-  expect(JSON.stringify(rows), "fake Gateway capture must not persist the raw token").not.toContain(
-    expectedToken,
-  );
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
