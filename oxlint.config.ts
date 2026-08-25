@@ -63,7 +63,7 @@ export default defineConfig({
         "scripts/**/*.js",
         "scripts/**/*.mjs",
         "test/**/*.js",
-        "test/credentials-shim.test.ts",
+        "test/package-contract/credentials-shim.test.ts",
         "test/e2e-runtime/runner-basic.test.ts",
       ],
       rules: {

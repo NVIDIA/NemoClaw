@@ -34,6 +34,14 @@
 
 set -euo pipefail
 
+_nemoclaw_capture_epoch_realtime() {
+  local destination="$1"
+  local LC_NUMERIC=C
+  printf -v "$destination" '%s' "${EPOCHREALTIME:-}"
+}
+
+_nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_STARTUP_ENTRY_EPOCH
+
 # SECURITY: Lock down PATH before any commands run so an injected PATH
 # cannot resolve id/chown/chmod/tee from an attacker-controlled location.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -131,6 +139,31 @@ _nemoclaw_safe_replace_tmp_file() {
 
 _nemoclaw_safe_create_tmp_file() {
   _nemoclaw_safe_replace_tmp_file "$@" </dev/null
+}
+
+_PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PATH="/tmp/nemoclaw-openclaw-gateway-startup-timing"
+
+# Best-effort: this fixed-schema record contains timing values only. The host
+# lifecycle validates correlation before it emits the credential-free receipt.
+record_portable_openclaw_gateway_startup_timing() {
+  local value
+  for value in \
+    "${_NEMOCLAW_GATEWAY_STARTUP_ENTRY_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_WORKSPACE_FINISHED_EPOCH:-}" \
+    "${_NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH:-}"; do
+    [ -n "$value" ] || return 0
+  done
+
+  printf '%s\n' \
+    "schema=1 entry=${_NEMOCLAW_GATEWAY_STARTUP_ENTRY_EPOCH} configStart=${_NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH} configEnd=${_NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH} providerEnd=${_NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH} tokenEnd=${_NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH} messagingEnd=${_NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH} workspaceEnd=${_NEMOCLAW_GATEWAY_WORKSPACE_FINISHED_EPOCH} spawnEnd=${_NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH}" \
+    | _nemoclaw_safe_replace_tmp_file \
+      "$_PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PATH" 600 "" best-effort \
+      2>/dev/null || true
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
@@ -5312,6 +5345,8 @@ launch_openclaw_gateway_non_root() {
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
+  record_portable_openclaw_gateway_startup_timing
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
 }
 
@@ -5839,15 +5874,18 @@ if [ "$(id -u)" -ne 0 ]; then
   # Empty-config recovery runs before integrity check so a #3118 truncation
   # (openshell inference set inside the sandbox) is restored from baseline
   # rather than failing the integrity hash for the empty file.
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH
   recover_openclaw_config_if_empty
   if ! verify_config_integrity_if_locked /sandbox/.openclaw; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
   normalize_mutable_config_perms
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH
   apply_model_override
   reconcile_agent_model_with_provider
   apply_cors_override
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
   prepare_gateway_token_for_current_command
@@ -5856,6 +5894,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # actually runs with.
   write_openclaw_config_baseline
   export_gateway_token
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
@@ -5878,6 +5917,7 @@ if [ "$(id -u)" -ne 0 ]; then
   write_openclaw_config_baseline
   install_messaging_runtime_preloads
   verify_messaging_runtime_secret_scans
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
@@ -5913,6 +5953,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
   validate_nemoclaw_tmp_permissions
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_WORKSPACE_FINISHED_EPOCH
 
   # Start gateway in background, auto-pair, then wait. Mark the in-container
   # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting

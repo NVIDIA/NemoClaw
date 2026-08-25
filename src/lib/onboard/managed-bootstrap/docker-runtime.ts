@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerImageInspect } from "../../adapters/docker/inspect";
+import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
+import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
@@ -40,6 +43,9 @@ type SupportedBootstrapSurface = Extract<
   RuntimeProviderBootstrapSurface,
   { readonly supported: true }
 >;
+
+const MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS = 30_000;
+const MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS = 30 * 60 * 1000;
 
 type CompleteOwnerCleanupInput = Readonly<{
   providerId: string;
@@ -82,6 +88,34 @@ function dockerReplacementOptions(
   };
 }
 
+function managedBootstrapImageReference(input: ManagedBootstrapRuntimeCreateLifecycleInput): string {
+  return `${input.image.repository}@${input.image.manifestDigest}`;
+}
+
+async function prepareDockerManagedBootstrapGpuProbeImage(image: string): Promise<void> {
+  const inspected = dockerImageInspect(image, {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS,
+  });
+  if (hasZeroDockerExitStatus(inspected)) return;
+
+  console.log("  Pulling managed sandbox image before Docker GPU mode selection...");
+  const pulled = await dockerPullWithProgressWatchdog(image, {
+    maxTimeoutMs: MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS,
+  });
+  if (pulled.status === 0 && !pulled.timedOut && !pulled.error) return;
+
+  const reason = pulled.timedOut
+    ? pulled.timeoutKind === "stall"
+      ? "stalled without progress"
+      : "exceeded the 30-minute safety limit"
+    : pulled.error
+      ? `could not start (${pulled.error.message})`
+      : `exited with status ${String(pulled.status)}`;
+  throw new Error(`Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`);
+}
+
 function selectedDockerMode(
   input: ManagedBootstrapRuntimeCreateLifecycleInput,
   dockerDesktopWsl: boolean | undefined,
@@ -92,10 +126,11 @@ function selectedDockerMode(
   }
   const selection = selectDockerGpuPatchMode(
     {
-      image: `${input.image.repository}@${input.image.manifestDigest}`,
+      image: managedBootstrapImageReference(input),
       device: input.sandboxGpuConfig.sandboxGpuDevice,
       backend,
       dockerDesktopWsl,
+      ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
     },
     input.dependencies,
   );
@@ -118,7 +153,7 @@ function createDockerLifecycle(
   }
   const dockerDesktopWsl =
     input.route === "compatibility" ? isDockerDesktopWslRuntime() : undefined;
-  const mode = selectedDockerMode(input, dockerDesktopWsl);
+  const preselectedMode = dockerDesktopWsl ? null : selectedDockerMode(input, dockerDesktopWsl);
   const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
   const persistStartupCommand =
     input.persistStartupCommand && (input.route !== "native" || input.requiredLimits.length > 0);
@@ -160,7 +195,6 @@ function createDockerLifecycle(
     expectedSupervisorArgv: input.expectedSupervisorArgv,
     metadata: {},
   } as const;
-  const replacementOptions = dockerReplacementOptions(mode, input);
   let activatedRuntimeId: string | null = null;
 
   return {
@@ -219,6 +253,15 @@ function createDockerLifecycle(
         readonly bootstrapIdentity: string;
       }) => Promise<ManagedBootstrapRuntimeCreateLaunchResult<T>>,
     ): Promise<T> {
+      if (
+        dockerDesktopWsl &&
+        input.route === "compatibility" &&
+        input.sandboxGpuConfig.sandboxGpuEnabled
+      ) {
+        await prepareDockerManagedBootstrapGpuProbeImage(managedBootstrapImageReference(input));
+      }
+      const mode = preselectedMode ?? selectedDockerMode(input, dockerDesktopWsl);
+      const replacementOptions = dockerReplacementOptions(mode, input);
       const launchState: { value?: ManagedBootstrapRuntimeCreateLaunchResult<T> } = {};
       const prepared = await prepareManagedBootstrapSequence(adapter, {
         create: {

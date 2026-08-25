@@ -3,7 +3,7 @@
     {
       "name": "nvidia/nemotron-3-super-120b-a12b",
       "image": "nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest",
-      "minGpuMemoryMB": 40960
+      "minGpuMemoryMB": 127386
     },
     {
       "name": "nvidia/nemotron-3-nano-30b-a3b",
