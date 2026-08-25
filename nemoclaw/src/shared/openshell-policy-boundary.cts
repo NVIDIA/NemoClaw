@@ -15,6 +15,13 @@ export interface ParsedOpenShellPolicy {
   readonly policy: ValidatedOpenShellPolicyMapping;
 }
 
+export type OpenShellPolicyAuthority = "nemoclaw-managed" | "externally-managed";
+
+export interface SandboxPolicyAuthorityInspection {
+  readonly authority: OpenShellPolicyAuthority;
+  readonly effectivePolicy: OpenShellPolicyMapping;
+}
+
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 
@@ -22,14 +29,189 @@ function isMapping(value: unknown): value is OpenShellPolicyMapping {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isPolicyAuthority(value: unknown): value is OpenShellPolicyAuthority {
+  return value === "nemoclaw-managed" || value === "externally-managed";
+}
+
+function parseJsonMapping(source: string, invalidMessage: string): OpenShellPolicyMapping {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error(invalidMessage);
+  }
+  if (!isMapping(parsed)) {
+    throw new Error(invalidMessage);
+  }
+  return parsed;
+}
+
+/** Parse machine-readable effective policy metadata for one sandbox. */
+export function parseSandboxPolicyAuthorityMetadata(
+  raw: string,
+  sandboxName: string,
+): SandboxPolicyAuthorityInspection {
+  if (raw.trim().length === 0) {
+    throw new Error("OpenShell returned empty sandbox policy authority metadata");
+  }
+  const metadata = parseJsonMapping(
+    raw,
+    "OpenShell returned malformed sandbox policy authority metadata",
+  );
+  if (
+    metadata.scope !== "sandbox" ||
+    metadata.sandbox !== sandboxName ||
+    metadata.status !== "effective" ||
+    (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global") ||
+    !isMapping(metadata.policy)
+  ) {
+    throw new Error("OpenShell returned invalid sandbox policy authority metadata");
+  }
+  return {
+    authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
+    effectivePolicy: metadata.policy,
+  };
+}
+
+/** Require durable and observed policy authority to describe the same owner. */
+export function assertMatchingPolicyAuthority(recorded: unknown, observed: unknown): void {
+  if (!isPolicyAuthority(recorded)) {
+    throw new Error("the recorded policy authority is unavailable or invalid");
+  }
+  if (!isPolicyAuthority(observed)) {
+    throw new Error("the observed OpenShell policy authority is unavailable or invalid");
+  }
+  if (recorded !== observed) {
+    throw new Error(`OpenShell policy authority changed from ${recorded} to ${observed}`);
+  }
+}
+
+function policyMapping(value: unknown, invalidMessage: string): OpenShellPolicyMapping {
+  if (!isMapping(value)) throw new Error(invalidMessage);
+  return value;
+}
+
+function policyValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => policyValuesEqual(value, right[index]))
+    );
+  }
+  if (!isMapping(left) || !isMapping(right)) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] &&
+        Object.hasOwn(right, key) &&
+        policyValuesEqual(left[key], right[key]),
+    )
+  );
+}
+
+function formatPolicyKeys(keys: readonly string[]): string {
+  return keys.map((key) => JSON.stringify(key)).join(", ");
+}
+
+function assertPolicyRequirementContainmentForOwner(
+  inspection: SandboxPolicyAuthorityInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+  owner: string,
+): void {
+  if (!isPolicyAuthority(inspection.authority)) {
+    throw new Error("the observed OpenShell policy authority is invalid");
+  }
+  const effectivePolicy = policyMapping(
+    inspection.effectivePolicy,
+    "the observed effective policy is invalid",
+  );
+  const required = policyMapping(requiredPolicy, "the required policy input is invalid");
+  const requiredNetwork =
+    required.network_policies === undefined
+      ? {}
+      : policyMapping(required.network_policies, "the required network policy input is invalid");
+  const observedNetwork = isMapping(effectivePolicy.network_policies)
+    ? effectivePolicy.network_policies
+    : null;
+  const missing: string[] = [];
+  const drifted: string[] = [];
+  for (const key of Object.keys(requiredNetwork).sort()) {
+    if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
+      missing.push(key);
+    } else if (!policyValuesEqual(observedNetwork[key], requiredNetwork[key])) {
+      drifted.push(key);
+    }
+  }
+  const requiredSections = Object.keys(required)
+    .filter((key) => key !== "network_policies" && key !== "version")
+    .sort();
+  const missingSections: string[] = [];
+  const driftedSections: string[] = [];
+  for (const key of requiredSections) {
+    if (!Object.hasOwn(effectivePolicy, key)) {
+      missingSections.push(key);
+    } else if (!policyValuesEqual(effectivePolicy[key], required[key])) {
+      driftedSections.push(key);
+    }
+  }
+  if (
+    missing.length === 0 &&
+    drifted.length === 0 &&
+    missingSections.length === 0 &&
+    driftedSections.length === 0
+  ) {
+    return;
+  }
+  const differences = [
+    ...(missing.length > 0 ? [`missing entries ${formatPolicyKeys(missing)}`] : []),
+    ...(drifted.length > 0 ? [`drifted entries ${formatPolicyKeys(drifted)}`] : []),
+    ...(missingSections.length > 0
+      ? [`missing sections ${formatPolicyKeys(missingSections)}`]
+      : []),
+    ...(driftedSections.length > 0
+      ? [`drifted sections ${formatPolicyKeys(driftedSections)}`]
+      : []),
+  ].join("; ");
+  throw new Error(`the ${owner} has ${differences}`);
+}
+
+/** Require a policy to contain the requested entries and sections. */
+export function assertPolicyRequirementContainment(
+  inspection: SandboxPolicyAuthorityInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+): void {
+  assertPolicyRequirementContainmentForOwner(inspection, requiredPolicy, "observed policy");
+}
+
+/**
+ * Require an external policy to contain the requested entries and sections.
+ * Additional externally managed content is allowed.
+ */
+export function assertExternalPolicyRequirementContainment(
+  inspection: SandboxPolicyAuthorityInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+): void {
+  if (!isPolicyAuthority(inspection.authority)) {
+    throw new Error("the observed OpenShell policy authority is invalid");
+  }
+  if (inspection.authority === "nemoclaw-managed") return;
+  assertPolicyRequirementContainmentForOwner(
+    inspection,
+    requiredPolicy,
+    "externally managed policy",
+  );
+}
+
 function assertValidatedPolicyFields(
   policy: OpenShellPolicyMapping,
 ): asserts policy is ValidatedOpenShellPolicyMapping {
   if (
     policy.version !== undefined &&
-    (typeof policy.version !== "number" ||
-      !Number.isInteger(policy.version) ||
-      policy.version < 1)
+    (typeof policy.version !== "number" || !Number.isInteger(policy.version) || policy.version < 1)
   ) {
     throw new Error(
       "Current policy from openshell policy get --base version must be a positive integer",

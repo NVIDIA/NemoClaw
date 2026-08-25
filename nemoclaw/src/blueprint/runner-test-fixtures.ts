@@ -82,9 +82,12 @@ export function resultForCommandFailure(
   command: readonly [string, string],
   stderr: string,
 ): { exitCode: number; stdout: string; stderr: string } {
-  return args[0] === command[0] && args[1] === command[1]
-    ? { exitCode: 1, stdout: "", stderr }
-    : { exitCode: 0, stdout: "", stderr: "" };
+  return resultWithBlueprintPolicyAuthority(
+    args,
+    args[0] === command[0] && args[1] === command[1]
+      ? { exitCode: 1, stdout: "", stderr }
+      : { exitCode: 0, stdout: "", stderr: "" },
+  );
 }
 
 /** An empty successful command result. */
@@ -94,6 +97,74 @@ export function successResult(): {
   stderr: string;
 } {
   return { exitCode: 0, stdout: "", stderr: "" };
+}
+
+type CommandResult = { exitCode: number; stdout: string; stderr: string };
+
+/** The connected gateway identity reported by `openshell status`. */
+export function gatewayStatusResult(gateway = "test-gateway"): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: ["Gateway Status", "", "  Status: Connected", `  Gateway: ${gateway}`, ""].join("\n"),
+    stderr: "",
+  };
+}
+
+/** Machine-readable effective policy metadata for one sandbox. */
+export function sandboxPolicyAuthorityResult(
+  sandboxName: string,
+  authority: "nemoclaw-managed" | "externally-managed" = "nemoclaw-managed",
+  networkPolicies: Record<string, unknown> = {},
+): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "sandbox",
+      sandbox: sandboxName,
+      status: "effective",
+      policy_source: authority === "nemoclaw-managed" ? "sandbox" : "global",
+      policy: { version: 1, network_policies: networkPolicies },
+    }),
+    stderr: "",
+  };
+}
+
+/** Machine-readable external global policy metadata. */
+export function globalPolicyAuthorityResult(
+  networkPolicies: Record<string, unknown> = {},
+): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "global",
+      status: "loaded",
+      policy_source: "global",
+      policy: { version: 1, network_policies: networkPolicies },
+    }),
+    stderr: "",
+  };
+}
+
+/** Standard gateway and policy-authority responses for blueprint apply tests. */
+export function resultWithBlueprintPolicyAuthority(
+  args: readonly string[],
+  fallback: CommandResult,
+  gateway = "test-gateway",
+): CommandResult {
+  return args.join(" ") === "status"
+    ? gatewayStatusResult(gateway)
+    : args.join(" ") === `policy list -g ${gateway} --global --limit 1`
+      ? successResult()
+      : args[0] === "policy" &&
+          args[1] === "get" &&
+          args[2] === "-g" &&
+          args[3] === gateway &&
+          args[4] === "--full" &&
+          args[5] === "--output" &&
+          args[6] === "json" &&
+          typeof args[7] === "string"
+        ? sandboxPolicyAuthorityResult(args[7])
+        : fallback;
 }
 
 /** A failed command result carrying only stderr. */
