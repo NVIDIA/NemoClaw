@@ -110,21 +110,20 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   expectExitZero(provider, "Discord provider exists");
 
   const configScript =
-    "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); proxy=cfg.get('proxy') or {}; print(json.dumps({'token': account.get('token',''), 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'accountProxy': account.get('proxy',''), 'managedProxy': proxy.get('proxyUrl','')}))";
+    "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); proxy=cfg.get('proxy') or {}; print(json.dumps({'hasToken': 'token' in account, 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'accountProxy': account.get('proxy',''), 'managedProxy': proxy.get('proxyUrl','')}))";
   const config = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(configScript)}`, {
     artifactName: "discord-openclaw-config",
     redactionValues: redactions,
   });
   expectExitZero(config, "Discord OpenClaw config");
   const configSummary = JSON.parse(config.stdout.trim()) as {
-    token: string;
+    hasToken: boolean;
     dmPolicy: string;
     allowFrom: string[];
     accountProxy: string;
     managedProxy: string;
   };
-  expect(configSummary.token).toContain("openshell:resolve:env:");
-  expect(configSummary.token).toContain("DISCORD_BOT_TOKEN");
+  expect(configSummary.hasToken, "Discord config must defer to injected process env").toBe(false);
   expect(configSummary.dmPolicy).not.toBe("allowlist");
   expect(configSummary.accountProxy, "Discord account proxy").toBe("");
   expect(configSummary.managedProxy, "OpenClaw managed proxy").toMatch(/^http:\/\//);

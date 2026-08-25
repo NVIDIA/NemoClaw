@@ -75,6 +75,10 @@ export const discordManifest = {
   policyPresets: [
     {
       name: "discord",
+      // The Discord policy owns the credential binding that makes the token
+      // available in the sandbox process environment. The sandbox reads that
+      // environment at boot, so applying this preset afterwards is too late.
+      requiredAtCreate: true,
       validationWarningLines: [
         "For Discord preset validation, do not use curl as the success signal:",
         "curl is not in the preset binary allowlist, so curl probes can fail even",
@@ -97,7 +101,9 @@ export const discordManifest = {
           enabled: true,
           accounts: {
             default: {
-              token: "{{credential.discordBotToken.placeholder}}",
+              // OpenShell injects the current revision-scoped placeholder into
+              // DISCORD_BOT_TOKEN. Leaving the canonical placeholder here
+              // shadows that value and is rejected by the bound endpoint.
               enabled: true,
               healthMonitor: {
                 enabled: false,
