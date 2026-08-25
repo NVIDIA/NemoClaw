@@ -10,6 +10,7 @@ import {
   decideMcpLifecycleTakeover,
   type CorruptGenerationState,
   type DecideMcpLifecycleLockInput,
+  type McpLifecycleLockDecision,
 } from "./decisions";
 import type { LockObservation, McpLifecycleLockOwner } from "../mcp-lifecycle-lock-identity";
 
@@ -179,33 +180,61 @@ describe("lifecycle lock decisions", () => {
   });
 
   it.each([
-    ["active main owner", "main-owner", decideMcpLifecycleLock(decisionInput()), "wait"],
+    [
+      "active main owner",
+      "main-owner",
+      {
+        kind: "wait",
+        disposition: "active",
+        ownerPid: 100,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "wait",
+    ],
     [
       "stale main owner",
       "main-owner",
-      decideMcpLifecycleLock(decisionInput({ ownerDisposition: "stale" })),
+      {
+        kind: "reap",
+        observation: observation(owner()),
+        timerBound: false,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
       "reap",
     ],
     [
       "unverifiable main owner",
       "main-owner",
-      decideMcpLifecycleLock(
-        decisionInput({
-          observation: observation(owner({ sandboxName: "sandbox-b" })),
-          monotonicNow: 700,
-          corruptGeneration: { generation: "20:30:10", firstSeenAt: 500 },
-          ownerDisposition: undefined,
-        }),
-      ),
+      {
+        kind: "contain",
+        observation: observation(owner({ sandboxName: "sandbox-b" })),
+        reason: "unverifiable-main-owner",
+        corruptGeneration: { generation: "20:30:10", firstSeenAt: 500 },
+      } satisfies McpLifecycleLockDecision,
       "contain",
     ],
     [
       "stale deadline owner",
       "deadline",
-      decideMcpLifecycleLock(decisionInput({ role: "deadline", ownerDisposition: "stale" })),
+      {
+        kind: "contain",
+        observation: observation(owner()),
+        reason: "deadline-owner",
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
       "contain",
     ],
-    ["active reaper", "reaper", decideMcpLifecycleLock(decisionInput({ role: "reaper" })), "wait"],
+    [
+      "active reaper",
+      "reaper",
+      {
+        kind: "wait",
+        disposition: "active",
+        ownerPid: 100,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "wait",
+    ],
   ] as const)("maps the %s generation to %s", (_name, phase, lock, kind) => {
     expect(decideMcpLifecycleAcquisition({ phase, lock }).kind).toBe(kind);
   });
