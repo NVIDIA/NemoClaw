@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { discordManifest } from "./manifest";
+import { loadMessagingChannelPolicyPreset } from "../policy";
 
 type PolicyEndpoint = {
   readonly host?: string;
@@ -36,9 +35,12 @@ describe("Discord credential injection", () => {
   });
 
   it("binds every OpenClaw Discord credential route to the sandbox provider", () => {
-    const parsed = YAML.parse(
-      readFileSync(new URL("./policy/openclaw.yaml", import.meta.url), "utf8"),
-    ) as {
+    const content = loadMessagingChannelPolicyPreset("discord", {
+      agent: "openclaw",
+      sandboxName: "discord-proof",
+    });
+    expect(content).not.toBeNull();
+    const parsed = YAML.parse(content!) as {
       network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
     };
     const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
@@ -61,7 +63,7 @@ describe("Discord credential injection", () => {
     );
     expect(
       credentialRoutes.every(
-        (endpoint) => endpoint.credential_binding?.provider === "{sandboxName}-discord-bridge",
+        (endpoint) => endpoint.credential_binding?.provider === "discord-proof-discord-bridge",
       ),
     ).toBe(true);
   });
