@@ -334,7 +334,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("destroy shields cleanup warns on timer/cleanup failures but keeps best-effort flow", () => {
+  it("destroy preserves Shields state when external recovery cleanup fails (#9833)", () => {
     const warnings: string[] = [];
     const rmSync = vi.fn((artifactPath: string) => {
       if (artifactPath.endsWith("shields-external-policy-alpha.yaml")) {
@@ -344,23 +344,22 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       }
     });
 
-    cleanupShieldsDestroyArtifacts("alpha", {
-      stateDir: "/tmp/nonexistent-state-dir",
-      rmSync: rmSync as unknown as typeof fs.rmSync,
-      killShieldsTimer: () => ({
-        warnings: ["Failed to terminate shields timer PID 4242"],
+    expect(() =>
+      cleanupShieldsDestroyArtifacts("alpha", {
+        stateDir: "/tmp/nonexistent-state-dir",
+        rmSync: rmSync as unknown as typeof fs.rmSync,
+        killShieldsTimer: () => ({
+          warnings: ["Failed to terminate Shields timer PID 4242"],
+        }),
+        warn: (message) => warnings.push(message),
       }),
-      warn: (message) => warnings.push(message),
-    });
+    ).toThrow(
+      "Could not remove external Shields policy recovery artifact '/tmp/nonexistent-state-dir/shields-external-policy-alpha.yaml': permission denied. Shields state was preserved for retry.",
+    );
 
-    expect(warnings).toContain("Failed to terminate shields timer PID 4242");
-    expect(
-      warnings.some((message) => message.includes("Failed to remove shields cleanup artifact")),
-    ).toBe(true);
-    expect(rmSync).toHaveBeenCalledTimes(3);
+    expect(warnings).toEqual(["Failed to terminate Shields timer PID 4242"]);
+    expect(rmSync).toHaveBeenCalledOnce();
     expect(rmSync.mock.calls[0][0]).toContain("shields-external-policy-alpha.yaml");
-    expect(rmSync.mock.calls[1][0]).toContain("shields-alpha.json");
-    expect(rmSync.mock.calls[2][0]).toContain("shields-timer-alpha.json");
   });
 
   it("state-dir helper resolves ~/.nemoclaw/state from a single shared helper", () => {

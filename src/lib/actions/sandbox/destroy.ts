@@ -292,8 +292,9 @@ export function removeShieldsState(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
   const resolvedStateDir = path.resolve(stateDir);
+  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
   const artifactNames = [
-    `shields-external-policy-${sandboxName}.yaml`,
+    recoveryArtifactName,
     `shields-${sandboxName}.json`,
     `shields-timer-${sandboxName}.json`,
   ];
@@ -307,12 +308,18 @@ export function removeShieldsState(
     try {
       rmSync(filePath, { force: true });
     } catch (error) {
-      // force: true already suppresses ENOENT; warn on real failures
-      // (e.g. EPERM) so stale state doesn't silently survive.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`Failed to remove shields cleanup artifact '${filePath}': ${message}`);
+      // force: true already suppresses ENOENT. A recovery handoff must not
+      // become unbound under a reusable sandbox name, so preserve Shields
+      // state and stop cleanup when that artifact cannot be removed.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (artifactName === recoveryArtifactName) {
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
+          { cause: error },
+        );
       }
+      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
     }
   }
 }
