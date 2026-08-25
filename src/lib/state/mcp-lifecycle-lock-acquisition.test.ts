@@ -250,6 +250,26 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 
+  it("rejects asynchronous entry after its published generation is replaced", async () => {
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const realLink = fs.promises.link.bind(fs.promises);
+    vi.spyOn(fs.promises, "link").mockImplementationOnce(async (candidatePath, targetPath) => {
+      await realLink(candidatePath, targetPath);
+      await fs.promises.rm(targetPath);
+      writeOwnerAt(String(targetPath), "replacement-generation");
+    });
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, { ...options(), timeoutMs: 10 }),
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+      token: "replacement-generation",
+    });
+  });
+
   it("keeps ordinary acquisition closed after a dead timer misses its deadline", async () => {
     const operation = vi.fn(() => "must not enter");
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
@@ -373,6 +393,26 @@ describe("MCP lifecycle lock acquisition", () => {
     );
 
     expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("rejects synchronous entry after its published generation is replaced", () => {
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const realLinkSync = fs.linkSync.bind(fs);
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((candidatePath, targetPath) => {
+      realLinkSync(candidatePath, targetPath);
+      fs.rmSync(targetPath);
+      writeOwnerAt(String(targetPath), "replacement-generation");
+    });
+
+    expect(() =>
+      withMcpLifecycleLockSync(SANDBOX_NAME, operation, { ...options(), timeoutMs: 10 }),
+    ).toThrow("Timed out waiting for sandbox mutation lock");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+      token: "replacement-generation",
+    });
   });
 
   it("does not strand asynchronous recovery behind an expired legacy marker", async () => {

@@ -281,7 +281,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       // Should report the stale sandbox with version info
       expect(r.out).toContain("my-agent");
       expect(r.out).toContain("2026.3.11");
@@ -432,7 +432,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       expect(r.out).not.toContain("All sandboxes are up to date.");
       expect(r.out).toContain("my-agent");
       // Surfaces the NemoClaw image drift with the stale recorded fingerprint.
@@ -502,7 +502,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       expect(r.out).toContain("my-agent");
       expect(r.out).toContain("2026.3.11");
       expect(r.out).toMatch(/stale|need upgrading/i);

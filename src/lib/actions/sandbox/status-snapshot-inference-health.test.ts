@@ -18,6 +18,7 @@ function snapshotDeps(
   gateway: SandboxInferenceRouteHealth | null,
   providerHealth: ProviderHealthStatus | null = null,
   invocation: SandboxInferenceInvocationResult = { ok: true },
+  sandboxOverride: Partial<SandboxEntry> = {},
 ) {
   const sandbox: SandboxEntry = {
     name: "alpha",
@@ -25,6 +26,7 @@ function snapshotDeps(
     policies: [],
     provider: "nvidia",
     model: "nvidia/nemotron",
+    ...sandboxOverride,
   };
   return {
     suppressInferenceProbe: false,
@@ -582,5 +584,93 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
 
     expect(probeSandboxInferenceInvocationImpl).not.toHaveBeenCalled();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
+  });
+
+  it("reports an OpenClaw sandbox with a 404 models route as not ready (#10080)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 404,
+      detail:
+        "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
+    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
+  });
+
+  it("reports a Deep Agents Code OpenRouter 404 route as ready once an invocation succeeds (#10080)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 404,
+      detail:
+        "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
+    };
+
+    const options = snapshotDeps(
+      gateway,
+      null,
+      { ok: true },
+      {
+        agent: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "openai/gpt-4o-mini",
+      },
+    );
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        probeSandboxInferenceInvocationImpl,
+      },
+    });
+
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "openai/gpt-4o-mini",
+        preferredInferenceApi: null,
+      },
+      {},
+      30_000,
+    );
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+  });
+
+  it("reports a Deep Agents Code OpenRouter 404 route as not ready when the invocation fails (#10080)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 404,
+      detail:
+        "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(
+        gateway,
+        null,
+        {
+          ok: false,
+          detail: "provider rejected the request",
+          httpStatus: 401,
+        },
+        {
+          agent: "langchain-deepagents-code",
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+        },
+      ),
+    );
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false });
+    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
   });
 });
