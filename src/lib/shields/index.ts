@@ -44,6 +44,12 @@ const {
 } = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
+  buildOpenshellCommand,
+}: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
+const {
+  parseLiveSandboxEntries,
+}: typeof import("../runtime-recovery") = require("../runtime-recovery");
+const {
   timerMarkerPath,
   readTimerMarker,
   clearTimerMarker,
@@ -166,6 +172,11 @@ const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
 // five-second termination grace, so the host never abandons a live recovery.
 const OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS = 26 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
+// #10104: a Hermes sandbox stuck in Provisioning is Docker-Running but its
+// in-container broker never starts, so the docker-state-mutation round trip
+// stalls until DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS (15min). Probe
+// OpenShell's own Phase first with a short, fail-open bound.
+const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
 const MAX_SHIELDS_POLICY_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
 type BoundShieldsPolicyArtifact = {
@@ -1296,15 +1307,39 @@ function requireHermesRuntimeProviderSandbox(sandboxName: string) {
   return sandbox;
 }
 
+// #10104: best-effort, fail-open Phase probe. Any resolution failure, ENOENT,
+// non-zero exit, or timeout collapses to null (proceed as before); only a
+// positive, non-Ready/Running phase trips the fast-fail path below.
+function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | null {
+  try {
+    const output = runCapture(buildOpenshellCommand(["sandbox", "list"]), {
+      ignoreError: true,
+      timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
+    });
+    return (
+      parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function runHermesProviderProtectionTransition(
   sandboxName: string,
   configTarget: AgentConfigTarget,
   targetPosture: "locked" | "mutable",
   rollback: "locked" | "mutable",
 ): void {
+  const sandbox = requireHermesRuntimeProviderSandbox(sandboxName);
+  const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+  if (phase !== null && phase !== "Ready" && phase !== "Running") {
+    throw new Error(
+      `Hermes runtime-provider state mutation is unavailable because sandbox '${sandboxName}' has OpenShell phase '${phase}', not Ready or Running. Run '${CLI_NAME} ${sandboxName} status'. Resolve the reported phase, then retry.`,
+    );
+  }
   runHermesRuntimeProviderStateMutation({
     environment: process.env,
-    sandbox: requireHermesRuntimeProviderSandbox(sandboxName),
+    sandbox,
     sandboxName,
     configTarget,
     target: targetPosture,

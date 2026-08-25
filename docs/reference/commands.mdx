@@ -1593,10 +1593,30 @@ Read the sanitized agent configuration from a sandbox.
 The output removes credential-bearing sections before printing.
 Use `--key` to read one dotpath and `--format` to choose JSON or YAML output.
 
+<AgentOnly variant="openclaw">
+
 ```bash
 $$nemoclaw my-assistant config get
-$$nemoclaw my-assistant config get --key model --format yaml
+$$nemoclaw my-assistant config get --key agents.defaults.model.primary --format yaml
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+$$nemoclaw my-assistant config get
+$$nemoclaw my-assistant config get --key model.default --format yaml
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+$$nemoclaw my-assistant config get
+$$nemoclaw my-assistant config get --key models.default --format yaml
+```
+
+</AgentOnly>
 
 | Flag | Description |
 |------|-------------|
