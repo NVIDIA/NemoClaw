@@ -268,6 +268,8 @@ describe("policy channel remove/enable flows", () => {
       "        port: 443",
       "        protocol: rest",
       "        enforcement: enforce",
+      "        credential_binding:",
+      "          provider: alpha-telegram-bridge",
       "        rules:",
       "          - allow: { method: GET, path: '/bot*/**' }",
       "          - allow: { method: POST, path: '/bot*/**' }",

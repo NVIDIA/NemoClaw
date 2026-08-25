@@ -19,6 +19,7 @@ import {
   type MessagingAgentId,
   MessagingWorkflowPlanner,
   type SandboxMessagingPlan,
+  loadMessagingChannelPolicyPreset,
 } from "../../src/lib/messaging";
 import {
   getMessagingChannelConfigEnvKeys,
@@ -879,7 +880,10 @@ describe("channel preset source-of-truth", () => {
   it.each(knownChannelNames())(
     "channel $name ships a preset that parsePresetPolicyKeys accepts",
     (name) => {
-      const content = policies.loadPreset(name);
+      const content = loadMessagingChannelPolicyPreset(name, {
+        agent: "openclaw",
+        sandboxName: "channel-preset",
+      });
       expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
       expect(
         policies.parsePresetPolicyKeys(content!).length,

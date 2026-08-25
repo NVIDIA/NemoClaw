@@ -1130,13 +1130,18 @@ network_policies:
         "        port: 443\n" +
         "        access: full\n";
 
-      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"]);
+      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"], {
+        agent: "openclaw",
+        sandboxName: "policy-merge",
+      });
 
       expect(result.appliedPresets).toEqual(["slack"]);
       expect(result.missingPresets).toEqual([]);
       expect(result.policy).toContain("existing");
       expect(result.policy).toContain("slack:");
       expect(result.policy).toContain("wss-primary.slack.com");
+      expect(result.policy).toContain("policy-merge-slack-app");
+      expect(result.policy).toContain("policy-merge-slack-bridge");
     });
   });
 
