@@ -184,7 +184,7 @@ describe("onboard helpers", () => {
     // emitted here so the L7 proxy never tunnels them through the host
     // proxy. The complementary runtime exclusion (nemoclaw-start.sh sets a
     // narrower NO_PROXY without inference.local once sandbox boots) is
-    // asserted in test/service-env.test.ts.
+    // asserted in test/runtime/gateway/service-env.test.ts.
     const envArgs: string[] = [];
 
     appendHostProxyEnvArgs(envArgs, {

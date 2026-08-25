@@ -1,0 +1,667 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import SandboxConfigSetCommand from "../../src/commands/sandbox/config/set";
+import SandboxStatusCommand from "../../src/commands/sandbox/status";
+import StatusCommand from "../../src/commands/status";
+import { withDirectPublicDispatch } from "../support/public-dispatch-test-harness.js";
+
+const require = createRequire(import.meta.url);
+const requireCache: Record<string, unknown> = require.cache as any;
+
+function restoreCache(path: string, prior: unknown): void {
+  if (prior) requireCache[path] = prior;
+  else delete requireCache[path];
+}
+
+describe("oclif compatibility dispatch", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders native sandbox help without registry recovery", async () => {
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+
+    const priorCli = require.cache[cliPath];
+    const priorRegistry = require.cache[registryPath];
+    const priorRegistryRecovery = require.cache[registryRecoveryPath];
+    const priorRunner = require.cache[runnerPath];
+    const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+
+    const recoverRegistryEntries = vi.fn(async () => undefined);
+    const validateName = vi.fn();
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((message = "") => {
+      stdout.push(String(message));
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message = "") => {
+      stderr.push(String(message));
+    });
+
+    process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
+
+    requireCache[runnerPath] = {
+      id: runnerPath,
+      filename: runnerPath,
+      loaded: true,
+      exports: new Proxy(
+        {
+          ROOT: process.cwd(),
+          validateName,
+        },
+        {
+          get(target, prop) {
+            if (prop in target) return target[prop as keyof typeof target];
+            return vi.fn();
+          },
+        },
+      ),
+    } as any;
+
+    requireCache[registryPath] = {
+      id: registryPath,
+      filename: registryPath,
+      loaded: true,
+      exports: {
+        getSandbox: vi.fn(() => null),
+        listSandboxes: vi.fn(() => ({ sandboxes: [] })),
+      },
+    } as any;
+
+    requireCache[registryRecoveryPath] = {
+      id: registryRecoveryPath,
+      filename: registryRecoveryPath,
+      loaded: true,
+      exports: { recoverRegistryEntries },
+    } as any;
+
+    try {
+      delete require.cache[cliPath];
+      const { dispatchCli } = require(cliPath);
+
+      await dispatchCli(["missing-sandbox", "channels", "start", "--help"]);
+
+      expect(validateName).toHaveBeenCalledWith("missing-sandbox", "sandbox name");
+      expect(recoverRegistryEntries).not.toHaveBeenCalled();
+      expect(stdout.join("\n")).toContain(
+        "$ nemoclaw missing-sandbox channels start <channel> [--dry-run]",
+      );
+      expect(stderr).toEqual([]);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+
+      if (priorDisableAutoDispatch === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+      } else {
+        process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
+      }
+
+      restoreCache(cliPath, priorCli);
+      restoreCache(registryPath, priorRegistry);
+      restoreCache(registryRecoveryPath, priorRegistryRecovery);
+      restoreCache(runnerPath, priorRunner);
+    }
+  });
+
+  it("hands exact public sandbox execution to oclif by command id", async () => {
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
+    const sandboxConnectPath = require.resolve("../../src/lib/actions/sandbox/connect.js");
+
+    const priorCli = require.cache[cliPath];
+    const priorRegistry = require.cache[registryPath];
+    const priorRegistryRecovery = require.cache[registryRecoveryPath];
+    const priorRunner = require.cache[runnerPath];
+    const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorOclifRunner = require.cache[oclifRunnerPath];
+    const priorSandboxConnect = require.cache[sandboxConnectPath];
+    const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+
+    const runOclifArgv = vi.fn(async () => undefined);
+    const runOclifCommandById = vi.fn(async () => undefined);
+    const validateName = vi.fn();
+
+    process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
+
+    requireCache[runnerPath] = {
+      id: runnerPath,
+      filename: runnerPath,
+      loaded: true,
+      exports: {
+        ROOT: process.cwd(),
+        validateName,
+      },
+    } as any;
+
+    requireCache[registryPath] = {
+      id: registryPath,
+      filename: registryPath,
+      loaded: true,
+      exports: {
+        getSandbox: vi.fn((name: string) => (name === "alpha" ? { name: "alpha" } : null)),
+        listSandboxes: vi.fn(() => ({ sandboxes: [{ name: "alpha" }] })),
+      },
+    } as any;
+
+    requireCache[registryRecoveryPath] = {
+      id: registryRecoveryPath,
+      filename: registryRecoveryPath,
+      loaded: true,
+      exports: { recoverRegistryEntries: vi.fn(async () => undefined) },
+    } as any;
+
+    requireCache[oclifRunnerPath] = {
+      id: oclifRunnerPath,
+      filename: oclifRunnerPath,
+      loaded: true,
+      exports: { runOclifArgv, runOclifCommandById },
+    } as any;
+
+    requireCache[sandboxConnectPath] = {
+      id: sandboxConnectPath,
+      filename: sandboxConnectPath,
+      loaded: true,
+      exports: {
+        isSandboxConnectFlag: vi.fn(() => false),
+        parseSandboxConnectArgs: vi.fn(),
+        printSandboxConnectHelp: vi.fn(),
+      },
+    } as any;
+
+    try {
+      delete require.cache[cliPath];
+      delete require.cache[publicDispatchPath];
+      const { dispatchCli } = require(cliPath);
+
+      await dispatchCli(["alpha", "status"]);
+
+      expect(validateName).toHaveBeenCalledWith("alpha", "sandbox name");
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:status",
+        ["alpha"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifArgv).not.toHaveBeenCalled();
+
+      runOclifArgv.mockClear();
+      runOclifCommandById.mockClear();
+
+      await dispatchCli(["alpha", "channels", "bogus"]);
+
+      expect(runOclifArgv).toHaveBeenCalledWith(
+        ["sandbox", "channels", "bogus", "alpha"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifCommandById).not.toHaveBeenCalled();
+    } finally {
+      if (priorDisableAutoDispatch === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+      } else {
+        process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
+      }
+
+      restoreCache(cliPath, priorCli);
+      restoreCache(registryPath, priorRegistry);
+      restoreCache(registryRecoveryPath, priorRegistryRecovery);
+      restoreCache(runnerPath, priorRunner);
+      restoreCache(publicDispatchPath, priorPublicDispatch);
+      restoreCache(oclifRunnerPath, priorOclifRunner);
+      restoreCache(sandboxConnectPath, priorSandboxConnect);
+    }
+  });
+
+  it("recovers a requested sandbox, rereads the registry, and dispatches connect", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        getSandbox,
+        recoverRegistryEntries,
+        runOclifArgv,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
+        recoverRegistryEntries.mockImplementationOnce(
+          async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
+            expect(requestedSandboxName).toBe("alpha");
+            sandboxes.set("alpha", { name: "alpha" });
+            return {
+              sandboxes: [...sandboxes.values()],
+              defaultSandbox: "alpha",
+              recoveredFromSession: true,
+              recoveredFromGateway: 0,
+            };
+          },
+        );
+
+        await dispatchCli(["alpha", "connect"]);
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
+        expect(getSandbox.mock.results[0]?.value).toBeNull();
+        expect(
+          getSandbox.mock.results.slice(1).some((result) => result.value?.name === "alpha"),
+        ).toBe(true);
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["alpha"],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+    );
+  });
+
+  it("guides a missing requested sandbox after recovery finds a different live sandbox", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        exitSpy,
+        listSandboxes,
+        recoverRegistryEntries,
+        runOclifArgv,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
+        recoverRegistryEntries.mockImplementationOnce(
+          async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
+            expect(requestedSandboxName).toBe("beta");
+            sandboxes.set("alpha", { name: "alpha" });
+            return {
+              sandboxes: [...sandboxes.values()],
+              defaultSandbox: "alpha",
+              recoveredFromSession: true,
+              recoveredFromGateway: 0,
+            };
+          },
+        );
+
+        await expect(dispatchCli(["beta", "connect"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "beta" });
+        expect(listSandboxes).toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("Sandbox 'beta' does not exist.");
+        expect(stderr.join("\n")).toContain("Registered sandboxes: alpha");
+        expect(stderr.join("\n")).toContain("Run 'nemoclaw list' to see all sandboxes.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it("forwards exec command help flags after -- instead of rendering NemoClaw help", async () => {
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
+
+    const priorCli = require.cache[cliPath];
+    const priorRegistry = require.cache[registryPath];
+    const priorRegistryRecovery = require.cache[registryRecoveryPath];
+    const priorRunner = require.cache[runnerPath];
+    const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorOclifRunner = require.cache[oclifRunnerPath];
+    const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+
+    const recoverRegistryEntries = vi.fn(async () => undefined);
+    const validateName = vi.fn();
+    const runOclifArgv = vi.fn(async () => undefined);
+    const runOclifCommandById = vi.fn(async () => undefined);
+
+    process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
+
+    requireCache[runnerPath] = {
+      id: runnerPath,
+      filename: runnerPath,
+      loaded: true,
+      exports: new Proxy(
+        {
+          ROOT: process.cwd(),
+          validateName,
+        },
+        {
+          get(target, prop) {
+            if (prop in target) return target[prop as keyof typeof target];
+            return vi.fn();
+          },
+        },
+      ),
+    } as any;
+
+    requireCache[registryPath] = {
+      id: registryPath,
+      filename: registryPath,
+      loaded: true,
+      exports: {
+        getSandbox: vi.fn(() => ({ name: "alpha" })),
+        listSandboxes: vi.fn(() => ({ sandboxes: [{ name: "alpha" }] })),
+      },
+    } as any;
+
+    requireCache[registryRecoveryPath] = {
+      id: registryRecoveryPath,
+      filename: registryRecoveryPath,
+      loaded: true,
+      exports: { recoverRegistryEntries },
+    } as any;
+
+    requireCache[oclifRunnerPath] = {
+      id: oclifRunnerPath,
+      filename: oclifRunnerPath,
+      loaded: true,
+      exports: { runOclifArgv, runOclifCommandById },
+    } as any;
+
+    try {
+      delete require.cache[cliPath];
+      delete require.cache[publicDispatchPath];
+      const { dispatchCli } = require(cliPath);
+
+      await dispatchCli(["alpha", "exec", "--", "grep", "--help"]);
+
+      expect(validateName).toHaveBeenCalledWith("alpha", "sandbox name");
+      expect(recoverRegistryEntries).not.toHaveBeenCalled();
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:exec",
+        ["alpha", "--", "grep", "--help"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifArgv).not.toHaveBeenCalled();
+    } finally {
+      if (priorDisableAutoDispatch === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+      } else {
+        process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
+      }
+
+      restoreCache(cliPath, priorCli);
+      restoreCache(registryPath, priorRegistry);
+      restoreCache(registryRecoveryPath, priorRegistryRecovery);
+      restoreCache(runnerPath, priorRunner);
+      restoreCache(publicDispatchPath, priorPublicDispatch);
+      restoreCache(oclifRunnerPath, priorOclifRunner);
+    }
+  });
+
+  it("keeps exact global execution on direct command IDs to avoid flexible taxonomy overmatching", async () => {
+    const cliPath = require.resolve("../../src/nemoclaw.js");
+    const runnerPath = require.resolve("../../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
+
+    const priorCli = require.cache[cliPath];
+    const priorRunner = require.cache[runnerPath];
+    const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorOclifRunner = require.cache[oclifRunnerPath];
+    const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+
+    const runOclifArgv = vi.fn(async () => undefined);
+    const runOclifCommandById = vi.fn(async () => undefined);
+    const stderr: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message = "") => {
+      stderr.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: string | number | null,
+    ) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as never);
+
+    process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
+    requireCache[runnerPath] = {
+      id: runnerPath,
+      filename: runnerPath,
+      loaded: true,
+      exports: { ROOT: process.cwd(), validateName: vi.fn() },
+    } as any;
+    requireCache[oclifRunnerPath] = {
+      id: oclifRunnerPath,
+      filename: oclifRunnerPath,
+      loaded: true,
+      exports: { runOclifArgv, runOclifCommandById },
+    } as any;
+
+    try {
+      delete require.cache[cliPath];
+      delete require.cache[publicDispatchPath];
+      const { dispatchCli } = require(cliPath);
+
+      await expect(dispatchCli(["status", "bogus"])).rejects.toThrow("process.exit:2");
+
+      expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(stderr.join("\n")).toContain("Run: nemoclaw bogus status");
+      expect(runOclifCommandById).not.toHaveBeenCalled();
+      expect(runOclifArgv).not.toHaveBeenCalled();
+
+      errorSpy.mockClear();
+      exitSpy.mockClear();
+      stderr.length = 0;
+      runOclifArgv.mockClear();
+      runOclifCommandById.mockClear();
+
+      await dispatchCli(["credentials", "reset", "--yes"]);
+
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "credentials:reset",
+        ["--yes"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifArgv).not.toHaveBeenCalled();
+    } finally {
+      if (priorDisableAutoDispatch === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+      } else {
+        process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
+      }
+
+      restoreCache(cliPath, priorCli);
+      restoreCache(runnerPath, priorRunner);
+      restoreCache(publicDispatchPath, priorPublicDispatch);
+      restoreCache(oclifRunnerPath, priorOclifRunner);
+    }
+  });
+
+  it.each([
+    { argv: ["status", "alpha"], command: "nemoclaw alpha status" },
+    { argv: ["status", "--json", "alpha"], command: "nemoclaw alpha status --json" },
+    { argv: ["status", "alpha", "--json"], command: "nemoclaw alpha status --json" },
+    { argv: ["status", "alpha", "--help"], command: "nemoclaw alpha status --help" },
+    {
+      argv: ["status", "alpha", "--json", "--help"],
+      command: "nemoclaw alpha status --help",
+    },
+    {
+      argv: ["status", "alpha", "--help", "--json"],
+      command: "nemoclaw alpha status --help",
+    },
+  ])(
+    "corrects a single sandbox-like global status argument to $command",
+    async ({ argv, command }) => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
+          await expect(dispatchCli(argv)).rejects.toThrow("process.exit:2");
+
+          const output = stderr.join("\n");
+          expect(output).toContain("'nemoclaw status' shows the global sandbox/service overview");
+          expect(output).toContain(`Run: ${command}`);
+          expect(output).not.toContain("nemoclaw alpha status --json --help");
+          expect(exitSpy).toHaveBeenCalledWith(2);
+          expect(runOclifArgv).not.toHaveBeenCalled();
+          expect(runOclifCommandById).not.toHaveBeenCalled();
+        },
+      );
+    },
+  );
+
+  it.each([
+    ["status", "--bogus"],
+    ["status", "--bogus", "alpha"],
+    ["status", "alpha", "--bogus"],
+    ["status", "alpha", "beta"],
+    ["status", "status"],
+    ["status", "help"],
+    ["status", "sandbox"],
+    ["status", "internal"],
+    ["status", "alpha;echo pwned"],
+  ])(
+    "leaves ambiguous or unsafe global status arguments to the strict parser [%j]",
+    async (...argv) => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
+          await dispatchCli(argv);
+
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "status",
+            argv.slice(1),
+            expect.objectContaining({ rootDir: process.cwd() }),
+          );
+          expect(runOclifArgv).not.toHaveBeenCalled();
+          expect(exitSpy).not.toHaveBeenCalled();
+          expect(stderr.join("\n")).not.toContain("does not take a sandbox name");
+          expect(stderr.join("\n")).not.toContain("Run:");
+        },
+      );
+    },
+  );
+
+  it.each([["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]])(
+    "keeps strict status flag errors in process [%j]",
+    async (...args) => {
+      await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
+        "Nonexistent flag: --bogus",
+      );
+    },
+  );
+
+  it.each(["status", "help", "sandbox", "internal", "alpha;echo pwned"])(
+    "keeps strict status argument errors in process [%s]",
+    async (token) => {
+      await expect(StatusCommand.run([token], process.cwd())).rejects.toThrow(
+        `Unexpected argument: ${token}`,
+      );
+    },
+  );
+
+  it("keeps multiple strict status arguments in process", async () => {
+    await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
+      "Unexpected arguments: alpha, beta",
+    );
+  });
+
+  it("routes sandbox status help directly and keeps its JSON help metadata", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {
+      await dispatchCli(["alpha", "status", "--help"]);
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:status",
+        ["alpha", "--help"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+
+      await dispatchCli(["sandbox", "status", "alpha", "--help"]);
+      expect(runOclifArgv).toHaveBeenCalledWith(
+        ["sandbox", "status", "alpha", "--help"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+    });
+
+    expect(SandboxStatusCommand.enableJsonFlag).toBe(true);
+    expect(SandboxStatusCommand.usage.join(" ")).toContain("<name> [--json]");
+    expect(SandboxStatusCommand.examples).toEqual(
+      expect.arrayContaining([
+        "<%= config.bin %> alpha status",
+        "<%= config.bin %> sandbox status alpha --json",
+      ]),
+    );
+  });
+
+  it("uses schema-valid OpenClaw paths in config set examples (#6868)", () => {
+    expect(SandboxConfigSetCommand.examples).toEqual([
+      "<%= config.bin %> alpha config set --key agents.defaults.model.primary --value nvidia/nemotron",
+      "<%= config.bin %> alpha config set --key agents.defaults.timeoutSeconds --value 600 --restart",
+    ]);
+  });
+
+  it("shows the alias binary name in sandbox-first help", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["bin/nemohermes.js", "sandbox", "channels", "start", "--help"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NO_COLOR: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("$ nemohermes <name> channels start <channel>");
+    expect(result.stdout).not.toContain("$ nemoclaw <name> channels start <channel>");
+  });
+
+  it("shows the Deep Agents alias binary name in sandbox-first help", () => {
+    const aliasDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-oclif-bin-"));
+    const alias = path.join(aliasDir, "nemo-deepagents");
+    fs.symlinkSync(path.join(process.cwd(), "bin", "nemoclaw.js"), alias);
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [alias, "sandbox", "channels", "start", "--help"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("$ nemo-deepagents <name> channels start <channel>");
+      expect(result.stdout).not.toContain("$ nemoclaw <name> channels start <channel>");
+    } finally {
+      fs.rmSync(aliasDir, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps nested internal commands routable through native oclif help", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["bin/nemoclaw.js", "internal", "installer", "plan", "--help"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NO_COLOR: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("$ nemoclaw internal installer plan");
+    expect(result.stdout).toContain("Build a deterministic installer plan");
+  });
+});

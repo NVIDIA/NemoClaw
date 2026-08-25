@@ -120,6 +120,9 @@ jobs:
       - name: Install test dependencies
         run: npm ci --ignore-scripts
 
+      - name: Compile the managed inference catalog
+        run: npm run catalog:compile
+
       - name: Audit the real patched OpenClaw distribution
         env:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
