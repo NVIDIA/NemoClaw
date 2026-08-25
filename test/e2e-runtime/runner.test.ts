@@ -1,0 +1,1244 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { StdioOptions } from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+
+import { redact, runCapture } from "../../src/lib/runner";
+
+const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
+const platformPath = path.join(import.meta.dirname, "..", "src", "lib", "platform.ts");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliDarwinArm64: "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905",
+  cliLinuxArm64: "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55",
+  cliLinuxX64: "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
+  gatewayDarwinArm64: "de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94",
+  gatewayLinuxArm64: "22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7",
+  gatewayLinuxX64: "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c",
+  sandboxLinuxArm64: "5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd",
+  sandboxLinuxX64: "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
+};
+
+type SpawnCallOptions = {
+  stdio?: StdioOptions;
+  shell?: boolean;
+  env?: Record<string, string | undefined>;
+};
+
+type SpawnCall = [command: string, args?: readonly string[], options?: SpawnCallOptions];
+type RedactedRunnerError = Error & {
+  cmd?: string;
+  output?: string[];
+};
+
+function captureSpawnCall(
+  calls: SpawnCall[],
+  result: { status: number; stdout: string; stderr: string },
+) {
+  return (command: string, args?: readonly string[], options?: SpawnCallOptions) => {
+    calls.push([command, args, options]);
+    return result;
+  };
+}
+
+function requireCall(calls: SpawnCall[], index: number): SpawnCall {
+  const call = calls[index];
+  expect(call).toBeDefined();
+  if (!call) {
+    throw new Error(`Expected spawnSync call ${index}`);
+  }
+  return call;
+}
+
+function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
+  return calls.filter(
+    ([command, args]) =>
+      command !== "docker" ||
+      args?.[0] !== "version" ||
+      args?.[1] !== "--format" ||
+      args?.[2] !== "{{json .}}",
+  );
+}
+
+describe("runner helpers", () => {
+  it("does not let child commands consume installer stdin", () => {
+    const script = `
+      const { runShell } = require(${JSON.stringify(runnerPath)});
+      process.stdin.setEncoding("utf8");
+      runShell("cat >/dev/null || true");
+      process.stdin.once("data", (chunk) => {
+        process.stdout.write(chunk);
+      });
+    `;
+
+    const result = spawnSync("node", ["-e", script], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      input: "preserved-answer\n",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("preserved-answer\n");
+  });
+
+  it("uses inherited stdio for interactive commands only", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run, runInteractive } = require(runnerPath);
+      run(["echo", "noninteractive"]);
+      runInteractive(["echo", "interactive"]);
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    const firstCall = requireCall(runnerCalls, 0);
+    const secondCall = requireCall(runnerCalls, 1);
+    expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    expect(secondCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
+  });
+  it("runs argv-style commands without going through bash -c", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      runFile("bash", ["/tmp/setup.sh", "safe;name", "$(id)"]);
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
+    expect(firstCall[0]).toBe("bash");
+    expect(firstCall[1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
+    expect(firstCall[2]?.shell).toBe(false);
+    expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("rejects opts.shell for argv-style commands", () => {
+    const { runFile } = require(runnerPath);
+    expect(() => runFile("bash", ["/tmp/setup.sh"], { shell: true })).toThrow(
+      /runFile does not allow opts\.shell=true/,
+    );
+  });
+
+  it("honors suppressOutput for argv-style commands", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      status: 0,
+      stdout: "safe stdout\n",
+      stderr: "safe stderr\n",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      runFile("bash", ["/tmp/setup.sh"], { suppressOutput: true });
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
+    expect(stderrSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("runner env merging", () => {
+  it("clears a named context when initialization selects a socket fallback (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///selected-fallback.sock",
+      source: "socket",
+      socketPath: "/selected-fallback.sock",
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "unreachable-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///selected-fallback.sock");
+    expect(initializedContext).toBeUndefined();
+  });
+
+  it("keeps a named context when initialization uses an explicit Docker host (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///explicit.sock",
+      source: "env",
+      socketPath: null,
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_HOST", "unix:///explicit.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///explicit.sock");
+    expect(initializedContext).toBe("ambient-context");
+  });
+
+  it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+      run(["echo", "test"]);
+      vi.stubEnv("DOCKER_CONTEXT", undefined);
+      run(["docker", "info"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(3);
+    const dockerEnv = requireCall(runnerCalls, 0)[2]?.env;
+    const nonDockerEnv = requireCall(runnerCalls, 1)[2]?.env;
+    const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
+    expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
+    expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+    expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
+    expect(nonDockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+  });
+
+  it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/ambient-docker-config");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"], { env: { DOCKER_HOST: "unix:///explicit.sock" } });
+      vi.stubEnv("DOCKER_HOST", "unix:///selected-fallback.sock");
+      run(["docker", "ps"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    expect(requireCall(runnerCalls, 0)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///explicit.sock",
+    });
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///selected-fallback.sock",
+    });
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+  });
+
+  it("preserves process env when opts.env is provided to runCapture", () => {
+    const originalGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.OPENSHELL_GATEWAY = "nemoclaw";
+    try {
+      const output = runCapture(
+        ["sh", "-c", 'printf "%s %s" "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"'],
+        {
+          env: { OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-SECRET" },
+        },
+      );
+      expect(output).toBe("nemoclaw sk-TEST-NOT-A-REAL-SECRET");
+    } finally {
+      if (originalGateway === undefined) {
+        delete process.env.OPENSHELL_GATEWAY;
+      } else {
+        process.env.OPENSHELL_GATEWAY = originalGateway;
+      }
+    }
+  });
+
+  it("preserves process env when opts.env is provided to run", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalPath = process.env.PATH;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      run(["echo", "test"], {
+        env: {
+          OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12",
+        },
+      });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
+    expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
+      "ghcr.io/nvidia/openshell/cluster:0.0.12",
+    );
+    expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
+  });
+
+  it("preserves process env when opts.env is provided to runFile", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalPath = process.env.PATH;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      runFile("bash", ["/tmp/setup.sh"], {
+        env: {
+          OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12",
+        },
+      });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
+    expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
+      "ghcr.io/nvidia/openshell/cluster:0.0.12",
+    );
+    expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
+  });
+
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
+    // Regression for the macOS Privoxy scenario: validateOllamaModel calls
+    // runCaptureEx with a curl probe against http://localhost:11434. Before
+    // the fix, runCaptureEx merged raw process.env (including the user's
+    // http_proxy) and never injected NO_PROXY, so the spawned curl tunneled
+    // its localhost probe through Privoxy and returned HTTP 500.
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalHttpProxy = process.env.http_proxy;
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalNoProxyLower = process.env.no_proxy;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCaptureEx } = require(runnerPath);
+      process.env.http_proxy = "http://127.0.0.1:8118";
+      delete process.env.NO_PROXY;
+      delete process.env.no_proxy;
+      runCaptureEx(["curl", "-sS", "--max-time", "3", "http://localhost:11434/api/ps"]);
+    } finally {
+      if (originalHttpProxy === undefined) delete process.env.http_proxy;
+      else process.env.http_proxy = originalHttpProxy;
+      if (originalNoProxy === undefined) delete process.env.NO_PROXY;
+      else process.env.NO_PROXY = originalNoProxy;
+      if (originalNoProxyLower === undefined) delete process.env.no_proxy;
+      else process.env.no_proxy = originalNoProxyLower;
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
+    const env = firstCall[2]?.env ?? {};
+    expect(env.http_proxy).toBe("http://127.0.0.1:8118");
+    // Both casings get the loopback hosts so curl, Node, Python all respect
+    // the bypass regardless of which one they read.
+    expect(env.NO_PROXY).toContain("localhost");
+    expect(env.NO_PROXY).toContain("127.0.0.1");
+    expect(env.no_proxy).toContain("localhost");
+    expect(env.no_proxy).toContain("127.0.0.1");
+  });
+});
+
+describe("shellQuote", () => {
+  it("wraps in single quotes", () => {
+    const { shellQuote } = require(runnerPath);
+    expect(shellQuote("hello")).toBe("'hello'");
+  });
+
+  it("escapes embedded single quotes", () => {
+    const { shellQuote } = require(runnerPath);
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+  });
+
+  it("neutralizes shell metacharacters", () => {
+    const { shellQuote } = require(runnerPath);
+    const dangerous = "test; rm -rf /";
+    const quoted = shellQuote(dangerous);
+    expect(quoted).toBe("'test; rm -rf /'");
+    const result = spawnSync("bash", ["-c", `echo ${quoted}`], {
+      encoding: "utf-8",
+    });
+    expect(result.stdout.trim()).toBe(dangerous);
+  });
+
+  it("handles backticks and dollar signs", () => {
+    const { shellQuote } = require(runnerPath);
+    const payload = "test`whoami`$HOME";
+    const quoted = shellQuote(payload);
+    const result = spawnSync("bash", ["-c", `echo ${quoted}`], {
+      encoding: "utf-8",
+    });
+    expect(result.stdout.trim()).toBe(payload);
+  });
+});
+
+describe("validateName", () => {
+  it("accepts valid sandbox names", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("my-sandbox")).toBe("my-sandbox");
+    expect(validateName("test123")).toBe("test123");
+    expect(validateName("a")).toBe("a");
+  });
+
+  it("rejects names with shell metacharacters", () => {
+    const { validateName } = require(runnerPath);
+    expect(() => validateName("test; whoami")).toThrow(/Invalid/);
+    expect(() => validateName("test`id`")).toThrow(/Invalid/);
+    expect(() => validateName("a$(id)")).toThrow(/Invalid/);
+    expect(() => validateName("../etc/passwd")).toThrow(/Invalid/);
+  });
+
+  it("rejects empty and overlength names", () => {
+    const { validateName } = require(runnerPath);
+    expect(() => validateName("")).toThrow(/required/);
+    expect(() => validateName(null)).toThrow(/required/);
+    expect(() => validateName("a".repeat(64))).toThrow(/too long/);
+  });
+
+  it("rejects excessively long valid-looking names before spawning OpenShell", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("a".repeat(19))).toBe("a".repeat(19));
+    expect(() => validateName("a".repeat(20), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
+    );
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
+    );
+  });
+
+  it("escapes control characters in a rejected name instead of echoing raw bytes (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31mX`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(escapeByte);
+  });
+
+  it("escapes control characters in an over-length rejected name (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31m${"x".repeat(200)}`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("sandbox name too long (max 19 chars)");
+    expect(message).not.toContain(escapeByte);
+    expect(message).toContain('..."');
+  });
+
+  it("rejects uppercase and special characters", () => {
+    const { validateName } = require(runnerPath);
+    expect(() => validateName("1sandbox")).toThrow(/Invalid/);
+    expect(() => validateName("MyBox")).toThrow(/Invalid/);
+    expect(() => validateName("my_box")).toThrow(/Invalid/);
+    expect(() => validateName("-leading")).toThrow(/Invalid/);
+    expect(() => validateName("trailing-")).toThrow(/Invalid/);
+  });
+});
+
+describe("redact", () => {
+  it("masks NVIDIA API keys", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("key is nvapi-abc123XYZ_def456")).toBe("key is nvap******************");
+  });
+
+  it("masks NVCF keys", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("nvcf-abcdef1234567890")).toBe("nvcf*****************");
+  });
+
+  it("masks bearer tokens", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload")).toBe(
+      "Authorization: Bearer eyJh********************",
+    );
+  });
+
+  it("masks key assignments in commands", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).toContain("nvap");
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).not.toContain(
+      "realkey12345",
+    );
+  });
+
+  it("masks variables ending in _KEY", () => {
+    const { redact } = require(runnerPath);
+    const output = redact('export SERVICE_KEY="supersecretvalue12345"');
+    expect(output).not.toContain("supersecretvalue12345");
+    expect(output).toContain('export SERVICE_KEY="supe');
+  });
+
+  it("masks bare GitHub personal access tokens", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("token ghp_abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(output).toContain("ghp_");
+    expect(output).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
+  });
+
+  it("masks bearer tokens case-insensitively", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("authorization: bearer someBearerToken")).toContain("some****");
+    expect(redact("authorization: bearer someBearerToken")).not.toContain("someBearerToken");
+    expect(redact("AUTHORIZATION: BEARER someBearerToken")).toContain("some****");
+    expect(redact("AUTHORIZATION: BEARER someBearerToken")).not.toContain("someBearerToken");
+  });
+
+  it("masks bearer tokens with repeated spacing", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("Authorization: Bearer   someBearerToken");
+    expect(output).toContain("some****");
+    expect(output).not.toContain("someBearerToken");
+  });
+
+  it("masks quoted assignment values", () => {
+    const { redact } = require(runnerPath);
+    const output = redact('API_KEY="secret123abc"');
+    expect(output).not.toContain("secret123abc");
+    expect(output).toContain('API_KEY="sec');
+  });
+
+  it("masks multiple secrets in one string", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("nvapi-firstkey12345 nvapi-secondkey67890");
+    expect(output).not.toContain("firstkey12345");
+    expect(output).not.toContain("secondkey67890");
+    expect(output).toContain("nvap");
+    expect(output).toContain(" ");
+  });
+
+  it("masks URL credentials and auth query parameters", () => {
+    const { redact } = require(runnerPath);
+    const output = redact(
+      "https://alice:secret@example.com/v1/models?auth=abc123456789&sig=def987654321&keep=yes",
+    );
+    expect(output).toBe("https://****:****@example.com/v1/models?auth=****&sig=****&keep=yes");
+  });
+
+  it("masks auth-style query parameters case-insensitively", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("https://example.com?Signature=secret123456&AUTH=anothersecret123");
+    expect(output).toBe("https://example.com/?Signature=****&AUTH=****");
+  });
+
+  it("masks dashboard URL hash tokens", () => {
+    const token = "a".repeat(64);
+    const output = redact(`http://127.0.0.1:18789/#token=${token}`);
+    expect(output).toBe("http://127.0.0.1:18789/#token=****");
+    expect(output).not.toContain(token);
+  });
+
+  it("leaves non-secret strings untouched", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("docker run --name my-sandbox")).toBe("docker run --name my-sandbox");
+    expect(redact("openshell sandbox list")).toBe("openshell sandbox list");
+  });
+
+  it("handles non-string input gracefully", () => {
+    const { redact } = require(runnerPath);
+    expect(redact(null)).toBe(null);
+    expect(redact(undefined)).toBe(undefined);
+    expect(redact(42)).toBe(42);
+  });
+});
+
+describe("regression guards", () => {
+  it("runCapture redacts secrets before rethrowing spawn errors", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      error: new Error(
+        'command failed: export SERVICE_KEY="supersecretvalue12345" ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+      ),
+      status: null,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCapture } = require(runnerPath);
+
+      let error: Error | undefined;
+      try {
+        runCapture(["echo", "nope"]);
+      } catch (err) {
+        if (err instanceof Error) {
+          error = err;
+        } else {
+          throw err;
+        }
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      if (!error) {
+        throw new Error("Expected runCapture() to throw");
+      }
+      expect(error.message).toContain("ghp_");
+      expect(error.message).not.toContain("supersecretvalue12345");
+      expect(error.message).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
+  it("runCapture redacts spawn error cmd/output fields", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => {
+      const err: RedactedRunnerError = new Error("command failed");
+      err.cmd = "echo nvapi-aaaabbbbcccc1111 && echo ghp_abcdefghijklmnopqrstuvwxyz123456";
+      err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: PASSWORD=secret123456"];
+      return {
+        error: err,
+        status: null,
+        stdout: "",
+        stderr: "",
+      };
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCapture } = require(runnerPath);
+
+      let error: RedactedRunnerError | undefined;
+      try {
+        runCapture(["echo", "nope"]);
+      } catch (err) {
+        if (err instanceof Error) {
+          error = err;
+        } else {
+          throw err;
+        }
+      }
+
+      expect(error).toBeDefined();
+      expect(error).toBeInstanceOf(Error);
+      if (!error) {
+        throw new Error("Expected runCapture() to throw");
+      }
+      expect(error.cmd).toBeDefined();
+      expect(error.output).toBeDefined();
+      if (!error.cmd || !error.output) {
+        throw new Error("Expected redacted cmd/output fields on the thrown error");
+      }
+      expect(error.cmd).not.toContain("nvapi-aaaabbbbcccc1111");
+      expect(error.cmd).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+      expect(Array.isArray(error.output)).toBe(true);
+      expect(error.output[0]).not.toContain("nvapi-aaaabbbbcccc1111");
+      expect(error.output[1]).not.toContain("secret123456");
+      expect(error.output[0]).toContain("****");
+      expect(error.output[1]).toContain("****");
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
+  it("run redacts captured child output before printing on failure", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalExit = process.exit;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      status: 1,
+      stdout: "token ghp_abcdefghijklmnopqrstuvwxyz1234567890\n",
+      stderr: 'export SERVICE_KEY="supersecretvalue12345"\n',
+    });
+    process.exit = (code) => {
+      throw new Error(`exit:${code}`);
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      expect(() => run(["echo", "fail"])).toThrow("exit:1");
+      expect(stdoutSpy).toHaveBeenCalledWith("token ghp_********************\n");
+      expect(stderrSpy).toHaveBeenCalledWith('export SERVICE_KEY="supe*****************"\n');
+      expect(errorSpy).toHaveBeenCalledWith("  Command failed (exit 1): echo fail");
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      process.exit = originalExit;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      errorSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
+  it("runInteractive keeps stdin inherited while redacting captured output", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const calls: SpawnCall[] = [];
+
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
+      stderr: "",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runInteractive } = require(runnerPath);
+      runInteractive(["echo", "interactive"]);
+      const firstCall = requireCall(withoutDockerAuthorityProbe(calls), 0);
+      expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
+      expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
+  it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
+    const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-canary-"));
+    const canary = path.join(canaryDir, "executed");
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+          `test; touch ${canary}`,
+          "connect",
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 10000,
+          cwd: path.join(import.meta.dirname, ".."),
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(fs.existsSync(canary)).toBe(false);
+    } finally {
+      fs.rmSync(canaryDir, { recursive: true, force: true });
+    }
+  });
+
+  describe("credential exposure guards (#429)", () => {
+    it("install-openshell.sh gh-absent path uses curl directly", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
+      const stub = `
+        #!/usr/bin/env bash
+        printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.1"' > "${tmpBin}/openshell"
+        chmod +x "${tmpBin}/openshell"
+        export PATH="${tmpBin}:/usr/bin:/bin"
+        command() { if [ "\${1:-}" = "-v" ] && [ "\${2:-}" = "gh" ]; then return 1; fi; builtin command "$@"; }
+        curl() {
+          echo "CURL_DIRECT $*"
+          local out=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-o" ]; then
+              shift
+              out="$1"
+            fi
+            shift || true
+          done
+          if [ -n "$out" ]; then
+            case "$(basename "$out")" in
+            openshell-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-gateway-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-sandbox-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+              ;;
+            *)
+              : > "$out"
+              ;;
+            esac
+          fi
+          return 0
+        }
+        export -f curl
+        sha256sum() { cat >/dev/null; echo "checksum OK"; return 0; }
+        export -f sha256sum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
+        export -f strings
+        tar() {
+          local mode="\${1:-}" archive="\${2:-}" expected="" destination=""
+          case "$(basename "$archive")" in
+          openshell-gateway-*) expected="openshell-gateway" ;;
+          openshell-sandbox-*) expected="openshell-sandbox" ;;
+          openshell-*) expected="openshell" ;;
+          *) return 2 ;;
+          esac
+          case "$mode" in
+          -tzf)
+            printf '%s\n' "$expected"
+            ;;
+          -tvzf)
+            printf '%s\n' "-rwxr-xr-x 0/0 0 2026-01-01 00:00 $expected"
+            ;;
+          xzf|-xzf)
+            shift 2
+            while [ "$#" -gt 0 ]; do
+              if [ "$1" = "-C" ]; then
+                shift
+                destination="$1"
+              fi
+              shift || true
+            done
+            [ -n "$destination" ] || return 2
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.106"' > "$destination/$expected"
+            chmod +x "$destination/$expected"
+            ;;
+          *) return 2 ;;
+          esac
+        }; export -f tar
+        install() { /usr/bin/install "$@"; }; export -f install
+        source "${scriptPath}"
+      `;
+      try {
+        const result = spawnSync("bash", ["-c", stub], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        const out = (result.stdout || "") + (result.stderr || "");
+        expect(result.status, out).toBe(0);
+        expect(out).toContain("CURL_DIRECT");
+        expect(out).not.toContain("gh CLI download failed");
+      } finally {
+        fs.rmSync(tmpBin, { recursive: true, force: true });
+      }
+    });
+
+    it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const checksumLog = path.join(tmpBin, "sha256sum.log");
+      const ghStub = path.join(tmpBin, "gh");
+      fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
+      fs.chmodSync(ghStub, 0o755);
+
+      const stub = `
+        #!/usr/bin/env bash
+        printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.1"' > "${tmpBin}/openshell"
+        chmod +x "${tmpBin}/openshell"
+        export PATH="${tmpBin}:/usr/bin:/bin"
+        curl() {
+          echo "CURL_FALLBACK $*"
+          local out=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-o" ]; then
+              shift
+              out="$1"
+            fi
+            shift || true
+          done
+          if [ -n "$out" ]; then
+            case "$(basename "$out")" in
+            openshell-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-gateway-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-sandbox-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+              ;;
+            *)
+              : > "$out"
+              ;;
+            esac
+          fi
+          return 0
+        }
+        export -f curl
+        sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
+        export -f sha256sum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
+        export -f strings
+        tar() {
+          local mode="\${1:-}" archive="\${2:-}" expected="" destination=""
+          case "$(basename "$archive")" in
+          openshell-gateway-*) expected="openshell-gateway" ;;
+          openshell-sandbox-*) expected="openshell-sandbox" ;;
+          openshell-*) expected="openshell" ;;
+          *) return 2 ;;
+          esac
+          case "$mode" in
+          -tzf)
+            printf '%s\n' "$expected"
+            ;;
+          -tvzf)
+            printf '%s\n' "-rwxr-xr-x 0/0 0 2026-01-01 00:00 $expected"
+            ;;
+          xzf|-xzf)
+            shift 2
+            while [ "$#" -gt 0 ]; do
+              if [ "$1" = "-C" ]; then
+                shift
+                destination="$1"
+              fi
+              shift || true
+            done
+            [ -n "$destination" ] || return 2
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.106"' > "$destination/$expected"
+            chmod +x "$destination/$expected"
+            ;;
+          *) return 2 ;;
+          esac
+        }; export -f tar
+        install() { /usr/bin/install "$@"; }; export -f install
+        source "${scriptPath}"
+      `;
+      try {
+        const result = spawnSync("bash", ["-c", stub], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        const out = (result.stdout || "") + (result.stderr || "");
+        expect(out).toContain("falling back to curl");
+        expect(out).toContain("CURL_FALLBACK");
+        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
+      } finally {
+        fs.rmSync(tmpBin, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("curl-pipe-to-shell guards (#574, #583)", () => {
+    it.each([{ scenario: "root installer" }, { scenario: "scripts installer" }])(
+      "installer entrypoints run local version checks without curl-to-shell bootstrap [$scenario]",
+      ({ scenario }) => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "installer-entrypoints-"));
+        const fakeBin = path.join(tmp, "bin");
+        const callLog = path.join(tmp, "calls.log");
+        fs.mkdirSync(fakeBin);
+        fs.writeFileSync(
+          path.join(fakeBin, "curl"),
+          `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 70\n`,
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(
+          path.join(fakeBin, "sh"),
+          `#!/usr/bin/env bash\nprintf 'sh %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 71\n`,
+          { mode: 0o755 },
+        );
+
+        try {
+          const script = (
+            {
+              "root installer": "install.sh",
+              "scripts installer": path.join("scripts", "install.sh"),
+            } as const
+          )[scenario]!;
+          const result = spawnSync(
+            "bash",
+            [path.join(import.meta.dirname, "..", script), "--version"],
+            {
+              encoding: "utf-8",
+              env: {
+                ...process.env,
+                HOME: tmp,
+                PATH: `${fakeBin}:/usr/bin:/bin`,
+              },
+              timeout: 15000,
+            },
+          );
+          expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);
+
+          expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : "").toBe("");
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it("scripts/brev-setup.sh has been removed", () => {
+      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
+        false,
+      );
+    });
+
+    it("scripts/setup-jetson.sh exists and is executable", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+      expect(fs.existsSync(scriptPath)).toBe(true);
+      const mode = fs.statSync(scriptPath).mode;
+      expect((mode & 0o111) !== 0).toBe(true);
+    });
+  });
+
+  describe("OpenClaw runtime hardening", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const startSrc = fs.readFileSync(
+        path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
+        "utf-8",
+      );
+
+      expect(baseSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(runtimeSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(startSrc).toContain('export JITI_FS_CACHE="false"');
+    });
+
+    it.each([{ scenario: "base image" }, { scenario: "runtime image" }])(
+      "disables EC2 metadata credential discovery across image, startup, and shell boundaries [$scenario]",
+      ({ scenario }) => {
+        const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+        const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+        const startSrc = fs.readFileSync(
+          path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
+          "utf-8",
+        );
+        const hermesBaseSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
+          "utf-8",
+        );
+        const hermesRuntimeSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "Dockerfile"),
+          "utf-8",
+        );
+        const hermesStartSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "start.sh"),
+          "utf-8",
+        );
+
+        expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+        expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+        const baseRuntimeStageStart = baseSrc.lastIndexOf("\nFROM ");
+        expect(baseRuntimeStageStart).toBeGreaterThan(-1);
+        const runtimeStageStart = runtimeSrc.indexOf("# Stage 3: Runtime image");
+        expect(runtimeStageStart).toBeGreaterThan(-1);
+        const [source, stageStart] = (
+          {
+            "base image": [baseSrc, baseRuntimeStageStart],
+            "runtime image": [runtimeSrc, runtimeStageStart],
+          } as const
+        )[scenario]!;
+        const fromIndex = source.indexOf("\nFROM ", stageStart);
+        expect(fromIndex).toBeGreaterThan(-1);
+        const firstRunIndex = source.indexOf("\nRUN ", fromIndex);
+        expect(firstRunIndex).toBeGreaterThan(-1);
+        const metadataEnvIndex = source.indexOf("ENV AWS_EC2_METADATA_DISABLED=true", fromIndex);
+        expect(metadataEnvIndex).toBeGreaterThan(fromIndex);
+        expect(metadataEnvIndex).toBeLessThan(firstRunIndex);
+
+        expect(startSrc).toContain("export AWS_EC2_METADATA_DISABLED=true");
+        expect(startSrc).toContain('export AWS_EC2_METADATA_DISABLED="true"');
+        expect(hermesBaseSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+        expect(hermesRuntimeSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+        expect(hermesStartSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+      },
+    );
+  });
+
+  describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("base image installs a pinned tmux in the apt package list", () => {
+      const src = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      // Pinned (DL3008) tmux must be part of the single base apt-get install
+      // layer so fresh builds ship it without a runtime apt round-trip.
+      expect(src).toMatch(/tmux=[0-9]/);
+    });
+
+    it("runtime image repairs tmux on stale bases and asserts it at build time", () => {
+      const src = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      // Stale GHCR bases predating the tmux addition must still converge: the
+      // hardening layer detects a missing tmux, installs a pinned version, and
+      // fails the build if tmux is still absent afterwards.
+      expect(src).toContain("needs_tmux=1");
+      expect(src).toMatch(/apt-get install -y --no-install-recommends tmux=[0-9]/);
+      expect(src).toContain("command -v tmux >/dev/null");
+    });
+
+    it("base and runtime images pin tmux to the same version", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const baseVersion = baseSrc.match(/tmux=([0-9][^\s\\]*)/)?.[1];
+      const runtimeVersion = runtimeSrc.match(
+        /apt-get install -y --no-install-recommends tmux=([0-9][^\s\\;]*)/,
+      )?.[1];
+      expect(baseVersion).toBeDefined();
+      expect(runtimeVersion).toBeDefined();
+      expect(runtimeVersion).toBe(baseVersion);
+    });
+
+    it("the e2e sandbox suite exercises the tmux-session flow", () => {
+      const src = fs.readFileSync(
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
+        "utf-8",
+      );
+      expect(src).toContain("assertTmuxPtyFlow");
+      expect(src).toContain("command -v tmux");
+      // The smoke must be wired into the run, not just defined.
+      expect(src).toContain("await assertTmuxPtyFlow(sandbox, SANDBOX_A)");
+    });
+
+    it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
+      const src = fs.readFileSync(
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
+        "utf-8",
+      );
+      // The PTY root cause is pinned with an explicit openpty() probe.
+      expect(src).toContain("os.openpty()");
+      // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
+      // failure now means the devpts grant regressed and must fail loudly.
+      const tc09 = src.slice(src.indexOf("async function assertTmuxPtyFlow"));
+      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n") + 3);
+      expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
+    });
+  });
+});

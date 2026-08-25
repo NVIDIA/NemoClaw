@@ -111,7 +111,7 @@ describe("semantic E2E phase checker", () => {
             execution_id: "vllm-docker-storage-docker",
             runtime_provider: "docker",
             coverage_variant: "docker",
-            file: "test/vllm-docker-storage.test.ts",
+            file: "test/platform/images/vllm-docker-storage.test.ts",
             project: "integration",
           },
         ],
@@ -119,7 +119,7 @@ describe("semantic E2E phase checker", () => {
       {
         liveTestToJobs: new Map([
           ["test/e2e/live/bootstrap-install-smoke.test.ts", ["bootstrap-install-smoke"]],
-          ["test/vllm-docker-storage.test.ts", ["vllm-docker-storage"]],
+          ["test/platform/images/vllm-docker-storage.test.ts", ["vllm-docker-storage"]],
         ]),
       },
       [
@@ -136,7 +136,7 @@ describe("semantic E2E phase checker", () => {
       { file: "test/e2e/live/launchable-smoke.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/registry-targets.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/unselected-regression.test.ts", project: "e2e-live" },
-      { file: "test/vllm-docker-storage.test.ts", project: "integration" },
+      { file: "test/platform/images/vllm-docker-storage.test.ts", project: "integration" },
     ]);
   });
 
