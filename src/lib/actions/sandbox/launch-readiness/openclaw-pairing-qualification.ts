@@ -8,9 +8,8 @@ import path from "node:path";
 import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv";
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
-import { WARMUP_TIMEOUT_MS } from "../auto-pair-warmup";
+import { WARMUP_TIMEOUT_MS, WATCHER_STATUS_TIMEOUT_MS } from "../auto-pair-warmup";
 import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
-import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../connect-autopair-budget";
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
@@ -24,14 +23,14 @@ export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
-// Reserve every existing bounded child without allowing one stage to consume
-// the approval or final-observation window.
+// Reserve the bounded request producer and watcher-observation windows. The
+// host no longer owns an ordinary onboarding approval child (#10269).
 export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
   OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
   WARMUP_TIMEOUT_MS +
-  CONNECT_AUTO_PAIR_TIMEOUT_MS +
-  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS;
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS +
+  WATCHER_STATUS_TIMEOUT_MS;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
@@ -561,11 +560,11 @@ try:
         ):
             reject()
         if ALLOW_CANONICAL_PENDING:
-            # The startup watcher can publish the canonical write transition
-            # before finalization observes the pairing-only device. Admit only
-            # that exact intermediate state so the owning controller can reach
-            # its one approval pass. Its final observation still requires the
-            # settled scopes and no same-device pending request.
+            # The host warm-up or an earlier client command can publish the
+            # canonical write transition before finalization observes it.
+            # Admit only that exact intermediate state while the startup
+            # watcher remains the sole approval owner. Final observation still
+            # requires settled scopes and no same-device pending request.
             decision = approval_request_decision(request)
             request_scopes = request.get('scopes')
             valid_write_scopes = (

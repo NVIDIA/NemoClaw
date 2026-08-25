@@ -8,8 +8,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  parseAutoPairWatcherStatus,
+  parseSandboxScopeWarmupResult,
   RESTORED_CLONE_WARMUP_SCRIPT,
   sandboxWarmupExecArgs,
+  WATCHER_STATUS_SCRIPT,
   WARMUP_PROBE_TIMEOUT_S,
   WARMUP_SCRIPT,
   WARMUP_TIMEOUT_MS,
@@ -21,8 +24,8 @@ const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).sta
 const itWithSh = shAvailable ? it : it.skip;
 
 // NOTE on coverage shape (#4504-v2): `runSandboxScopeWarmupRun` is not exercised
-// in-process here. Like its sibling `runSandboxAutoPairApprovalPass`, the leaf
-// lazily does a raw `require("../../adapters/openshell/runtime")` — a native
+// in-process here. The leaf lazily does a raw
+// `require("../../adapters/openshell/resolve")`, a native
 // CJS require of a relative `.ts` path that Vitest's module-mock registry does
 // not intercept (mocking `node:child_process` to inspect the spawn args makes
 // the source resolve that require through native Node, which then fails with
@@ -31,8 +34,9 @@ const itWithSh = shAvailable ? it : it.skip;
 // spawn/wiring path to the `test/sandbox-connect-inference/` integration
 // harness (real compiled CLI + fake openshell on PATH). These cases therefore
 // pin the contract surface that IS testable in-process — the timeout bound and
-// the OpenShell-exec wrapping the leaf depends on — and the finalization tests
-// pin the producer→observation→approval wiring.
+// the OpenShell-exec wrapping the leaf depends on. The finalization tests pin
+// host production and canonical observation without host approval; the runtime
+// watcher tests pin watcher-owned approval.
 
 describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
   it("uses a fixed 30s outer cap so a wedged warm-up can never block onboard", () => {
@@ -46,10 +50,8 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
   });
 
   it("stays within the bounds the contract budgeted for finalization latency", () => {
-    // The architect budgeted worst-case added finalization latency at the
-    // warm-up cap (<=30s) plus the existing 15s approval pass. Guard that the
-    // warm-up cap has not crept past its 30s ceiling — anything larger would
-    // blow the budget the contract signed off on for a one-time onboard.
+    // Guard the fixed warm-up cap so this one-time onboarding request producer
+    // cannot consume the watcher-observation window.
     expect(WARMUP_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
   });
 });
@@ -75,12 +77,75 @@ describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", (
   });
 
   itWithSh("runs a multiline warm-up-shaped payload and preserves its exit-0 status", () => {
-    // Mirror the real warm-up: the direct probe normally returns the pending
-    // scope error, but its ignored status plus trailing exit 0 keep that expected
-    // response from surfacing as an onboard command failure.
+    // Mirror the real warm-up shell boundary: the fixed receipt owns the child
+    // classification, while the wrapper itself exits 0.
     const inner = ["false || true", "exit 0", ""].join("\n");
     const result = spawnSync("sh", ["-c", inner], { encoding: "utf-8", timeout: 10_000 });
     expect(result.status).toBe(0);
+  });
+});
+
+describe("ordinary onboarding warm-up and watcher receipts (#10269)", () => {
+  it("parses only one terminal fixed warm-up receipt", () => {
+    expect(parseSandboxScopeWarmupResult("NEMOCLAW_OPENCLAW_WARMUP_RESULT=request-issued\n")).toBe(
+      "request-issued",
+    );
+    expect(parseSandboxScopeWarmupResult("NEMOCLAW_OPENCLAW_WARMUP_RESULT=already-settled\n")).toBe(
+      "already-settled",
+    );
+    expect(
+      parseSandboxScopeWarmupResult(
+        "NEMOCLAW_OPENCLAW_WARMUP_RESULT=request-issued\ntrailing output\n",
+      ),
+    ).toBeNull();
+    expect(
+      parseSandboxScopeWarmupResult(
+        "NEMOCLAW_OPENCLAW_WARMUP_RESULT=request-issued\nNEMOCLAW_OPENCLAW_WARMUP_RESULT=request-issued\n",
+      ),
+    ).toBeNull();
+  });
+
+  it("parses a versioned watcher receipt without accepting extra fields", () => {
+    const marker = "NEMOCLAW_OPENCLAW_WATCHER_STATUS=";
+    expect(
+      parseAutoPairWatcherStatus(
+        `${marker}{"schemaVersion":1,"state":"approval-timeout","watcherActive":true}\n`,
+      ),
+    ).toEqual({ schemaVersion: 1, state: "approval-timeout", watcherActive: true });
+    expect(
+      parseAutoPairWatcherStatus(
+        `${marker}{"schemaVersion":1,"state":"approval-completed","watcherActive":true,"requestId":"secret"}\n`,
+      ),
+    ).toBeNull();
+    expect(WATCHER_STATUS_SCRIPT).not.toContain("requestId");
+    expect(WATCHER_STATUS_SCRIPT).not.toContain("deviceId");
+    expect(WATCHER_STATUS_SCRIPT).not.toContain("publicKey");
+    expect(WATCHER_STATUS_SCRIPT).not.toContain("token");
+  });
+
+  itWithSh("returns a fixed request-issued result for the expected pending response", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-receipt-"));
+    const binDir = path.join(fixtureRoot, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      path.join(binDir, "openclaw"),
+      "#!/bin/sh\necho 'scope upgrade pending approval' >&2\nexit 23\n",
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("sh", ["-c", WARMUP_SCRIPT], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("NEMOCLAW_OPENCLAW_WARMUP_RESULT=request-issued\n");
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -240,28 +305,28 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=ambient-force-marker",
         "export NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING=ambient-clone-marker",
         "export NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT=ambient-settlement-marker",
-        'printf \'consumed\\n\' > "$NEMOCLAW_TEST_PROXY_SOURCE_LOG"',
+        "printf 'consumed\\n' > \"$NEMOCLAW_TEST_PROXY_SOURCE_LOG\"",
         "",
       ].join("\n"),
       { mode: 0o444 },
     );
     fs.writeFileSync(
       path.join(binDir, "openclaw"),
-        [
-          "#!/bin/sh",
-          "{",
-          "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
-          "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
-          "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
-          "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
-          "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
-          "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
-          "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
-          "  printf 'argv=%s\\n' \"$*\"",
-          '} > "$NEMOCLAW_TEST_CALL_LOG"',
-          "exit 1",
-          "",
-        ].join("\n"),
+      [
+        "#!/bin/sh",
+        "{",
+        "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
+        "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
+        "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
+        "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
+        "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
+        "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
+        "  printf 'argv=%s\\n' \"$*\"",
+        '} > "$NEMOCLAW_TEST_CALL_LOG"',
+        "exit 1",
+        "",
+      ].join("\n"),
       { mode: 0o700 },
     );
 

@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "../../..", "scripts", "lib");
 
 function startScriptHeredoc(src: string, marker: string): string {
@@ -643,13 +649,7 @@ exit 2
     40_000,
   );
 
-  it("drops a permanently-failing gated approve to slow-mode instead of 1s-looping to the deadline (#6113)", () => {
-    // cv #6330 item 2: the fast->slow transition must be reached even when the
-    // gated list/approve path keeps failing and `continue`s. With a near-zero
-    // FAST_DEADLINE the first iteration must emit the slow-mode transition
-    // (proving the check runs before the failure `continue`), and the watcher
-    // must exit within the short deadline rather than busy-polling at 1s.
-    // (`_env_seconds` rejects a literal 0 as non-positive, so use a tiny value.)
+  it("keeps a permanently failing gated approval in fast mode until the watcher deadline (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-permfail-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -708,7 +708,6 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_STATE_DIR: stateDir,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.01",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -716,9 +715,9 @@ exit 2
       });
 
       expect(run.status).toBe(0);
-      // The transition fired on the permanently-failing gated path (loop-top check).
+      expect(run.stdout).not.toContain("entering slow-mode");
       expect(run.stdout).toContain(
-        "[auto-pair] fast-mode deadline reached; switching to slow-mode",
+        '[auto-pair-status] {"schemaVersion":1,"state":"approval-failed"}',
       );
       expect(run.stdout).toContain(
         "[auto-pair] initial CLI approve failed request=request-1: gateway permanently unavailable",
@@ -816,7 +815,6 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 10_000,
@@ -859,7 +857,6 @@ printf '%s\\n' ${JSON.stringify(response)}
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 10_000,
@@ -1007,7 +1004,7 @@ printf '%s\n' ${JSON.stringify(response)}
     },
   );
 
-  it("enters slow mode for a paired CLI record when all pending request IDs are malformed (#9844)", () => {
+  it("does not treat an incomplete paired CLI record as the canonical baseline (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-pending-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approvalMarker = path.join(tmpDir, "approval-called");
@@ -1039,9 +1036,8 @@ printf '%s\n' '{"pending":[{"requestId":"--help","clientId":"cli","clientMode":"
         "[auto-pair] stage=validation rejected reason=malformed-request-id",
       );
       expect(run.stdout).toContain("[auto-pair] loopback CLI pairing bootstrap completed");
-      expect(run.stdout).toContain(
-        "[auto-pair] devices paired (1); entering slow-mode approvals=0",
-      );
+      expect(run.stdout).not.toContain("entering slow-mode");
+      expect(run.stdout).toContain('[auto-pair-status] {"schemaVersion":1,"state":"stopped"}');
       expect(run.stdout).not.toContain("--help");
       expect(fs.existsSync(approvalMarker)).toBe(false);
     } finally {

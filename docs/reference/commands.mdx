@@ -396,8 +396,9 @@ It also rejects stored authority or filesystem ownership drift without falling b
 
 OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
 Ordinary onboarding first observes the canonical local CLI device.
-If the device is not settled and has no exact pending request, NemoClaw runs one bounded request producer on the owning gateway.
-It waits for the same-device request, approves at most once, and verifies the final settled state.
+If the device is pairing-only, the host runs one bounded request producer on the owning gateway.
+The in-sandbox watcher is the only component that approves the ordinary onboarding upgrade.
+The host observes through any same-device pending state and verifies the final settled state without sending an approval.
 Portable onboarding accepts one exact already-pending canonical write upgrade, avoids a duplicate producer, and still requires strict same-device settlement before completion.
 The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
 Any pairing request considered during bounded repair must request exactly those scopes.
