@@ -13,11 +13,11 @@ import {
   runOpenshellCommand,
 } from "./client";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
-export { buildOpenShellSubprocessEnv };
+export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */
