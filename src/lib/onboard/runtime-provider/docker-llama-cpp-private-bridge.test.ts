@@ -328,6 +328,7 @@ async function request(
   input: {
     readonly authorization?: string | readonly string[];
     readonly body?: string;
+    readonly eagerBody?: boolean;
     readonly expectContinue?: boolean;
     readonly keepAlive?: boolean;
     readonly method?: string;
@@ -376,13 +377,18 @@ async function request(
         });
       },
     );
+    const finishBodyAfterContinue = input.eagerBody
+      ? () => undefined
+      : () => outgoing.end(input.body);
     outgoing.once("continue", () => {
       continued = true;
-      outgoing.end(input.body);
+      finishBodyAfterContinue();
     });
     outgoing.once("error", reject);
     const start = input.expectContinue
-      ? () => outgoing.flushHeaders()
+      ? input.eagerBody
+        ? () => outgoing.end(input.body)
+        : () => outgoing.flushHeaders()
       : () => outgoing.end(input.body);
     start();
   });
@@ -543,6 +549,50 @@ describe("llama.cpp private bridge request authentication", () => {
       });
 
       expect(result).toMatchObject({ continued: true, status: 200 });
+      expect(receivedBody).toBe(body);
+    } finally {
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
+  it("holds an eagerly sent request body until the upstream server accepts it", async () => {
+    let bodyBytesBeforeContinue = -1;
+    let receivedBody = "";
+    const upstream = http.createServer();
+    upstream.on("checkContinue", (incoming, response) => {
+      incoming.setEncoding("utf8");
+      incoming.on("data", (chunk: string) => {
+        receivedBody += chunk;
+      });
+      setImmediate(() => {
+        bodyBytesBeforeContinue = Buffer.byteLength(receivedBody);
+        response.writeContinue();
+      });
+      incoming.once("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end("{}\n");
+      });
+    });
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    const body = "x".repeat(2 * 1024 * 1024);
+    try {
+      const result = await request(bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+        body,
+        eagerBody: true,
+        expectContinue: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+
+      expect(result).toMatchObject({ continued: true, status: 200 });
+      expect(bodyBytesBeforeContinue).toBe(0);
       expect(receivedBody).toBe(body);
     } finally {
       await close(bridge);

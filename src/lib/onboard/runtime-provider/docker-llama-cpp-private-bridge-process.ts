@@ -175,7 +175,7 @@ function writeUpstreamUnavailable(response: http.ServerResponse): void {
   response.end(body);
 }
 
-export function createLlamaCppPrivateBridgeRequestHandler(
+function createLlamaCppPrivateBridgeRequestHandler(
   authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
   apiKey: string,
 ): http.RequestListener {
@@ -204,7 +204,9 @@ export function createLlamaCppPrivateBridgeRequestHandler(
     delete headers["x-forwarded-host"];
     delete headers["x-forwarded-proto"];
 
+    const expectsContinue = request.headers.expect?.toLowerCase() === "100-continue";
     let upstreamResponded = false;
+    let forwardingRequestBody = false;
     const upstream = http.request(
       {
         headers,
@@ -225,8 +227,14 @@ export function createLlamaCppPrivateBridgeRequestHandler(
         });
       },
     );
+    const forwardRequestBody = () => {
+      if (forwardingRequestBody || upstreamResponded) return;
+      forwardingRequestBody = true;
+      request.pipe(upstream);
+    };
     upstream.once("continue", () => {
       if (!response.destroyed && !response.writableEnded) response.writeContinue();
+      forwardRequestBody();
     });
     upstream.once("error", () => {
       if (!upstreamResponded) writeUpstreamUnavailable(response);
@@ -240,7 +248,8 @@ export function createLlamaCppPrivateBridgeRequestHandler(
     response.once("close", () => {
       if (!response.writableEnded) upstream.destroy();
     });
-    request.pipe(upstream);
+    if (expectsContinue) upstream.flushHeaders();
+    else forwardRequestBody();
   };
 }
 
