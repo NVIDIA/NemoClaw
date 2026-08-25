@@ -654,6 +654,29 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
+      condition: "automatic rollback after the final container handoff fails",
+      finalizeOutcome: () => ({
+        backupRemoved: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: "Deleting",
+        replacementRestarted: true,
+        rollbackImageId: `sha256:${"d".repeat(64)}`,
+        rollbackRecordPath: "/home/test/.nemoclaw/recovery/docker-gpu/recovery.json",
+        rolledBack: false,
+        stateRestored: true,
+      }),
+      expectedDetail: "OpenShell did not acknowledge the final replacement container handoff",
+      expectedDetailFragments: [
+        `sha256:${"d".repeat(64)}`,
+        "/home/test/.nemoclaw/recovery/docker-gpu/recovery.json",
+        "Confirm the replacement container is absent",
+        "recoveryAction command and arguments",
+      ],
+      expectedReadinessCalls: 1,
+      finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
+      finalReadinessReady: true,
+    },
+    {
       condition: "the final OpenShell readiness check fails",
       finalizeOutcome: () => ({
         backupRemoved: true,
@@ -715,6 +738,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     "does not start the primary dashboard/API host forward when $condition (#9364)",
     ({
       expectedDetail,
+      expectedDetailFragments,
       expectedReadinessCalls,
       finalPinnedAction,
       finalReadinessReady,
@@ -773,6 +797,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
         "opaque-",
       );
+      const detail = "recoveryFailureDetail" in result ? result.recoveryFailureDetail : "";
+      expect(detail).toContain(expectedDetailFragments?.[0] ?? "");
+      expect(detail).toContain(expectedDetailFragments?.[1] ?? "");
+      expect(detail).toContain(expectedDetailFragments?.[2] ?? "");
+      expect(detail).toContain(expectedDetailFragments?.[3] ?? "");
       expect(result).not.toHaveProperty("forwardRecoveryFailed");
       expect(finalize).toHaveBeenCalledOnce();
       expect(finalize).toHaveBeenCalledWith(true);
