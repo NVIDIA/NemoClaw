@@ -11,9 +11,9 @@
 // supports that natively, NemoClaw recreates the container with GPU access
 // and uses this module to either restore the pre-patch backup before commit or
 // complete the exact stop/remove/start handoff and require OpenShell's final
-// Ready acknowledgement. Removing the old container is the irreversible
-// commit point: later failures require a sandbox rebuild rather than automatic
-// rollback. Regression coverage:
+// Ready acknowledgement. Before removing the old container, NemoClaw commits
+// its writable layer to a temporary image and records the exact run arguments
+// needed to restore it. Regression coverage:
 //   * src/lib/onboard/docker-gpu-patch-finalize.test.ts — direct unit tests
 //     for exact final handoff, terminal phase, rollback, and failure outcomes.
 //   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
@@ -29,11 +29,23 @@
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
+  type ResolvedDockerGpuPatchRollbackDeps,
+  removeReplacementContainer,
   resolveDockerGpuPatchRollbackDeps,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
-import { fullDockerContainerId } from "./docker-gpu-patch-clone";
-import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
+import {
+  buildDockerGpuCloneRunArgs,
+  buildDockerGpuCloneRunOptions,
+  fullDockerContainerId,
+  parseDockerInspectJson,
+} from "./docker-gpu-patch-clone";
+import { buildDockerGpuMode } from "./docker-gpu-patch-mode";
+import type {
+  DockerContainerInspect,
+  DockerGpuPatchDeps,
+  DockerGpuPatchResult,
+} from "./docker-gpu-patch-types";
 import {
   waitForOpenShellFinalHandoff,
   waitForOpenShellSandboxLifecycleRelease,
@@ -58,9 +70,11 @@ export type DockerGpuPatchFinalizeOptions =
     };
 
 export type DockerGpuPatchFinalizeOutcome = {
-  /** True once the old container has crossed the irreversible removal boundary. */
+  /** True once Docker has removed the old container. */
   backupRemoved: boolean;
   rolledBack: boolean;
+  rollbackImageId?: string;
+  rollbackImageRemoved?: boolean;
   replacementStoppedForCommit?: boolean;
   replacementRestarted?: boolean;
   lifecycleReleaseObserved?: boolean;
@@ -70,6 +84,109 @@ export type DockerGpuPatchFinalizeOutcome = {
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
 };
+
+type PostCommitRollbackPlan = {
+  imageId: string;
+  oldContainerId: string;
+  runArgs: string[];
+};
+
+const DOCKER_IMAGE_ID = /^sha256:[0-9a-f]{64}$/iu;
+
+function removeRollbackImage(
+  imageId: string,
+  deps: ResolvedDockerGpuPatchRollbackDeps,
+  options: Record<string, unknown>,
+): boolean {
+  return hasZeroDockerExitStatus(deps.dockerRun(["image", "rm", "--force", imageId], options));
+}
+
+function preparePostCommitRollback(
+  result: DockerGpuPatchResult,
+  resolved: ResolvedDockerGpuPatchRollbackDeps,
+  options: Record<string, unknown>,
+): PostCommitRollbackPlan | null {
+  const oldContainerId = fullDockerContainerId(result.oldContainerId);
+  if (!oldContainerId) return null;
+  let inspect: DockerContainerInspect;
+  try {
+    inspect = parseDockerInspectJson(
+      resolved.dockerCapture(["inspect", "--type", "container", oldContainerId], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      }),
+    );
+  } catch {
+    return null;
+  }
+
+  const committed = resolved.dockerRun(["commit", oldContainerId], options);
+  if (!hasZeroDockerExitStatus(committed)) return null;
+  const imageId = String(committed.stdout ?? "").trim();
+  if (!DOCKER_IMAGE_ID.test(imageId)) return null;
+
+  try {
+    const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    cloneOptions.containerName = result.originalName;
+    cloneOptions.image = imageId;
+    return {
+      imageId,
+      oldContainerId,
+      runArgs: buildDockerGpuCloneRunArgs(
+        inspect,
+        buildDockerGpuMode("startup-command"),
+        cloneOptions,
+      ),
+    };
+  } catch {
+    if (!removeRollbackImage(imageId, resolved, options)) {
+      console.warn(`  Could not remove temporary Docker rollback image ${imageId}.`);
+    }
+    return null;
+  }
+}
+
+function restorePostCommitRollback(
+  plan: PostCommitRollbackPlan,
+  result: DockerGpuPatchResult,
+  resolved: ResolvedDockerGpuPatchRollbackDeps,
+  options: Record<string, unknown>,
+): Pick<
+  DockerGpuPatchFinalizeOutcome,
+  | "rolledBack"
+  | "rollbackImageId"
+  | "rollbackImageRemoved"
+  | "replacementStopConfirmed"
+  | "replacementRemovalConfirmed"
+  | "replacementPresence"
+> {
+  const replacementContainerId = fullDockerContainerId(result.newContainerId);
+  if (!replacementContainerId) {
+    return {
+      rolledBack: false,
+      rollbackImageId: plan.imageId,
+      rollbackImageRemoved: false,
+      replacementStopConfirmed: false,
+      replacementRemovalConfirmed: false,
+      replacementPresence: "unknown",
+    };
+  }
+  const removal = removeReplacementContainer(replacementContainerId, resolved);
+  const restored =
+    removal.replacementPresence === "absent"
+      ? resolved.dockerRunDetached(plan.runArgs, options)
+      : null;
+  const restoredContainerId =
+    restored !== null && hasZeroDockerExitStatus(restored)
+      ? fullDockerContainerId(String(restored.stdout ?? ""))
+      : null;
+  return {
+    rolledBack: restoredContainerId !== null,
+    rollbackImageId: plan.imageId,
+    rollbackImageRemoved: false,
+    ...removal,
+  };
+}
 
 function isExactRunningReplacement(
   sandboxName: string,
@@ -128,10 +245,8 @@ export function finalizeDockerGpuPatchBackup(
   if (options.supervisorReady) {
     // Stop the exact replacement before retiring the exact backup, then start
     // the replacement afterward. The final start is the authoritative Docker
-    // lifecycle event. Backup removal is the irreversible commit point;
-    // failures after it require a sandbox rebuild. Success is withheld until
-    // OpenShell reports Ready and Docker still proves the exact replacement is
-    // the sole running labeled container (#9531).
+    // lifecycle event. Keep a committed rollback image until OpenShell accepts
+    // the exact replacement as Ready (#9531).
     if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
       return {
         backupRemoved: false,
@@ -149,15 +264,37 @@ export function finalizeDockerGpuPatchBackup(
         replacementStoppedForCommit: false,
       };
     }
-    const rmResult = resolved.dockerRm(options.result.oldContainerId, containerOpts);
-    const backupRemoved = hasZeroDockerExitStatus(rmResult);
-    if (!backupRemoved) {
+    const rollbackPlan = preparePostCommitRollback(options.result, resolved, containerOpts);
+    if (!rollbackPlan) {
       const replacementRestarted = hasZeroDockerExitStatus(
         resolved.dockerStart(options.result.newContainerId, containerOpts),
       );
       return {
         backupRemoved: false,
         rolledBack: false,
+        replacementStoppedForCommit: true,
+        replacementRestarted,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: null,
+      };
+    }
+    const rmResult = resolved.dockerRm(rollbackPlan.oldContainerId, containerOpts);
+    const backupRemoved = hasZeroDockerExitStatus(rmResult);
+    if (!backupRemoved) {
+      const rollbackImageRemoved = removeRollbackImage(
+        rollbackPlan.imageId,
+        resolved,
+        containerOpts,
+      );
+      const replacementRestarted = hasZeroDockerExitStatus(
+        resolved.dockerStart(options.result.newContainerId, containerOpts),
+      );
+      return {
+        backupRemoved: false,
+        rolledBack: false,
+        ...(rollbackImageRemoved
+          ? { rollbackImageRemoved: true }
+          : { rollbackImageId: rollbackPlan.imageId, rollbackImageRemoved: false }),
         replacementStoppedForCommit: true,
         replacementRestarted,
         finalHandoffAcknowledged: false,
@@ -190,9 +327,15 @@ export function finalizeDockerGpuPatchBackup(
       },
     );
     if (!lifecycleReleaseObserved) {
+      const rollback = restorePostCommitRollback(
+        rollbackPlan,
+        options.result,
+        resolved,
+        containerOpts,
+      );
       return {
         backupRemoved: true,
-        rolledBack: false,
+        ...rollback,
         replacementStoppedForCommit: true,
         replacementRestarted: false,
         lifecycleReleaseObserved: false,
@@ -203,9 +346,15 @@ export function finalizeDockerGpuPatchBackup(
     const startResult = resolved.dockerStart(options.result.newContainerId, containerOpts);
     const replacementRestarted = hasZeroDockerExitStatus(startResult);
     if (!replacementRestarted) {
+      const rollback = restorePostCommitRollback(
+        rollbackPlan,
+        options.result,
+        resolved,
+        containerOpts,
+      );
       return {
         backupRemoved: true,
-        rolledBack: false,
+        ...rollback,
         replacementStoppedForCommit: true,
         replacementRestarted,
         finalHandoffAcknowledged: false,
@@ -231,13 +380,37 @@ export function finalizeDockerGpuPatchBackup(
           ),
       },
     );
+    if (!acknowledgement.acknowledged) {
+      const rollback = restorePostCommitRollback(
+        rollbackPlan,
+        options.result,
+        resolved,
+        containerOpts,
+      );
+      return {
+        backupRemoved: true,
+        ...rollback,
+        replacementStoppedForCommit: true,
+        replacementRestarted: true,
+        lifecycleReleaseObserved: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: acknowledgement.lastSandboxPhase,
+      };
+    }
+    const rollbackImageRemoved = removeRollbackImage(rollbackPlan.imageId, resolved, containerOpts);
+    if (!rollbackImageRemoved) {
+      console.warn(`  Could not remove temporary Docker rollback image ${rollbackPlan.imageId}.`);
+    }
     return {
       backupRemoved: true,
       rolledBack: false,
+      ...(rollbackImageRemoved
+        ? { rollbackImageRemoved: true }
+        : { rollbackImageId: rollbackPlan.imageId, rollbackImageRemoved: false }),
       replacementStoppedForCommit: true,
       replacementRestarted: true,
       lifecycleReleaseObserved: true,
-      finalHandoffAcknowledged: acknowledgement.acknowledged,
+      finalHandoffAcknowledged: true,
       lastSandboxPhase: acknowledgement.lastSandboxPhase,
     };
   }

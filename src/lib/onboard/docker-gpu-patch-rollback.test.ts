@@ -175,6 +175,8 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       (args: readonly string[]) => captureByCommand[String(args[0])]?.(args) ?? "",
     );
     const runByCommand: Record<string, () => { status: number; stdout: string }> = {
+      commit: () => ({ status: 0, stdout: `sha256:${"d".repeat(64)}\n` }),
+      image: () => ({ status: 0, stdout: "" }),
       ps: () => ({
         status: 0,
         stdout: `${alphaContainerIds().join("\n")}\n`,

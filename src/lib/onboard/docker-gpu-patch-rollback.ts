@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  dockerCapture as defaultDockerCapture,
   dockerRename as defaultDockerRename,
   dockerRm as defaultDockerRm,
   dockerRun as defaultDockerRun,
+  dockerRunDetached as defaultDockerRunDetached,
   dockerStart as defaultDockerStart,
   dockerStop as defaultDockerStop,
 } from "../adapters/docker";
@@ -21,6 +23,7 @@ type DockerRunResult = {
 };
 
 type DockerRunOptions = Record<string, unknown>;
+type DockerCaptureFn = (args: readonly string[], opts?: DockerRunOptions) => string;
 type DockerContainerFn = (containerName: string, opts?: DockerRunOptions) => DockerRunResult;
 type DockerRenameFn = (
   oldContainerName: string,
@@ -45,8 +48,12 @@ export type DockerGpuPatchRollbackOutcome = {
   replacementPresence: "absent" | "present" | "unknown";
 };
 
+export type DockerGpuReplacementRemovalOutcome = Omit<DockerGpuPatchRollbackOutcome, "rolledBack">;
+
 export type ResolvedDockerGpuPatchRollbackDeps = {
+  dockerCapture: DockerCaptureFn;
   dockerRun: DockerRunFn;
+  dockerRunDetached: DockerRunFn;
   dockerStop: DockerContainerFn;
   dockerRm: DockerContainerFn;
   dockerRename: DockerRenameFn;
@@ -58,7 +65,9 @@ export function resolveDockerGpuPatchRollbackDeps(
   deps: DockerGpuPatchDeps,
 ): ResolvedDockerGpuPatchRollbackDeps {
   return {
+    dockerCapture: deps.dockerCapture ?? defaultDockerCapture,
     dockerRun: deps.dockerRun ?? defaultDockerRun,
+    dockerRunDetached: deps.dockerRunDetached ?? defaultDockerRunDetached,
     dockerStop: deps.dockerStop ?? defaultDockerStop,
     dockerRm: deps.dockerRm ?? defaultDockerRm,
     dockerRename: deps.dockerRename ?? defaultDockerRename,
@@ -106,26 +115,38 @@ export function rollbackToBackupContainer(
   refs: { newContainerId: string; backupContainerName: string; originalName: string },
   deps: ResolvedDockerGpuPatchRollbackDeps,
 ): DockerGpuPatchRollbackOutcome {
+  const removal = removeReplacementContainer(refs.newContainerId, deps);
+  const containerOpts = {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+  };
+  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
+  const rolledBack = hasZeroDockerExitStatus(restored)
+    ? hasZeroDockerExitStatus(deps.dockerStart(refs.originalName, containerOpts))
+    : false;
+  return { rolledBack, ...removal };
+}
+
+export function removeReplacementContainer(
+  containerId: string,
+  deps: ResolvedDockerGpuPatchRollbackDeps,
+): DockerGpuReplacementRemovalOutcome {
   const containerOpts = {
     ignoreError: true,
     suppressOutput: true,
     timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
   };
   const replacementStopConfirmed = hasZeroDockerExitStatus(
-    deps.dockerStop(refs.newContainerId, containerOpts),
+    deps.dockerStop(containerId, containerOpts),
   );
   const replacementRemovalConfirmed = hasZeroDockerExitStatus(
-    deps.dockerRm(refs.newContainerId, containerOpts),
+    deps.dockerRm(containerId, containerOpts),
   );
   const replacementPresence = replacementRemovalConfirmed
     ? "absent"
-    : observeReplacementPresence(refs.newContainerId, deps, containerOpts);
-  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
-  const rolledBack = hasZeroDockerExitStatus(restored)
-    ? hasZeroDockerExitStatus(deps.dockerStart(refs.originalName, containerOpts))
-    : false;
+    : observeReplacementPresence(containerId, deps, containerOpts);
   return {
-    rolledBack,
     replacementStopConfirmed,
     replacementRemovalConfirmed,
     replacementPresence,

@@ -508,13 +508,13 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("retains the restored state backup when final handoff is not acknowledged (#9531)", () => {
+  it("restores the prior container and retains state backup when final handoff fails (#9531)", () => {
     const deps = baseDeps({
       finalize: vi.fn(() => ({
         backupRemoved: true,
         finalHandoffAcknowledged: false,
         lastSandboxPhase: "Deleting",
-        rolledBack: false,
+        rolledBack: true,
       })),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
@@ -523,7 +523,7 @@ describe("relaunchManagedSupervisorSession", () => {
       backupRemoved: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: "Deleting",
-      rolledBack: false,
+      rolledBack: true,
       stateRestored: true,
     });
     expect(deps.removeBackup).not.toHaveBeenCalled();

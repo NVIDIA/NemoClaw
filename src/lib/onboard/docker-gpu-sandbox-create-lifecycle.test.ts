@@ -147,7 +147,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
-  it("rejects an explicit replacement restart failure after backup removal", async () => {
+  it("reports prior-container restoration after replacement restart failure (#9531)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const onPatchFailureExit = vi.fn();
@@ -162,7 +162,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         waitForSupervisor: vi.fn(() => true),
         finalizeBackup: vi.fn(() => ({
           backupRemoved: true,
-          rolledBack: false,
+          rolledBack: true,
           replacementRestarted: false,
         })),
         onPatchFailureExit,
@@ -171,14 +171,17 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
+    await expect(patch.commitAfterReady()).rejects.toThrow(
+      "pre-patch sandbox container was restored",
+    );
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[2]?.context).toMatchObject({
       backupRemoved: true,
+      rolledBack: true,
     });
   });
 
-  it("rejects final handoff when OpenShell reports Deleting after restart (#9531)", async () => {
+  it("reports prior-container restoration when final handoff stays Deleting (#9531)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const waitForSupervisor = vi.fn(() => true);
@@ -194,7 +197,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         waitForSupervisor,
         finalizeBackup: vi.fn(() => ({
           backupRemoved: true,
-          rolledBack: false,
+          rolledBack: true,
           replacementRestarted: true,
           finalHandoffAcknowledged: false,
           lastSandboxPhase: "Deleting",
@@ -205,7 +208,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
+    await expect(patch.commitAfterReady()).rejects.toThrow(
+      "pre-patch sandbox container was restored",
+    );
 
     expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(onPatchFailureExit).toHaveBeenCalledOnce();

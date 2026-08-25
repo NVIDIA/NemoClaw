@@ -10,6 +10,8 @@ import {
 
 const OLD_CONTAINER_ID = "a".repeat(64);
 const NEW_CONTAINER_ID = "b".repeat(64);
+const ROLLBACK_IMAGE_ID = `sha256:${"d".repeat(64)}`;
+const RESTORED_CONTAINER_ID = "e".repeat(64);
 
 function dockerCaptureFixture() {
   const responses: Record<string, string> = {
@@ -27,13 +29,21 @@ describe("Docker GPU recreate orchestration", () => {
       ps: { status: 0, stdout: `${NEW_CONTAINER_ID}\n` },
       inspect: { status: 0, stdout: "true\n" },
     };
-    const dockerRun = vi.fn(
-      (args: readonly string[]) =>
-        dockerRunResults[String(args[0]) as keyof typeof dockerRunResults] ?? {
-          status: 0,
-          stdout: "probe-id\n",
-        },
-    );
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "commit":
+          return { status: 0, stdout: `${ROLLBACK_IMAGE_ID}\n` };
+        case "image":
+          return { status: 0 };
+        default:
+          return (
+            dockerRunResults[String(args[0]) as keyof typeof dockerRunResults] ?? {
+              status: 0,
+              stdout: "probe-id\n",
+            }
+          );
+      }
+    });
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` }));
     const dockerRename = vi.fn(() => ({ status: 0 }));
     const dockerStop = vi.fn(() => ({ status: 0 }));
@@ -112,15 +122,30 @@ describe("Docker GPU recreate orchestration", () => {
     );
   });
 
-  it("does not report success when the final OpenShell phase is Deleting (#9531)", () => {
+  it("restores the pre-patch container when final OpenShell phase is Deleting (#9531)", () => {
+    const dockerRunDetached = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` })
+      .mockReturnValueOnce({ status: 0, stdout: `${RESTORED_CONTAINER_ID}\n` });
     let failure: unknown;
     try {
       recreateOpenShellDockerSandboxWithGpu(
         { sandboxName: "alpha", timeoutSecs: 1 },
         {
           dockerCapture: dockerCaptureFixture(),
-          dockerRun: vi.fn(() => ({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` })),
-          dockerRunDetached: vi.fn(() => ({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` })),
+          dockerRun: vi.fn((args: readonly string[]) => {
+            switch (args[0]) {
+              case "commit":
+                return { status: 0, stdout: `${ROLLBACK_IMAGE_ID}\n` };
+              case "image":
+                return { status: 0 };
+              case "inspect":
+                return { status: 0, stdout: "true\n" };
+              default:
+                return { status: 0, stdout: `${NEW_CONTAINER_ID}\n` };
+            }
+          }),
+          dockerRunDetached,
           dockerRename: vi.fn(() => ({ status: 0 })),
           dockerStop: vi.fn(() => ({ status: 0 })),
           dockerRm: vi.fn(() => ({ status: 0 })),
@@ -142,15 +167,20 @@ describe("Docker GPU recreate orchestration", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("final replacement handoff");
-    expect((failure as Error).message).toContain("automatic rollback is unavailable");
-    expect((failure as Error).message).toContain("Rebuild the sandbox before retrying");
+    expect((failure as Error).message).toContain("pre-patch sandbox container was restored");
     expect(getDockerGpuPatchFailureContext(failure)).toMatchObject({
       backupRemoved: true,
       oldContainerId: OLD_CONTAINER_ID,
       newContainerId: NEW_CONTAINER_ID,
+      rollbackImageId: ROLLBACK_IMAGE_ID,
       lastSandboxPhase: "Deleting",
-      rolledBack: false,
+      rolledBack: true,
     });
+    expect(dockerRunDetached).toHaveBeenCalledTimes(2);
+    expect(dockerRunDetached.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining(["--name", "openshell-alpha", ROLLBACK_IMAGE_ID]),
+    );
+    expect(dockerRunDetached.mock.calls[1]?.[0]).not.toContain("--gpus");
   });
 
   it("can recreate during sandbox create before supervisor exec is allowed", () => {

@@ -407,6 +407,8 @@ export function recreateOpenShellDockerSandboxContainer(
       : finalizeDockerGpuPatchBackup({ result: patchResult, supervisorReady: false }, deps);
     context.rolledBack = finalization.rolledBack;
     context.backupRemoved = finalization.backupRemoved;
+    context.rollbackImageId = finalization.rollbackImageId;
+    context.rollbackImageRemoved = finalization.rollbackImageRemoved;
     context.replacementStopConfirmed = finalization.replacementStopConfirmed;
     context.replacementRemovalConfirmed = finalization.replacementRemovalConfirmed;
     context.replacementPresence = finalization.replacementPresence;
@@ -419,13 +421,19 @@ export function recreateOpenShellDockerSandboxContainer(
       );
     }
     if (finalization.finalHandoffAcknowledged) return result(true);
-    const rebuildRequired = finalization.backupRemoved
-      ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
-      : "";
+    const rollbackDetail = finalization.rolledBack
+      ? " The pre-patch sandbox container was restored."
+      : finalization.backupRemoved
+        ? ` Automatic rollback failed.${
+            finalization.rollbackImageId
+              ? ` Docker retained rollback image ${finalization.rollbackImageId}.`
+              : ""
+          }`
+        : "";
     throw new Error(
       finalization.lastSandboxPhase
-        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.${rebuildRequired}`
-        : `OpenShell did not acknowledge the final replacement handoff.${rebuildRequired}`,
+        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.${rollbackDetail}`
+        : `OpenShell did not acknowledge the final replacement handoff.${rollbackDetail}`,
     );
   } catch (error) {
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);

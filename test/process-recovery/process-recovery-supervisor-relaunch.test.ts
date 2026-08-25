@@ -7,6 +7,7 @@ import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/p
 import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../../src/lib/agent/runtime.ts";
+import { createDockerGpuInspectFixture as inspectFixture } from "../../src/lib/onboard/__test-helpers__/docker-gpu-patch-fixtures.ts";
 import { finalizeDockerGpuPatchBackup } from "../../src/lib/onboard/docker-gpu-patch-finalize.ts";
 import * as registry from "../../src/lib/state/registry.ts";
 
@@ -479,11 +480,19 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const oldContainerId = "a".repeat(64);
     const replacementContainerId = "b".repeat(64);
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? { status: 0, stdout: `${replacementContainerId}\n` }
-        : { status: 0, stdout: "true\n" },
-    );
+    const rollbackImageId = `sha256:${"d".repeat(64)}`;
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "commit":
+          return { status: 0, stdout: `${rollbackImageId}\n` };
+        case "image":
+          return { status: 0 };
+        case "ps":
+          return { status: 0, stdout: `${replacementContainerId}\n` };
+        default:
+          return { status: 0, stdout: "true\n" };
+      }
+    });
     const finalizeTransaction = vi.fn(
       (
         options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
@@ -491,6 +500,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ) =>
         finalizeDockerGpuPatchBackup(options, {
           ...deps,
+          dockerCapture: vi.fn(() => JSON.stringify([{ ...inspectFixture(), Id: oldContainerId }])),
           dockerRm,
           dockerRun,
           dockerStart,
