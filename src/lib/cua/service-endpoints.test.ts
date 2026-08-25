@@ -11,9 +11,9 @@ import {
 } from "./service-endpoints";
 
 const serviceEnv = {
-  [CUA_SERVICE_ENDPOINT_ENV.browser]: "http://127.0.0.1:18001/browser",
-  [CUA_SERVICE_ENDPOINT_ENV.computer]: "http://localhost:18002/computer",
-  [CUA_SERVICE_ENDPOINT_ENV.terminal]: "http://[::1]:18003/terminal",
+  [CUA_SERVICE_ENDPOINT_ENV.browser]: "http://127.0.0.1:18001/",
+  [CUA_SERVICE_ENDPOINT_ENV.computer]: "http://localhost:18002/",
+  [CUA_SERVICE_ENDPOINT_ENV.terminal]: "http://[::1]:18003/",
   [CUA_SERVICE_ENDPOINT_ENV.fixture]: "http://127.0.0.1:18004/fixture",
 };
 
@@ -43,20 +43,20 @@ describe("NemoCUA service endpoint projection", () => {
     expect(requireCuaServiceEndpoints(serviceEnv)).toEqual([
       {
         role: "browser",
-        sandboxUrl: "http://host.openshell.internal:18001/browser",
-        path: "/browser",
+        sandboxUrl: "http://host.openshell.internal:18001/",
+        path: "/",
         port: 18001,
       },
       {
         role: "computer",
-        sandboxUrl: "http://host.openshell.internal:18002/computer",
-        path: "/computer",
+        sandboxUrl: "http://host.openshell.internal:18002/",
+        path: "/",
         port: 18002,
       },
       {
         role: "terminal",
-        sandboxUrl: "http://host.openshell.internal:18003/terminal",
-        path: "/terminal",
+        sandboxUrl: "http://host.openshell.internal:18003/",
+        path: "/",
         port: 18003,
       },
       {
@@ -68,12 +68,15 @@ describe("NemoCUA service endpoint projection", () => {
     ]);
   });
 
-  it("renders only sandbox-facing service URLs in TOML (#10289)", () => {
+  it("renders the exact NVLumina v0.0.5 tool-server settings without fixture state (#10289)", () => {
     const rendered = renderCuaServiceConfig(requireCuaServiceEndpoints(serviceEnv));
 
-    expect(rendered).toContain("[services]");
-    expect(rendered).toContain('browser = "http://host.openshell.internal:18001/browser"');
-    expect(rendered).toContain('fixture = "http://host.openshell.internal:18004/fixture"');
+    expect(rendered).toContain("[tool_servers]");
+    expect(rendered).toContain('base_host = "host.openshell.internal"');
+    expect(rendered).toContain("computer_use_port = 18002");
+    expect(rendered).toContain("browser_use_port = 18001");
+    expect(rendered).toContain("terminal_use_port = 18003");
+    expect(rendered).not.toContain("fixture");
     expect(rendered).not.toContain("127.0.0.1");
     expect(rendered).not.toContain("localhost");
   });
@@ -95,6 +98,10 @@ describe("NemoCUA service endpoint projection", () => {
     [
       "implicit port",
       { ...serviceEnv, [CUA_SERVICE_ENDPOINT_ENV.browser]: "http://127.0.0.1/browser" },
+    ],
+    [
+      "non-root tool path",
+      { ...serviceEnv, [CUA_SERVICE_ENDPOINT_ENV.browser]: "http://127.0.0.1:18001/browser" },
     ],
     [
       "duplicate port",
@@ -127,10 +134,10 @@ describe("NemoCUA service endpoint projection", () => {
           protocol: "rest",
           enforcement: "enforce",
           rules: [
-            { allow: { method: "GET", path: "/browser" } },
-            { allow: { method: "GET", path: "/browser/**" } },
-            { allow: { method: "POST", path: "/browser" } },
-            { allow: { method: "POST", path: "/browser/**" } },
+            { allow: { method: "GET", path: "/" } },
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/" } },
+            { allow: { method: "POST", path: "/**" } },
           ],
         },
       ],

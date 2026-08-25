@@ -54,6 +54,11 @@ function parseServiceEndpoint(role: CuaServiceRole, raw: string): CuaServiceEndp
   const sandbox = new URL(parsed.href);
   sandbox.hostname = OPENSHELL_SANDBOX_HOST_BRIDGE;
   const endpointPath = parsed.pathname.replace(/\/+$/u, "") || "/";
+  if (role !== "fixture" && endpointPath !== "/") {
+    throw new Error(
+      `${CUA_SERVICE_ENDPOINT_ENV[role]} must use the root path required by the pinned NVLumina tool-server contract`,
+    );
+  }
   return { role, sandboxUrl: sandbox.href, path: endpointPath, port };
 }
 
@@ -77,10 +82,18 @@ export function requireCuaServiceEndpoints(
   return endpoints;
 }
 
-/** Render the non-secret service section consumed by the prepared NemoCUA harness. */
+/** Render the exact NVLumina v0.0.5 ToolServersSettings contract. */
 export function renderCuaServiceConfig(endpoints: readonly CuaServiceEndpoint[]): string {
+  const byRole = Object.fromEntries(
+    endpoints.map((endpoint) => [endpoint.role, endpoint]),
+  ) as Record<CuaServiceRole, CuaServiceEndpoint>;
   return stringifyToml({
-    services: Object.fromEntries(endpoints.map(({ role, sandboxUrl }) => [role, sandboxUrl])),
+    tool_servers: {
+      base_host: OPENSHELL_SANDBOX_HOST_BRIDGE,
+      computer_use_port: byRole.computer.port,
+      browser_use_port: byRole.browser.port,
+      terminal_use_port: byRole.terminal.port,
+    },
   });
 }
 

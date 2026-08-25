@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -84,9 +86,9 @@ expect(
 describe("agent base image provisioning", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS", "");
-    vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/browser");
-    vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/computer");
-    vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/terminal");
+    vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/");
+    vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/");
+    vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/");
     vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
     vi.restoreAllMocks();
   });
@@ -149,12 +151,48 @@ describe("agent base image provisioning", () => {
           path.join(result.buildCtx, "nemoclaw-services.toml"),
           "utf8",
         );
-        expect(config).toContain("http://host.openshell.internal:18001/browser");
+        expect(config).toContain("[tool_servers]");
+        expect(config).toContain('base_host = "host.openshell.internal"');
+        expect(config).toContain("browser_use_port = 18001");
+        expect(config).not.toContain("fixture");
         expect(config).not.toContain("127.0.0.1");
       });
     } finally {
       fs.rmSync(buildContext, { recursive: true, force: true });
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["existing table", "[tool_servers]\nbase_host = \"private.default\"\n"],
+    ["existing dotted key", 'tool_servers.base_host = "private.default"\n'],
+  ])("rejects an NVLumina config with %s before projected settings are appended (#10289)", (_label, preparedConfig) => {
+    const dockerfile = fs.readFileSync(path.join(AGENTS_DIR, "nemocua", "Dockerfile"), "utf8");
+    const script = dockerfile.match(/RUN python3 - <<'PY'\n([\s\S]*?)\nPY/u)?.[1];
+    expect(script).toBeTruthy();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-config-"));
+    const configPath = path.join(directory, "config.toml");
+    const servicesPath = path.join(directory, "nemoclaw-services.toml");
+    fs.writeFileSync(configPath, preparedConfig);
+    fs.writeFileSync(
+      servicesPath,
+      '[tool_servers]\nbase_host = "host.openshell.internal"\ncomputer_use_port = 18002\nbrowser_use_port = 18001\nterminal_use_port = 18003\n',
+    );
+
+    try {
+      const result = spawnSync("python3", ["-c", script ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_CUA_CONFIG_PATH: configPath,
+          NEMOCLAW_CUA_SERVICES_PATH: servicesPath,
+        },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("must not define the projected tool_servers table");
+      expect(fs.readFileSync(configPath, "utf8")).toBe(preparedConfig);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

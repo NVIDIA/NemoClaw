@@ -53,9 +53,9 @@ type PolicyDocument = {
 const cleanupFns: Array<() => boolean | undefined> = [];
 
 beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/browser");
-  vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/computer");
-  vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/terminal");
+  vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/");
+  vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/");
+  vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/");
   vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
 });
 
@@ -290,10 +290,10 @@ describe("initial sandbox policy real preset merge", () => {
           protocol: "rest",
           enforcement: "enforce",
           rules: [
-            { allow: { method: "GET", path: "/browser" } },
-            { allow: { method: "GET", path: "/browser/**" } },
-            { allow: { method: "POST", path: "/browser" } },
-            { allow: { method: "POST", path: "/browser/**" } },
+            { allow: { method: "GET", path: "/" } },
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/" } },
+            { allow: { method: "POST", path: "/**" } },
           ],
         },
       ],
