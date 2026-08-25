@@ -120,10 +120,11 @@ export function assertHermesContainerImageAuthority(
   authorityReference: string,
   authorityContentId?: string,
 ): void {
+  const normalizedContainerImage = normalizeImmutableImageContentId(containerImage);
   expect(
-    containerImage === authorityReference ||
+    normalizedContainerImage === authorityReference ||
       (IMMUTABLE_IMAGE_CONTENT_ID.test(authorityContentId ?? "") &&
-        containerImage === authorityContentId),
+        normalizedContainerImage === authorityContentId),
   ).toBe(true);
 }
 

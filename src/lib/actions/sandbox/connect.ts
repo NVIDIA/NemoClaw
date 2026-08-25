@@ -1808,6 +1808,16 @@ async function prepareConnectSandboxWithinLifecycleFence(
             }
             requalify();
             await runSandboxConnectProbe(sandboxName, { hermesPortable, probeTiming });
+            if (!hermesPortable) {
+              probeTiming!.measure("gateway", () =>
+                waitForSandboxReadyOrExit(sandboxName, {
+                  allowInitialErrorAfterStart: true,
+                  allowDockerRuntimeInspection: false,
+                  defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+                  retryCommand: "connect --probe-only",
+                }),
+              );
+            }
             requalify();
           },
         });

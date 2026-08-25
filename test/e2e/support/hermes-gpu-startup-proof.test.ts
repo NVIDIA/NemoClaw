@@ -196,6 +196,16 @@ describe("Hermes GPU managed-image authority proof", () => {
     ).not.toThrow();
   });
 
+  it("accepts Podman's bare running-container content ID for the recorded authority", () => {
+    expect(() =>
+      assertHermesContainerImageAuthority(
+        "c".repeat(64),
+        MANAGED_IMAGE_REFERENCE,
+        MANAGED_IMAGE_CONTENT_ID,
+      ),
+    ).not.toThrow();
+  });
+
   it("rejects a running container outside the recorded authority (#9362)", () => {
     expect(() =>
       assertHermesContainerImageAuthority("ghcr.io/nvidia/test:latest", MANAGED_IMAGE_REFERENCE),
