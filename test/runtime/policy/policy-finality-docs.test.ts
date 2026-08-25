@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "../..");
+const repoRoot = path.join(import.meta.dirname, "../../..");
 const troubleshootingPath = path.join(repoRoot, "docs", "reference", "troubleshooting.mdx");
 
 function documentedCleanupCommand(): string {

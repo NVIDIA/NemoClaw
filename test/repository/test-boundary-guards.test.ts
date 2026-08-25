@@ -53,7 +53,7 @@ function writeSourceLoaderFixture(directory: string): void {
   fs.writeFileSync(path.join(directory, "value.ts"), 'export const marker = "source";\n');
   fs.writeFileSync(
     path.join(directory, "parent.cjs"),
-    'process.stdout.write(require(".././value.js").marker);\n',
+    'process.stdout.write(require("./value.js").marker);\n',
   );
 }
 
@@ -518,8 +518,8 @@ describe("fast-project transitive import boundary", () => {
   it("canonicalizes transitive imports through a symbolic-link loop (#6692)", () => {
     withImportGraphFixture(
       {
-        "entry.test.ts": 'import ".././loop/helper.js";\n',
-        "helper.ts": ['import ".././loop/helper.js";', 'import "../../../dist/lib/compiled.js";'].join(
+        "entry.test.ts": 'import "./loop/helper.js";\n',
+        "helper.ts": ['import "./loop/helper.js";', 'import "../../dist/lib/compiled.js";'].join(
           "\n",
         ),
       },
@@ -529,7 +529,7 @@ describe("fast-project transitive import boundary", () => {
         expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
           {
             chain: [fixtureRepoPath(root, "entry.test.ts"), fixtureRepoPath(root, "helper.ts")],
-            detail: 'imports compiled CLI internals from "../../../dist/lib/compiled.js"',
+            detail: 'imports compiled CLI internals from "../../dist/lib/compiled.js"',
             file: fixtureRepoPath(root, "helper.ts"),
             line: 2,
           },
@@ -541,11 +541,11 @@ describe("fast-project transitive import boundary", () => {
   it("reports a shortest chain through static import, export, dynamic import, and require edges (#6692)", () => {
     withImportGraphFixture(
       {
-        "dynamic.ts": 'void import(".././required.js");\n',
-        "entry.test.ts": 'import ".././exporter.js";\n',
-        "exporter.ts": 'export * from ".././dynamic.js";\n',
-        "helper.ts": 'import "../../../dist/lib/onboard.js";\n',
-        "required.ts": 'const loaded = require(".././helper.js");\nexport { loaded };\n',
+        "dynamic.ts": 'void import("./required.js");\n',
+        "entry.test.ts": 'import "./exporter.js";\n',
+        "exporter.ts": 'export * from "./dynamic.js";\n',
+        "helper.ts": 'import "../../dist/lib/onboard.js";\n',
+        "required.ts": 'const loaded = require("./helper.js");\nexport { loaded };\n',
       },
       (root) => {
         expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
@@ -557,7 +557,7 @@ describe("fast-project transitive import boundary", () => {
               fixtureRepoPath(root, "required.ts"),
               fixtureRepoPath(root, "helper.ts"),
             ],
-            detail: 'imports compiled CLI internals from "../../../dist/lib/onboard.js"',
+            detail: 'imports compiled CLI internals from "../../dist/lib/onboard.js"',
             file: fixtureRepoPath(root, "helper.ts"),
             line: 1,
           },
@@ -569,14 +569,14 @@ describe("fast-project transitive import boundary", () => {
   it("terminates cyclic createRequire graphs with one deterministic violation (#6692)", () => {
     withImportGraphFixture(
       {
-        "a.ts": 'import ".././b.js";\n',
+        "a.ts": 'import "./b.js";\n',
         "b.ts": [
           'import { createRequire } from "node:module";',
           "const load = createRequire(import.meta.url);",
-          'load(".././c.js");',
+          'load("./c.js");',
         ].join("\n"),
-        "c.ts": ['import ".././a.js";', 'import "../../../dist/commands/cycle.js";'].join("\n"),
-        "entry.test.ts": 'import ".././a.js";\n',
+        "c.ts": ['import "./a.js";', 'import "../../dist/commands/cycle.js";'].join("\n"),
+        "entry.test.ts": 'import "./a.js";\n',
       },
       (root) => {
         expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
@@ -587,7 +587,7 @@ describe("fast-project transitive import boundary", () => {
               fixtureRepoPath(root, "b.ts"),
               fixtureRepoPath(root, "c.ts"),
             ],
-            detail: 'imports compiled CLI internals from "../../../dist/commands/cycle.js"',
+            detail: 'imports compiled CLI internals from "../../dist/commands/cycle.js"',
             file: fixtureRepoPath(root, "c.ts"),
             line: 2,
           },
@@ -599,11 +599,11 @@ describe("fast-project transitive import boundary", () => {
   it("reports the shortest route when a longer import chain is discovered first (#6692)", () => {
     withImportGraphFixture(
       {
-        "entry.test.ts": ['import ".././long-a.js";', 'import ".././short.js";'].join("\n"),
-        "long-a.ts": 'import ".././long-b.js";\n',
-        "long-b.ts": 'import ".././target.js";\n',
-        "short.ts": 'import ".././target.js";\n',
-        "target.ts": 'import "../../../dist/lib/compiled.js";\n',
+        "entry.test.ts": ['import "./long-a.js";', 'import "./short.js";'].join("\n"),
+        "long-a.ts": 'import "./long-b.js";\n',
+        "long-b.ts": 'import "./target.js";\n',
+        "short.ts": 'import "./target.js";\n',
+        "target.ts": 'import "../../dist/lib/compiled.js";\n',
       },
       (root) => {
         expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
@@ -613,7 +613,7 @@ describe("fast-project transitive import boundary", () => {
               fixtureRepoPath(root, "short.ts"),
               fixtureRepoPath(root, "target.ts"),
             ],
-            detail: 'imports compiled CLI internals from "../../../dist/lib/compiled.js"',
+            detail: 'imports compiled CLI internals from "../../dist/lib/compiled.js"',
             file: fixtureRepoPath(root, "target.ts"),
             line: 1,
           },
@@ -625,7 +625,7 @@ describe("fast-project transitive import boundary", () => {
   it("rejects an alias whose resolved target is a compiled CLI module (#6692)", () => {
     withImportGraphFixture(
       {
-        "entry.test.ts": 'import ".././source-alias.js";\n',
+        "entry.test.ts": 'import "./source-alias.js";\n',
       },
       (root) => {
         const distRoot = path.join(REPO_ROOT, "dist");
@@ -647,7 +647,7 @@ describe("fast-project transitive import boundary", () => {
           expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
             {
               chain: [fixtureRepoPath(root, "entry.test.ts")],
-              detail: `imports compiled CLI internals from ".././source-alias.js" (resolves to ${compiledRepoPath})`,
+              detail: `imports compiled CLI internals from "./source-alias.js" (resolves to ${compiledRepoPath})`,
               file: fixtureRepoPath(root, "entry.test.ts"),
               line: 1,
             },
@@ -669,14 +669,14 @@ describe("fast-project transitive import boundary", () => {
   it("reports compiled loads inside generated scripts reached through fast helpers (#6692)", () => {
     withImportGraphFixture(
       {
-        "entry.test.ts": 'import ".././helper.js";\n',
-        "helper.ts": 'export const script = String.raw`require("../../../dist/lib/embedded.js");`;\n',
+        "entry.test.ts": 'import "./helper.js";\n',
+        "helper.ts": 'export const script = String.raw`require("../../dist/lib/embedded.js");`;\n',
       },
       (root) => {
         expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
           {
             chain: [fixtureRepoPath(root, "entry.test.ts"), fixtureRepoPath(root, "helper.ts")],
-            detail: 'imports compiled CLI internals from "../../../dist/lib/embedded.js"',
+            detail: 'imports compiled CLI internals from "../../dist/lib/embedded.js"',
             file: fixtureRepoPath(root, "helper.ts"),
             line: 1,
           },
@@ -705,8 +705,8 @@ describe("fast-project transitive import boundary", () => {
   it("ignores unreachable compiled imports and ordinary runtime dist paths (#6692)", () => {
     withImportGraphFixture(
       {
-        "entry.test.ts": 'import ".././safe.js";\n',
-        "orphan.ts": 'import "../../../dist/lib/orphan.js";\n',
+        "entry.test.ts": 'import "./safe.js";\n',
+        "orphan.ts": 'import "../../dist/lib/orphan.js";\n',
         "safe.ts": [
           'import path from "node:path";',
           'export const runtimePath = path.join(root, "dist", "lib", "runtime.js");',
@@ -897,7 +897,7 @@ describe("CommonJS source runtime", () => {
 
       const outside = run(outsideFixture);
       expect(outside.status).not.toBe(0);
-      expect(outside.stderr).toContain("Cannot find module '.././value.js'");
+      expect(outside.stderr).toContain("Cannot find module './value.js'");
     } finally {
       fs.rmSync(sourceFixture, { force: true, recursive: true });
       fs.rmSync(outsideFixture, { force: true, recursive: true });

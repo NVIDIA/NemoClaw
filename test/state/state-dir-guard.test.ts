@@ -850,7 +850,7 @@ describe("state-dir-guard", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(pluginPath, "trusted\n");
     fs.writeFileSync(sessionPayload, "mutable\n");
-    fs.symlinkSync("../../agents/main/sessions/payload.js", path.join(pluginDir, "evil"));
+    fs.symlinkSync("../agents/main/sessions/payload.js", path.join(pluginDir, "evil"));
 
     const result = runGuard("preflight", configDir);
 

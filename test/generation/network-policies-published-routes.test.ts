@@ -118,19 +118,19 @@ describe("shared Network Policies published routes", () => {
         fromRoute: "/user-guide/deepagents/reference/network-policies",
         published: true,
         resolved: "/user-guide/deepagents/network-policy/approve-network-requests",
-        target: "../../network-policy/approve-network-requests",
+        target: "../network-policy/approve-network-requests",
       },
       {
         fromRoute: "/user-guide/hermes/reference/network-policies",
         published: true,
         resolved: "/user-guide/hermes/network-policy/approve-network-requests",
-        target: "../../network-policy/approve-network-requests",
+        target: "../network-policy/approve-network-requests",
       },
       {
         fromRoute: "/user-guide/openclaw/reference/network-policies",
         published: true,
         resolved: "/user-guide/openclaw/network-policy/approve-network-requests",
-        target: "../../network-policy/approve-network-requests",
+        target: "../network-policy/approve-network-requests",
       },
     ]);
   });

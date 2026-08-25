@@ -66,16 +66,16 @@ describe("OpenClaw commands page Install OpenClaw Plugins link (#5445)", () => {
 describe("route resolver and link extractor robustness (#5445)", () => {
   it("resolves route-relative links the way Fern serves them (#5445)", () => {
     const from = "/user-guide/openclaw/reference/commands";
-    expect(resolvePublishedRoute(from, "../../manage-sandboxes/install-openclaw-plugins")).toBe(
+    expect(resolvePublishedRoute(from, "../manage-sandboxes/install-openclaw-plugins")).toBe(
       CORRECT_ROUTE,
     );
-    expect(resolvePublishedRoute(from, "../../deployment/install-openclaw-plugins")).toBe(WRONG_ROUTE);
+    expect(resolvePublishedRoute(from, "../deployment/install-openclaw-plugins")).toBe(WRONG_ROUTE);
     // Fern serves extensionless routes; a stray .mdx suffix resolves the same.
-    expect(resolvePublishedRoute(from, "../../manage-sandboxes/install-openclaw-plugins.mdx")).toBe(
+    expect(resolvePublishedRoute(from, "../manage-sandboxes/install-openclaw-plugins.mdx")).toBe(
       CORRECT_ROUTE,
     );
     // Fragments and queries do not change the target route.
-    expect(resolvePublishedRoute(from, "../../reference/network-policies#policy-tiers")).toBe(
+    expect(resolvePublishedRoute(from, "../reference/network-policies#policy-tiers")).toBe(
       "/user-guide/openclaw/reference/network-policies",
     );
   });
@@ -91,11 +91,11 @@ describe("route resolver and link extractor robustness (#5445)", () => {
       "`[inline code](../also/ignored)`",
     ].join("\n");
     const targets = extractMarkdownLinks(body).map((link) => link.target);
-    expect(targets).toContain("../../manage-sandboxes/install-openclaw-plugins");
+    expect(targets).toContain("../manage-sandboxes/install-openclaw-plugins");
     // Code-span link text is still captured; the title suffix is stripped.
-    expect(targets).toContain("../../reference/commands");
+    expect(targets).toContain("../reference/commands");
     // A 3-backtick line inside a 4-backtick block must not end the fence.
-    expect(targets).not.toContain("../../should/be/ignored");
-    expect(targets).not.toContain("../../also/ignored");
+    expect(targets).not.toContain("../should/be/ignored");
+    expect(targets).not.toContain("../also/ignored");
   });
 });
