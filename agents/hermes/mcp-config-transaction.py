@@ -71,6 +71,10 @@ MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
+REVISIONED_ENV_PLACEHOLDER_RE = re.compile(
+    r"^Bearer openshell:resolve:env:(v[0-9]{1,20})_([A-Za-z_][A-Za-z0-9_]{0,127})$"
+)
+OPENSHELL_CREDENTIAL_REVISION_RE = re.compile(r"^v[0-9]{1,20}$")
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
 BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.106.json"
 ANSI_ESCAPE_RE = re.compile(
@@ -361,6 +365,8 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError("Unsupported MCP config action")
     allowed = {"server", "url", "headers"}
     allowed.add("replace_existing" if action == "add" else "force")
+    if action == "add":
+        allowed.update({"credential_name", "credential_revision"})
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise ValueError(
@@ -453,16 +459,38 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         raise ValueError("MCP mutation payload must contain one Authorization header")
     authorization = headers.get("Authorization")
-    authorization_match = (
-        ENV_PLACEHOLDER_RE.fullmatch(authorization)
-        if isinstance(authorization, str)
-        else None
-    )
+    declared_credential_name = payload.get("credential_name")
+    credential_revision = payload.get("credential_revision")
+    if credential_revision is not None and (
+        not isinstance(credential_revision, str)
+        or OPENSHELL_CREDENTIAL_REVISION_RE.fullmatch(credential_revision) is None
+    ):
+        raise ValueError("Hermes MCP credential revision is invalid")
+    authorization_match = None
+    credential_name = None
+    if isinstance(authorization, str) and credential_revision is not None:
+        authorization_match = REVISIONED_ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if (
+            authorization_match is not None
+            and authorization_match.group(1) == credential_revision
+            and isinstance(declared_credential_name, str)
+            and authorization_match.group(2) == declared_credential_name
+        ):
+            credential_name = authorization_match.group(2)
+        else:
+            authorization_match = None
+    elif isinstance(authorization, str) and declared_credential_name is None:
+        authorization_match = ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if authorization_match is not None:
+            credential_name = authorization_match.group(1)
     if authorization_match is None:
         raise ValueError(
             "Hermes MCP Authorization must contain an OpenShell environment placeholder"
         )
-    if action == "add" and _credential_name_is_reserved(authorization_match.group(1)):
+    if action == "add" and (
+        not isinstance(credential_name, str)
+        or _credential_name_is_reserved(credential_name)
+    ):
         raise ValueError(
             "Hermes MCP Authorization uses a reserved credential environment name"
         )
@@ -482,6 +510,48 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
     if headers:
         candidate["headers"] = headers
     return candidate
+
+
+def _managed_candidate_matches(
+    actual: object, expected: dict[str, object], allow_revisioned: bool
+) -> bool:
+    if actual == expected:
+        return True
+    if not allow_revisioned or not isinstance(actual, dict):
+        return False
+    if set(actual) != set(expected):
+        return False
+    for name, value in expected.items():
+        if name != "headers" and actual.get(name) != value:
+            return False
+    actual_headers = actual.get("headers")
+    expected_headers = expected.get("headers")
+    if not isinstance(actual_headers, dict) or not isinstance(expected_headers, dict):
+        return False
+    if set(actual_headers) != {"Authorization"} or set(expected_headers) != {
+        "Authorization"
+    }:
+        return False
+    expected_authorization = expected_headers.get("Authorization")
+    actual_authorization = actual_headers.get("Authorization")
+    expected_match = (
+        ENV_PLACEHOLDER_RE.fullmatch(expected_authorization)
+        if isinstance(expected_authorization, str)
+        else None
+    )
+    if expected_match is None:
+        return False
+    expected_name = expected_match.group(1)
+    if OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(expected_name):
+        return False
+    if not isinstance(actual_authorization, str):
+        return False
+    prefix = "Bearer openshell:resolve:env:v"
+    suffix = f"_{expected_name}"
+    if not actual_authorization.startswith(prefix) or not actual_authorization.endswith(suffix):
+        return False
+    revision = actual_authorization[len(prefix) : -len(suffix)]
+    return revision.isdigit() and 1 <= len(revision) <= 20
 
 
 _MANAGED_CANDIDATE_FIELDS = frozenset(
@@ -555,7 +625,10 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     absent = payload["absent"]
     if not isinstance(present, dict) or not isinstance(absent, list):
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
-    matches = all(servers.get(name) == expected for name, expected in present.items())
+    matches = all(
+        _managed_candidate_matches(servers.get(name), expected, True)
+        for name, expected in present.items()
+    )
     matches = matches and all(name not in servers for name in absent)
     if not matches:
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
@@ -595,7 +668,7 @@ def _mutate(data: object, action: str, payload: dict[str, object]) -> tuple[dict
         return data, False
     if payload.get("force") is not True:
         current = servers.get(server_name)
-        if current != _managed_candidate(payload):
+        if not _managed_candidate_matches(current, _managed_candidate(payload), True):
             raise ValueError(
                 f"Refusing to remove modified Hermes MCP server '{server_name}'. Use --force to remove it."
             )
