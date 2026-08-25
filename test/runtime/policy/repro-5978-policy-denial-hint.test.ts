@@ -44,7 +44,7 @@ const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 // test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts because it needs Docker and the
 // pulled base image. Run with:
 //   NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E=1 vitest run \
-//     test/repro-5978-policy-denial-hint.test.ts --project integration
+//     test/runtime/policy/repro-5978-policy-denial-hint.test.ts --project integration
 //
 // Kept opt-in rather than promoted to a required CI lane on purpose: it requires
 // a Docker daemon plus the multi-hundred-MB sandbox base image, which the fast
