@@ -152,37 +152,37 @@
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "requires valid sandbox names",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "requires distinct specialist and synthesis sandboxes",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "requires a synthesis matrix",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "requires native specialist sessions",
       "category": "security"
     },
     {
-      "file": "test/pr-workflow-contract.test.ts",
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },
     {
-      "file": "test/release-daily-brev-image.test.ts",
+      "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
     },
     {
-      "file": "test/release-lkg-brev-image.test.ts",
+      "file": "test/automation/releases/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"
     },

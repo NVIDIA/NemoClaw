@@ -6,8 +6,9 @@ import path from "node:path";
 import { R, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
 import * as registry from "../../state/registry";
+import { SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 
-type RunOpenshellResult = { status: number | null };
+type RunOpenshellResult = { error?: Error; status: number | null };
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => RunOpenshellResult;
 
 type AgentStateInfo = {
@@ -202,24 +203,33 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
     {
       ignoreError: true,
+      killSignal: "SIGKILL",
       stdio: ["ignore", "ignore", "ignore"],
+      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
     },
   );
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error(
+      `OpenShell workspace cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Its remote result is unknown, so NemoClaw preserved the sandbox registry entry. Start the recorded OpenShell gateway, then retry destroy.`,
+    );
+  }
   if (result.status !== 0) {
     // #5455 PRA-2 (best-effort failure semantics, justified): destroy must
     // remove the registry entry and tear down the OpenShell pod even when
-    // the wipe exec returns non-zero. The most common nonzero path is "the
-    // sandbox is no longer live" (gateway down, container already stopped,
-    // openshell connectivity transient): blocking destroy there would leave
-    // the user with an unkillable broken sandbox. The next re-onboard with
-    // the same name is the only path where stale workspace state actually
-    // surfaces, so the contract is: warn loudly here, let destroy proceed,
-    // and the re-onboard banner re-surfaces the warning if the PVC is
-    // detected as non-empty. The behavioral validation for that full
-    // destroy -> re-onboard -> clean-workspace contract (#5455 PRA-1) is an
-    // E2E concern -- the helper-level test below pins the warning and the
-    // CLI-level lifecycle test in test/cli/destroy-gateway-cleanup.test.ts
-    // pins the gateway-select-then-exec-then-delete order.
+    // the wipe exec returns non-zero. A child-process timeout is different:
+    // its remote result is unknown, so destroy stops above and preserves the
+    // registry entry. The most common completed nonzero path is "the sandbox
+    // is no longer live" (gateway down, container already stopped, OpenShell
+    // connectivity transient). Blocking destroy there would leave the user
+    // with an unkillable broken sandbox. The next re-onboard with the same
+    // name is the only path where stale workspace state actually surfaces, so
+    // the contract is: warn loudly here, let destroy proceed, and the
+    // re-onboard banner re-surfaces the warning if the PVC is detected as
+    // non-empty. The behavioral validation for that full destroy ->
+    // re-onboard -> clean-workspace contract (#5455 PRA-1) is an E2E concern.
+    // The helper-level test below pins the warning, and the CLI-level lifecycle
+    // test in test/cli/destroy-gateway-cleanup.test.ts pins the
+    // gateway-select-then-exec-then-delete order.
     warn(
       `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
         "re-onboarding with the same name may resurface old files. " +
