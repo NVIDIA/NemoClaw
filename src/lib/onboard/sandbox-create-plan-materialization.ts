@@ -145,8 +145,10 @@ export function validateSandboxCreateIntentBindings(
   messagingTokenDefs: readonly MessagingTokenDef[],
 ): MessagingTokenDef[] {
   const disabledChannelNames = new Set(intent.disabledChannelNames);
+  const activeChannelNames = new Set(intent.policy.activeMessagingChannels);
   const enabledRequests = intent.messagingProviderRequests.filter(
-    ({ channel }) => !channel || !disabledChannelNames.has(channel),
+    ({ channel }) =>
+      !channel || (activeChannelNames.has(channel) && !disabledChannelNames.has(channel)),
   );
   const intentRequestKeys = new Set(
     intent.messagingProviderRequests.map(messagingProviderRequestKey),
@@ -205,12 +207,26 @@ function resolveProviderChannelMap(
 function filterDisabledMessagingProviders(
   providerNames: string[],
   providerChannels: ReadonlyMap<string, string>,
+  activeChannelNames: ReadonlySet<string>,
   disabledChannelNames: ReadonlySet<string>,
 ): string[] {
   return providerNames.filter((providerName) => {
     const channel = providerChannels.get(providerName);
-    return !channel || !disabledChannelNames.has(channel);
+    return !channel || activeChannelNames.has(channel) || disabledChannelNames.has(channel);
   });
+}
+
+function assertCredentialBindingProvidersAttached(
+  policy: InitialSandboxPolicy,
+  createProviders: ReadonlySet<string>,
+): void {
+  for (const provider of policy.credentialBindingProviders ?? []) {
+    if (createProviders.has(provider)) continue;
+    policy.cleanup?.();
+    throw new Error(
+      `Cannot create sandbox; create-time policy requires credential provider '${provider}', but the sandbox create plan does not attach it.`,
+    );
+  }
 }
 
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
@@ -266,6 +282,7 @@ export function materializeSandboxCreatePlan({
 
   runProviderPreDeleteCleanup();
   const providerChannels = resolveProviderChannelMap(intent.messagingProviderRequests);
+  const activeChannelNames = new Set(intent.policy.activeMessagingChannels);
   const messagingProviders = filterDisabledMessagingProviders(
     [
       ...new Set([
@@ -277,6 +294,7 @@ export function materializeSandboxCreatePlan({
       ]),
     ],
     providerChannels,
+    activeChannelNames,
     new Set(intent.disabledChannelNames),
   );
   const createProviders = new Set<string>();
@@ -286,12 +304,13 @@ export function materializeSandboxCreatePlan({
     createProviders.add(getHermesToolGatewayProviderName(intent.sandboxName));
   }
   for (const provider of intent.extraProviders) createProviders.add(provider);
+  assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
   for (const provider of createProviders) {
     createArgs.push("--provider", provider);
   }
 
   return {
-    activeMessagingChannels: [...intent.activeMessagingChannels],
+    activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
     policyTier: intent.policy.options.policyTier,
     createArgs,
@@ -312,7 +331,7 @@ export function materializeHermesPortableCreatePlan(input: {
     intent.policy.options.agentName !== "hermes" ||
     !["none", "native-only"].includes(intent.gpuRoutePlan) ||
     (intent.hostMounts?.length ?? 0) > 0 ||
-    intent.activeMessagingChannels.length > 0 ||
+    intent.policy.activeMessagingChannels.length > 0 ||
     intent.messagingProviderRequests.length > 0 ||
     intent.reusableMessagingProviders.length > 0 ||
     intent.extraProviders.length > 0 ||
