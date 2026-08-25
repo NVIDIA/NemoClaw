@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { safeTmpHelpers } from "./nemoclaw-start-gateway.test-helpers";
+import { safeTmpHelpers } from "../../nemoclaw-start-gateway.test-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const NORMALIZER = path.join(ROOT, "scripts", "lib", "normalize_mutable_config_perms.py");
