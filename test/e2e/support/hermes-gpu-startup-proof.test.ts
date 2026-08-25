@@ -9,6 +9,7 @@ import {
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
+  normalizeImmutableImageContentId,
 } from "../live/hermes-gpu-startup-proof.ts";
 
 const HEALTHY_NEW_GATEWAY = [
@@ -81,13 +82,25 @@ describe("Hermes GPU startup output contract", () => {
     "rejects fallback disclosure in %s output: %s (#9362)",
     (route, fragment) => {
       expect(() =>
-        assertHermesGpuStartupOutputContract(route, "docker", `${HEALTHY_NEW_GATEWAY}\n${fragment}`),
+        assertHermesGpuStartupOutputContract(
+          route,
+          "docker",
+          `${HEALTHY_NEW_GATEWAY}\n${fragment}`,
+        ),
       ).toThrow();
     },
   );
 });
 
 describe("Hermes GPU managed-image authority proof", () => {
+  it("canonicalizes a Podman bare image content ID without changing canonical Docker IDs", () => {
+    expect(normalizeImmutableImageContentId("c".repeat(64))).toBe(MANAGED_IMAGE_CONTENT_ID);
+    expect(normalizeImmutableImageContentId(MANAGED_IMAGE_CONTENT_ID)).toBe(
+      MANAGED_IMAGE_CONTENT_ID,
+    );
+    expect(normalizeImmutableImageContentId("not-an-image-id")).toBe("not-an-image-id");
+  });
+
   it("accepts one immutable authority shared by the registry, contract, and receipt (#9362)", () => {
     expect(
       assertHermesManagedWorkloadAuthority(

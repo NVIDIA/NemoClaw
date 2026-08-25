@@ -31,6 +31,10 @@ import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-app
 import type { ManagedStartupWorkspaceRoot } from "../managed-startup/state-roots";
 import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import {
+  normalizePodmanLogicalMounts,
+  resolvePodmanStorageGraphRoot,
+} from "../runtime-provider/podman-runtime-surfaces";
+import {
   activateManagedBootstrapSequence,
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
@@ -605,41 +609,28 @@ function networkArgs(inspect: JsonRecord): string[] {
   return names[0] ? ["--network", names[0]] : [];
 }
 
-export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] {
+export function renderPodmanReplacementMountArgs(
+  inspect: JsonRecord,
+  storageGraphRoot: string,
+): string[] {
   if (!Array.isArray(inspect.Mounts)) return [];
   const args: string[] = [];
-  const mountsByDestination = new Map<string, JsonRecord[]>();
-  for (const value of inspect.Mounts) {
-    const mount = record(value, "mount");
+  const mounts = normalizePodmanLogicalMounts(
+    inspect.Mounts.map((value) => record(value, "mount")),
+    storageGraphRoot,
+  ) as readonly JsonRecord[];
+  const destinations = new Set<string>();
+  for (const mount of mounts) {
     const destination = String(mount.Destination ?? "");
     if (!destination || !path.isAbsolute(destination)) {
       throw new Error("Managed bootstrap Podman mount cannot be reproduced exactly.");
     }
-    const mounts = mountsByDestination.get(destination) ?? [];
-    mounts.push(mount);
-    mountsByDestination.set(destination, mounts);
-  }
-  for (const [destination, observed] of mountsByDestination) {
-    let mount: JsonRecord;
-    if (observed.length === 1) {
-      mount = observed[0] as JsonRecord;
-    } else {
-      const imageMounts = observed.filter((candidate) => candidate.Type === "image");
-      const materializedBinds = observed.filter((candidate) => candidate.Type === "bind");
-      if (
-        imageMounts.length !== 1 ||
-        materializedBinds.length !== observed.length - 1 ||
-        materializedBinds.some((candidate) => !path.isAbsolute(String(candidate.Source ?? "")))
-      ) {
-        throw new Error(
-          "Managed bootstrap Podman mount destination resolves to ambiguous runtime mounts.",
-        );
-      }
-      // Podman inspect reports both the provider-owned image-volume identity
-      // and its materialized storage bind. Recreate only the image mount;
-      // Podman resolves a fresh bind for the replacement container.
-      mount = imageMounts[0] as JsonRecord;
+    if (destinations.has(destination)) {
+      throw new Error(
+        "Managed bootstrap Podman mount destination resolves to ambiguous runtime mounts.",
+      );
     }
+    destinations.add(destination);
     const type = String(mount.Type ?? "");
     const name = String(mount.Name ?? "");
     const source = name || String(mount.Source ?? "");
@@ -1885,7 +1876,10 @@ export function createPodmanManagedBootstrapAdapter(
             runtimeArgs: Object.freeze([
               ...renderPodmanReplacementRuntimeArgs(current.rawInspect),
               ...networkArgs(current.rawInspect),
-              ...renderPodmanReplacementMountArgs(current.rawInspect),
+              ...renderPodmanReplacementMountArgs(
+                current.rawInspect,
+                resolvePodmanStorageGraphRoot(options.engine),
+              ),
               ...renderPodmanReplacementSecretArgs(
                 options.engine,
                 current.rawInspect,

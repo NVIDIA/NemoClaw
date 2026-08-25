@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
+import type { SandboxMessagingPlan } from "../messaging";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import * as braveProviderProfile from "./brave-provider-profile";
@@ -10,6 +11,7 @@ import * as messagingBridgeProvider from "./messaging-bridge-provider";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { OpenshellCliHelpers } from "./openshell-cli";
 import { createGatewayScopedOpenshellRunner } from "./setup-inference";
+import { convergeManagedMessagingCredentials as convergeManagedMessagingCredentialsAtFinalPolicy } from "./machine/messaging-credential-convergence";
 
 const providers = require("./providers");
 
@@ -129,6 +131,9 @@ function validatePlannedCredentialProviderBindings(
 }
 
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
+  const messagingProviderIds = new Map<string, string>();
+  const messagingProviderIdKey = (gatewayName: string, providerName: string) =>
+    `${gatewayName}\0${providerName}`;
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
   const ensureWebSearchProviderProfiles = (
@@ -178,11 +183,27 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
     ensureWebSearchProviderProfiles(tokenDefs, runOpenshell);
+    if (options.replaceExisting) {
+      for (const tokenDef of tokenDefs) {
+        messagingProviderIds.delete(messagingProviderIdKey(deps.getGatewayName(), tokenDef.name));
+      }
+    }
     const upserted = providers.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
       options,
     ) as string[];
+    for (const tokenDef of tokenDefs) {
+      if (!upserted.includes(tokenDef.name)) continue;
+      captureMessagingProviderId(
+        {
+          name: tokenDef.name,
+          type: tokenDef.providerType || "generic",
+          credentialEnv: tokenDef.envKey,
+        },
+        runOpenshell,
+      );
+    }
     recordMigratedLegacyMessagingCredentials(tokenDefs, upserted, deps);
     return upserted;
   }
@@ -196,7 +217,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       { root: deps.root, runOpenshell },
     );
     if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+    const matches = gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
       providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
       {
         name: binding.name,
@@ -204,6 +225,29 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         credentialKey: binding.credentialEnv,
       },
     );
+    if (matches) captureMessagingProviderId(binding, runOpenshell);
+    return matches;
+  }
+
+  function captureMessagingProviderId(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): void {
+    const inspection = gatewayProviderMetadata.inspectGatewayCredentialOnlyProviderAuthority(
+      {
+        name: binding.name,
+        type: binding.type,
+        credentialKey: binding.credentialEnv,
+      },
+      runOpenshell,
+    );
+    if (inspection.kind !== "exact") return;
+    const key = messagingProviderIdKey(deps.getGatewayName(), binding.name);
+    const current = messagingProviderIds.get(key);
+    if (current && current !== inspection.id) {
+      throw new Error(`Messaging provider '${binding.name}' changed immutable ownership.`);
+    }
+    messagingProviderIds.set(key, inspection.id);
   }
 
   function providerMatchesGatewayCredential(
@@ -214,6 +258,46 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return credentialBindingMatchesGateway(
       { name, type, credentialEnv },
       gatewayRunner(),
+    );
+  }
+
+  async function convergeManagedMessagingCredentials(
+    sandboxName: string,
+    openshellDriver: string | null | undefined,
+    gatewayName: string,
+    plan: SandboxMessagingPlan,
+    restartManagedGateway: (sandboxName: string) => {
+      readonly ok: boolean;
+      readonly detail?: string;
+    },
+  ) {
+    if (!openshellDriver) {
+      throw new Error(
+        `Cannot converge messaging credentials for unregistered sandbox '${sandboxName}'.`,
+      );
+    }
+    return await convergeManagedMessagingCredentialsAtFinalPolicy(
+      {
+        sandboxName,
+        gatewayName,
+        openshellDriver,
+        plan,
+        environment: process.env,
+        expectedProviderIds: new Map(
+          plan.credentialBindings.flatMap((binding) => {
+            const id = messagingProviderIds.get(
+              messagingProviderIdKey(gatewayName, binding.providerName),
+            );
+            return id ? [[binding.providerName, id]] : [];
+          }),
+        ),
+      },
+      {
+        runOpenshell: deps.runOpenshell,
+        getCredential: deps.getCredential,
+        normalizeCredentialValue: deps.normalizeCredentialValue,
+        restartManagedGateway,
+      },
     );
   }
 
@@ -272,6 +356,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    convergeManagedMessagingCredentials,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertProvider,

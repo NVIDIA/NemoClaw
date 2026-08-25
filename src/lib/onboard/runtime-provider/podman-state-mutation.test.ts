@@ -16,6 +16,7 @@ import {
   type HermesRuntimeStateMutationConfigTarget,
 } from "../../shields/hermes-runtime-state-mutation";
 import { createPodmanRuntimeProviderBundle } from "./podman";
+import { createPodmanStateMutationSurface } from "./podman-state-mutation";
 import { createRuntimeProviderBundleRegistry } from "./registry";
 
 function companionEngine(
@@ -55,6 +56,31 @@ function hermesConfigTarget(): HermesRuntimeStateMutationConfigTarget {
 afterEach(() => cleanupDockerStateMutationRoots());
 
 describe("Podman runtime-provider state mutation", () => {
+  it("treats a materialized image bind as one logical Podman mount", () => {
+    const runtime = harness({ podmanMaterializedImageMount: true });
+    const surface = createPodmanStateMutationSurface({
+      engine: runtime.authority.engine as PodmanBoundContainerEngine,
+      resolveStateDir: () => runtime.root,
+    });
+
+    expect(surface.acquire({ ...runtime.context, plan: plan() })).toMatchObject({
+      providerId: "podman",
+      phase: "fenced",
+    });
+  });
+
+  it("rejects unrelated Podman mounts with the same destination", () => {
+    const runtime = harness({ podmanAmbiguousMounts: true });
+    const surface = createPodmanStateMutationSurface({
+      engine: runtime.authority.engine as PodmanBoundContainerEngine,
+      resolveStateDir: () => runtime.root,
+    });
+
+    expect(() => surface.acquire({ ...runtime.context, plan: plan() })).toThrow(
+      "Podman container has ambiguous mount destinations",
+    );
+  });
+
   it("holds one exact Podman fence through rollback, activation, and durable release", () => {
     const runtime = harness();
     const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
@@ -90,12 +116,12 @@ describe("Podman runtime-provider state mutation", () => {
       .map(([, args]) => args as readonly string[])
       .filter((args) => args.includes("inspect"));
     expect(inspectCommands.length).toBeGreaterThan(0);
-    expect(inspectCommands.every((args) => args.some((value) => value.includes("{{json .ID}}")))).toBe(
-      true,
-    );
-    expect(inspectCommands.every((args) => args.every((value) => !value.includes("{{json .Id}}")))).toBe(
-      true,
-    );
+    expect(
+      inspectCommands.every((args) => args.some((value) => value.includes("{{json .ID}}"))),
+    ).toBe(true);
+    expect(
+      inspectCommands.every((args) => args.every((value) => !value.includes("{{json .Id}}"))),
+    ).toBe(true);
     expect(
       runtime.capture.mock.calls.every(([, args]) =>
         (args as readonly string[])

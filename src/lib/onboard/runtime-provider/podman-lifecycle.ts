@@ -24,7 +24,7 @@ export const PODMAN_SANDBOX_WORKSPACE = "default";
 export const PODMAN_SANDBOX_CONTAINER_PREFIX = `openshell-${PODMAN_SANDBOX_WORKSPACE}--`;
 
 const PROBE_TIMEOUT_MS = 5000;
-const MUTATION_TIMEOUT_MS = 40_000;
+export const PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS = 75_000;
 const STOP_GRACE_SECONDS = 30;
 const FULL_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/u;
 const AT_REST_STATES = new Set(["configured", "created", "dead", "exited", "stopped"]);
@@ -299,7 +299,7 @@ function mutateContainer(
     ...(operation === "stop" ? ["--time", String(STOP_GRACE_SECONDS)] : []),
     container.containerId,
   ];
-  const result = engine.capture(args, MUTATION_TIMEOUT_MS);
+  const result = engine.capture(args, PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS);
   if (result.status !== 0 || result.error) throw commandFailure(operation, result);
 }
 

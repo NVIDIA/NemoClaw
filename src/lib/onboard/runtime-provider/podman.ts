@@ -33,7 +33,11 @@ import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
 } from "./podman-preflight";
-import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
+import {
+  PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+  startPodmanSandbox,
+  stopPodmanSandbox,
+} from "./podman-lifecycle";
 import { createPodmanPrivilegedSandboxControl } from "./podman-privileged-sandbox-control";
 import {
   inspectPodmanHost,
@@ -325,6 +329,7 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "openshell",
+      containerMutationTimeoutMs: PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
       privilegedSandboxControl: createPodmanPrivilegedSandboxControl(sandboxLifecycle),
       start: (input) => startPodmanSandbox(input, sandboxLifecycle),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),

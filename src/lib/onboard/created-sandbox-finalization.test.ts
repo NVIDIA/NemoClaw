@@ -17,6 +17,7 @@ import {
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import { dashboardForwardControlRuntime } from "./dashboard-forward-control";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
@@ -331,16 +332,39 @@ describe("created DCode sandbox finalization", () => {
   it("passes the fresh create endpoint through the production completion constructor (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1";
     const model = "nvidia/nemotron-3-ultra-550b-a55b";
-    const runCaptureOpenshell = vi.fn(() =>
-      [
-        "Sandbox:  dcode",
-        "Route:    inference",
-        "Provider: compatible-endpoint",
-        `Model:    openai:${model}`,
-        "Endpoint: https://inference.local/v1",
-        "Runtime:  Deep Agents Code (terminal)",
-      ].join("\n"),
-    );
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(
+        ["SANDBOX BIND PORT PID STATUS", "alpha 127.0.0.1 18789 101 running"].join("\n"),
+      )
+      .mockReturnValue(
+        [
+          "Sandbox:  dcode",
+          "Route:    inference",
+          "Provider: compatible-endpoint",
+          `Model:    openai:${model}`,
+          "Endpoint: https://inference.local/v1",
+          "Runtime:  Deep Agents Code (terminal)",
+        ].join("\n"),
+      );
+    const ensureDashboardForward = vi.fn(() => 8643);
+    const preservedSibling = {
+      bind: "127.0.0.1",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-alpha",
+      lifecycleLiveIdentityFingerprint: "b".repeat(64),
+      openshellDriver: "podman",
+      pid: 101,
+      port: "18789",
+      sandboxName: "alpha",
+    };
+    vi.spyOn(dashboardForwardControlRuntime, "getSandbox").mockReturnValue({
+      name: "alpha",
+      gatewayName: preservedSibling.gatewayName,
+      lifecycleGeneration: preservedSibling.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: preservedSibling.lifecycleLiveIdentityFingerprint,
+      openshellDriver: preservedSibling.openshellDriver,
+    });
     vi.spyOn(process, "exit").mockImplementation((code): never => {
       throw new Error(`exit ${code}`);
     });
@@ -407,7 +431,7 @@ describe("created DCode sandbox finalization", () => {
       "http://127.0.0.1:8643",
       { config: null, enabled: false },
       vi.fn(),
-      vi.fn(),
+      ensureDashboardForward,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -428,6 +452,10 @@ describe("created DCode sandbox finalization", () => {
       vi.fn(),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["forward", "list"], {
+      ignoreError: true,
+    });
     const created = {
       createResult: { status: 0, output: "", sawProgress: true },
       route: "native",
@@ -453,12 +481,24 @@ describe("created DCode sandbox finalization", () => {
         created,
         null,
         "disabled",
-        false,
+        true,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
       ),
     ).rejects.toThrow("exit 1");
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(ensureDashboardForward).toHaveBeenCalledWith("dcode", "http://127.0.0.1:8643", {
+      rollbackSandboxOnFailure: true,
+      preservedSiblingForwards: [preservedSibling],
+    });
+
+    runCaptureOpenshell.mockClear();
+    const portableCompletionArgs = [...completionArgs] as Parameters<
+      typeof createOnboardCreatedSandboxCompletion
+    >;
+    portableCompletionArgs[9] = true;
+    createOnboardCreatedSandboxCompletion(...portableCompletionArgs);
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
   it("does not publish registry metadata when live validation fails (#6311)", () => {
@@ -963,10 +1003,34 @@ describe("created sandbox completion actions", () => {
           dashboard: {
             chatUiUrl: "http://127.0.0.1:8643",
             initialHermesState: { config: null, enabled: false },
+            preservedSiblingForwards: [
+              {
+                bind: "127.0.0.1",
+                gatewayName: "nemoclaw",
+                lifecycleGeneration: "generation-alpha",
+                lifecycleLiveIdentityFingerprint: "b".repeat(64),
+                openshellDriver: "podman",
+                pid: 101,
+                port: "18789",
+                sandboxName: "alpha",
+              },
+            ],
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward: () => {
+            ensureForward: (_sandboxName, _chatUiUrl, options) => {
+              expect(options.preservedSiblingForwards).toEqual([
+                {
+                  bind: "127.0.0.1",
+                  gatewayName: "nemoclaw",
+                  lifecycleGeneration: "generation-alpha",
+                  lifecycleLiveIdentityFingerprint: "b".repeat(64),
+                  openshellDriver: "podman",
+                  pid: 101,
+                  port: "18789",
+                  sandboxName: "alpha",
+                },
+              ]);
               order.push("dashboard-forward");
               return 8644;
             },

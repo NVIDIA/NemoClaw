@@ -25,9 +25,7 @@ const MCP_BRIDGE_ONBOARD_ARGS = [
   "--yes-i-accept-third-party-software",
 ] as const;
 
-export function buildMcpBridgeOnboardArgs(
-  environment: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function buildMcpBridgeOnboardArgs(environment: NodeJS.ProcessEnv = process.env): string[] {
   const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   return catalogPath
     ? [
@@ -113,6 +111,9 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     NEMOCLAW_RECREATE_SANDBOX: "1",
+    ...(options.agent === "langchain-deepagents-code"
+      ? { NEMOCLAW_TOOL_DISCLOSURE: "direct" }
+      : {}),
   };
 }
 

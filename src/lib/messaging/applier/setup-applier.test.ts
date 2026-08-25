@@ -764,6 +764,127 @@ describe("MessagingSetupApplier", () => {
     });
   });
 
+  it("projects an exact current credential revision without mutating durable plan intent", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const canonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      scoped = "openshell:resolve:env:v77_TELEGRAM_BOT_TOKEN";
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: { accounts: { default: { botToken: canonical, unrelated: "preserved" } } },
+        },
+      }),
+    };
+    const writes: string[] = [];
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      switch (true) {
+        case args.includes("cat") && options?.input === undefined:
+          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+        case options?.input !== undefined:
+          files[target] = options.input;
+          writes.push(target);
+          return { status: 0 };
+        default:
+          return { status: 1 };
+      }
+    };
+
+    expect(
+      MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
+        plan,
+        new Map([["TELEGRAM_BOT_TOKEN", scoped]]),
+        { runOpenshell },
+      ),
+    ).toEqual({ appliedTargets: ["/sandbox/.openclaw/openclaw.json"] });
+    expect(
+      JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}").channels.telegram.accounts
+        .default.botToken,
+    ).toBe(scoped);
+    expect(
+      JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}").channels.telegram.accounts
+        .default.unrelated,
+    ).toBe("preserved");
+    expect(plan.credentialBindings[0]?.placeholder).toBe(canonical);
+    expect(
+      MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
+        plan,
+        new Map([["TELEGRAM_BOT_TOKEN", scoped]]),
+        { runOpenshell },
+      ),
+    ).toEqual({ appliedTargets: [] });
+    expect(writes).toEqual(["/sandbox/.openclaw/openclaw.json"]);
+  });
+
+  it("rejects canonical or unrelated credential projections", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const runOpenshell: MessagingOpenShellRunner = () => ({ status: 1 });
+
+    expect(() =>
+      MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
+        plan,
+        new Map([["TELEGRAM_BOT_TOKEN", "openshell:resolve:env:TELEGRAM_BOT_TOKEN"]]),
+        { runOpenshell },
+      ),
+    ).toThrow("is not revision-scoped");
+    expect(() =>
+      MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
+        plan,
+        new Map([["SLACK_BOT_TOKEN", "openshell:resolve:env:v8_SLACK_BOT_TOKEN"]]),
+        { runOpenshell },
+      ),
+    ).toThrow("does not belong to active env");
+  });
+
+  it("projects both Hermes Slack revisions through the generic env render path", async () => {
+    const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ["slack"], "hermes");
+    const durablePlaceholders = plan.credentialBindings.map((binding) => binding.placeholder);
+    const files: Record<string, string> = {
+      "/sandbox/.hermes/.env": [
+        "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN",
+        "UNRELATED=preserved",
+        "",
+      ].join("\n"),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      switch (true) {
+        case args.includes("cat") && options?.input === undefined:
+          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+        case options?.input !== undefined:
+          files[target] = options.input;
+          return { status: 0 };
+        default:
+          return { status: 1 };
+      }
+    };
+
+    MessagingSetupApplier.applyCredentialProjectionAtOpenShell(
+      plan,
+      new Map([
+        ["SLACK_BOT_TOKEN", "openshell:resolve:env:v8_SLACK_BOT_TOKEN"],
+        ["SLACK_APP_TOKEN", "openshell:resolve:env:v9_SLACK_APP_TOKEN"],
+      ]),
+      { runOpenshell },
+    );
+
+    expect(files["/sandbox/.hermes/.env"]).toContain(
+      "SLACK_BOT_TOKEN=openshell:resolve:env:v8_SLACK_BOT_TOKEN",
+    );
+    expect(files["/sandbox/.hermes/.env"]).toContain(
+      "SLACK_APP_TOKEN=openshell:resolve:env:v9_SLACK_APP_TOKEN",
+    );
+    expect(files["/sandbox/.hermes/.env"]).toContain("UNRELATED=preserved");
+    expect(plan.credentialBindings.map((binding) => binding.placeholder)).toEqual(
+      durablePlaceholders,
+    );
+  });
+
   it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {
     const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ALL_CHANNELS, "hermes");
     const files: Record<string, string> = {};

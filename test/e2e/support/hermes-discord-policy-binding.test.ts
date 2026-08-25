@@ -12,6 +12,7 @@ import YAML from "yaml";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { HERMES_DISCORD_REST_PROOF_SOURCE } from "../live/hermes-discord-proxy.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
 const tempDirs: string[] = [];
@@ -62,6 +63,16 @@ function successfulProbe(stdout = ""): ShellProbeResult {
 }
 
 describe("Hermes Discord E2E policy binding", () => {
+  it("uses only the fresh revision-scoped exec credential for the REST proof", () => {
+    expect(HERMES_DISCORD_REST_PROOF_SOURCE).toContain(
+      'token = os.environ.get("DISCORD_BOT_TOKEN", "")',
+    );
+    expect(HERMES_DISCORD_REST_PROOF_SOURCE).toContain(
+      're.fullmatch(r"openshell:resolve:env:v[0-9]{1,20}_DISCORD_BOT_TOKEN", token)',
+    );
+    expect(HERMES_DISCORD_REST_PROOF_SOURCE).not.toContain("/sandbox/.hermes/.env");
+  });
+
   afterEach(() => {
     for (const tempDir of tempDirs.splice(0)) {
       fs.rmSync(tempDir, { force: true, recursive: true });

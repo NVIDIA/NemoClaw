@@ -601,6 +601,7 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "docker-kubectl-first",
+      containerMutationTimeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
       privilegedSandboxControl: createDockerPrivilegedSandboxControl(),
       start: (input) => startDockerSandbox(input, deps),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),

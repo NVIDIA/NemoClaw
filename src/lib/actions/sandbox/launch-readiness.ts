@@ -171,6 +171,7 @@ export type PortableOpenClawPairingSettlementResult =
 
 export interface OpenClawPairingSettlementTarget {
   readonly gatewayName: string;
+  readonly openshellDriver: string;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly stateDirectory: string;
@@ -956,18 +957,21 @@ function resolveOpenClawPairingSettlementTarget(
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
+  const openshellDriver = normalizedString(entry.openshellDriver);
   if (
     version === null ||
     !expectedVersion ||
     !stateDirectory ||
     !lifecycleGeneration ||
     !lifecycleLiveIdentityFingerprint ||
+    !openshellDriver ||
     (requiredGeneration !== undefined && lifecycleGeneration !== requiredGeneration)
   ) {
     return null;
   }
   return {
     gatewayName,
+    openshellDriver,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint,
     stateDirectory,

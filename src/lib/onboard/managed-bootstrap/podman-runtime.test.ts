@@ -60,6 +60,7 @@ const ORIGINAL_RUNTIME_ID = "2".repeat(64);
 const REPLACEMENT_RUNTIME_ID = "3".repeat(64);
 const LEASE_ID = "123e4567-e89b-42d3-a456-426614174000";
 const ENGINE_AUTHORITY_ID = `podman-sha256:${"4".repeat(64)}`;
+const STORAGE_GRAPH_ROOT = "/run/user/1000/containers/storage";
 
 function committedJournal(): PodmanBootstrapJournal {
   return {
@@ -315,16 +316,19 @@ describe("Podman managed-bootstrap runtime surface", () => {
 
   it("reproduces the OpenShell supervisor image mount on the bootstrap replacement", () => {
     expect(
-      renderPodmanReplacementMountArgs({
-        Mounts: [
-          {
-            Type: "image",
-            Source: `sha256:${"9".repeat(64)}`,
-            Destination: "/opt/openshell/bin",
-            RW: false,
-          },
-        ],
-      }),
+      renderPodmanReplacementMountArgs(
+        {
+          Mounts: [
+            {
+              Type: "image",
+              Source: `sha256:${"9".repeat(64)}`,
+              Destination: "/opt/openshell/bin",
+              RW: false,
+            },
+          ],
+        },
+        STORAGE_GRAPH_ROOT,
+      ),
     ).toEqual([
       "--mount",
       `type=image,source=sha256:${"9".repeat(64)},destination=/opt/openshell/bin,rw=false`,
@@ -334,23 +338,74 @@ describe("Podman managed-bootstrap runtime surface", () => {
   it("collapses Podman's materialized supervisor bind into its image-mount identity", () => {
     const image = `sha256:${"9".repeat(64)}`;
     expect(
-      renderPodmanReplacementMountArgs({
-        Mounts: [
-          {
-            Type: "image",
-            Source: image,
-            Destination: "/opt/openshell/bin",
-            RW: false,
-          },
-          {
-            Type: "bind",
-            Source: "/run/user/1000/containers/storage/overlay/example/merged",
-            Destination: "/opt/openshell/bin",
-            RW: true,
-          },
-        ],
-      }),
+      renderPodmanReplacementMountArgs(
+        {
+          Mounts: [
+            {
+              Type: "image",
+              Source: image,
+              Destination: "/opt/openshell/bin",
+              RW: false,
+            },
+            {
+              Type: "bind",
+              Source: `${STORAGE_GRAPH_ROOT}/overlay/example/merged`,
+              Destination: "/opt/openshell/bin",
+              RW: true,
+            },
+          ],
+        },
+        STORAGE_GRAPH_ROOT,
+      ),
     ).toEqual(["--mount", `type=image,source=${image},destination=/opt/openshell/bin,rw=false`]);
+  });
+
+  it("rejects unrelated Podman mounts with the same destination", () => {
+    expect(() =>
+      renderPodmanReplacementMountArgs(
+        {
+          Mounts: [
+            {
+              Type: "bind",
+              Source: "/srv/first",
+              Destination: "/sandbox/state",
+              RW: true,
+            },
+            {
+              Type: "bind",
+              Source: "/srv/second",
+              Destination: "/sandbox/state",
+              RW: true,
+            },
+          ],
+        },
+        STORAGE_GRAPH_ROOT,
+      ),
+    ).toThrow("mount destination resolves to ambiguous runtime mounts");
+  });
+
+  it("rejects an image mount paired with a foreign absolute bind", () => {
+    expect(() =>
+      renderPodmanReplacementMountArgs(
+        {
+          Mounts: [
+            {
+              Type: "image",
+              Source: `sha256:${"9".repeat(64)}`,
+              Destination: "/opt/openshell/bin",
+              RW: false,
+            },
+            {
+              Type: "bind",
+              Source: "/srv/overlay/attacker/merged",
+              Destination: "/opt/openshell/bin",
+              RW: true,
+            },
+          ],
+        },
+        STORAGE_GRAPH_ROOT,
+      ),
+    ).toThrow("mount destination resolves to ambiguous runtime mounts");
   });
 
   it("restores the exact OpenShell named-volume workspace authority before replacement start", () => {

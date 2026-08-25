@@ -14,7 +14,10 @@ import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-provide
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
+import {
+  hermesDiscordHttpProxyWebSocketUrl,
+  HERMES_DISCORD_REST_PROOF_SOURCE,
+} from "./hermes-discord-proxy.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
@@ -22,7 +25,6 @@ import {
   phase6Env,
   requirePhase6RuntimeProvider,
   resultText,
-  sandboxNode,
   sandboxSh,
   sandboxShWithArgs,
   shellQuote,
@@ -670,35 +672,11 @@ PY`,
   expectExitZero(filesystemSurface, "sandbox filesystem token isolation");
   expect(filesystemSurface.stdout.trim()).toBe("ABSENT");
 
-  const discordApi = await sandboxNode(
+  const discordApi = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    `
-import fs from "node:fs";
-import https from "node:https";
-const env = fs.readFileSync("/sandbox/.hermes/.env", "utf8");
-const line = env.split(/\\n/).find((entry) => entry.startsWith("DISCORD_BOT_TOKEN="));
-const token = line ? line.slice("DISCORD_BOT_TOKEN=".length) : "";
-switch (token ? "present" : "missing") {
-  case "missing":
-    console.log(JSON.stringify({ error: "missing_token" }));
-    process.exit(0);
-}
-const req = https.request({
-  hostname: "discord.com",
-  path: "/api/v10/users/@me",
-  method: "GET",
-  headers: { Authorization: "Bot " + token },
-}, (res) => {
-  let body = "";
-  res.on("data", (d) => { body += d; });
-  res.on("end", () => console.log(JSON.stringify({ statusCode: res.statusCode, body: body.slice(0, 200) })));
-});
-req.on("error", (error) => console.log(JSON.stringify({ error: error.message })));
-req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: "timeout" })); });
-req.end();
-`,
-    {},
+    `/opt/hermes/.venv/bin/python - <<'PY'\n${HERMES_DISCORD_REST_PROOF_SOURCE}\nPY\n`,
+    [],
     {
       artifactName: "phase-6-discord-users-me",
       redactionValues,

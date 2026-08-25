@@ -21,6 +21,7 @@ function readSandboxDriver(name: string): string | null | undefined {
 
 interface SandboxLifecycleEngine {
   readonly runtimeProviderId: string;
+  readonly mutationTimeoutMs: number;
   capture(args: readonly string[], timeoutMs?: number): RuntimeProviderCommandCapture;
 }
 
@@ -30,7 +31,11 @@ function resolveSandboxLifecycleEngine(
   const normalized = driverName?.trim().toLowerCase();
   if (!normalized) return null;
   const provider = resolveRegisteredRuntimeProvider(normalized);
-  if (!provider || provider.identity.id !== normalized || provider.containerEngine.supported !== true) {
+  if (
+    !provider ||
+    provider.identity.id !== normalized ||
+    provider.containerEngine.supported !== true
+  ) {
     return null;
   }
   const containerEngine = provider.containerEngine;
@@ -39,6 +44,10 @@ function resolveSandboxLifecycleEngine(
   }
   return {
     runtimeProviderId: provider.identity.id,
+    mutationTimeoutMs:
+      provider.lifecycle.supported === true && provider.lifecycle.containerMutationTimeoutMs
+        ? provider.lifecycle.containerMutationTimeoutMs
+        : CONTAINER_ENGINE_MUTATION_TIMEOUT_MS,
     capture: (args, timeoutMs) => containerEngine.capture("sandbox-lifecycle", args, timeoutMs),
   };
 }
@@ -125,14 +134,15 @@ interface StartDeps {
 const defaultStartDeps: StartDeps = {
   getSandboxDriver: readSandboxDriver,
   listSandboxNames: () =>
-    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
+    registry
+      .listSandboxes()
+      .sandboxes.filter(registry.isPublishedSandboxRegistration)
+      .map((entry) => entry.name),
   resolveLifecycleEngine: resolveSandboxLifecycleEngine,
   listLabeledContainerNames,
   inspectStatus: inspectContainerStatus,
   start: (engine, containerName) =>
-    captureSucceeded(
-      engine.capture(["start", containerName], CONTAINER_ENGINE_MUTATION_TIMEOUT_MS),
-    ),
+    captureSucceeded(engine.capture(["start", containerName], engine.mutationTimeoutMs)),
 };
 
 export function startStoppedSandboxContainerForBackup(
@@ -208,9 +218,7 @@ interface StopDeps {
 const defaultStopDeps: StopDeps = {
   resolveLifecycleEngine: resolveSandboxLifecycleEngine,
   stop: (engine, containerName) =>
-    captureSucceeded(
-      engine.capture(["stop", containerName], CONTAINER_ENGINE_MUTATION_TIMEOUT_MS),
-    ),
+    captureSucceeded(engine.capture(["stop", containerName], engine.mutationTimeoutMs)),
   inspectStatus: inspectContainerStatus,
 };
 

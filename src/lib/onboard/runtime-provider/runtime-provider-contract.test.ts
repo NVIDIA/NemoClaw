@@ -565,6 +565,23 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/lifecycle\.verifyStarted must be a function/u);
   });
 
+  it("rejects an invalid provider-owned container mutation timeout", () => {
+    const bundle = mxcBundle();
+    expectSupportedSurface(bundle.lifecycle);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "lifecycle", {
+            ...bundle.lifecycle,
+            containerMutationTimeoutMs: 0,
+          }),
+        ],
+      ]),
+    ).toThrow(/invalid container mutation timeout/u);
+  });
+
   it("rejects cleanup without a side-effect-free ownership plan", () => {
     const bundle = mxcBundle();
     expectSupportedSurface(bundle.cleanup);

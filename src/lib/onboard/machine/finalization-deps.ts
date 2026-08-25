@@ -22,7 +22,9 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+  | "checkAndRecoverSandboxProcesses"
+  | "restartSandboxGateway"
+  | "waitForRecreatedSandboxOpenShellReady"
 >;
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
@@ -97,6 +99,7 @@ function samePairingTarget(
   return (
     right !== null &&
     left.gatewayName === right.gatewayName &&
+    left.openshellDriver === right.openshellDriver &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
     left.lifecycleLiveIdentityFingerprint === right.lifecycleLiveIdentityFingerprint &&
     left.stateDirectory === right.stateDirectory &&
@@ -111,6 +114,7 @@ function samePairingRuntimeSurface(
   return (
     right !== null &&
     left.gatewayName === right.gatewayName &&
+    left.openshellDriver === right.openshellDriver &&
     left.stateDirectory === right.stateDirectory &&
     left.version === right.version
   );
@@ -120,6 +124,11 @@ type PairingWaitResult =
   | { readonly kind: "observed"; readonly value: OpenClawPairingSettlementObservation }
   | { readonly kind: "target-changed" }
   | { readonly kind: "timeout" };
+
+type PairingWaitWithTargetResult = {
+  readonly result: PairingWaitResult;
+  readonly target: OpenClawPairingSettlementTarget;
+};
 
 async function waitForPairingObservation(
   name: string,
@@ -148,6 +157,35 @@ async function waitForPairingObservation(
     const remainingAfterAttempt = deadline - deps.now();
     if (remainingAfterAttempt <= 0) return { kind: "timeout" };
     await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remainingAfterAttempt));
+  }
+}
+
+/**
+ * The bounded warm-up is itself allowed to recover the managed workload. That
+ * recovery can publish its replacement generation after the warm-up command
+ * returns, while the pairing request is still settling. Rebind once only when
+ * the new target proves the same gateway, state directory, agent version, and
+ * runtime surface; every later change remains foreign drift.
+ */
+async function waitForPairingObservationAfterWarmup(
+  name: string,
+  initialTarget: OpenClawPairingSettlementTarget,
+  deadline: number,
+  accept: (value: OpenClawPairingSettlementObservation) => boolean,
+  deps: OrdinaryOpenClawPairingSettlementDeps,
+  alreadyRebound: boolean,
+): Promise<PairingWaitWithTargetResult> {
+  let target = initialTarget;
+  let rebound = alreadyRebound;
+  while (true) {
+    const result = await waitForPairingObservation(name, target, deadline, accept, deps);
+    if (result.kind !== "target-changed") return { result, target };
+    const refreshed = deps.getTarget(name);
+    if (rebound || !samePairingRuntimeSurface(target, refreshed)) {
+      return { result, target };
+    }
+    target = refreshed;
+    rebound = true;
   }
 }
 
@@ -261,12 +299,13 @@ export async function settleOrdinaryOpenClawPairing(
             if (!samePairingRuntimeSurface(target, refreshedTarget)) {
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
+            const warmupAlreadyRebound = !samePairingTarget(target, refreshedTarget);
             target = refreshedTarget;
             const pairingAppearanceDeadline = Math.min(
               settlementDeadline,
               deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
             );
-            baseline = await waitForPairingObservation(
+            const waited = await waitForPairingObservationAfterWarmup(
               name,
               target,
               pairingAppearanceDeadline,
@@ -275,7 +314,10 @@ export async function settleOrdinaryOpenClawPairing(
                 return value.state !== "pairing-only";
               },
               deps,
+              warmupAlreadyRebound,
             );
+            target = waited.target;
+            baseline = waited.result;
           }
           if (baseline.kind === "target-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
@@ -362,6 +404,24 @@ export const finalizationHandlerDeps = {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
+  withManagedMessagingCredentialLocks<T>(
+    name: string,
+    gatewayName: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return finalizationHandlerRuntime
+      .loadSandboxLifecycleLock()
+      .withMcpLifecycleLock(name, () =>
+        finalizationHandlerRuntime
+          .loadGatewayRouteLock()
+          .withGatewayRouteMutationLock(gatewayName, operation),
+      );
+  },
+  restartManagedGateway(name: string): ReturnType<ProcessRecoveryDeps["restartSandboxGateway"]> {
+    return finalizationHandlerRuntime.loadProcessRecovery().restartSandboxGateway(name, {
+      quiet: true,
+    });
+  },
   settleOrdinaryOpenClawPairing,
   ordinaryOpenClawPairingIncompleteMessage,
   readRegistryAgent(name: string): string | null {
@@ -370,6 +430,29 @@ export const finalizationHandlerDeps = {
         name
       ]?.agent;
       return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
+  },
+  readManagedMessagingRuntimeIdentity(name: string) {
+    try {
+      const entry = finalizationHandlerRuntime.loadRegistryPersistence().load().sandboxes[name];
+      if (
+        typeof entry?.gatewayName !== "string" ||
+        typeof entry.lifecycleGeneration !== "string" ||
+        typeof entry.openshellDriver !== "string" ||
+        (entry.lifecycleLiveIdentityFingerprint !== undefined &&
+          entry.lifecycleLiveIdentityFingerprint !== null &&
+          typeof entry.lifecycleLiveIdentityFingerprint !== "string")
+      ) {
+        return null;
+      }
+      return {
+        gatewayName: entry.gatewayName,
+        lifecycleGeneration: entry.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint ?? null,
+        openshellDriver: entry.openshellDriver,
+      };
     } catch {
       return null;
     }

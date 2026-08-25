@@ -13,6 +13,10 @@ vi.mock("../../onboard/runtime-provider/selection", () => ({
     const normalized = String(providerId).trim().toLowerCase();
     return {
       identity: { id: normalized },
+      lifecycle: {
+        supported: true,
+        containerMutationTimeoutMs: normalized === "podman" ? 75_000 : 30_000,
+      },
       containerEngine: {
         supported: true,
         identities: [
@@ -45,7 +49,7 @@ import {
 } from "./stopped-sandbox-backup";
 
 function lifecycleEngine(runtimeProviderId = "docker") {
-  return { runtimeProviderId, capture: vi.fn() };
+  return { runtimeProviderId, mutationTimeoutMs: 30_000, capture: vi.fn() };
 }
 
 describe("startStoppedSandboxContainerForBackup", () => {
@@ -249,6 +253,8 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
 });
 
 describe("returnSandboxContainerToStopped", () => {
+  beforeEach(() => adapterMocks.providerCapture.mockReset());
+
   const started = {
     containerName: "openshell-my-sb-abc123",
     runtimeProviderId: "podman",
@@ -269,6 +275,20 @@ describe("returnSandboxContainerToStopped", () => {
     expect(resolveLifecycleEngine).toHaveBeenCalledWith("podman");
     expect(stop).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
     expect(inspectStatus).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
+  });
+
+  it("uses the Podman lifecycle timeout when restoring a stopped container", () => {
+    adapterMocks.providerCapture
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "exited\n", stderr: "" });
+
+    expect(returnSandboxContainerToStopped(started)).toBe(true);
+    expect(adapterMocks.providerCapture).toHaveBeenNthCalledWith(
+      1,
+      "sandbox-lifecycle",
+      ["stop", "openshell-my-sb-abc123"],
+      75_000,
+    );
   });
 
   it("reports failure when the provider stop operation fails", () => {

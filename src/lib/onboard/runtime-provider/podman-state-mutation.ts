@@ -7,6 +7,10 @@ import {
   createContainerStateMutationSurface,
   type ContainerStateMutationSurfaceOptions,
 } from "./container-state-mutation";
+import {
+  normalizePodmanLogicalMounts,
+  resolvePodmanStorageGraphRoot,
+} from "./podman-runtime-surfaces";
 
 export interface PodmanStateMutationSurfaceOptions {
   readonly engine: PodmanBoundContainerEngine;
@@ -27,6 +31,8 @@ export function createPodmanStateMutationSurface(
     engineOperation: "state-mutation",
     runtimeIdInspectField: "ID",
     privatePidMode: "private",
+    normalizeInspectionMounts: (mounts) =>
+      normalizePodmanLogicalMounts(mounts, resolvePodmanStorageGraphRoot(options.engine)),
     createAuthority: () => ({
       assertAuthority: options.engine.assertAuthority,
       engine: options.engine,

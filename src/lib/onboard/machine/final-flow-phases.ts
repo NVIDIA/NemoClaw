@@ -131,6 +131,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      messagingPlan: context.session?.messagingPlan ?? null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
       deps: finalizationDeps,
@@ -156,6 +157,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      messagingPlan: context.session?.messagingPlan ?? null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
       deps: finalizationDeps,

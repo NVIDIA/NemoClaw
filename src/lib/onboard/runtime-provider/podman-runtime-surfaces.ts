@@ -46,6 +46,91 @@ export const NATIVE_PODMAN_SANDBOX_HOST_ADDRESS = "169.254.2.2";
 export const NATIVE_PODMAN_RESOURCE_LABEL = "openshell.managed";
 export const NATIVE_PODMAN_RESOURCE_LABEL_VALUE = "true";
 
+type PodmanMount = Readonly<Record<string, unknown>>;
+const PODMAN_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
+const PODMAN_STORAGE_PROBE_TIMEOUT_MS = 5_000;
+
+function mountRecord(value: unknown): PodmanMount | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as PodmanMount)
+    : null;
+}
+
+function isMaterializedPodmanImageBind(
+  value: PodmanMount | null,
+  storageGraphRoot: string,
+): boolean {
+  if (value?.Type !== "bind" || value.RW !== true) return false;
+  const source = String(value.Source ?? "");
+  if (!path.isAbsolute(source) || path.normalize(source) !== source) return false;
+  const relative = path.relative(storageGraphRoot, source);
+  const segments = relative.split(path.sep);
+  return (
+    relative.length > 0 &&
+    !path.isAbsolute(relative) &&
+    segments.length === 3 &&
+    segments[0] === "overlay" &&
+    Boolean(segments[1]) &&
+    segments[2] === "merged"
+  );
+}
+
+/** Read the exact graphroot from the already authority-bound Podman engine. */
+export function resolvePodmanStorageGraphRoot(engine: PodmanBoundContainerEngine): string {
+  const result = engine.capture(
+    ["info", "--format", "{{.Store.GraphRoot}}"],
+    PODMAN_STORAGE_PROBE_TIMEOUT_MS,
+  );
+  if (result.status !== 0 || result.error) {
+    throw new Error("Native Podman storage graphroot is unavailable.");
+  }
+  return normalizedAbsolutePath(result.stdout.trim(), "storage graphroot");
+}
+
+/**
+ * Collapse Podman's two inspect rows for one image mount into the provider-owned
+ * image identity. Other duplicate destinations remain visible to the caller's
+ * ambiguity check.
+ */
+export function normalizePodmanLogicalMounts(
+  mounts: readonly unknown[],
+  storageGraphRoot: string,
+): readonly unknown[] {
+  const normalizedGraphRoot = normalizedAbsolutePath(storageGraphRoot, "storage graphroot");
+  const groups = new Map<string | number, unknown[]>();
+  mounts.forEach((value, index) => {
+    const destination = mountRecord(value)?.Destination;
+    const group = typeof destination === "string" && destination.length > 0 ? destination : index;
+    const observed = groups.get(group) ?? [];
+    observed.push(value);
+    groups.set(group, observed);
+  });
+
+  const normalized: unknown[] = [];
+  for (const observed of groups.values()) {
+    if (observed.length === 1) {
+      normalized.push(observed[0]);
+      continue;
+    }
+    const records = observed.map(mountRecord);
+    const imageMounts = records.filter((candidate) => candidate?.Type === "image");
+    const materializedBinds = records.filter((candidate) => candidate?.Type === "bind");
+    if (
+      imageMounts.length === 1 &&
+      materializedBinds.length === 1 &&
+      observed.length === 2 &&
+      imageMounts[0]?.RW === false &&
+      PODMAN_IMAGE_CONTENT_ID.test(String(imageMounts[0]?.Source ?? "")) &&
+      isMaterializedPodmanImageBind(materializedBinds[0] ?? null, normalizedGraphRoot)
+    ) {
+      normalized.push(imageMounts[0] as PodmanMount);
+    } else {
+      normalized.push(...observed);
+    }
+  }
+  return Object.freeze(normalized);
+}
+
 const FULL_ID = /^[a-f0-9]{64}$/u;
 const ROUTE_STORE_DIRECTORY = "runtime-provider-podman";
 const ROUTE_STORE_FILE = "host-local-inference-route.json";

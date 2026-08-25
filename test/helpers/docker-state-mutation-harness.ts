@@ -150,6 +150,8 @@ export interface DockerStateMutationHarnessOptions {
   readonly loseReleaseResponseOnce?: boolean;
   readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
+  readonly podmanAmbiguousMounts?: boolean;
+  readonly podmanMaterializedImageMount?: boolean;
 }
 
 export interface DockerStateMutationHarnessState {
@@ -237,8 +239,17 @@ function createContainerStateMutationHarness(
   };
 
   const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args, _timeout, input) => {
-    const commandStart = args.findIndex((value) => value === "ps" || value === "container");
+    const commandStart = args.findIndex(
+      (value) => value === "ps" || value === "container" || value === "info",
+    );
     const command = commandStart < 0 ? [] : args.slice(commandStart);
+    if (command[0] === "info") {
+      return {
+        status: 0,
+        stdout: "/run/user/1000/containers/storage\n",
+        stderr: "",
+      };
+    }
     if (command[0] === "ps") {
       return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
     }
@@ -277,6 +288,46 @@ function createContainerStateMutationHarness(
               RW: true,
               Propagation: "rprivate",
             },
+            ...(options.podmanMaterializedImageMount
+              ? [
+                  {
+                    Type: "image",
+                    Source: `sha256:${"9".repeat(64)}`,
+                    Destination: "/opt/openshell/bin",
+                    Mode: "",
+                    RW: false,
+                    Propagation: "rprivate",
+                  },
+                  {
+                    Type: "bind",
+                    Source: "/run/user/1000/containers/storage/overlay/example/merged",
+                    Destination: "/opt/openshell/bin",
+                    Mode: "",
+                    RW: true,
+                    Propagation: "rprivate",
+                  },
+                ]
+              : []),
+            ...(options.podmanAmbiguousMounts
+              ? [
+                  {
+                    Type: "bind",
+                    Source: "/srv/first",
+                    Destination: "/sandbox/ambiguous",
+                    Mode: "",
+                    RW: true,
+                    Propagation: "rprivate",
+                  },
+                  {
+                    Type: "bind",
+                    Source: "/srv/second",
+                    Destination: "/sandbox/ambiguous",
+                    Mode: "",
+                    RW: true,
+                    Propagation: "rprivate",
+                  },
+                ]
+              : []),
             ...(state.overlayProc
               ? [
                   {

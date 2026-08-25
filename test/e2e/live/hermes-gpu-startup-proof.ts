@@ -50,6 +50,13 @@ interface HermesGpuStartupProofOptions {
 
 const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
+const BARE_IMMUTABLE_IMAGE_CONTENT_ID = /^[a-f0-9]{64}$/u;
+
+export function normalizeImmutableImageContentId(value: unknown): unknown {
+  return typeof value === "string" && BARE_IMMUTABLE_IMAGE_CONTENT_ID.test(value)
+    ? `sha256:${value}`
+    : value;
+}
 
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
@@ -212,7 +219,9 @@ export async function assertHermesGpuStartupProof({
   const managedImageInspectEntry = (
     JSON.parse(managedImageInspection.stdout) as Array<{ Id?: unknown; ID?: unknown }>
   )[0];
-  const managedImageContentId = managedImageInspectEntry?.Id ?? managedImageInspectEntry?.ID;
+  const managedImageContentId = normalizeImmutableImageContentId(
+    managedImageInspectEntry?.Id ?? managedImageInspectEntry?.ID,
+  );
   expect(managedImageContentId).toMatch(IMMUTABLE_IMAGE_CONTENT_ID);
 
   const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;

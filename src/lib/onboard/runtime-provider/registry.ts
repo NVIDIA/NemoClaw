@@ -423,6 +423,16 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
     requireFunction(surface, "start", "lifecycle");
     requireFunction(surface, "verifyStarted", "lifecycle");
     requireFunction(surface, "stop", "lifecycle");
+    if (
+      surface.containerMutationTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
+        (surface.containerMutationTimeoutMs as number) < 1_000 ||
+        (surface.containerMutationTimeoutMs as number) > 5 * 60_000)
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `lifecycle for '${providerId}' has an invalid container mutation timeout`,
+      );
+    }
     const control = requireOwnRecord(surface, "privilegedSandboxControl");
     requireFunction(control, "resolveTarget", "lifecycle.privilegedSandboxControl");
     requireFunction(control, "execute", "lifecycle.privilegedSandboxControl");

@@ -28,6 +28,7 @@ import {
 
 const PAIRING_TARGET = {
   gatewayName: "nemoclaw",
+  openshellDriver: "docker",
   lifecycleGeneration: "generation-1",
   lifecycleLiveIdentityFingerprint: "fingerprint-1",
   stateDirectory: "/sandbox/.openclaw",
@@ -331,6 +332,94 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(currentTarget.lifecycleGeneration).toBe("generation-2");
   });
 
+  it("rejects a second same-surface generation after warm-up already consumed the rebind", async () => {
+    let currentTarget = PAIRING_TARGET;
+    const generation = (suffix: string) => ({
+      ...PAIRING_TARGET,
+      lifecycleGeneration: `generation-${suffix}`,
+      lifecycleLiveIdentityFingerprint: `fingerprint-${suffix}`,
+    });
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => currentTarget),
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockImplementationOnce(() => {
+          currentTarget = generation("3");
+          return SCOPE_UPGRADE_PENDING;
+        }),
+      runWarmup: vi.fn(() => {
+        currentTarget = generation("2");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "runtime-identity-invalid",
+    });
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("rebinds once when warm-up recovery publishes the same runtime surface while pairing settles", async () => {
+    let currentTarget = PAIRING_TARGET;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => currentTarget),
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockImplementationOnce(() => {
+          currentTarget = {
+            ...PAIRING_TARGET,
+            lifecycleGeneration: "generation-2",
+            lifecycleLiveIdentityFingerprint: "fingerprint-2",
+          };
+          return SCOPE_UPGRADE_PENDING;
+        })
+        .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
+        .mockReturnValue(SETTLED),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+    expect(currentTarget.lifecycleGeneration).toBe("generation-2");
+  });
+
+  it("rejects a second lifecycle generation change after the bounded warm-up", async () => {
+    let currentTarget = PAIRING_TARGET;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => currentTarget),
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockImplementationOnce(() => {
+          currentTarget = {
+            ...PAIRING_TARGET,
+            lifecycleGeneration: "generation-2",
+            lifecycleLiveIdentityFingerprint: "fingerprint-2",
+          };
+          return SCOPE_UPGRADE_PENDING;
+        })
+        .mockImplementationOnce(() => {
+          currentTarget = {
+            ...PAIRING_TARGET,
+            lifecycleGeneration: "generation-3",
+            lifecycleLiveIdentityFingerprint: "fingerprint-3",
+          };
+          return SCOPE_UPGRADE_PENDING;
+        }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "runtime-identity-invalid",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
   it("rejects a different runtime surface after the bounded warm-up", async () => {
     let currentTarget = PAIRING_TARGET;
     const scope = ordinaryPairingDeps({
@@ -409,9 +498,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       throw new Error("not published");
     };
     const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() =>
-        attempts++ < 10 ? unavailable() : SCOPE_UPGRADE_PENDING,
-      ),
+      observePairing: vi.fn(() => (attempts++ < 10 ? unavailable() : SCOPE_UPGRADE_PENDING)),
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
@@ -650,6 +737,7 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     );
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(),
+      restartSandboxGateway: vi.fn(),
       waitForRecreatedSandboxOpenShellReady,
     });
 
@@ -716,5 +804,72 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
     });
 
     expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBeNull();
+  });
+});
+
+describe("finalizationHandlerDeps managed messaging authority", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reads the exact persisted runtime identity", () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+      load: () => ({
+        sandboxes: {
+          alpha: {
+            gatewayName: "nemoclaw",
+            lifecycleGeneration: "generation-1",
+            lifecycleLiveIdentityFingerprint: "a".repeat(64),
+            openshellDriver: "podman",
+          },
+        },
+      }),
+    } as never);
+
+    expect(finalizationHandlerDeps.readManagedMessagingRuntimeIdentity("alpha")).toEqual({
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      openshellDriver: "podman",
+    });
+  });
+
+  it("holds lifecycle then gateway authority across one credential operation", async () => {
+    const order: string[] = [];
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock: async (_name: string, operation: () => Promise<unknown>) => {
+        order.push("sandbox:start");
+        const result = await operation();
+        order.push("sandbox:end");
+        return result;
+      },
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRouteLock").mockReturnValue({
+      withGatewayRouteMutationLock: async (
+        _name: string,
+        operation: () => Promise<unknown>,
+      ) => {
+        order.push("gateway:start");
+        const result = await operation();
+        order.push("gateway:end");
+        return result;
+      },
+    } as never);
+
+    await expect(
+      finalizationHandlerDeps.withManagedMessagingCredentialLocks(
+        "alpha",
+        "nemoclaw",
+        async () => {
+          order.push("operation");
+          return "done";
+        },
+      ),
+    ).resolves.toBe("done");
+    expect(order).toEqual([
+      "sandbox:start",
+      "gateway:start",
+      "operation",
+      "gateway:end",
+      "sandbox:end",
+    ]);
   });
 });

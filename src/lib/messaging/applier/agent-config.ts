@@ -65,6 +65,32 @@ export async function applyAgentConfigAtOpenShell(
     });
   }
 
+  const rendered = applyAgentRenderAtOpenShell(plan, options.runOpenshell);
+  appliedTargets.push(...rendered.appliedTargets);
+
+  for (const request of hookRequests.filter((hook) => hook.phase === "post-agent-install")) {
+    await runApplyHook(request, options.runHook, plan, options.runOpenshell, {
+      appliedHooks,
+      appliedTargets,
+    });
+  }
+
+  return {
+    appliedTargets: uniqueStrings(appliedTargets),
+    appliedHooks,
+    unresolvedTemplateRefs: rendered.unresolvedTemplateRefs,
+  };
+}
+
+function applyAgentRenderAtOpenShell(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): {
+  readonly appliedTargets: readonly string[];
+  readonly unresolvedTemplateRefs: readonly string[];
+} {
+  const appliedTargets: string[] = [];
+
   const enabledRender = filterEnabledPlanEntries(plan, plan.agentRender);
   const disabledChannelIds = new Set(plan.disabledChannels);
   const disabledJsonRender = plan.agentRender.filter(
@@ -79,7 +105,7 @@ export async function applyAgentConfigAtOpenShell(
     if (render.some((entry) => entry.kind !== kind)) {
       throw new Error(`Cannot apply mixed messaging render kinds to ${target}.`);
     }
-    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, runOpenshell);
     const contents =
       kind === "json-fragment"
         ? applyJsonFragments(
@@ -96,22 +122,200 @@ export async function applyAgentConfigAtOpenShell(
             resolvedTarget,
           )
         : applyEnvLines(existing, render.filter(isEnvLinesRender));
-    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, runOpenshell);
     appliedTargets.push(resolvedTarget);
-  }
-
-  for (const request of hookRequests.filter((hook) => hook.phase === "post-agent-install")) {
-    await runApplyHook(request, options.runHook, plan, options.runOpenshell, {
-      appliedHooks,
-      appliedTargets,
-    });
   }
 
   return {
     appliedTargets: uniqueStrings(appliedTargets),
-    appliedHooks,
     unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
   };
+}
+
+/**
+ * Project exact current provider placeholders into agent-owned config without
+ * changing the durable manifest plan or replaying channel hooks. The caller
+ * supplies values observed from fresh OpenShell execs after policy binding.
+ */
+export function applyCredentialProjectionAtOpenShell(
+  plan: SandboxMessagingPlan,
+  placeholders: ReadonlyMap<string, string>,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly appliedTargets: readonly string[] } {
+  const activeBindings = filterEnabledPlanEntries(plan, plan.credentialBindings);
+  const activeEnvKeys = new Set(activeBindings.map((binding) => binding.providerEnvKey));
+  for (const [envKey, placeholder] of placeholders) {
+    if (!activeEnvKeys.has(envKey)) {
+      throw new Error(`Messaging credential projection does not belong to active env '${envKey}'.`);
+    }
+    if (
+      placeholder === `openshell:resolve:env:${envKey}` ||
+      !isProviderPlaceholderForEnvKey(placeholder, envKey)
+    ) {
+      throw new Error(`Messaging credential projection for '${envKey}' is not revision-scoped.`);
+    }
+  }
+  const appliedTargets: string[] = [];
+  const activeRender = filterEnabledPlanEntries(plan, plan.agentRender);
+  for (const [target, render] of groupRenderByTarget(activeRender)) {
+    const projectsCredential = render.some((entry) =>
+      entry.kind === "json-fragment"
+        ? hasCredentialProjection(entry.value, activeBindings, placeholders)
+        : entry.lines.some((line) =>
+            hasCredentialProjection(line, activeBindings, placeholders),
+          ),
+    );
+    if (!projectsCredential) continue;
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    if (existing === undefined) {
+      throw new Error(`Messaging credential projection target '${resolvedTarget}' is unavailable.`);
+    }
+    const kind = render[0]?.kind;
+    if (!kind || render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot project mixed messaging render kinds to ${target}.`);
+    }
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonCredentialProjection(
+            existing,
+            render.filter(isJsonRender),
+            resolvedTarget,
+            activeBindings,
+            placeholders,
+          )
+        : applyEnvCredentialProjection(
+            existing,
+            render.filter(isEnvLinesRender),
+            activeBindings,
+            placeholders,
+          );
+    if (contents === existing) continue;
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+  return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function projectCredentialPlaceholderText(
+  value: string,
+  bindings: SandboxMessagingPlan["credentialBindings"],
+  placeholders: ReadonlyMap<string, string>,
+): string | null {
+  for (const binding of bindings) {
+    const replacement = placeholders.get(binding.providerEnvKey);
+    if (!replacement) continue;
+    if (value === binding.placeholder) return replacement;
+    const separator = value.indexOf("=");
+    if (
+      separator > 0 &&
+      value.slice(0, separator).trim() === binding.providerEnvKey &&
+      value.slice(separator + 1) === binding.placeholder
+    ) {
+      return `${value.slice(0, separator + 1)}${replacement}`;
+    }
+  }
+  return null;
+}
+
+const NO_CREDENTIAL_PROJECTION = Symbol("no-credential-projection");
+
+function hasCredentialProjection(
+  value: MessagingSerializableValue,
+  bindings: SandboxMessagingPlan["credentialBindings"],
+  placeholders: ReadonlyMap<string, string>,
+): boolean {
+  if (typeof value === "string") {
+    return bindings.some(
+      (binding) =>
+        placeholders.has(binding.providerEnvKey) && value.includes(binding.placeholder),
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasCredentialProjection(entry, bindings, placeholders));
+  }
+  return (
+    isObjectRecord(value) &&
+    Object.values(value).some((entry) =>
+      hasCredentialProjection(entry as MessagingSerializableValue, bindings, placeholders),
+    )
+  );
+}
+
+function credentialProjectionPatch(
+  desired: MessagingSerializableValue,
+  existing: unknown,
+  bindings: SandboxMessagingPlan["credentialBindings"],
+  placeholders: ReadonlyMap<string, string>,
+): MessagingSerializableValue | typeof NO_CREDENTIAL_PROJECTION {
+  if (typeof desired === "string") {
+    return projectCredentialPlaceholderText(desired, bindings, placeholders) ??
+      NO_CREDENTIAL_PROJECTION;
+  }
+  if (Array.isArray(desired)) {
+    if (!Array.isArray(existing) || existing.length !== desired.length) {
+      return NO_CREDENTIAL_PROJECTION;
+    }
+    let changed = false;
+    const projected = desired.map((entry, index) => {
+      const patch = credentialProjectionPatch(entry, existing[index], bindings, placeholders);
+      if (patch === NO_CREDENTIAL_PROJECTION) return existing[index] as MessagingSerializableValue;
+      changed = true;
+      return patch;
+    });
+    return changed ? projected : NO_CREDENTIAL_PROJECTION;
+  }
+  if (isObjectRecord(desired)) {
+    const existingObject = isObjectRecord(existing) ? existing : {};
+    const projected = Object.fromEntries(
+      Object.entries(desired).flatMap(([key, entry]) => {
+        const patch = credentialProjectionPatch(
+          entry as MessagingSerializableValue,
+          existingObject[key],
+          bindings,
+          placeholders,
+        );
+        return patch === NO_CREDENTIAL_PROJECTION ? [] : [[key, patch]];
+      }),
+    );
+    return Object.keys(projected).length > 0 ? projected : NO_CREDENTIAL_PROJECTION;
+  }
+  return NO_CREDENTIAL_PROJECTION;
+}
+
+function applyJsonCredentialProjection(
+  existing: string,
+  render: readonly SandboxMessagingJsonRenderPlan[],
+  target: string,
+  bindings: SandboxMessagingPlan["credentialBindings"],
+  placeholders: ReadonlyMap<string, string>,
+): string {
+  const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
+  const root = parseStructuredConfig(existing, target, format);
+  for (const entry of render) {
+    const patch = credentialProjectionPatch(
+      entry.value,
+      getJsonPath(root, entry.path),
+      bindings,
+      placeholders,
+    );
+    if (patch !== NO_CREDENTIAL_PROJECTION) setJsonPath(root, entry.path, patch);
+  }
+  return format === "yaml" ? YAML.stringify(root) : `${JSON.stringify(root, null, 2)}\n`;
+}
+
+function applyEnvCredentialProjection(
+  existing: string,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  bindings: SandboxMessagingPlan["credentialBindings"],
+  placeholders: ReadonlyMap<string, string>,
+): string {
+  const lines = render.flatMap((entry) =>
+    entry.lines
+      .map((line) => projectCredentialPlaceholderText(line, bindings, placeholders))
+      .filter((line): line is string => line !== null),
+  );
+  return lines.length > 0 ? applyEnvLineValues(existing, lines) : existing;
 }
 
 function hookRequestsForPhases(
@@ -371,16 +575,21 @@ function applyEnvLines(
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
 ): string {
+  return applyEnvLineValues(
+    existing,
+    render.flatMap((entry) => entry.lines),
+  );
+}
+
+function applyEnvLineValues(existing: string | undefined, lines: readonly string[]): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
-  for (const entry of render) {
-    for (const line of entry.lines) {
-      const key = readEnvLineKey(line);
-      if (key) {
-        desired.set(key, line);
-      } else {
-        rawDesiredLines.push(line);
-      }
+  for (const line of lines) {
+    const key = readEnvLineKey(line);
+    if (key) {
+      desired.set(key, line);
+    } else {
+      rawDesiredLines.push(line);
     }
   }
 

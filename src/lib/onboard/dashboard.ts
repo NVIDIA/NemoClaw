@@ -10,6 +10,7 @@ import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
+import { withSandboxGatewayRouteMutationLocksSync } from "../inference/gateway-route-mutation-lock";
 import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
@@ -23,9 +24,12 @@ import {
   captureLiveSiblingDashboardForwards,
   createSandboxForwardStopper,
   type DashboardForwardOptions,
+  mergePreservedDashboardForwards,
   normalizeDashboardForwardOptions,
   type PreservedDashboardForward,
   reconcileSiblingDashboardForwards,
+  revalidatePreservedDashboardForward,
+  revalidatePreservedDashboardOwner,
 } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
@@ -315,8 +319,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
-      normalizeDashboardForwardOptions(options);
+    const {
+      rollbackSandboxOnFailure,
+      preservedPorts,
+      preservedSiblingForwards: preCreateSiblingForwards,
+      allowPortReallocation,
+    } = normalizeDashboardForwardOptions(options);
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -328,9 +336,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       });
     const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-    const preservedSiblingForwards = captureLiveSiblingDashboardForwards(
-      existingForwards,
-      sandboxName,
+    const preservedSiblingForwards = mergePreservedDashboardForwards(
+      preCreateSiblingForwards,
+      captureLiveSiblingDashboardForwards(existingForwards, sandboxName),
     );
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -440,7 +448,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       }
     }
     if (fwdOk && preservedSiblingForwards.length > 0) {
-      const targetForward: PreservedDashboardForward = {
+      const targetForward = {
         sandboxName,
         bind: actualTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1",
         port: String(actualPort),
@@ -452,49 +460,65 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           deps.runCaptureOpenshell(["forward", "list"], {
             timeout: OPENSHELL_PROBE_TIMEOUT_MS,
           }),
+        revalidateLive: (forward, snapshot) =>
+          revalidatePreservedDashboardForward(forward, snapshot, deps.getSandbox as never),
         restore: (forward) => {
-          const port = Number(forward.port);
-          if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-            return { ok: false, diagnostic: "recorded port is invalid" };
-          }
-          if (forward.bind !== "127.0.0.1" && forward.bind !== "0.0.0.0") {
-            return { ok: false, diagnostic: `recorded bind '${forward.bind}' is unsupported` };
-          }
-          const makeSiblingStopper = () =>
-            createSandboxForwardStopper({
-              runOpenshell: deps.runOpenshell,
-              runCaptureOpenshell: deps.runCaptureOpenshell,
-              sandboxName: forward.sandboxName,
-            });
-          const stopResult = makeSiblingStopper()(port);
-          if (stopResult === "list-failed" || stopResult === "owned-other") {
-            return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
-          }
-          waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
-            sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
-          });
-          const forwardTarget =
-            forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
-          return runDetachedForwardStartWithRetries(
-            buildDetachedForwardStartSpawn(
-              deps.openshellArgv([
-                "forward",
-                "start",
-                "--background",
-                forwardTarget,
-                forward.sandboxName,
-              ]),
-            ),
-            () =>
-              deps.runCaptureOpenshell(["forward", "list"], {
-                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-              }),
-            { port, sandboxName: forward.sandboxName },
+          return withSandboxGatewayRouteMutationLocksSync(
+            forward.sandboxName,
+            forward.gatewayName,
             () => {
-              deps.sleep(1);
-              makeSiblingStopper()(port);
+              const ownership = deps.runCaptureOpenshell(["forward", "list"], {
+                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+              });
+              if (
+                !revalidatePreservedDashboardForward(forward, ownership, deps.getSandbox as never)
+              ) {
+                return { ok: false, diagnostic: "recorded forward ownership changed" };
+              }
+              const port = Number(forward.port);
+              const makeSiblingStopper = () =>
+                createSandboxForwardStopper({
+                  runOpenshell: deps.runOpenshell,
+                  runCaptureOpenshell: deps.runCaptureOpenshell,
+                  sandboxName: forward.sandboxName,
+                });
+              const stopResult = makeSiblingStopper()(port);
+              if (stopResult === "list-failed" || stopResult === "owned-other") {
+                return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
+              }
+              waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
+                sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
+              });
+              if (!revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)) {
+                return { ok: false, diagnostic: "sandbox owner changed before forward restart" };
+              }
+              const forwardTarget =
+                forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
+              const restarted = runDetachedForwardStartWithRetries(
+                buildDetachedForwardStartSpawn(
+                  deps.openshellArgv([
+                    "forward",
+                    "start",
+                    "--background",
+                    forwardTarget,
+                    forward.sandboxName,
+                  ]),
+                ),
+                () =>
+                  deps.runCaptureOpenshell(["forward", "list"], {
+                    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+                  }),
+                { port, sandboxName: forward.sandboxName },
+                () => {
+                  deps.sleep(1);
+                  makeSiblingStopper()(port);
+                },
+                { onProgress: buildForwardStartProgressLogger(port) },
+              );
+              return revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)
+                ? restarted
+                : { ok: false, diagnostic: "sandbox owner changed after forward restart" };
             },
-            { onProgress: buildForwardStartProgressLogger(port) },
           );
         },
       });

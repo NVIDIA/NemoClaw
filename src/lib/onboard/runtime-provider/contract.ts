@@ -506,6 +506,8 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
+      /** Provider-owned timeout for direct container lifecycle mutations. */
+      readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
       start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
       verifyStarted(

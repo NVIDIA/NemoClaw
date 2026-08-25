@@ -454,6 +454,8 @@ export interface ContainerStateMutationOwnerOptions {
   readonly runtimeIdInspectField?: "Id" | "ID";
   /** Provider-native inspect value proving a private PID namespace. */
   readonly privatePidMode?: string;
+  /** Provider-owned normalization for one logical mount reported as multiple inspect rows. */
+  readonly normalizeInspectionMounts?: (mounts: readonly unknown[]) => readonly unknown[];
 }
 
 export type DockerStateMutationOwnerOptions = Omit<
@@ -484,6 +486,7 @@ export interface ContainerStateMutationSurfaceOptions {
   ) => ContainerStateMutationAuthority;
   readonly runtimeIdInspectField?: "Id" | "ID";
   readonly privatePidMode?: string;
+  readonly normalizeInspectionMounts?: (mounts: readonly unknown[]) => readonly unknown[];
   readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
   readonly withDirectSandboxExecutionExclusion?: <T>(
     sandboxName: string,
@@ -732,6 +735,7 @@ function parseInspection(
   expectedSandboxName: string,
   providerDisplayName: string,
   expectedPrivatePidMode: string,
+  normalizeMounts: (mounts: readonly unknown[]) => readonly unknown[],
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
@@ -792,7 +796,7 @@ function parseInspection(
   if (!Array.isArray(mountsInput) || mountsInput.length > MAX_MOUNTS) {
     fail(`${providerDisplayName} container mounts are malformed`);
   }
-  const mounts = mountsInput
+  const mounts = normalizeMounts(mountsInput)
     .map(parseMount)
     .sort((left, right) =>
       left.destination < right.destination
@@ -1692,6 +1696,7 @@ function inspectDirect(
     options.sandboxName,
     options.providerDisplayName,
     options.privatePidMode ?? "",
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1712,6 +1717,7 @@ function inspectAuthorized(
     options.sandboxName,
     options.providerDisplayName,
     options.privatePidMode ?? "",
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -2793,6 +2799,9 @@ function createSurfaceOwner(
       ? { runtimeIdInspectField: options.runtimeIdInspectField }
       : {}),
     ...(options.privatePidMode === undefined ? {} : { privatePidMode: options.privatePidMode }),
+    ...(options.normalizeInspectionMounts === undefined
+      ? {}
+      : { normalizeInspectionMounts: options.normalizeInspectionMounts }),
   });
 }
 

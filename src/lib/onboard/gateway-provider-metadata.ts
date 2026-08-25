@@ -24,6 +24,11 @@ export type GatewayProviderMetadata = {
   configKeys: string[];
 };
 
+export type GatewayProviderAuthority = {
+  id: string;
+  resourceVersion: number;
+};
+
 export type GatewayProviderBinding = {
   name: string;
   type: string;
@@ -93,6 +98,10 @@ export type GatewayCredentialOnlyProviderInspection =
   | { readonly kind: "exact" }
   | { readonly kind: "indeterminate" }
   | { readonly kind: "missing" };
+
+export type GatewayCredentialOnlyProviderAuthorityInspection =
+  | Exclude<GatewayCredentialOnlyProviderInspection, { readonly kind: "exact" }>
+  | ({ readonly kind: "exact" } & GatewayProviderAuthority);
 
 type ProviderField = "Name" | "Type" | "Credential keys" | "Config keys";
 
@@ -195,6 +204,27 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
   return { name, type, credentialKeys, configKeys };
 }
 
+/** Parse the immutable identity and optimistic-concurrency generation from provider output. */
+export function parseGatewayProviderAuthority(output: string): GatewayProviderAuthority | null {
+  if (Buffer.byteLength(output, "utf8") > MAX_PROVIDER_OUTPUT_BYTES) return null;
+  const fields = new Map<"Id" | "Resource version", string>();
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.replace(ANSI_OSC_PATTERN, "").replace(ANSI_CSI_PATTERN, "");
+    const match = line.match(/^\s*(Id|Resource version):\s*(.*?)\s*$/iu);
+    if (!match || hasUnsafeRawProviderFieldValue(rawLine)) continue;
+    const field = match[1].toLowerCase() === "id" ? "Id" : "Resource version";
+    if (fields.has(field)) return null;
+    fields.set(field, match[2].trim());
+  }
+  const id = fields.get("Id");
+  const rawVersion = fields.get("Resource version");
+  if (!id || !isSafeIdentifier(id, MAX_PROVIDER_NAME_LENGTH) || !/^[1-9][0-9]*$/u.test(rawVersion ?? "")) {
+    return null;
+  }
+  const resourceVersion = Number(rawVersion);
+  return Number.isSafeInteger(resourceVersion) ? { id, resourceVersion } : null;
+}
+
 /** Distinguish an exact credential-only binding from absence and lookup failure. */
 export function inspectGatewayCredentialOnlyProviderBinding(
   expected: GatewayCredentialOnlyProviderBinding,
@@ -226,6 +256,39 @@ export function inspectGatewayCredentialOnlyProviderBinding(
   const metadata = parseGatewayProviderMetadata(output);
   return matchesGatewayCredentialOnlyProviderBinding(metadata, expected)
     ? { kind: "exact" }
+    : { kind: "collision" };
+}
+
+/** Inspect an exact credential-only binding together with its immutable provider authority. */
+export function inspectGatewayCredentialOnlyProviderAuthority(
+  expected: GatewayCredentialOnlyProviderBinding,
+  runOpenshell: GatewayProviderRunner,
+): GatewayCredentialOnlyProviderAuthorityInspection {
+  let result: GatewayProviderCommandResult;
+  try {
+    result = runOpenshell(["provider", "get", expected.name], {
+      ignoreError: true,
+      maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: PROVIDER_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return { kind: "indeterminate" };
+  }
+  const output = providerCommandOutput(result);
+  if (result.error || result.signal || result.status !== 0) {
+    return !result.error &&
+      !result.signal &&
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, expected.name, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
+      ? { kind: "missing" }
+      : { kind: "indeterminate" };
+  }
+  const metadata = parseGatewayProviderMetadata(output);
+  const authority = parseGatewayProviderAuthority(output);
+  return matchesGatewayCredentialOnlyProviderBinding(metadata, expected) && authority
+    ? { kind: "exact", ...authority }
     : { kind: "collision" };
 }
 

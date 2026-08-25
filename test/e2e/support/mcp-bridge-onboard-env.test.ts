@@ -141,8 +141,22 @@ describe("MCP bridge onboarding environment", () => {
       NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-main/openshell",
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
+      NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
   });
+
+  it("uses direct tool disclosure for the Deep Agents adapter qualification", () => {
+    expect(buildMcpBridgeOnboardEnv(ONBOARD_OPTIONS).NEMOCLAW_TOOL_DISCLOSURE).toBe("direct");
+  });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "preserves the default disclosure for the %s adapter qualification",
+    (agent) => {
+      expect(
+        buildMcpBridgeOnboardEnv({ ...ONBOARD_OPTIONS, agent }).NEMOCLAW_TOOL_DISCLOSURE,
+      ).toBeUndefined();
+    },
+  );
 
   it("passes the routed-private MCP test CA through the normal corporate CA input", () => {
     const env = buildMcpBridgeOnboardEnv({

@@ -40,8 +40,10 @@ function providerMetadata(
   return {
     status: 0,
     stdout: [
+      `Id: provider-${name}`,
       `Name: ${name}`,
       `Type: ${type}`,
+      "Resource version: 1",
       `Credential keys: ${credentialKey}`,
       "Config keys: <none>",
     ].join("\n"),
@@ -185,6 +187,7 @@ describe("credential provider registration", () => {
     ).toBe(true);
     expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
       "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+      "provider get -g test-gateway alpha-discord-bridge",
       "provider get -g test-gateway alpha-discord-bridge",
     ]);
   });

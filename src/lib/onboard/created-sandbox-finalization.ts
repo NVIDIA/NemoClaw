@@ -22,7 +22,13 @@ import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
+import {
+  captureLiveSiblingDashboardForwards,
+  type DashboardForwardOptions,
+  type PreservedDashboardForward,
+} from "./dashboard-forward-control";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
+import { shouldManageDashboardForAgent } from "./dashboard-runtime";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { warnIfLandlockUnsupported } from "./landlock-warning";
@@ -114,11 +120,15 @@ export interface CreatedSandboxCompletionOptions {
   readonly dashboard: {
     readonly chatUiUrl: string;
     readonly initialHermesState: HermesDashboardOnboardState;
+    readonly preservedSiblingForwards: readonly PreservedDashboardForward[];
     readonly releasePort: () => Promise<void>;
     readonly ensureForward: (
       sandboxName: string,
       chatUiUrl: string,
-      options: { rollbackSandboxOnFailure: true },
+      options: Pick<
+        DashboardForwardOptions,
+        "rollbackSandboxOnFailure" | "preservedSiblingForwards"
+      > & { rollbackSandboxOnFailure: true },
     ) => number;
     readonly getForwardPort: (chatUiUrl: string) => string;
     readonly resolveHermesState: (port: number) => HermesDashboardOnboardState;
@@ -315,6 +325,7 @@ export function createCreatedSandboxCompletionActions(
     await options.dashboard.releasePort();
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      preservedSiblingForwards: options.dashboard.preservedSiblingForwards,
     });
     if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
       chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
@@ -465,6 +476,17 @@ export function createOnboardCreatedSandboxCompletion(
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
+  // This constructor runs before the potentially long create/build operation.
+  // Preserve only siblings proven live now; finalization may safely restore
+  // those exact forwards if their SSH processes die while the target builds.
+  // Portable lifecycle keeps its separate forwarding behavior unchanged.
+  const preservedSiblingForwards =
+    portableLifecycle || !shouldManageDashboardForAgent(agent ?? null)
+      ? []
+      : captureLiveSiblingDashboardForwards(
+          runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+          sandboxName,
+        );
   return createCreatedSandboxCompletionActions(
     {
       finalization: {
@@ -522,6 +544,7 @@ export function createOnboardCreatedSandboxCompletion(
       dashboard: {
         chatUiUrl,
         initialHermesState: initialHermesDashboardState,
+        preservedSiblingForwards,
         releasePort: releaseDashboardPort,
         ensureForward: ensureDashboardForward,
         getForwardPort: getDashboardForwardPort,
