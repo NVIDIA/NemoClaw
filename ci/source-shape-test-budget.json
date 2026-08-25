@@ -92,6 +92,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
+      "test": "pins $source to its current bytes",
+      "category": "security"
+    },
+    {
       "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
