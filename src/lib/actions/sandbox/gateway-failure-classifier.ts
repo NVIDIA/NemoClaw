@@ -5,7 +5,7 @@ import net from "node:net";
 
 import { dockerInfo } from "../../adapters/docker/info";
 import { dockerCapture } from "../../adapters/docker/run";
-import { CLI_NAME, getAgentBranding } from "../../cli/branding";
+import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
@@ -19,11 +19,6 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const DOCKER_TIMEOUT_MS = 3000;
 const PORT_PROBE_TIMEOUT_MS = 2000;
-
-/** Format recovery guidance with the CLI name used for this invocation. */
-export function formatGatewayRecoveryCommand(sandboxName: string): string {
-  return `${getAgentBranding().cli} ${sandboxName} recover`;
-}
 
 const portableRuntimeFailures = new Map<
   string,
