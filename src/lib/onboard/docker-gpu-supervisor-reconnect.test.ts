@@ -14,18 +14,27 @@ import {
 describe("Docker GPU final lifecycle release", () => {
   it("requires corroboration for a retiring lifecycle row (#9962)", () => {
     const corroborate = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
+    }));
 
     expect(
       waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell: vi.fn(() => ({
-          status: 0,
-          stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
-        })),
+        runOpenshell,
         sleep: vi.fn(),
         soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
       }),
     ).toBe(true);
     expect(corroborate).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
   });
 
   it("does not accept an uncorroborated retiring lifecycle row (#9962)", () => {
@@ -84,6 +93,22 @@ describe("Docker GPU final handoff acknowledgement", () => {
       "exec ready",
       "confirm exact replacement",
     ]);
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-n", "alpha", "--", "true"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: expect.any(Number),
+      }),
+    );
   });
 
   it("treats Deleting after the replacement start as terminal (#9531)", () => {

@@ -522,19 +522,9 @@ export function createDockerGpuSandboxCreatePatch(
               ? ` Last OpenShell phase: ${finalizeOutcome.lastSandboxPhase}.`
               : ""
           }${
-            finalizeOutcome.rolledBack
-              ? " The pre-patch sandbox container was restored."
-              : finalizeOutcome.backupRemoved
-                ? ` Automatic rollback failed.${
-                    finalizeOutcome.rollbackImageId
-                      ? ` Docker retained rollback image ${finalizeOutcome.rollbackImageId}.`
-                      : ""
-                  }${
-                    finalizeOutcome.rollbackRecordPath
-                      ? ` Recovery action record: ${finalizeOutcome.rollbackRecordPath}.`
-                      : ""
-                  }`
-                : ""
+            finalizeOutcome.backupRemoved
+              ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+              : ""
           }`,
         );
         cutoverFinalizationFailure = failure;
@@ -545,15 +535,7 @@ export function createDockerGpuSandboxCreatePatch(
           context: {
             ...failureContext(),
             backupRemoved: finalizeOutcome.backupRemoved,
-            rollbackImageId: finalizeOutcome.rollbackImageId,
-            rollbackImageRemoved: finalizeOutcome.rollbackImageRemoved,
-            rollbackRecordPath: finalizeOutcome.rollbackRecordPath,
-            rollbackRecordRemoved: finalizeOutcome.rollbackRecordRemoved,
             lastSandboxPhase: finalizeOutcome.lastSandboxPhase,
-            replacementStopConfirmed: finalizeOutcome.replacementStopConfirmed,
-            replacementRemovalConfirmed: finalizeOutcome.replacementRemovalConfirmed,
-            replacementPresence: finalizeOutcome.replacementPresence,
-            rolledBack: finalizeOutcome.rolledBack,
           },
         });
         throw failure;

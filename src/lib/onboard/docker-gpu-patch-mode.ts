@@ -5,8 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRm, dockerRun } from "../adapters/docker";
+import { sleepSeconds } from "../core/wait";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS, sleepSeconds } from "./docker-gpu-patch-constants";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import type {
   DockerGpuPatchBackend,

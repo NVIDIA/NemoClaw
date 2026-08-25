@@ -25,7 +25,7 @@
 
 import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS, sleepSeconds } from "./docker-gpu-patch-constants";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
 
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
@@ -99,6 +99,10 @@ export type DockerFinalHandoffAcknowledgement = {
 };
 
 const FINAL_HANDOFF_TERMINAL_PHASES = new Set(["Deleting", "Failed", "CrashLoopBackOff"]);
+const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
+  killProcessTreeOnTimeout: true,
+  killSignal: "SIGKILL",
+} as const;
 
 /**
  * Wait for OpenShell to retire the pre-replacement lifecycle record before
@@ -111,7 +115,7 @@ export function waitForOpenShellSandboxLifecycleRelease(
   deps: DockerLifecycleReleaseDeps,
 ): boolean {
   if (!deps.runOpenshell) return false;
-  const sleep = deps.sleep ?? sleepSeconds;
+  const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
   const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
 
@@ -120,6 +124,7 @@ export function waitForOpenShellSandboxLifecycleRelease(
     if (remainingMs <= 0) break;
     const result = deps.runOpenshell(["sandbox", "list"], {
       ignoreError: true,
+      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
       suppressOutput: true,
       timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
     });
@@ -178,7 +183,7 @@ export function waitForOpenShellFinalHandoff(
   timeoutSecs: number,
   deps: DockerFinalHandoffDeps,
 ): DockerFinalHandoffAcknowledgement {
-  const sleep = deps.sleep ?? sleepSeconds;
+  const sleep = deps.sleep ?? defaultSleep;
   const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
   const deadline = Date.now() + boundedTimeoutSecs * 1000;
   const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
@@ -191,6 +196,7 @@ export function waitForOpenShellFinalHandoff(
     try {
       listOutput = deps.runCaptureOpenshell(["sandbox", "list"], {
         ignoreError: true,
+        ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
         suppressOutput: true,
         timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeListMs),
       });
@@ -217,6 +223,7 @@ export function waitForOpenShellFinalHandoff(
       if (remainingBeforeExecMs <= 0) break;
       const execResult = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
         ignoreError: true,
+        ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
         suppressOutput: true,
         timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeExecMs),
       });
@@ -244,6 +251,10 @@ export function waitForOpenShellFinalHandoff(
   return { acknowledged: false, lastSandboxPhase };
 }
 
+function defaultSleep(seconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
+}
+
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function parseSandboxListFailurePhase(output: string, sandboxName: string): string | null {
@@ -264,6 +275,7 @@ function sandboxListShowsErrorPhase(
   try {
     const list = runCaptureOpenshell(["sandbox", "list"], {
       ignoreError: true,
+      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
@@ -279,7 +291,7 @@ export function waitForOpenShellSupervisorReconnect(
   deps: DockerGpuSupervisorReconnectDeps,
 ): boolean {
   if (!deps.runOpenshell) return false;
-  const sleep = deps.sleep ?? sleepSeconds;
+  const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
   const errorPhaseDebouncePolls =
     deps.errorPhaseDebouncePolls == null || !Number.isFinite(deps.errorPhaseDebouncePolls)
@@ -291,6 +303,7 @@ export function waitForOpenShellSupervisorReconnect(
   while (Date.now() <= deadline) {
     const result = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
       ignoreError: true,
+      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });

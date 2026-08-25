@@ -249,7 +249,6 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
 
 const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
 const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
-const ONBOARD_SANDBOX_ROLLBACK_IMAGE_ID = `sha256:${"d".repeat(64)}`;
 const ONBOARD_SANDBOX_INSPECT = {
   Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
   Image: `sha256:${"c".repeat(64)}`,
@@ -398,16 +397,6 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   let lifecycleReleased = false;
   const wrappedRun = (command, options) => {
     const normalized = normalizeCommand(command);
-    switch (normalized) {
-      case `docker commit ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`:
-        return {
-          status: 0,
-          stdout: Buffer.from(`${ONBOARD_SANDBOX_ROLLBACK_IMAGE_ID}\n`),
-          stderr: Buffer.alloc(0),
-        };
-      case `docker image rm --force ${ONBOARD_SANDBOX_ROLLBACK_IMAGE_ID}`:
-        return { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-    }
     if (
       finalCommitReleased &&
       normalized.startsWith("docker ps -a --no-trunc ") &&

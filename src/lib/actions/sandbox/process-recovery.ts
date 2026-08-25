@@ -499,40 +499,19 @@ function waitForFinalRelaunchManagedSupervisor(
   return { failure: classifyGatewayRestartFailure(probeResult), ready: false };
 }
 
-function retainedRollbackArtifactsDetail(
-  completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>,
-): string {
-  if (completion.backupRemoved !== true || completion.rolledBack !== false) return "";
-  const artifacts = [
-    ...(completion.rollbackImageId
-      ? [`rollback image ID ${JSON.stringify(completion.rollbackImageId)}`]
-      : []),
-    ...(completion.rollbackRecordPath
-      ? [`rollback recovery record ${JSON.stringify(completion.rollbackRecordPath)}`]
-      : []),
-  ];
-  if (artifacts.length === 0) return "";
-  return ` Retained ${artifacts.join(" and ")}.${
-    completion.rollbackRecordPath
-      ? " Confirm the replacement container is absent before using the recovery record's recoveryAction command and arguments."
-      : ""
-  }`;
-}
-
 function finalRelaunchContainerFailureDetail(
   completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>,
 ): string | null {
-  const rollbackArtifacts = retainedRollbackArtifactsDetail(completion);
   if (completion.replacementStoppedForCommit === false) {
-    return `Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward${rollbackArtifacts}`;
+    return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.replacementRestarted === false) {
-    return `Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward${rollbackArtifacts}`;
+    return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.finalHandoffAcknowledged === false) {
     return `OpenShell did not acknowledge the final replacement container handoff${
       completion.lastSandboxPhase ? `; last sandbox phase was ${completion.lastSandboxPhase}` : ""
-    }. NemoClaw did not start the primary dashboard/API host forward${rollbackArtifacts}`;
+    }. NemoClaw did not start the primary dashboard/API host forward`;
   }
   return null;
 }

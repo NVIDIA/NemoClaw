@@ -5,24 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createDockerGpuInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import { collectDockerGpuPatchDiagnostics, type DockerGpuPatchResult } from "./docker-gpu-patch";
 import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
 } from "./docker-gpu-patch-finalize";
-
-const ROLLBACK_IMAGE_ID = `sha256:${"d".repeat(64)}`;
-const RESTORED_CONTAINER_ID = "e".repeat(64);
-const ROLLBACK_TEST_ROOT = fs.mkdtempSync(
-  path.join(os.tmpdir(), "nemoclaw-docker-gpu-rollback-record-"),
-);
-
-afterAll(() => {
-  fs.rmSync(ROLLBACK_TEST_ROOT, { recursive: true, force: true });
-});
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -49,48 +38,8 @@ function exactDeferredCreateResult(): DockerGpuPatchResult {
   };
 }
 
-function rollbackPlanDeps(result: DockerGpuPatchResult = exactDeferredCreateResult()) {
-  const homeDir = fs.mkdtempSync(path.join(ROLLBACK_TEST_ROOT, "case-"));
-  const inspect = inspectFixture();
-  inspect.Config = {
-    ...inspect.Config,
-    Env: [...(inspect.Config?.Env ?? []), "ROLLBACK_TEST_TOKEN=super-secret-value"],
-  };
-  return {
-    dockerCapture: vi.fn(() => JSON.stringify([{ ...inspect, Id: result.oldContainerId }])),
-    dockerRun: vi.fn((args: readonly string[]) => {
-      switch (args[0]) {
-        case "commit":
-          return { status: 0, stdout: `${ROLLBACK_IMAGE_ID}\n` };
-        case "image":
-          return { status: 0 };
-        case "ps":
-          return { status: 0, stdout: `${result.newContainerId}\n` };
-        case "inspect":
-          return { status: 0, stdout: "true\n" };
-        default:
-          return { status: 1, stderr: "unexpected Docker command" };
-      }
-    }),
-    dockerRunDetached: vi.fn((_args: readonly string[]) => ({
-      status: 0,
-      stdout: `${RESTORED_CONTAINER_ID}\n`,
-      stderr: "",
-    })),
-    homedir: () => homeDir,
-  };
-}
-
-function rollbackRecordFiles(homeDir: string): string[] {
-  const directory = path.join(homeDir, ".nemoclaw", "recovery", "docker-gpu");
-  return fs.existsSync(directory)
-    ? fs.readdirSync(directory).map((entry) => path.join(directory, entry))
-    : [];
-}
-
 function readyHandoffDeps() {
   return {
-    ...rollbackPlanDeps(),
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
     runOpenshell: vi.fn((args: readonly string[]) =>
       args[1] === "list"
@@ -162,7 +111,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
   it("uses one exact stop, remove, start, and Ready acknowledgement handoff (#9531)", () => {
     const result = exactDeferredCreateResult();
-    const rollbackDeps = rollbackPlanDeps(result);
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
       events.push("stop replacement");
@@ -200,19 +148,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       inspect: { event: "confirm running replacement", result: { status: 0, stdout: "true\n" } },
     } as const;
     const dockerRun = vi.fn((args: readonly string[]) => {
-      switch (args[0]) {
-        case "commit":
-          events.push("commit rollback image");
-          return rollbackDeps.dockerRun(args);
-        case "image":
-          events.push("remove rollback image");
-          return rollbackDeps.dockerRun(args);
-        default: {
-          const response = dockerResults[String(args[0]) as keyof typeof dockerResults];
-          events.push(response.event);
-          return response.result;
-        }
-      }
+      const response = dockerResults[String(args[0]) as keyof typeof dockerResults];
+      events.push(response.event);
+      return response.result;
     });
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -223,11 +161,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
         finalHandoffTimeoutSecs: 60,
       },
       {
-        dockerCapture: rollbackDeps.dockerCapture,
         dockerStop,
         dockerRm,
         dockerRun,
-        dockerRunDetached: rollbackDeps.dockerRunDetached,
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
@@ -238,18 +174,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome).toEqual({
       backupRemoved: true,
       rolledBack: false,
-      rollbackImageRemoved: true,
-      rollbackRecordRemoved: true,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
       lifecycleReleaseObserved: true,
       finalHandoffAcknowledged: true,
       lastSandboxPhase: "Ready",
     });
-    expect(rollbackRecordFiles(rollbackDeps.homedir())).toEqual([]);
     expect(events).toEqual([
       "stop replacement",
-      "commit rollback image",
       "remove backup",
       "observe lifecycle release",
       "start replacement",
@@ -257,7 +189,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "exec ready",
       "confirm sole replacement",
       "confirm running replacement",
-      "remove rollback image",
     ]);
     expect(dockerStop).toHaveBeenCalledWith(
       result.newContainerId,
@@ -267,20 +198,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
       result.oldContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
-    const commitCall = dockerRun.mock.calls.findIndex((call) => call[0][0] === "commit");
-    expect(commitCall).toBeGreaterThanOrEqual(0);
-    expect(dockerRun.mock.invocationCallOrder[commitCall]).toBeLessThan(
-      dockerRm.mock.invocationCallOrder[0],
-    );
     expect(dockerStart).toHaveBeenCalledWith(
       result.newContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
   });
 
-  it("restores the prior container when OpenShell reports Deleting after final start (#9531)", () => {
+  it("fails immediately when OpenShell reports Deleting after the final start (#9531)", () => {
     const result = exactDeferredCreateResult();
-    const rollbackDeps = rollbackPlanDeps(result);
     const events: string[] = [];
     const sleep = vi.fn();
     const outcome = finalizeDockerGpuPatchBackup(
@@ -291,13 +216,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
         finalHandoffTimeoutSecs: 60,
       },
       {
-        dockerCapture: rollbackDeps.dockerCapture,
         dockerStop: vi.fn(() => {
           events.push("stop replacement");
           return { status: 0 };
         }),
-        dockerRm: vi.fn((target: string) => {
-          events.push(target === result.oldContainerId ? "remove backup" : "remove replacement");
+        dockerRm: vi.fn(() => {
+          events.push("remove backup");
           return { status: 0 };
         }),
         dockerStart: vi.fn(() => {
@@ -313,21 +237,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
             ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
             : { status: 1 },
         ),
-        dockerRun: rollbackDeps.dockerRun,
-        dockerRunDetached: rollbackDeps.dockerRunDetached,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: `${result.newContainerId}\n` })),
         sleep,
       },
     );
 
     expect(outcome).toEqual({
       backupRemoved: true,
-      rolledBack: true,
-      rollbackImageId: ROLLBACK_IMAGE_ID,
-      rollbackImageRemoved: false,
-      rollbackRecordRemoved: true,
-      replacementStopConfirmed: true,
-      replacementRemovalConfirmed: true,
-      replacementPresence: "absent",
+      rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
       lifecycleReleaseObserved: true,
@@ -339,82 +256,19 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "remove backup",
       "start replacement",
       "observe deleting",
-      "stop replacement",
-      "remove replacement",
     ]);
     expect(sleep).not.toHaveBeenCalled();
-    expect(rollbackDeps.dockerRunDetached).toHaveBeenCalledOnce();
-    expect(rollbackDeps.dockerRunDetached.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining([
-        "--name",
-        "openshell-alpha",
-        "--label",
-        "openshell.ai/managed-by=openshell",
-        "--label",
-        "openshell.ai/sandbox-name=alpha",
-        "--volume",
-        "/host:/container:rw",
-        ROLLBACK_IMAGE_ID,
-      ]),
-    );
-    expect(rollbackDeps.dockerRunDetached.mock.calls[0]?.[0]).not.toContain("--gpus");
-    expect(rollbackRecordFiles(rollbackDeps.homedir())).toEqual([]);
-    const diagnostics = collectRollbackDiagnostics(result.newContainerId, outcome);
-    expect(diagnostics.summary).toContain(`rollback_image_id=${ROLLBACK_IMAGE_ID}`);
-    expect(diagnostics.summary).toContain("rollback_image_removed=no");
-    expect(diagnostics.summary).toContain("rollback_record_path=none");
-    expect(diagnostics.summary).toContain("rollback_record_removed=yes");
-    expect(diagnostics.summary).toContain("rolled_back=yes");
-  });
-
-  it("reports a retained rollback image when successful-handoff cleanup fails (#9531)", () => {
-    const result = exactDeferredCreateResult();
-    const deps = readyHandoffDeps();
-    const baseDockerRun = deps.dockerRun;
-    deps.dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "image" ? { status: 1, stderr: "image is busy" } : baseDockerRun(args),
-    );
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result,
-        supervisorReady: true,
-        sandboxName: "alpha",
-        finalHandoffTimeoutSecs: 60,
-      },
-      {
-        ...deps,
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerStart: vi.fn(() => ({ status: 0 })),
-      },
-    );
-
-    expect(outcome).toMatchObject({
-      backupRemoved: true,
-      rolledBack: false,
-      rollbackImageId: ROLLBACK_IMAGE_ID,
-      rollbackImageRemoved: false,
-      rollbackRecordRemoved: true,
-      finalHandoffAcknowledged: true,
-    });
-    expect(warn).toHaveBeenCalledWith(
-      `  Could not remove temporary Docker rollback image ${ROLLBACK_IMAGE_ID}.`,
-    );
   });
 
   it("accepts a retiring Error row only when the exact replacement has the OpenShell label (#9962)", () => {
     const result = exactDeferredCreateResult();
-    const rollbackDeps = rollbackPlanDeps(result);
     const dockerRunResults = {
       inspect: { status: 0, stdout: "true\n" },
       ps: { status: 0, stdout: `${result.newContainerId}\n` },
     } as const;
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "commit" || args[0] === "image"
-        ? rollbackDeps.dockerRun(args)
-        : dockerRunResults[String(args[0]) as keyof typeof dockerRunResults],
+    const dockerRun = vi.fn(
+      (args: readonly string[]) =>
+        dockerRunResults[String(args[0]) as keyof typeof dockerRunResults],
     );
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -425,12 +279,10 @@ describe("finalizeDockerGpuPatchBackup", () => {
         finalHandoffTimeoutSecs: 60,
       },
       {
-        dockerCapture: rollbackDeps.dockerCapture,
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
-        dockerRunDetached: rollbackDeps.dockerRunDetached,
         runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:35  Ready\n"),
         runOpenshell: vi.fn((args: readonly string[]) =>
           args[1] === "list"
@@ -446,7 +298,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       lifecycleReleaseObserved: true,
       finalHandoffAcknowledged: true,
     });
-    expect(dockerRun.mock.calls.find((call) => call[0][0] === "ps")?.[0]).toEqual([
+    expect(dockerRun.mock.calls[0]?.[0]).toEqual([
       "ps",
       "-a",
       "--no-trunc",
@@ -467,13 +319,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "multiple labeled replacements",
       { status: 0, stdout: `${"b".repeat(64)}\n${"c".repeat(64)}\n` },
     ],
-  ])("restores the prior container when lifecycle release has %s (#9531)", (_case, query) => {
+  ])("rejects retiring Error when the canonical query returns %s (#9531)", (_case, query) => {
     const result = exactDeferredCreateResult();
-    const rollbackDeps = rollbackPlanDeps(result);
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "commit" || args[0] === "image" ? rollbackDeps.dockerRun(args) : query,
-    );
 
     const outcome = finalizeDockerGpuPatchBackup(
       {
@@ -483,11 +331,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
         finalHandoffTimeoutSecs: 1,
       },
       {
-        dockerCapture: rollbackDeps.dockerCapture,
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerRun,
-        dockerRunDetached: rollbackDeps.dockerRunDetached,
+        dockerRun: vi.fn(() => query),
         dockerStart,
         runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
         runOpenshell: vi.fn(() => ({
@@ -500,13 +346,10 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
     expect(outcome).toMatchObject({
       backupRemoved: true,
-      rolledBack: true,
-      rollbackImageId: ROLLBACK_IMAGE_ID,
       lifecycleReleaseObserved: false,
       replacementRestarted: false,
     });
     expect(dockerStart).not.toHaveBeenCalled();
-    expect(rollbackDeps.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
   it("rolls back to the backup container when supervisor reconnect failed", () => {
@@ -611,17 +454,16 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerRm).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["an explicit failure", { status: 1, stderr: "container is in use" }],
-    ["no exit status", { status: null, stderr: "timed out" }],
-  ])("retains the backup when Docker removal returns %s (#9531)", (_case, removal) => {
-    const result = exactDeferredCreateResult();
+  it("reports backupRemoved=false when supervisor reconnect succeeded but docker rm of the backup failed", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRm = vi.fn(() => removal);
+    const dockerRm = vi.fn((_name: string) => ({
+      status: 1,
+      stderr: "Error response from daemon: container is in use",
+    }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       {
-        result,
+        result: deferredCreateResult(),
         supervisorReady: true,
         sandboxName: "alpha",
         finalHandoffTimeoutSecs: 60,
@@ -631,19 +473,44 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome).toEqual({
       backupRemoved: false,
       rolledBack: false,
-      rollbackImageRemoved: true,
-      rollbackRecordRemoved: true,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
     expect(dockerRm).toHaveBeenCalledWith(
-      result.oldContainerId,
+      "old-container-id",
       expect.objectContaining({ ignoreError: true }),
     );
     expect(dockerStart).toHaveBeenCalledWith(
-      result.newContainerId,
+      "new-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("fails closed when backup removal has no exit status", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      { dockerStop, dockerRm, dockerStart, ...readyHandoffDeps() },
+    );
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: null,
+    });
+    expect(dockerStart).toHaveBeenCalledWith(
+      "new-container-id",
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -672,48 +539,10 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("retains the backup when Docker cannot prepare the rollback image (#9531)", () => {
-    const result = exactDeferredCreateResult();
-    const dockerRm = vi.fn(() => ({ status: 0 }));
-    const dockerStart = vi.fn(() => ({ status: 0 }));
-
+  it("reports a failed replacement restart after the backup is removed", () => {
     const outcome = finalizeDockerGpuPatchBackup(
       {
-        result,
-        supervisorReady: true,
-        sandboxName: "alpha",
-        finalHandoffTimeoutSecs: 60,
-      },
-      {
-        ...readyHandoffDeps(),
-        dockerCapture: rollbackPlanDeps(result).dockerCapture,
-        dockerRun: vi.fn(() => ({ status: 1, stderr: "commit failed" })),
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm,
-        dockerStart,
-      },
-    );
-
-    expect(outcome).toEqual({
-      backupRemoved: false,
-      rolledBack: false,
-      replacementStoppedForCommit: true,
-      replacementRestarted: true,
-      finalHandoffAcknowledged: false,
-      lastSandboxPhase: null,
-    });
-    expect(dockerRm).not.toHaveBeenCalled();
-    expect(dockerStart).toHaveBeenCalledWith(
-      result.newContainerId,
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
-
-  it("restores the prior container when replacement restart fails after removal (#9531)", () => {
-    const result = exactDeferredCreateResult();
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result,
+        result: deferredCreateResult(),
         supervisorReady: true,
         sandboxName: "alpha",
         finalHandoffTimeoutSecs: 60,
@@ -728,140 +557,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
     expect(outcome).toEqual({
       backupRemoved: true,
-      rolledBack: true,
-      rollbackImageId: ROLLBACK_IMAGE_ID,
-      rollbackImageRemoved: false,
-      rollbackRecordRemoved: true,
-      replacementStopConfirmed: true,
-      replacementRemovalConfirmed: true,
-      replacementPresence: "absent",
+      rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: false,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
-  });
-
-  it("retains the rollback image when post-commit restoration fails (#9531)", () => {
-    const result = exactDeferredCreateResult();
-    const deps = readyHandoffDeps();
-    const inspect = inspectFixture();
-    inspect.Config = {
-      ...inspect.Config,
-      Env: [
-        ...(inspect.Config?.Env ?? []).filter(
-          (entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND="),
-        ),
-        "ROLLBACK_TEST_TOKEN=super-secret-value",
-        "OPENSHELL_SANDBOX_COMMAND=env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=CUSTOM_PROVIDER_VALUE CUSTOM_PROVIDER_VALUE=startup-secret CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
-      ],
-      Labels: {
-        ...inspect.Config?.Labels,
-        "untrusted.example/token": "label-secret",
-      },
-    };
-    deps.dockerCapture.mockReturnValue(JSON.stringify([{ ...inspect, Id: result.oldContainerId }]));
-    deps.dockerRunDetached.mockReturnValue({ status: 1, stdout: "", stderr: "restore failed" });
-
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result,
-        supervisorReady: true,
-        sandboxName: "alpha",
-        finalHandoffTimeoutSecs: 60,
-      },
-      {
-        ...deps,
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerStart: vi.fn(() => ({ status: 1 })),
-      },
-    );
-
-    expect(outcome).toMatchObject({
-      backupRemoved: true,
-      rolledBack: false,
-      rollbackImageId: ROLLBACK_IMAGE_ID,
-      rollbackImageRemoved: false,
-      rollbackRecordRemoved: false,
-      replacementPresence: "absent",
-      replacementRestarted: false,
-    });
-    expect(deps.dockerRun).not.toHaveBeenCalledWith(
-      ["image", "rm", "--force", ROLLBACK_IMAGE_ID],
-      expect.anything(),
-    );
-    const recordPath = outcome.rollbackRecordPath;
-    expect(recordPath).toBeTypeOf("string");
-    const recordFd = fs.openSync(recordPath as string, "r");
-    let record: string;
-    try {
-      expect(fs.fstatSync(recordFd).mode & 0o777).toBe(0o600);
-      record = fs.readFileSync(recordFd, "utf8");
-    } finally {
-      fs.closeSync(recordFd);
-    }
-    expect(record).toContain(ROLLBACK_IMAGE_ID);
-    expect(record).toContain('"command": "docker"');
-    expect(record).toContain('"run"');
-    expect(record).toContain('"--detach"');
-    expect(record).toContain("OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/");
-    expect(record).toContain(
-      "OPENSHELL_SANDBOX_COMMAND=env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=CUSTOM_PROVIDER_VALUE CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
-    );
-    expect(record).toContain("openshell.ai/managed-by=openshell");
-    expect(record).toContain("openshell.ai/sandbox-name=alpha");
-    expect(record).toContain("openshell.ai/sandbox-id=sandbox-id");
-    expect(record).not.toContain("super-secret-value");
-    expect(record).not.toContain("ROLLBACK_TEST_TOKEN");
-    expect(record).not.toContain("startup-secret");
-    expect(record).not.toContain("CUSTOM_PROVIDER_VALUE=startup-secret");
-    expect(record).not.toContain("OPENSHELL_TEST=1");
-    expect(record).not.toContain("untrusted.example/token");
-    expect(record).not.toContain("label-secret");
-    const diagnostics = collectRollbackDiagnostics(result.newContainerId, outcome);
-    expect(diagnostics.summary).toContain("rollback_record_removed=no");
-    expect(diagnostics.summary).toContain("rollback_recovery_action=");
-  });
-
-  it("refuses a symlinked rollback-record path before removing the backup (#9531)", () => {
-    const result = exactDeferredCreateResult();
-    const deps = readyHandoffDeps();
-    const homeDir = deps.homedir();
-    const redirectedDirectory = fs.mkdtempSync(path.join(ROLLBACK_TEST_ROOT, "redirected-"));
-    fs.mkdirSync(path.join(homeDir, ".nemoclaw"), { recursive: true });
-    fs.symlinkSync(redirectedDirectory, path.join(homeDir, ".nemoclaw", "recovery"), "dir");
-    const dockerRm = vi.fn(() => ({ status: 0 }));
-    const dockerStart = vi.fn(() => ({ status: 0 }));
-    vi.stubEnv("HOME", homeDir);
-    let outcome: DockerGpuPatchFinalizeOutcome;
-    try {
-      outcome = finalizeDockerGpuPatchBackup(
-        {
-          result,
-          supervisorReady: true,
-          sandboxName: "alpha",
-          finalHandoffTimeoutSecs: 60,
-        },
-        { ...deps, dockerRm, dockerStart, dockerStop: vi.fn(() => ({ status: 0 })) },
-      );
-    } finally {
-      vi.unstubAllEnvs();
-    }
-
-    expect(outcome).toMatchObject({
-      backupRemoved: false,
-      rolledBack: false,
-      replacementStoppedForCommit: true,
-      replacementRestarted: true,
-      finalHandoffAcknowledged: false,
-    });
-    expect(dockerRm).not.toHaveBeenCalled();
-    expect(fs.readdirSync(redirectedDirectory)).toEqual([]);
-    expect(deps.dockerRun).toHaveBeenCalledWith(
-      ["image", "rm", "--force", ROLLBACK_IMAGE_ID],
-      expect.anything(),
-    );
   });
 
   it("records a remaining exact-ID replacement when removal fails (#7996)", () => {
@@ -993,5 +694,24 @@ describe("finalizeDockerGpuPatchBackup", () => {
       replacementPresence: "absent",
     });
     expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when rollback start has no exit status", () => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: null })),
+      },
+    );
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
   });
 });

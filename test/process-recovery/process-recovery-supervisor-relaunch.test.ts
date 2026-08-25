@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
 import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/process-recovery.ts";
 import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../../src/lib/agent/runtime.ts";
-import { createDockerGpuInspectFixture as inspectFixture } from "../../src/lib/onboard/__test-helpers__/docker-gpu-patch-fixtures.ts";
 import { finalizeDockerGpuPatchBackup } from "../../src/lib/onboard/docker-gpu-patch-finalize.ts";
 import * as registry from "../../src/lib/state/registry.ts";
 
@@ -28,12 +23,6 @@ const MISSING_MANAGED_SUPERVISOR = {
   stdout: "",
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
-const TEST_TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-relaunch-"));
-
-function testHome(): string {
-  return fs.mkdtempSync(path.join(TEST_TEMP_ROOT, "case-"));
-}
-
 function pinnedIdentityRefusal(sandboxName: string) {
   return {
     status: 1,
@@ -45,10 +34,6 @@ function pinnedIdentityRefusal(sandboxName: string) {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-});
-
-afterAll(() => {
-  fs.rmSync(TEST_TEMP_ROOT, { recursive: true, force: true });
 });
 
 function mockOpenClawSandbox(sandboxName: string, healthTimeoutSeconds = 30) {
@@ -494,19 +479,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const oldContainerId = "a".repeat(64);
     const replacementContainerId = "b".repeat(64);
-    const rollbackImageId = `sha256:${"d".repeat(64)}`;
-    const dockerRun = vi.fn((args: readonly string[]) => {
-      switch (args[0]) {
-        case "commit":
-          return { status: 0, stdout: `${rollbackImageId}\n` };
-        case "image":
-          return { status: 0 };
-        case "ps":
-          return { status: 0, stdout: `${replacementContainerId}\n` };
-        default:
-          return { status: 0, stdout: "true\n" };
-      }
-    });
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? { status: 0, stdout: `${replacementContainerId}\n` }
+        : { status: 0, stdout: "true\n" },
+    );
     const finalizeTransaction = vi.fn(
       (
         options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
@@ -514,12 +491,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ) =>
         finalizeDockerGpuPatchBackup(options, {
           ...deps,
-          dockerCapture: vi.fn(() => JSON.stringify([{ ...inspectFixture(), Id: oldContainerId }])),
           dockerRm,
           dockerRun,
           dockerStart,
           dockerStop,
-          homedir: testHome,
         }),
     );
     const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
@@ -654,29 +629,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
-      condition: "automatic rollback after the final container handoff fails",
-      finalizeOutcome: () => ({
-        backupRemoved: true,
-        finalHandoffAcknowledged: false,
-        lastSandboxPhase: "Deleting",
-        replacementRestarted: true,
-        rollbackImageId: `sha256:${"d".repeat(64)}`,
-        rollbackRecordPath: "/home/test/.nemoclaw/recovery/docker-gpu/recovery.json",
-        rolledBack: false,
-        stateRestored: true,
-      }),
-      expectedDetail: "OpenShell did not acknowledge the final replacement container handoff",
-      expectedDetailFragments: [
-        `sha256:${"d".repeat(64)}`,
-        "/home/test/.nemoclaw/recovery/docker-gpu/recovery.json",
-        "Confirm the replacement container is absent",
-        "recoveryAction command and arguments",
-      ],
-      expectedReadinessCalls: 1,
-      finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
-      finalReadinessReady: true,
-    },
-    {
       condition: "the final OpenShell readiness check fails",
       finalizeOutcome: () => ({
         backupRemoved: true,
@@ -738,7 +690,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     "does not start the primary dashboard/API host forward when $condition (#9364)",
     ({
       expectedDetail,
-      expectedDetailFragments,
       expectedReadinessCalls,
       finalPinnedAction,
       finalReadinessReady,
@@ -797,11 +748,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
         "opaque-",
       );
-      const detail = "recoveryFailureDetail" in result ? result.recoveryFailureDetail : "";
-      expect(detail).toContain(expectedDetailFragments?.[0] ?? "");
-      expect(detail).toContain(expectedDetailFragments?.[1] ?? "");
-      expect(detail).toContain(expectedDetailFragments?.[2] ?? "");
-      expect(detail).toContain(expectedDetailFragments?.[3] ?? "");
       expect(result).not.toHaveProperty("forwardRecoveryFailed");
       expect(finalize).toHaveBeenCalledOnce();
       expect(finalize).toHaveBeenCalledWith(true);
