@@ -60,7 +60,7 @@ function isMaterializedPodmanImageBind(
   value: PodmanMount | null,
   storageGraphRoot: string,
 ): boolean {
-  if (value?.Type !== "bind" || value.RW !== true) return false;
+  if (value?.Type !== "bind" || value.RW !== false) return false;
   const source = String(value.Source ?? "");
   if (!path.isAbsolute(source) || path.normalize(source) !== source) return false;
   const relative = path.relative(storageGraphRoot, source);
@@ -88,9 +88,8 @@ export function resolvePodmanStorageGraphRoot(engine: PodmanBoundContainerEngine
 }
 
 /**
- * Collapse Podman's two inspect rows for one image mount into the provider-owned
- * image identity. Other duplicate destinations remain visible to the caller's
- * ambiguity check.
+ * Collapse one read-only image mount and its Podman storage bind into the
+ * provider-owned image identity. Other duplicate destinations remain visible.
  */
 export function normalizePodmanLogicalMounts(
   mounts: readonly unknown[],

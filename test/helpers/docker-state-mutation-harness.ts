@@ -303,7 +303,7 @@ function createContainerStateMutationHarness(
                     Source: "/run/user/1000/containers/storage/overlay/example/merged",
                     Destination: "/opt/openshell/bin",
                     Mode: "",
-                    RW: true,
+                    RW: false,
                     Propagation: "rprivate",
                   },
                 ]
