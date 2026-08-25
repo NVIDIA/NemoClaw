@@ -99,7 +99,7 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries[0].label, "Start vLLM (DGX Station)");
   });
 
-  it("labels only the N1x managed install entry as a Deferred preview (#8574)", () => {
+  it("keeps the Deferred label scoped to the pre-admission N1x managed entry (#8574)", () => {
     const install = buildVllmMenuEntries({
       vllmRunning: false,
       vllmProfile: { name: "N1x" },
@@ -119,6 +119,9 @@ describe("buildVllmMenuEntries", () => {
       log: () => {},
     });
 
+    // N1x readiness rejects the running-server state without explicit managed
+    // intent. If this lower-level helper sees that state in isolation, it must
+    // not mislabel an operator-managed server as the Deferred managed preview.
     assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");
     assert.equal(running[0].label, "Local vLLM (localhost:8000) — running");
     assert.doesNotMatch(running[0].label, /Deferred preview/);

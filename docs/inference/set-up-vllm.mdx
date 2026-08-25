@@ -46,7 +46,7 @@ $$nemoclaw onboard
 
 Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
-N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
+On N1x, the readiness gate admits only explicit managed-preview intent, so the user-facing onboarding flow does not offer the existing-server entry.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
 When you request a vLLM serving profile, the detected server must report the profile's served model alias or a safe `root` that matches the profile's declared model.
@@ -54,7 +54,7 @@ NemoClaw stops onboarding when neither identifier matches, rather than recording
 Stop the server and rerun the original command, or unset `NEMOCLAW_SERVING_PRESET` and `NEMOCLAW_PROVIDER` before you start fresh onboarding to keep the detected model.
 
 On hosts other than N1x, when an install request without a managed GPU selection encounters an already-running server, NemoClaw selects that server instead of starting another container.
-On N1x, explicit managed-preview intent never reuses an already-running server.
+On N1x, explicit managed-preview intent keeps the managed entry and stops onboarding when another vLLM server occupies the configured port.
 Stop the server, then rerun managed onboarding.
 
 ```bash
@@ -150,12 +150,12 @@ $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
 
 The single-host managed vLLM runtime is host-global.
 Destroying a sandbox does not stop it, and the container remains available for other sandboxes.
-During later onboarding, NemoClaw normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
+On hosts other than N1x, later onboarding normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
 When a managed GPU selection accompanies explicit managed-install intent, NemoClaw preserves that intent and reports the running-server conflict.
 
 Choose one action:
 
-- To reuse the running server, omit `--vllm-gpu-device` and select **Local vLLM**.
+- On hosts other than N1x, to reuse the running server, omit `--vllm-gpu-device` and select **Local vLLM**.
 - To change the GPU or port, inspect the sandbox registry for every gateway-port environment on the host.
   Run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw list` for port `8080` and for every non-default port represented by a numeric directory under `~/.nemoclaw/gateways/`.
   Treat every sandbox that reports provider `vllm-local` as a possible consumer because the list output does not distinguish local vLLM from Local NIM.
