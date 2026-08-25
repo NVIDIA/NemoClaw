@@ -542,13 +542,27 @@ async function setupPoliciesWithSelectionInner(
     let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      const retainedPresets = ensureRequiredTierPolicyPresets(
-        tierName,
-        filterSuppressedAgentRequiredPresets(
-          excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+      const retainedPresets = mergeRequiredSetupPolicyPresets(
+        ensureRequiredTierPolicyPresets(
           tierName,
-          agent,
+          filterSuppressedAgentRequiredPresets(
+            excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+            tierName,
+            agent,
+          ),
         ),
+        {
+          enabledChannels,
+          hermesToolGateways,
+          agent,
+          observabilityEnabled,
+          knownPresetNames: knownPresets,
+          env: deps.env,
+          tierName,
+          webSearchConfig,
+          customPresetNames,
+          customOwnsObservability,
+        },
       );
       const selectionChanged =
         retainedPresets.length !== currentAppliedPresets.length ||

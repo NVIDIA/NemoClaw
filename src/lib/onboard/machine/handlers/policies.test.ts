@@ -436,6 +436,30 @@ describe("handlePoliciesState", () => {
     expect(result.appliedPolicyPresets).toEqual(["dns", "github"]);
   });
 
+  it("keeps the policy step resumable when finalized registry persistence fails", async () => {
+    const setupPolicies = vi.fn(async (_name: string, options: SetupOptions) => {
+      options.onSelection(["npm"]);
+      return ["npm"];
+    });
+    const persistPolicies = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { deps, calls } = createDeps({
+      setupPoliciesWithSelection: setupPolicies,
+      persistAppliedPolicyPresets: persistPolicies,
+    });
+
+    await expect(handlePoliciesState(baseOptions(deps))).rejects.toThrow(
+      "Failed to persist finalized policy presets for sandbox 'my-assistant'.",
+    );
+    expect(calls.complete).not.toHaveBeenCalled();
+
+    await expect(
+      handlePoliciesState({ ...baseOptions(deps), resume: true }),
+    ).resolves.toMatchObject({ appliedPolicyPresets: ["npm"] });
+    expect(setupPolicies).toHaveBeenCalledTimes(2);
+    expect(persistPolicies).toHaveBeenCalledTimes(2);
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
   it("re-onboard carries the persisted set forward without re-adding removed defaults (#4621)", async () => {
     // A prior onboard recorded the custom "Balanced minus npm plus github" set.
     // On re-onboard the recorded set is re-applied verbatim and persisted back —

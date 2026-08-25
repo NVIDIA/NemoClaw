@@ -131,7 +131,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     // write-back the registry keeps a stale `policies` list and recreate /
     // re-onboard reintroduces removed tier defaults (e.g. a removed Balanced
     // `npm`). See #4621.
-    persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): void;
+    persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): boolean;
   };
 }
 
@@ -323,7 +323,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // applied set untouched and would otherwise be clobbered with []. See
     // #4621.
     if (reflectsLiveAppliedSet) {
-      deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
+      if (!deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets)) {
+        throw new Error(`Failed to persist finalized policy presets for sandbox '${sandboxName}'.`);
+      }
     }
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(

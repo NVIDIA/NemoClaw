@@ -57,7 +57,7 @@ export function createPolicyHandlerDeps(
       return session;
     }),
     complete: vi.fn(async () => session),
-    persistPolicies: vi.fn((_sandboxName: string, _appliedPolicyPresets: string[]) => undefined),
+    persistPolicies: vi.fn((_sandboxName: string, _appliedPolicyPresets: string[]) => true),
   };
   return {
     calls,
