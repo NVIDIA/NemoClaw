@@ -75,7 +75,7 @@ jobs:
           npx vitest run --project cli \
             src/lib/onboard/preflight.test.ts \
             src/lib/onboard/preflight-ubuntu-2604.test.ts
-          npx vitest run --project integration test/platform.test.ts
+          npx vitest run --project integration test/e2e-runtime/platform.test.ts
           npx vitest run --project installer-integration \
             --testTimeout 30000 \
             test/installer-integration/install-preflight.test.ts

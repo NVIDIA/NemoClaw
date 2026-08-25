@@ -54,7 +54,7 @@ npx vitest run --project cli \
   src/lib/onboard/runtime-provider/runtime-provider-contract.test.ts \
   src/lib/onboard/runtime-provider/activation.test.ts \
   src/lib/onboard/runtime-provider/<provider>.test.ts
-npx vitest run --project integration test/layer-import-boundaries.test.ts
+npx vitest run --project integration test/repository/layer-import-boundaries.test.ts
 npx vitest run --project e2e-support test/e2e/support/native-runtime-qualification.test.ts
 ```
 
