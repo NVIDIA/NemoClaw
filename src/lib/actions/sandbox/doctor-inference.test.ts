@@ -60,36 +60,39 @@ describe("doctor inference checks", () => {
     ["absent", "fail", true],
     ["conflict", "fail", true],
     ["unknown", "fail", true],
-  ] as const)("maps managed llama.cpp %s to an actionable %s diagnostic", (state, status, hinted) => {
-    const checks = collectManagedLlamaCppDoctorChecks("spark-agent", 7443, {
-      inspectManagedLlamaCppStatusImpl: vi.fn(() => ({
-        recipeId: "llama-cpp.nemotron.spark.v1",
-        modelDigest: state === "preparing" ? null : `sha256:${"a".repeat(64)}`,
-        imageReference:
-          state === "preparing"
-            ? null
-            : `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"b".repeat(64)}`,
-        endpoint: "https://inference.local/v1" as const,
-        state,
-        detail: `${state} managed runtime`,
-      })),
-    });
+  ] as const)(
+    "maps managed llama.cpp %s to an actionable %s diagnostic",
+    (state, status, hinted) => {
+      const checks = collectManagedLlamaCppDoctorChecks("spark-agent", 7443, {
+        inspectManagedLlamaCppStatusImpl: vi.fn(() => ({
+          recipeId: "llama-cpp.nemotron.spark.v1",
+          modelDigest: state === "preparing" ? null : `sha256:${"a".repeat(64)}`,
+          imageReference:
+            state === "preparing"
+              ? null
+              : `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"b".repeat(64)}`,
+          endpoint: "https://inference.local/v1" as const,
+          state,
+          detail: `${state} managed runtime`,
+        })),
+      });
 
-    expect(checks).toHaveLength(2);
-    expect(checks[1]).toMatchObject({
-      label: "Managed llama.cpp runtime",
-      status,
-      detail: `${state}: ${state} managed runtime; endpoint https://inference.local/v1`,
-      ...(hinted
-        ? { hint: "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime" }
-        : {}),
-    });
-    expect(checks[1]?.hint).toBe(
-      hinted
-        ? "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime"
-        : undefined,
-    );
-  });
+      expect(checks).toHaveLength(2);
+      expect(checks[1]).toMatchObject({
+        label: "Managed llama.cpp runtime",
+        status,
+        detail: `${state}: ${state} managed runtime; endpoint https://inference.local/v1`,
+        ...(hinted
+          ? { hint: "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime" }
+          : {}),
+      });
+      expect(checks[1]?.hint).toBe(
+        hinted
+          ? "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime"
+          : undefined,
+      );
+    },
+  );
 
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
     const checks = await collectInferenceChecks(
@@ -156,24 +159,25 @@ describe("doctor inference checks", () => {
     );
   });
 
-  it.each([
-    "nvidia-router",
-    "hermes-provider",
-  ])("probes inference.local for %s without a direct health check (#6192)", async (provider) => {
-    const routeProbe = vi.fn(async () => gateway(false));
-    const checks = await collectInferenceChecks("alpha", { provider, model: "model" }, true, {
-      probeProviderHealthImpl: () => null,
-      probeSandboxInferenceGatewayHealthImpl: routeProbe,
-    });
+  it.each(["nvidia-router", "hermes-provider"])(
+    "probes inference.local for %s without a direct health check (#6192)",
+    async (provider) => {
+      const routeProbe = vi.fn(async () => gateway(false));
+      const checks = await collectInferenceChecks("alpha", { provider, model: "model" }, true, {
+        gatewayName: "recorded-gateway",
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: routeProbe,
+      });
 
-    expect(routeProbe).toHaveBeenCalledWith("alpha");
-    expect(checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: "Inference route (gateway)", status: "fail" }),
-        expect.objectContaining({ label: "Provider health (upstream)", status: "info" }),
-      ]),
-    );
-  });
+      expect(routeProbe).toHaveBeenCalledWith("alpha", { gatewayName: "recorded-gateway" });
+      expect(checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: "Inference route (gateway)", status: "fail" }),
+          expect.objectContaining({ label: "Provider health (upstream)", status: "info" }),
+        ]),
+      );
+    },
+  );
 
   it("reports an HTTP 503 inference.local route as unhealthy (#6192)", async () => {
     const checks = await collectInferenceChecks(
@@ -195,33 +199,33 @@ describe("doctor inference checks", () => {
     );
   });
 
-  it.each([
-    "null",
-    "throw",
-  ])("fails closed when the inference.local probe is unavailable (%s) (#6192)", async (failureMode) => {
-    const checks = await collectInferenceChecks(
-      "alpha",
-      { provider: "nvidia-prod", model: "model" },
-      true,
-      {
-        probeProviderHealthImpl: () => upstream(),
-        probeSandboxInferenceGatewayHealthImpl:
-          failureMode === "throw"
-            ? async () => {
-                throw new Error("openshell unavailable");
-              }
-            : async () => null,
-      },
-    );
+  it.each(["null", "throw"])(
+    "fails closed when the inference.local probe is unavailable (%s) (#6192)",
+    async (failureMode) => {
+      const checks = await collectInferenceChecks(
+        "alpha",
+        { provider: "nvidia-prod", model: "model" },
+        true,
+        {
+          probeProviderHealthImpl: () => upstream(),
+          probeSandboxInferenceGatewayHealthImpl:
+            failureMode === "throw"
+              ? async () => {
+                  throw new Error("openshell unavailable");
+                }
+              : async () => null,
+        },
+      );
 
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        label: "Inference route (gateway)",
-        status: "fail",
-        detail: expect.stringContaining("Could not probe"),
-      }),
-    );
-  });
+      expect(checks).toContainEqual(
+        expect.objectContaining({
+          label: "Inference route (gateway)",
+          status: "fail",
+          detail: expect.stringContaining("Could not probe"),
+        }),
+      );
+    },
+  );
 
   it("keeps serving-process health explicitly unchecked until a probe contract exists (#7003)", async () => {
     const checks = await collectInferenceChecks(

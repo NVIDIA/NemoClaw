@@ -260,7 +260,9 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
     expect(snapshot.lookup.state).toBe("present");
-    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha");
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("keeps a terminal runtime result neutral", async () => {
