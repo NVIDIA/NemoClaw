@@ -48,7 +48,8 @@ if (
   crashAfter === "credential-projection-coalesced" ||
   crashAfter === "credential-projection-delayed-hostless"
 ) {
-  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS =
+    crashAfter === "credential-projection-delayed-hostless" ? "4" : "2";
 }
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });

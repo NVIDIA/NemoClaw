@@ -40,7 +40,6 @@ import {
   detachProvider,
   ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
-  mcpAttachedCredentialRevisionForProviderVersion,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
@@ -50,6 +49,7 @@ import {
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import {
   assertMcpDestroyNotPending,
   assertNoDerivedResourceCollision,
@@ -62,6 +62,7 @@ import {
   writeBridgeEntry,
 } from "./mcp-bridge-state";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 import {
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
@@ -73,6 +74,62 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+
+const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
+
+/** Register one adapter and converge it on the credential revision exposed by fresh execs. */
+export function registerAgentAdapterAtCurrentCredentialRevision(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+  entry: McpBridgeEntry,
+  envValues: Record<string, string>,
+  initialCredentialRevision: McpAttachedCredentialRevision,
+  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
+): McpAttachedCredentialRevision {
+  const timeoutSeconds = Number.parseInt(
+    process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
+    10,
+  );
+  let credentialRevision = initialCredentialRevision;
+  let replaceExisting = options.replaceExisting === true;
+  let registrationRequired = true;
+  let stableObservations = 0;
+  const converged = waitForMcpBridgeCondition(
+    () => {
+      if (registrationRequired) {
+        registerAgentAdapter(sandboxName, adapter, entry, envValues, {
+          replaceExisting,
+          teardownRollback: options.teardownRollback === true,
+          credentialRevision,
+        });
+        registrationRequired = false;
+      }
+      const observation = observeMcpCredentialRevision(sandboxName, entry);
+      if (observation === "absent" || observation === "canonical") {
+        throw new McpBridgeError(
+          `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${entry.server}'.`,
+        );
+      }
+      if (observation !== credentialRevision) {
+        credentialRevision = observation;
+        replaceExisting = true;
+        registrationRequired = true;
+        stableObservations = 0;
+        return false;
+      }
+      stableObservations += 1;
+      return stableObservations >= STABLE_CREDENTIAL_REVISION_OBSERVATIONS;
+    },
+    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
+    1_000,
+  );
+  if (!converged) {
+    throw new McpBridgeError(
+      `OpenShell credential revision did not stabilize while reconciling MCP adapter '${entry.server}'.`,
+    );
+  }
+  return credentialRevision;
+}
 
 function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): boolean {
   return (
@@ -436,25 +493,16 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    let expectedCredentialRevision:
-      | ReturnType<typeof mcpAttachedCredentialRevisionForProviderVersion>
-      | undefined;
     if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // OpenShell 0.0.106 can miss a credential update published before the
       // bound policy generation. Republish while that policy is active and
       // before the first readiness exec; the exact provider identity is
       // rechecked before and after this update-only mutation.
-      const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
-      // A fresh exec can briefly expose the pre-republish revision. Every
-      // credential-bearing adapter must bind to the final acknowledged provider
-      // mutation, not that intermediate credential identity.
-      expectedCredentialRevision = mcpAttachedCredentialRevisionForProviderVersion(
-        republished.inspection.resourceVersion,
-      );
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
@@ -462,7 +510,6 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
-      ...(expectedCredentialRevision ? { expectedRevision: expectedCredentialRevision } : {}),
       // A no-field provider update advances only the provider resource version.
       // If the credential remains available, republish it after observing an
       // absence; otherwise, a hostless recovery advances the provider revision.
@@ -484,25 +531,27 @@ async function addMcpBridgeUnlocked(
           expectedProviderId: entry.providerId,
           requireExisting: true,
         });
-        const synchronized =
-          republished.action === "updated"
-            ? republished.inspection
-            : refreshMcpProviderEnvironment(entry);
-        return mcpAttachedCredentialRevisionForProviderVersion(synchronized.resourceVersion);
+        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
-    registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
-      // An exact adapter entry is evidence of a post-commit process death.
-      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // Credential-bearing adapters must project the same live revision
-      // OpenShell will recognize at egress. The canonical placeholder omits
-      // the provider identity required by revision-bound credentials.
-      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+    registerAgentAdapterAtCurrentCredentialRevision(
+      sandboxName,
+      adapter,
+      entry,
+      adapterEnvValues,
       credentialRevision,
-    });
+      {
+        // An exact adapter entry is evidence of a post-commit process death.
+        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+        // Credential-bearing adapters must project the same live revision
+        // OpenShell will recognize at egress. The canonical placeholder omits
+        // the provider identity required by revision-bound credentials.
+        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+      },
+    );
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);

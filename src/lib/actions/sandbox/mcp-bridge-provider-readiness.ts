@@ -20,22 +20,6 @@ export type McpAttachedCredentialRevision = Exclude<
   "absent" | "canonical"
 >;
 
-/** Bind an OpenShell provider mutation result to its projected credential identity. */
-export function mcpAttachedCredentialRevisionForProviderVersion(
-  resourceVersion: number | null,
-): McpAttachedCredentialRevision {
-  const revision = `v${resourceVersion}`;
-  if (
-    resourceVersion === null ||
-    !Number.isSafeInteger(resourceVersion) ||
-    resourceVersion <= 0 ||
-    !MCP_CREDENTIAL_REVISION_OBSERVATION_RE.test(revision)
-  ) {
-    throw new McpBridgeError("Invalid OpenShell provider resource version for MCP credentials.");
-  }
-  return revision as McpAttachedCredentialRevision;
-}
-
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
   | { kind: "transport-unavailable" }
@@ -164,8 +148,7 @@ export function waitForAttachedMcpCredential(
   entry: McpBridgeEntry,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
-    expectedRevision?: McpAttachedCredentialRevision;
-    refreshAfterObservedAbsence?: () => McpAttachedCredentialRevision | void;
+    refreshAfterObservedAbsence?: () => void;
   } = {},
 ): McpAttachedCredentialRevision {
   assertAuthenticatedBridgeEntry(entry);
@@ -181,7 +164,6 @@ export function waitForAttachedMcpCredential(
     10,
   );
   let refreshedAfterObservedAbsence = false;
-  let expectedRevision = options.expectedRevision;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitForMcpBridgeCondition(
@@ -198,7 +180,7 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        expectedRevision = options.refreshAfterObservedAbsence() ?? expectedRevision;
+        options.refreshAfterObservedAbsence();
         attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
         lastAttempt = attempt;
       }
@@ -211,7 +193,6 @@ export function waitForAttachedMcpCredential(
         observation !== null &&
         observation !== "absent" &&
         observation !== "canonical" &&
-        (expectedRevision === undefined || observation === expectedRevision) &&
         (options.previousRevision === undefined || observation !== options.previousRevision);
       if (attached) attachedRevision = observation;
       return attached;
@@ -221,7 +202,7 @@ export function waitForAttachedMcpCredential(
   );
   if (!ready) {
     throw new McpBridgeError(
-      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (expected provider revision: ${expectedRevision ?? "any new attached revision"}; last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
+      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
     );
   }
   if (attachedRevision === undefined) {

@@ -6,7 +6,6 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import {
-  mcpAttachedCredentialRevisionForProviderVersion,
   observeMcpCredentialRevision,
   type McpAttachedCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
@@ -39,10 +38,13 @@ export function scrubManagedMcpAdapterOrThrow(
     credentialRevision = observation;
   } else if (observation === "absent") {
     const provider = inspectMcpProvider(entry.providerName);
-    if (provider.exists && provider.id === entry.providerId) {
-      credentialRevision = mcpAttachedCredentialRevisionForProviderVersion(
-        provider.resourceVersion,
-      );
+    if (
+      provider.exists &&
+      provider.id === entry.providerId &&
+      provider.resourceVersion !== null &&
+      provider.resourceVersion > 0
+    ) {
+      credentialRevision = `v${provider.resourceVersion}`;
     }
   }
   if (!credentialRevision) {

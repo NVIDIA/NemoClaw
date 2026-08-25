@@ -197,6 +197,7 @@ replace(provider, "upsertMcpProvider", () => ({
 replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(provider, "waitForAttachedMcpCredential", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v1");
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",

@@ -5,7 +5,7 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapter } from "./mcp-bridge-adapters";
+import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-add-restart";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
@@ -16,7 +16,6 @@ import {
   attachProvider,
   detachMissingProviderReference,
   ensureMcpBridgeProviderProfile,
-  mcpAttachedCredentialRevisionForProviderVersion,
   refreshMcpProviderEnvironment,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
@@ -173,22 +172,20 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
+    refreshMcpProviderEnvironment(entry);
     const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
-      expectedRevision: mcpAttachedCredentialRevisionForProviderVersion(
-        synchronizedProvider.resourceVersion,
-      ),
     });
-    registerAgentAdapter(
+    registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
       entry,
       adapterEnvValues,
-      { replaceExisting: true, credentialRevision },
+      credentialRevision,
+      { replaceExisting: true },
     );
     writeBridgeEntry(sandboxName, {
       ...entry,
@@ -247,21 +244,17 @@ export async function restoreExistingMcpBridgeRuntime(
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
-    const synchronizedProvider = refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      expectedRevision: mcpAttachedCredentialRevisionForProviderVersion(
-        synchronizedProvider.resourceVersion,
-      ),
-    });
-    registerAgentAdapter(
+    refreshMcpProviderEnvironment(entry);
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
+    registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,
       {},
+      credentialRevision,
       {
         replaceExisting: true,
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
-        credentialRevision,
       },
     );
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
