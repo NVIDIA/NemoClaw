@@ -23,6 +23,7 @@ import type {
   HermesPortableOnboardingDeps,
   HermesPortableOnboardingInput,
 } from "../../src/lib/onboard/experimental/hermes-portable-onboarding";
+import { registryEntryGatewayPort } from "../../src/lib/state/gateway-registry";
 
 export const HERMES_PORTABLE_TEST_POLICY = "version: 1\nnetwork_policies: {}\n";
 
@@ -166,12 +167,22 @@ function routeSelection() {
 
 function matchingRegistryEntry(
   input: HermesPortableOnboardingInput,
-  options: { openshellVersion?: string | null; liveFingerprint?: string } = {},
+  options: {
+    openshellVersion?: string | null;
+    liveFingerprint?: string;
+    omitGatewayPort?: boolean;
+  } = {},
 ): SandboxEntry {
+  const gatewayPort = registryEntryGatewayPort({
+    name: input.sandboxName,
+    gatewayName: input.gatewayName,
+  });
   return {
     name: input.sandboxName,
     agent: "hermes",
+    ...normalizeSandboxInferenceRouteSelection(input.inferenceRouteReservation.selection),
     gatewayName: input.gatewayName,
+    ...(options.omitGatewayPort ? {} : { gatewayPort }),
     lifecycleGeneration: input.lifecycleGeneration,
     openshellDriver: "docker",
     lifecycleLiveIdentityFingerprint: options.liveFingerprint ?? HERMES_PORTABLE_TEST_LIVE_IDENTITY,
@@ -280,11 +291,13 @@ export interface HermesPortableTransactionFixtureOptions {
   }>["readSandboxReadyPublicationClockMs"];
   registryOpenShellVersion?: string | null;
   registryLiveFingerprint?: string;
+  omitRegistryGatewayPort?: boolean;
   existingRegistry?: boolean;
   registryEntry?: SandboxEntry | null;
   replaceRegistryBeforeRegistration?: SandboxEntry | null;
   podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   readRegistry?: () => SandboxEntry | null;
+  updateRegistry?: HermesPortableOnboardingDeps<{ ready: true }>["updateRegistry"];
   registerSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["registerSandbox"];
   createSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["createSandbox"];
   expectedBuildContextPath?: string;
@@ -307,6 +320,7 @@ export function createHermesPortableTransactionFixture(
               ? { openshellVersion: options.registryOpenShellVersion }
               : {}),
             liveFingerprint: options.registryLiveFingerprint,
+            omitGatewayPort: options.omitRegistryGatewayPort,
           })
         : hermesPortableReservationForOnboarding(input);
   const registryFailures = options.failAfterRegistry
@@ -369,6 +383,7 @@ export function createHermesPortableTransactionFixture(
       options.podmanAuthority ?? hermesPortableTestPodmanAuthority(),
     container: {
       podman,
+      authenticatedHealth: vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" })),
       assertSocketAuthority: options.assertSocketAuthority ?? vi.fn(),
     },
     assertOpenShellExecutableAuthority: options.assertOpenShellExecutableAuthority ?? vi.fn(),
@@ -409,6 +424,14 @@ export function createHermesPortableTransactionFixture(
       return { ready: true };
     },
     readRegistry: options.readRegistry ?? (() => registryEntry),
+    updateRegistry:
+      options.updateRegistry ??
+      ((name, updates) => {
+        if (!registryEntry || registryEntry.name !== name) return false;
+        registryEntry = { ...registryEntry, ...updates };
+        events.push("registry-update");
+        return true;
+      }),
     registerSandbox:
       options.registerSandbox ??
       ((_result, _receipt, _liveIdentityFingerprint, revalidate, routeReservation) => {
@@ -425,7 +448,9 @@ export function createHermesPortableTransactionFixture(
         revalidate();
         events.push("registry");
         registryEntry = {
-          ...matchingRegistryEntry(input),
+          ...matchingRegistryEntry(input, {
+            omitGatewayPort: options.omitRegistryGatewayPort,
+          }),
           pendingRouteReservation: true,
           reservationSessionId: input.inferenceRouteReservation.sessionId,
         };

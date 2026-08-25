@@ -520,6 +520,7 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
     `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
   return `
+import errno
 import json
 import sys
 import time
@@ -531,7 +532,8 @@ model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
 max_response_bytes = 1048576
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+inference_opener = urllib.request.build_opener()
+direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def post_inference(payload, label):
     request = urllib.request.Request(
@@ -543,7 +545,7 @@ def post_inference(payload, label):
     response_data = None
     for attempt in range(3):
         try:
-            with opener.open(request, timeout=60) as response:
+            with inference_opener.open(request, timeout=60) as response:
                 if response.status < 200 or response.status > 299:
                     raise RuntimeError("inference.local returned HTTP %s" % response.status)
                 response_bytes = response.read(max_response_bytes + 1)
@@ -638,7 +640,7 @@ direct_request = urllib.request.Request(
     method=direct_method,
 )
 try:
-    with opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
+    with direct_opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
         print(
             "direct host inference route unexpectedly returned HTTP %s" % direct_response.status,
             file=sys.stderr,
@@ -674,9 +676,11 @@ except urllib.error.HTTPError as error:
             file=sys.stderr,
         )
         sys.exit(1)
-except urllib.error.URLError:
-    print("direct host inference deny could not be proven", file=sys.stderr)
-    sys.exit(1)
+except urllib.error.URLError as error:
+    reason = error.reason
+    if not isinstance(reason, ConnectionRefusedError) or reason.errno != errno.ECONNREFUSED:
+        print("direct host inference deny could not be proven", file=sys.stderr)
+        sys.exit(1)
 
 print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 `.trim();

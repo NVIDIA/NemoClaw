@@ -324,6 +324,9 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 # create new top-level state while the gateway user cannot remove config files.
 # Immutability is opt-in via `shields up`.
 HERMES_DIR="/sandbox/.hermes"
+if [ -z "${HERMES_LAZY_INSTALL_TARGET+x}" ]; then
+  export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
+fi
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at

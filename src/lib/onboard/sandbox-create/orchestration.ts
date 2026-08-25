@@ -117,9 +117,7 @@ export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
-  return Boolean(
-    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
-  );
+  return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
 }
 
 function shouldRefuseManagedMcpRecreate(
@@ -169,6 +167,37 @@ export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
   const runtime = input.createRecreateRuntime();
   input.carryForward();
   return runtime;
+}
+
+export function readSandboxRecreateRegistryEntry(input: {
+  readonly sandboxName: string;
+  readonly recreateTransaction: boolean;
+  readonly existingEntry: SandboxEntry | null;
+  readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
+}): SandboxEntry | null {
+  if (!input.recreateTransaction) return input.existingEntry;
+  return input.readRegistry(input.sandboxName);
+}
+
+type PortableAgentReceiptGenerationObservation =
+  | { readonly kind: "absent" | "openclaw" }
+  | {
+      readonly kind: "hermes";
+      readonly gatewayName: string;
+      readonly lifecycleGeneration: string;
+    };
+
+function readHermesPortableLifecycleGeneration(input: {
+  readonly enabled: boolean;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inspect: (sandboxName: string) => PortableAgentReceiptGenerationObservation;
+}): string | undefined {
+  if (!input.enabled) return undefined;
+  const receipt = input.inspect(input.sandboxName);
+  return receipt.kind === "hermes" && receipt.gatewayName === input.gatewayName
+    ? receipt.lifecycleGeneration
+    : undefined;
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -406,6 +435,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
+    const recreateRegistryEntry = readSandboxRecreateRegistryEntry({
+      sandboxName,
+      recreateTransaction: Boolean(createIntent?.recreateTransaction),
+      existingEntry,
+      readRegistry: registry.getSandbox,
+    });
     // Prove the preserved source row before replacing its stale preset list.
     // Policy carry-forward is an owned post-delete mutation, but applying it
     // before recreate recovery makes the journal correctly reject that row as
@@ -419,7 +454,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           createIntent?.recreateTransaction,
           sandboxName,
           GATEWAY_NAME,
-          existingEntry,
+          recreateRegistryEntry,
           getSandboxRecreateObservation,
           note,
         ),
@@ -1067,10 +1102,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       request: managedStartupRootApplyRequest,
       intendedWorkloadArgv: intendedSandboxStartupCommand,
     });
+    const recoveredHermesLifecycleGeneration = readHermesPortableLifecycleGeneration({
+      enabled: agentCreateInput.hermesPortableLifecycle,
+      sandboxName,
+      gatewayName: GATEWAY_NAME,
+      inspect: sandboxGpuCreateFlow.inspectPortableAgentReceiptDisposition,
+    });
     const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(
       recreateRuntime,
       { sandboxName, gatewayName: GATEWAY_NAME },
       getSandboxRecreateObservation,
+      recoveredHermesLifecycleGeneration,
     );
     const hermesPortableAuthority = agentCreateInput.hermesPortableLifecycle
       ? (() => {
@@ -1257,6 +1299,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         createSandbox: (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
           runCreateFlow([...attemptArgv], readyCapture, readyRunner, buildContextPath),
         readRegistry: () => registry.getSandbox(sandboxName),
+        updateRegistry: registry.updateSandbox,
         registerSandbox: async (
           created,
           receipt,

@@ -15,7 +15,10 @@ import {
 } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
-const ENV_WRAPPER = path.join(import.meta.dirname, "../../../scripts/lib/entrypoint-env-wrapper.sh");
+const ENV_WRAPPER = path.join(
+  import.meta.dirname,
+  "../../../scripts/lib/entrypoint-env-wrapper.sh",
+);
 const TIRITH_FINALIZER = path.join(
   import.meta.dirname,
   "../../..",
@@ -43,6 +46,19 @@ function extractRuntimeShellEnvBlock(src: string): string {
   return src.slice(start, end).trimEnd();
 }
 
+function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const start = src.indexOf('HERMES_DIR="/sandbox/.hermes"');
+  const end = src.indexOf("\nHERMES_HASH_FILE=", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return spawnSync(
+    "bash",
+    ["-c", `${src.slice(start, end)}\nprintf '%s\\n' "$HERMES_LAZY_INSTALL_TARGET"`],
+    { encoding: "utf-8", env: childEnv, timeout: 5000 },
+  );
+}
+
 function extractDashboardPortBootstrap(src: string): string {
   const start = src.indexOf('NEMOCLAW_CMD=("$@")');
   const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
@@ -60,7 +76,9 @@ function runHermesDashboardPortBootstrap(env: Record<string, string | undefined>
     scriptPath,
     [
       "#!/usr/bin/env bash",
-      "set -euo pipefail",
+      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
+      // This fixture deliberately starts with no command arguments.
+      "set -eo pipefail",
       "set --",
       extractDashboardPortBootstrap(src),
       'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
@@ -753,6 +771,20 @@ describe("agents/hermes/start.sh sandbox init bootstrap", () => {
 });
 
 describe("agents/hermes/start.sh runtime shell env", () => {
+  it("defaults the managed lazy dependency target without replacing an explicit target (#9211)", () => {
+    const { HERMES_LAZY_INSTALL_TARGET: _ignored, ...envWithoutTarget } = process.env;
+    const defaulted = runHermesLazyInstallTargetBootstrap(envWithoutTarget);
+    const preserved = runHermesLazyInstallTargetBootstrap({
+      ...process.env,
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/custom-lazy-packages",
+    });
+
+    expect(defaulted.status, defaulted.stderr).toBe(0);
+    expect(defaulted.stdout.trim()).toBe("/sandbox/.hermes/lazy-packages");
+    expect(preserved.status, preserved.stderr).toBe(0);
+    expect(preserved.stdout.trim()).toBe("/sandbox/custom-lazy-packages");
+  });
+
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
     const escapedCaFile = bashPrintfQ(run.caFile);

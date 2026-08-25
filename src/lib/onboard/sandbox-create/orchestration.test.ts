@@ -10,6 +10,7 @@ import {
   hasManagedMcpRebuildHandoff,
   proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
+  readSandboxRecreateRegistryEntry,
 } from "./orchestration";
 
 describe("managed MCP rebuild handoff", () => {
@@ -110,6 +111,38 @@ describe("authoritative rebuild policy carry-forward", () => {
       note,
       [],
     );
+  });
+});
+
+describe("sandbox recreate registry authority", () => {
+  it("re-reads the durable source row for Hermes portable recreation (#10056)", () => {
+    const durable = { name: "alpha", lifecycleGeneration: "source-generation" } as SandboxEntry;
+    const readRegistry = vi.fn(() => durable);
+
+    expect(
+      readSandboxRecreateRegistryEntry({
+        sandboxName: "alpha",
+        recreateTransaction: true,
+        existingEntry: null,
+        readRegistry,
+      }),
+    ).toBe(durable);
+    expect(readRegistry).toHaveBeenCalledExactlyOnceWith("alpha");
+  });
+
+  it("keeps the inspected entry when no recreate transaction exists", () => {
+    const inspected = { name: "alpha" } as SandboxEntry;
+    const readRegistry = vi.fn(() => null);
+
+    expect(
+      readSandboxRecreateRegistryEntry({
+        sandboxName: "alpha",
+        recreateTransaction: false,
+        existingEntry: inspected,
+        readRegistry,
+      }),
+    ).toBe(inspected);
+    expect(readRegistry).not.toHaveBeenCalled();
   });
 });
 

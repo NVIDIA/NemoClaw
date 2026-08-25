@@ -24,7 +24,10 @@ import {
   recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
 } from "./hermes-portable-lifecycle";
-import { hermesPortableCreatePolicySemanticDigest } from "./hermes-portable-policy-authority";
+import {
+  hermesPortableCreatePolicySemanticDigest,
+  resolveHermesPortableExpectedPolicyBytes,
+} from "./hermes-portable-policy-authority";
 import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
@@ -250,7 +253,11 @@ function activeReceipt(): HermesPortableConfiguredReceipt {
   return active;
 }
 
-function lifecycleDeps(receipt: HermesPortableConfiguredReceipt, initiallyRunning = true) {
+function lifecycleDeps(
+  receipt: HermesPortableConfiguredReceipt,
+  initiallyRunning = true,
+  options: { readonly livePolicy?: string; readonly registry?: Partial<SandboxEntry> } = {},
+) {
   let running = initiallyRunning;
   const podman = vi.fn((args: readonly string[]) => {
     const actions = {
@@ -283,11 +290,12 @@ function lifecycleDeps(receipt: HermesPortableConfiguredReceipt, initiallyRunnin
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
+    const sandboxExecOutput = args.includes("python3") ? "200\n" : "";
     const responses = {
-      "policy:get": { status: 0, stdout: POLICY, stderr: "" },
-      "sandbox:list": { status: 0, stdout: LIVE, stderr: "" },
+      "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
+      "sandbox:list": { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" },
       "sandbox:get": { status: 0, stdout: LIVE, stderr: "" },
-      "sandbox:exec": { status: 0, stdout: "", stderr: "" },
+      "sandbox:exec": { status: 0, stdout: sandboxExecOutput, stderr: "" },
     };
     return (
       responses[args.slice(0, 2).join(":") as keyof typeof responses] ??
@@ -312,6 +320,7 @@ function lifecycleDeps(receipt: HermesPortableConfiguredReceipt, initiallyRunnin
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
           openshellVersion: "0.0.106",
+          ...options.registry,
         }) as SandboxEntry,
       captureOpenShell,
       assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
@@ -499,7 +508,7 @@ describe("Hermes portable lifecycle", () => {
 
   it("starts and proves exact receipt-owned authenticated health without Docker (#9203)", () => {
     const receipt = activeReceipt();
-    const { deps, podman } = lifecycleDeps(receipt, false);
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
 
     const result = withMcpLifecycleLockSync(
       SANDBOX,
@@ -510,6 +519,101 @@ describe("Hermes portable lifecycle", () => {
     expect(result).toEqual({ kind: "recovered" });
     expect(podman.mock.calls.some(([args]) => args[1] === "start")).toBe(true);
     expect(podman.mock.calls.every(([args]) => !String(args[0]).includes("docker"))).toBe(true);
+    expect(captureOpenShell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-g",
+        GATEWAY,
+        "--name",
+        SANDBOX,
+        "--no-tty",
+        "--",
+        "python3",
+        "-c",
+        hermesPortableContainerInternals.authenticatedHealthScript,
+      ],
+      40_000,
+    );
+  });
+
+  it("recovers against the finalized Personal policy authority (#9211)", () => {
+    const receipt = activeReceipt();
+    const registry = {
+      policyTier: "personal",
+      policies: ["personal-open-internet"],
+      policyPresetsFinalized: true,
+    } satisfies Partial<SandboxEntry>;
+    const livePolicy = resolveHermesPortableExpectedPolicyBytes(Buffer.from(POLICY), {
+      name: SANDBOX,
+      agent: "hermes",
+      ...registry,
+    } as SandboxEntry).bytes.toString("utf8");
+    const { deps, podman } = lifecycleDeps(receipt, false, { livePolicy, registry });
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "recovered" });
+    expect(podman.mock.calls.some(([args]) => args[1] === "start")).toBe(true);
+  });
+
+  it("uses structured list phase when sandbox get omits phase (#9211)", () => {
+    const receipt = activeReceipt();
+    const { deps, captureOpenShell } = lifecycleDeps(receipt, false);
+    const defaultCapture = captureOpenShell.getMockImplementation()!;
+    captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.slice(0, 2).join(":") === "sandbox:get"
+        ? {
+            status: 0,
+            stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\n`,
+            stderr: "",
+          }
+        : defaultCapture(args),
+    );
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "recovered" });
+    expect(captureOpenShell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", GATEWAY, "-o", "json"],
+      5_000,
+    );
+  });
+
+  it("rejects Personal policy without finalized registry authority (#9211)", () => {
+    const receipt = activeReceipt();
+    const finalized = {
+      name: SANDBOX,
+      agent: "hermes",
+      policyTier: "personal",
+      policies: ["personal-open-internet"],
+      policyPresetsFinalized: true,
+    } as SandboxEntry;
+    const livePolicy = resolveHermesPortableExpectedPolicyBytes(
+      Buffer.from(POLICY),
+      finalized,
+    ).bytes.toString("utf8");
+    const { deps, podman } = lifecycleDeps(receipt, false, {
+      livePolicy,
+      registry: { ...finalized, policyPresetsFinalized: undefined },
+    });
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("base policy disagrees with create input");
+    expect(podman).not.toHaveBeenCalled();
   });
 
   it("rejects an ambient OpenShell endpoint before Podman or OpenShell effects (#9203)", () => {
@@ -596,7 +700,13 @@ describe("Hermes portable lifecycle", () => {
     deps.captureOpenShell = vi.fn((args: readonly string[]) =>
       args[0] === "policy"
         ? { status: 0, stdout: POLICY, stderr: "" }
-        : { status: 0, stdout: `Name: ${SANDBOX}\nID: replacement\nPhase: Ready\n`, stderr: "" },
+        : args[1] === "list"
+          ? { status: 0, stdout: sandboxListJson("replacement", "Ready"), stderr: "" }
+          : {
+              status: 0,
+              stdout: `Name: ${SANDBOX}\nID: replacement\n`,
+              stderr: "",
+            },
     );
 
     expect(() =>
@@ -614,11 +724,13 @@ describe("Hermes portable lifecycle", () => {
     deps.captureOpenShell = vi.fn((args: readonly string[]) =>
       args[0] === "policy"
         ? { status: 0, stdout: POLICY, stderr: "" }
-        : {
-            status: 0,
-            stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: Creating\n`,
-            stderr: "",
-          },
+        : args[1] === "list"
+          ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Creating"), stderr: "" }
+          : {
+              status: 0,
+              stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\n`,
+              stderr: "",
+            },
     );
 
     expect(() =>

@@ -94,6 +94,7 @@ import {
   type SandboxRecreateObservation,
   sandboxRecreatePhaseReached,
   sandboxRecreateSourceWorkloadEntry,
+  selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
@@ -173,6 +174,7 @@ function shouldApplyCheckpointCrashRecovery(
   return (
     !recreateRequested &&
     decision.kind === "create" &&
+    decision.continueHermesPortableLifecycle !== true &&
     decision.validateMessagingCredentialsBeforeMutation !== true
   );
 }
@@ -782,6 +784,16 @@ class SandboxStateFlow<
       ),
       recreateSandboxRequested: this.options.recreateSandbox(false),
       recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
+      activeRecreateJournal: Boolean(
+        state.session?.checkpoint?.sandboxRecreate &&
+        this.options.recreateJournalTargetIntentFingerprint &&
+        state.session.checkpoint.sandboxRecreate.sandboxName === state.sandboxName &&
+        state.session.checkpoint.sandboxRecreate.targetIntentFingerprint ===
+          this.options.recreateJournalTargetIntentFingerprint,
+      ),
+      hermesPortableLifecyclePending:
+        this.options.hermesPortableLifecycle === true &&
+        registryEntry?.pendingRouteReservation === true,
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,
@@ -1705,9 +1717,10 @@ class SandboxStateFlow<
         gatewayPort: gateway.gatewayPort,
         sourceEntry,
         observation,
-        targetIntentFingerprint: this.sandboxRecreateTargetIntentFingerprint(
-          sandboxName,
-          createIntent,
+        targetIntentFingerprint: selectSandboxRecreateTargetIntentFingerprint(
+          existing,
+          this.sandboxRecreateTargetIntentFingerprint(sandboxName, createIntent),
+          this.options.recreateJournalTargetIntentFingerprint,
         ),
       });
       return current;
@@ -1750,12 +1763,11 @@ class SandboxStateFlow<
     decision: SandboxCreationDecision,
   ): Promise<SandboxRecreatePreparation> {
     const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
-    const transaction = this.beginSandboxRecreateJournal(
-      state,
-      requestedSandboxName,
-      createIntent,
-      sourceEntry,
-    );
+    const continueHermesPortableLifecycle =
+      decision.kind === "create" && decision.continueHermesPortableLifecycle === true;
+    const transaction = continueHermesPortableLifecycle
+      ? null
+      : this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent, sourceEntry);
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }

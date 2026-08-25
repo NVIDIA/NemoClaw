@@ -6,10 +6,14 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 
 import {
+  fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
-import { classifyOpenShellSandboxPresence } from "../../adapters/openshell/sandbox-presence";
+import {
+  classifyOpenShellSandboxPresence,
+  observeOpenShellSandboxIdentity,
+} from "../../adapters/openshell/sandbox-presence";
 import { assertPodmanSocketAuthority } from "../../adapters/podman";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
@@ -210,6 +214,21 @@ function createContainerDeps(
   };
 }
 
+function createAuthenticatedHealthCapture(
+  receipt: HermesPortableConfiguredReceipt,
+  capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
+): NonNullable<HermesPortableContainerDeps["authenticatedHealth"]> {
+  return (script, timeoutMs) => {
+    const result = capture(openshellExecArgs(receipt, ["python3", "-c", script]), timeoutMs);
+    return {
+      status: result.status,
+      stdout: commandOutput(result.stdout, "authenticated health output"),
+      stderr: commandOutput(result.stderr, "authenticated health diagnostic"),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
+}
+
 function sameSnapshot(
   left: HermesPortableReceiptSnapshot,
   right: HermesPortableReceiptSnapshot,
@@ -240,8 +259,16 @@ function observeOpenShellIdentity(
   capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
   acceptedPhases: readonly string[] = ["Ready"],
 ): { readonly sandboxId: string; readonly liveIdentityFingerprint: string } {
-  const gateway = capture(["sandbox", "list", "-g", receipt.gatewayName], COMMAND_TIMEOUT_MS);
+  const gateway = capture(
+    ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
+    COMMAND_TIMEOUT_MS,
+  );
   if (gateway.status !== 0 || gateway.error) fail("cannot prove the selected gateway reachable");
+  const listed = observeOpenShellSandboxIdentity(receipt.sandboxName, {
+    status: gateway.status,
+    stdout: commandOutput(gateway.stdout, "sandbox list output"),
+    stderr: commandOutput(gateway.stderr, "sandbox list diagnostic"),
+  });
   const current = capture(
     ["sandbox", "get", "-g", receipt.gatewayName, receipt.sandboxName],
     COMMAND_TIMEOUT_MS,
@@ -250,13 +277,14 @@ function observeOpenShellIdentity(
   const output = commandOutput(current.stdout, "sandbox identity output");
   const sandboxId = parseOpenShellSandboxId(output);
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
-  const phases = [...output.matchAll(/^Phase:\s*(\S+)\s*$/gmu)].map((match) => match[1]!);
   if (
-    phases.length !== 1 ||
-    !acceptedPhases.includes(phases[0]!) ||
+    listed.kind !== "present" ||
+    !acceptedPhases.includes(listed.phase) ||
     !sandboxId ||
     !liveIdentityFingerprint ||
-    sandboxId !== receipt.container.sandboxId
+    listed.id !== sandboxId ||
+    sandboxId !== receipt.container.sandboxId ||
+    fingerprintOpenShellSandboxId(listed.id) !== liveIdentityFingerprint
   ) {
     fail("OpenShell sandbox identity disagrees with the receipt container");
   }
@@ -281,7 +309,7 @@ function requireRegistry(
   receipt: HermesPortableConfiguredReceipt,
   liveIdentityFingerprint: string,
   deps: HermesPortableLifecycleDeps,
-): void {
+): SandboxEntry {
   const entry = deps.readRegistry?.(receipt.sandboxName);
   if (
     !entry ||
@@ -295,6 +323,7 @@ function requireRegistry(
   ) {
     fail("registry authority disagrees with the active receipt");
   }
+  return entry;
 }
 
 function qualify(
@@ -342,24 +371,30 @@ function qualify(
     buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
     return rawCapture(args, timeoutMs);
   };
+  const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
+  const registryEntry = requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
   const policy = proveHermesPortableLivePolicy({
     gatewayName: receipt.gatewayName,
     sandboxName,
     createPolicyBytes: durablePolicy,
+    finalizedRegistryEntry: registryEntry,
     capture: policyCapture(capture),
   });
   if (
-    policy.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256 ||
-    policy.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256
+    policy.expectedPolicySource === "create" &&
+    (policy.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256 ||
+      policy.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256)
   ) {
     fail("live policy authority disagrees with the active receipt");
   }
-  const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
-  requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
-  const containerDeps =
+  const baseContainerDeps =
     typeof deps.container === "function"
       ? deps.container(receipt)
       : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
+  const containerDeps: HermesPortableContainerDeps = {
+    ...baseContainerDeps,
+    authenticatedHealth: createAuthenticatedHealthCapture(receipt, capture),
+  };
   const container = assertCurrentHermesPortableContainer(receipt, containerDeps);
   if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
     fail("container state or restart policy disagrees with active authority");
