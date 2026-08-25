@@ -17,10 +17,10 @@ import {
   type SandboxInferenceInvocationInput,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
-
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
@@ -200,24 +200,61 @@ function buildInvokedRouteHealth(
   };
 }
 
+export type SandboxInferenceRouteHealthContext = {
+  agentName: string | null;
+  provider: string | null;
+};
+
+// A route status outside 200-299 only counts toward health for the one
+// combination known to intentionally 404 its models route: Deep Agents Code
+// on OpenRouter (#9834). Every other agent and provider must fail closed on
+// a non-2xx route status, even when a bounded inference request happens to
+// succeed against it, so `status` cannot report Ready for a route that
+// genuine model-list validation would reject (#10080).
+function routeStatusAccepted(
+  gateway: SandboxInferenceRouteHealth,
+  context: SandboxInferenceRouteHealthContext,
+): boolean {
+  if (gateway.httpStatus >= 200 && gateway.httpStatus < 300) return true;
+  return (
+    context.agentName === DCODE_AGENT_NAME &&
+    context.provider === "openrouter-api" &&
+    gateway.httpStatus === 404
+  );
+}
+
 export function buildSandboxInferenceRouteHealth(
   gateway: SandboxInferenceRouteHealth | null,
   providerHealth: ProviderHealthStatus | null,
   invocation: SandboxInferenceInvocationResult | null,
+  context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
   const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
+  const accepted = gateway !== null && gateway.ok && routeStatusAccepted(gateway, context);
   let routeHealth: ProviderHealthStatus;
   if (gateway?.ok && invocation) {
-    routeHealth = buildInvokedRouteHealth(gateway, endpoint, invocation);
+    const invoked = buildInvokedRouteHealth(gateway, endpoint, invocation);
+    routeHealth =
+      invoked.ok && !accepted
+        ? {
+            ...invoked,
+            ok: false,
+            detail:
+              `Inference gateway served a request, but HTTP ${gateway.httpStatus} on ${endpoint} ` +
+              `is only accepted for Deep Agents Code with OpenRouter; treating this route as not ready.`,
+            failureLabel: "unreachable" as const,
+          }
+        : invoked;
   } else if (gateway) {
+    const ok = accepted;
     routeHealth = {
-      ok: gateway.ok,
+      ok,
       probed: true,
       providerLabel: "Inference route",
       endpoint,
       detail: gateway.detail,
-      ...(gateway.ok
+      ...(ok
         ? { okLabel: "reachable" }
         : {
             failureLabel: classifyInferenceRouteFailureLabel(gateway.httpStatus),
