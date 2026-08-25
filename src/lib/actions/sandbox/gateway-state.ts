@@ -232,6 +232,17 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
+  const suffixLineIdx = cleanLines.findIndex(
+    (line, index) =>
+      index > policyLineIdx &&
+      /^\s*(?:Id|Name|Phase|Resource version|Labels|Annotations|Policy source|Revision):(?:\s|$)/u.test(
+        line,
+      ),
+  );
+  const suffix =
+    suffixLineIdx === -1
+      ? ""
+      : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
   const cleanLivePolicy = stripAnsi(String(livePolicyOutput));
   const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
   const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
@@ -255,7 +266,7 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
-  return `${before}\n\n${indented}\n`;
+  return `${before}\n\n${indented}${suffix}\n`;
 }
 
 /** Query sandbox presence and return its output with the live enforced policy. */
