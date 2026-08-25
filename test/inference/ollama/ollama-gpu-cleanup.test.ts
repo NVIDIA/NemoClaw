@@ -103,7 +103,7 @@ describe("Ollama GPU cleanup", () => {
     );
   });
 
-  it("calls curl synchronously to unload every running model via /api/generate", async () => {
+  it("unloads every running model through the Ollama API", async () => {
     await withMockedSpawnSync(
       respondWithLoadedModels("llama3.1:8b", "qwen:7b"),
       (calls, { unloadOllamaModels }) => {
