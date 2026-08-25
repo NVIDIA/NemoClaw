@@ -16,6 +16,7 @@ import {
   DEFAULT_GATEWAY_BIND_ADDRESS,
   WILDCARD_GATEWAY_BIND_ADDRESS,
 } from "../../core/gateway-address";
+import { resolveDockerDriverNetworkName } from "../experimental/docker-network-authority";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   type HostLocalInferenceRouteAuthority,
@@ -113,6 +114,29 @@ export function prepareNativePodmanGatewayHostRuntime(
       timedOut: error?.code === "ETIMEDOUT",
     };
   };
+  const inspectNetwork = (networkName: string) => {
+    const result = run(["network", "inspect", networkName], 30_000);
+    if (result.status !== 0) return undefined;
+    try {
+      const parsed = JSON.parse(String(result.stdout ?? "")) as unknown;
+      const record = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
+      const subnets = (record as { subnets?: unknown }).subnets;
+      if (!Array.isArray(subnets)) return undefined;
+      for (const subnet of subnets) {
+        if (!subnet || typeof subnet !== "object" || Array.isArray(subnet)) continue;
+        const values = subnet as { subnet?: unknown; gateway?: unknown };
+        const subnetValue = typeof values.subnet === "string" ? values.subnet : undefined;
+        const gatewayIp = typeof values.gateway === "string" ? values.gateway : undefined;
+        if (gatewayIp && !gatewayIp.includes(":")) {
+          return { ...(subnetValue ? { subnet: subnetValue } : {}), gatewayIp };
+        }
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  };
   return Object.freeze({
     providerId: "podman",
     openShellDriver: "podman",
@@ -135,29 +159,11 @@ export function prepareNativePodmanGatewayHostRuntime(
       processOwnership: "runtime-marker" as const,
     }),
     network: Object.freeze({
-      inspect: (networkName: string) => {
-        const result = run(["network", "inspect", networkName], 30_000);
-        if (result.status !== 0) return undefined;
-        try {
-          const parsed = JSON.parse(String(result.stdout ?? "")) as unknown;
-          const record = Array.isArray(parsed) ? parsed[0] : parsed;
-          if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
-          const subnets = (record as { subnets?: unknown }).subnets;
-          if (!Array.isArray(subnets)) return undefined;
-          for (const subnet of subnets) {
-            if (!subnet || typeof subnet !== "object" || Array.isArray(subnet)) continue;
-            const values = subnet as { subnet?: unknown; gateway?: unknown };
-            const subnetValue = typeof values.subnet === "string" ? values.subnet : undefined;
-            const gatewayIp = typeof values.gateway === "string" ? values.gateway : undefined;
-            if (gatewayIp && !gatewayIp.includes(":")) {
-              return { ...(subnetValue ? { subnet: subnetValue } : {}), gatewayIp };
-            }
-          }
-          return undefined;
-        } catch {
-          return undefined;
-        }
+      sandboxSourceCidrs: () => {
+        const network = inspectNetwork(resolveDockerDriverNetworkName(input.environment));
+        return network?.subnet ? [network.subnet] : [];
       },
+      inspect: inspectNetwork,
       usesHostGatewayRoute: () => false,
       run,
       ensureProbeImageCached: (image: string) => {

@@ -22,6 +22,7 @@ import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
 } from "../experimental/docker-network-authority";
 import {
   hasPortableAgentSandboxLifecycleReceipt,
@@ -569,6 +570,12 @@ export function createDockerRuntimeProviderBundle(
             processOwnership: "scoped-namespace",
           },
           network: {
+            sandboxSourceCidrs: () => {
+              const network = inspectDockerGatewayNetwork(
+                resolveDockerDriverNetworkName(input.environment),
+              );
+              return network?.subnet ? [network.subnet] : [];
+            },
             inspect: inspectDockerGatewayNetwork,
             usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
             run: runDockerGatewayCommand,

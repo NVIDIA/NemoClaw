@@ -67,6 +67,16 @@ export type RegisteredRuntimeRecoveryResult = {
   readonly message?: string;
 };
 
+/** Whether the registered provider exposes the managed in-sandbox controller. */
+export function usesManagedGatewayController(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return (
+    provider?.gateway.supported === true &&
+    provider.gateway.launcher === "nemoclaw" &&
+    provider.lifecycle.supported === true
+  );
+}
+
 /** Whether retained default-engine gateway compatibility logic applies. */
 export function usesLegacyManagedGatewayRecovery(entry: registry.SandboxEntry): boolean {
   const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);

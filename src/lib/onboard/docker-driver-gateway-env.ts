@@ -108,6 +108,15 @@ function preparePortableGatewayHostRuntime(
       stdout: result.stdout,
     };
   };
+  const inspectNetwork = (networkName: string) => {
+    const raw = dockerCapture(
+      ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+      { ignoreError: true },
+    );
+    return (parseDockerNetworkIpamEntries(raw) ?? []).find(
+      ({ gatewayIp }) => gatewayIp && !gatewayIp.includes(":"),
+    );
+  };
   return {
     providerId: "docker",
     openShellDriver: "podman",
@@ -132,15 +141,11 @@ function preparePortableGatewayHostRuntime(
       processOwnership: "scoped-namespace",
     },
     network: {
-      inspect: (networkName) => {
-        const raw = dockerCapture(
-          ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
-          { ignoreError: true },
-        );
-        return (parseDockerNetworkIpamEntries(raw) ?? []).find(
-          ({ gatewayIp }) => gatewayIp && !gatewayIp.includes(":"),
-        );
+      sandboxSourceCidrs: () => {
+        const network = inspectNetwork(resolveDockerDriverNetworkName());
+        return network?.subnet ? [network.subnet] : [];
       },
+      inspect: inspectNetwork,
       usesHostGatewayRoute: () => {
         if (platform !== "linux") return true;
         const info = dockerCapture(

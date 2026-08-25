@@ -591,6 +591,7 @@ function createContainerStateMutationHarness(
           providerId,
           providerDisplayName: "Podman",
           engineOperation: "state-mutation",
+          runtimeIdInspectField: "ID",
         });
   const sandbox: SandboxEntry = {
     name: "alpha",

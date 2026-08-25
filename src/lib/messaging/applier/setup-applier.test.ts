@@ -1134,6 +1134,7 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
+    expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
     expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
       enabled: true,
     });

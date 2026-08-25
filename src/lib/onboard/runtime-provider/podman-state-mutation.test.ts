@@ -86,6 +86,16 @@ describe("Podman runtime-provider state mutation", () => {
       "activate",
       "release",
     ]);
+    const inspectCommands = runtime.capture.mock.calls
+      .map(([, args]) => args as readonly string[])
+      .filter((args) => args.includes("inspect"));
+    expect(inspectCommands.length).toBeGreaterThan(0);
+    expect(inspectCommands.every((args) => args.some((value) => value.includes("{{json .ID}}")))).toBe(
+      true,
+    );
+    expect(inspectCommands.every((args) => args.every((value) => !value.includes("{{json .Id}}")))).toBe(
+      true,
+    );
     expect(
       runtime.capture.mock.calls.every(([, args]) =>
         (args as readonly string[])

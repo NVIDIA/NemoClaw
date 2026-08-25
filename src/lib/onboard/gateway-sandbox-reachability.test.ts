@@ -166,6 +166,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
         socketPath: "/run/user/1000/podman/podman.sock",
       }),
       network: {
+        sandboxSourceCidrs: () => ["10.89.0.0/24"],
         inspect,
         usesHostGatewayRoute: vi.fn(() => false),
         run,

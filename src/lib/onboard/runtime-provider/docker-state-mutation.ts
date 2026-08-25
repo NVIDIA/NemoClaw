@@ -450,6 +450,8 @@ export interface ContainerStateMutationOwnerOptions {
   readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
+  /** Provider-native Go-template field for the full immutable runtime ID. */
+  readonly runtimeIdInspectField?: "Id" | "ID";
 }
 
 export type DockerStateMutationOwnerOptions = Omit<
@@ -478,6 +480,7 @@ export interface ContainerStateMutationSurfaceOptions {
   readonly createAuthority: (
     input: RuntimeProviderStateMutationContext,
   ) => ContainerStateMutationAuthority;
+  readonly runtimeIdInspectField?: "Id" | "ID";
   readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
   readonly withDirectSandboxExecutionExclusion?: <T>(
     sandboxName: string,
@@ -1272,9 +1275,10 @@ function requireCurrentEngineAuthority(
   );
 }
 
-function inspectCommand(runtimeId: string) {
+function inspectCommand(runtimeId: string, runtimeIdField: "Id" | "ID" = "Id") {
+  const format = INSPECT_FORMAT.replace(".Id}}", `.${runtimeIdField}}}`);
   return Object.freeze({
-    args: Object.freeze(["container", "inspect", "--format", INSPECT_FORMAT, runtimeId]),
+    args: Object.freeze(["container", "inspect", "--format", format, runtimeId]),
     targetIndex: 4,
   });
 }
@@ -1674,7 +1678,7 @@ function inspectDirect(
 ): DockerRuntimeObservation {
   requireCurrentEngineAuthority(options, bindingSha256);
   const result = options.authority.engine.capture(
-    inspectCommand(options.runtimeId).args,
+    inspectCommand(options.runtimeId, options.runtimeIdInspectField).args,
     INSPECT_TIMEOUT_MS,
   );
   requireCurrentEngineAuthority(options, bindingSha256);
@@ -1692,7 +1696,11 @@ function inspectAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
   options: ContainerStateMutationOwnerOptions,
 ): DockerRuntimeObservation {
-  const result = scope.captureExact("target", inspectCommand, INSPECT_TIMEOUT_MS);
+  const result = scope.captureExact(
+    "target",
+    (runtimeId) => inspectCommand(runtimeId, options.runtimeIdInspectField),
+    INSPECT_TIMEOUT_MS,
+  );
   const observation = parseInspection(
     requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
@@ -2335,7 +2343,7 @@ function releaseAuthorizedFence(
 export function createContainerStateMutationOwner(
   optionsInput: ContainerStateMutationOwnerOptions,
 ): ContainerStateMutationOwner {
-  const options = Object.freeze({ ...optionsInput });
+  const options = Object.freeze({ runtimeIdInspectField: "Id" as const, ...optionsInput });
   boundedString(options.providerId, PROVIDER_ID, "provider identity");
   boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
@@ -2771,6 +2779,9 @@ function createSurfaceOwner(
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
+    ...(options.runtimeIdInspectField
+      ? { runtimeIdInspectField: options.runtimeIdInspectField }
+      : {}),
   });
 }
 

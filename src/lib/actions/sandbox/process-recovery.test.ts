@@ -595,6 +595,18 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("my-sandbox", "probe");
   });
 
+  it("accepts the same managed controller proof for a Podman sandbox", () => {
+    requestGatewaySupervisorAction.mockClear();
+    expect(
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
+        getSandboxImpl: () => ({ ...openClawEntry, openshellDriver: "podman" }),
+        getSessionAgentImpl: () => null,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
+      }),
+    ).toBe(true);
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("my-sandbox", "probe");
+  });
+
   it("does not control custom agents or non-direct OpenShell drivers", () => {
     requestGatewaySupervisorAction.mockClear();
     expect(

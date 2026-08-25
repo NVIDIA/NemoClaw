@@ -39,6 +39,7 @@ function gatewayRuntime(
       processOwnership: "scoped-namespace",
     },
     network: {
+      sandboxSourceCidrs: vi.fn(() => ["172.18.0.0/16"]),
       inspect: vi.fn(),
       usesHostGatewayRoute: vi.fn(() => false),
       run,

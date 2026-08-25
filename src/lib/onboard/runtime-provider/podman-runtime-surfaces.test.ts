@@ -209,6 +209,7 @@ describe("current Podman runtime provider", () => {
         processOwnership: "runtime-marker",
       },
       network: {
+        sandboxSourceCidrs: expect.any(Function),
         inspect: expect.any(Function),
         usesHostGatewayRoute: expect.any(Function),
         run: expect.any(Function),
@@ -218,7 +219,14 @@ describe("current Podman runtime provider", () => {
   });
 
   it("executes native gateway networking through the injected inspection authority", () => {
-    const capture = vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" }));
+    const capture = vi.fn((args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[0] === "network" && args[1] === "inspect"
+          ? JSON.stringify([{ subnets: [{ subnet: "10.89.0.0/24", gateway: "10.89.0.1" }] }])
+          : "[]",
+      stderr: "",
+    }));
     const gatewayInspection = {
       operation: "gateway-inspection",
       engineId: "podman",
@@ -239,8 +247,10 @@ describe("current Podman runtime provider", () => {
 
     expect(runtime.network.run(["network", "inspect", "openshell"], 7_500)).toMatchObject({
       status: 0,
-      stdout: "[]",
+      stdout: expect.stringContaining("10.89.0.0/24"),
     });
     expect(capture).toHaveBeenCalledWith(["network", "inspect", "openshell"], 7_500);
+    expect(runtime.network.sandboxSourceCidrs()).toEqual(["10.89.0.0/24"]);
+    expect(capture).toHaveBeenCalledWith(["network", "inspect", "openshell-docker"], 30_000);
   });
 });

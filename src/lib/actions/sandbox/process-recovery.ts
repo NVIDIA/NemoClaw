@@ -73,6 +73,7 @@ import {
   type ManagedSupervisorRelaunch,
   recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
+  usesManagedGatewayController,
   usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
@@ -634,7 +635,7 @@ export function confirmRecoveredSandboxGatewayManaged(
   const persistedAgent = entry.agent ?? "openclaw";
   if (persistedAgent !== "openclaw" && persistedAgent !== "hermes") return null;
 
-  if (!usesLegacyManagedGatewayRecovery(entry)) return null;
+  if (!usesManagedGatewayController(entry)) return null;
 
   const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);

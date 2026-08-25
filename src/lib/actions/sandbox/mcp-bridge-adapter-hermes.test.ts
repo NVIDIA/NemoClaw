@@ -131,6 +131,20 @@ describe("Hermes MCP config adapter", () => {
       expect(rawRuntime.status).toBe(3);
       expect(rawRuntime.stdout.trim()).toBe("error");
       expect(rawRuntime.stderr).not.toContain("raw-secret");
+
+      fs.writeFileSync(configPath, YAML.stringify({ mcp_servers: {} }));
+      const absent = spawnSync(
+        "bash",
+        [
+          "-c",
+          buildHermesMcpStatusCommand(baseEntry)
+            .replace("/opt/hermes/.venv/bin/python", "python3")
+            .replace("/sandbox/.hermes/config.yaml", configPath),
+        ],
+        { encoding: "utf8", env: { ...process.env } },
+      );
+      expect(absent.status, absent.stderr).toBe(0);
+      expect(absent.stdout.trim()).toBe("absent");
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }

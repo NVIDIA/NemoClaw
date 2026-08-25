@@ -128,6 +128,8 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly processOwnership: "scoped-namespace" | "runtime-marker";
   };
   readonly network: {
+    /** Provider-owned sandbox source ranges authorized to reach host services. */
+    sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
     run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;

@@ -824,7 +824,7 @@ export async function runSlackApiRequest(
   sandbox: SandboxClient,
   port: string,
   apiPath: string,
-  authorization: string,
+  authorization: string | { envKey: string; aliasPrefix?: string },
   redactionValues: string[],
 ): Promise<string> {
   const result = await runSandboxNode(
@@ -832,7 +832,19 @@ export async function runSlackApiRequest(
     `
 import http from "node:http";
 
-const authorization = process.env.FAKE_SLACK_AUTH ?? "";
+let authorization = process.env.FAKE_SLACK_AUTH ?? "";
+const providerEnvKey = process.env.FAKE_SLACK_PROVIDER_ENV_KEY ?? "";
+if (providerEnvKey) {
+  const scoped = process.env[providerEnvKey] ?? "";
+  const expected = new RegExp("^openshell:resolve:env:(v[0-9]{1,20}_" + providerEnvKey + ")$");
+  const match = scoped.match(expected);
+  if (!match) throw new Error("missing current revision-scoped Slack provider placeholder");
+  const aliasPrefix = process.env.FAKE_SLACK_ALIAS_PREFIX ?? "";
+  const placeholder = aliasPrefix
+    ? aliasPrefix + "-OPENSHELL-RESOLVE-ENV-" + match[1]
+    : scoped;
+  authorization = "Bearer " + placeholder;
+}
 const token = authorization.replace(/^Bearer\\s+/, "");
 const data = new URLSearchParams({ token }).toString();
 const req = http.request({
@@ -865,7 +877,14 @@ req.end();
       env: {
         FAKE_SLACK_PORT: port,
         FAKE_SLACK_PATH: apiPath,
-        FAKE_SLACK_AUTH: authorization,
+        ...(typeof authorization === "string"
+          ? { FAKE_SLACK_AUTH: authorization }
+          : {
+              FAKE_SLACK_PROVIDER_ENV_KEY: authorization.envKey,
+              ...(authorization.aliasPrefix
+                ? { FAKE_SLACK_ALIAS_PREFIX: authorization.aliasPrefix }
+                : {}),
+            }),
       },
       redactionValues,
       timeoutMs: 60_000,
@@ -878,7 +897,7 @@ req.end();
 export async function runDiscordGatewayClient(
   sandbox: SandboxClient,
   port: string,
-  identifyToken: string,
+  identifyToken: string | { envKey: string },
   redactionValues: string[],
 ): Promise<string> {
   const result = await runSandboxNode(
@@ -889,7 +908,15 @@ import net from "node:net";
 
 const host = "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = process.env.FAKE_DISCORD_IDENTIFY_TOKEN ?? "";
+let identifyToken = process.env.FAKE_DISCORD_IDENTIFY_TOKEN ?? "";
+const providerEnvKey = process.env.FAKE_DISCORD_PROVIDER_ENV_KEY ?? "";
+if (providerEnvKey) {
+  identifyToken = process.env[providerEnvKey] ?? "";
+  const expected = new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + providerEnvKey + "$");
+  if (!expected.test(identifyToken)) {
+    throw new Error("missing current revision-scoped Discord provider placeholder");
+  }
+}
 const results = [];
 
 function finish(message) {
@@ -1039,7 +1066,9 @@ socket.on("close", () => {
       artifactName: "fake-discord-gateway-client",
       env: {
         FAKE_DISCORD_GATEWAY_PORT: port,
-        FAKE_DISCORD_IDENTIFY_TOKEN: identifyToken,
+        ...(typeof identifyToken === "string"
+          ? { FAKE_DISCORD_IDENTIFY_TOKEN: identifyToken }
+          : { FAKE_DISCORD_PROVIDER_ENV_KEY: identifyToken.envKey }),
       },
       redactionValues,
       timeoutMs: 60_000,

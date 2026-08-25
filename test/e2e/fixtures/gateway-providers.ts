@@ -117,6 +117,26 @@ export async function rebindFixtureProviderPolicyEndpoint(
         redactionValues,
       },
     );
+    // Publish the new credential generation while detached so the following
+    // attachment captures that exact generation. Updating after attach leaves
+    // the sandbox bound to a stale placeholder revision.
+    await runFixtureOpenShell(
+      host,
+      [
+        "provider",
+        "update",
+        "-g",
+        gatewayName,
+        options.providerName,
+        "--credential",
+        options.credentialEnv,
+      ],
+      {
+        artifactName: `${options.artifactName}-provider-publication`,
+        env: options.env,
+        redactionValues,
+      },
+    );
     await runFixtureOpenShell(
       host,
       ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, options.providerName],
@@ -149,23 +169,6 @@ export async function rebindFixtureProviderPolicyEndpoint(
       ["policy", "set", "--policy", boundPolicy, "--wait", sandboxName],
       {
         artifactName: `${options.artifactName}-policy-rebound`,
-        env: options.env,
-        redactionValues,
-      },
-    );
-    await runFixtureOpenShell(
-      host,
-      [
-        "provider",
-        "update",
-        "-g",
-        gatewayName,
-        options.providerName,
-        "--credential",
-        options.credentialEnv,
-      ],
-      {
-        artifactName: `${options.artifactName}-provider-publication`,
         env: options.env,
         redactionValues,
       },

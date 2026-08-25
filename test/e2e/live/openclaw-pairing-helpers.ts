@@ -410,6 +410,12 @@ import http from "node:http";
 import net from "node:net";
 
 __SLACK_PROBE_INPUT_VALIDATION_SOURCE__
+function scopedProviderAlias(envKey, aliasPrefix) {
+  const value = process.env[envKey] || "";
+  const match = value.match(new RegExp("^openshell:resolve:env:(v[0-9]{1,20}_" + envKey + ")$"));
+  if (!match) throw new Error("missing current revision-scoped provider placeholder for " + envKey);
+  return aliasPrefix + "-OPENSHELL-RESOLVE-ENV-" + match[1];
+}
 function encodeClientText(payload) {
   const body = Buffer.from(payload, "utf8");
   const mask = crypto.randomBytes(4);
@@ -476,7 +482,7 @@ function receiveSlackSocketEvent() {
         }
         upgraded = true;
         framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN" })));
+        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: scopedProviderAlias("SLACK_APP_TOKEN", "xapp") })));
       } else {
         framed = Buffer.concat([framed, chunk]);
       }
@@ -500,7 +506,7 @@ function receiveSlackSocketEvent() {
 function postPairingReply(text, channel) {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort("FAKE_SLACK_REST_PORT");
-  const token = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  const token = scopedProviderAlias("SLACK_BOT_TOKEN", "xoxb");
   const data = new URLSearchParams({ token, channel, text }).toString();
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -712,7 +718,10 @@ import net from "node:net";
 
 const host = "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = "openshell:resolve:env:DISCORD_BOT_TOKEN";
+const identifyToken = process.env.DISCORD_BOT_TOKEN || "";
+if (!/^openshell:resolve:env:v[0-9]{1,20}_DISCORD_BOT_TOKEN$/.test(identifyToken)) {
+  throw new Error("missing current revision-scoped Discord provider placeholder");
+}
 const results = [];
 
 function finish(message) {

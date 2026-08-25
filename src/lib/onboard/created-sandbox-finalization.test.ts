@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
+  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   finalizeCreatedSandbox,
@@ -21,6 +22,44 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const fixtures: string[] = [];
+
+describe("ordinary managed sandbox completion", () => {
+  it.each(["docker", "podman"] as const)(
+    "republishes attached provider state after %s recreation without credential flags",
+    (openshellDriver) => {
+      const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+
+      expect(
+        completeOrdinaryOnboardSandboxCreation(
+          {
+            sandboxName: "alpha",
+            sandboxWasLiveDefault: false,
+            runtimeFields: { openshellDriver } as SandboxEntry,
+            messagingProviders: ["alpha-slack", "alpha-slack"],
+            inferenceProvider: "compatible-endpoint",
+            liveExists: true,
+          },
+          {
+            setDefault: vi.fn(),
+            runFile: vi.fn(),
+            scriptsDir: "/tmp/scripts",
+            gatewayName: "nemoclaw",
+            providerExistsInGateway: () => true,
+            runOpenshell,
+            armCancelRollback: vi.fn(),
+            dockerInfoFormat: vi.fn(() => "true"),
+            runCapture: vi.fn(() => ""),
+          },
+        ),
+      ).toBe("alpha");
+      expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+        ["provider", "update", "-g", "nemoclaw", "compatible-endpoint"],
+        ["provider", "update", "-g", "nemoclaw", "alpha-slack"],
+      ]);
+      expect(runOpenshell.mock.calls.flat(2)).not.toContain("--credential");
+    },
+  );
+});
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;

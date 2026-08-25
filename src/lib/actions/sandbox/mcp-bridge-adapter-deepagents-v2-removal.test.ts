@@ -10,6 +10,21 @@ import { buildDeepAgentsMcpRemoveCommand } from "./mcp-bridge-adapter-deepagents
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter v2 removal", () => {
+  it("reports an absent entry before requiring a provider credential revision", () => {
+    const status = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      { mcpServers: {} },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      {},
+    );
+
+    expect(status.status, status.stderr).toBe(0);
+    expect(status.stdout.trim()).toBe("absent");
+  });
+
   it("requires the exact current revision while retaining bounded cleanup ownership", () => {
     const revisionedServer = {
       type: "http",

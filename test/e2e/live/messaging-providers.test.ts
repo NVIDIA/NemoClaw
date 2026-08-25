@@ -865,7 +865,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackBot.port,
       "/api/auth.test",
-      "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      { envKey: "SLACK_BOT_TOKEN", aliasPrefix: "xoxb" },
       redactionValues,
     );
     check(
@@ -889,7 +889,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackBot.port,
       "/api/auth.test",
-      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+      { envKey: "SLACK_BOT_TOKEN" },
       redactionValues,
     );
     check(
@@ -913,7 +913,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackApp.port,
       "/api/apps.connections.open",
-      "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      { envKey: "SLACK_APP_TOKEN", aliasPrefix: "xapp" },
       redactionValues,
     );
     check(
@@ -1054,7 +1054,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     const gatewayProof = await runDiscordGatewayClient(
       sandbox,
       fakeGateway.port,
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      { envKey: "DISCORD_BOT_TOKEN" },
       redactionValues,
     );
     check(

@@ -233,6 +233,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
           processOwnership: "scoped-namespace",
         },
         network: {
+          sandboxSourceCidrs: () => [],
           inspect: () => undefined,
           usesHostGatewayRoute: () => false,
           run: () => ({ status: 0 }),

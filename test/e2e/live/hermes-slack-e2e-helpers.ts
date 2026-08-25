@@ -632,6 +632,8 @@ done`,
     String.raw`sh -lc '. /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; if [ -x /opt/hermes/.venv/bin/python ]; then exec /opt/hermes/.venv/bin/python -; fi; exec python3 -' <<'PY'
 import json
 import http.client
+import os
+import re
 import socket
 import ssl
 import sys
@@ -645,7 +647,12 @@ def call(label, path, env_key, allowed_errors):
         "SLACK_BOT_TOKEN": "xoxb",
         "SLACK_APP_TOKEN": "xapp",
     }[env_key]
-    token = f"{prefix}-OPENSHELL-RESOLVE-ENV-{env_key}"
+    runtime_value = os.environ.get(env_key, "")
+    match = re.fullmatch(rf"openshell:resolve:env:(v[0-9]{{1,20}}_{re.escape(env_key)})", runtime_value)
+    if not match:
+        print(f"ERROR {label}: missing current revision-scoped provider placeholder")
+        return False
+    token = f"{prefix}-OPENSHELL-RESOLVE-ENV-{match.group(1)}"
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",
         data=b"",
