@@ -713,6 +713,22 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(probes).toBe(1);
   });
 
+  it("rejects healthy output when the owned forward exits during the probe (#8178)", async () => {
+    let forwardActive = true;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 0,
+      forwardActive: () => forwardActive,
+      probe: async () => {
+        forwardActive = false;
+        return { exitCode: 0, stderr: "", stdout: JSON.stringify({ ok: true }) };
+      },
+    });
+
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([{ attempt: 1, outcome: "terminal" }]);
+  });
+
   it.each([
     "filesystemControlWrite",
     "filesystemDeniedWrite",

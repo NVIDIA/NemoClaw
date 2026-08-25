@@ -1484,7 +1484,7 @@ export async function observeWindowsMxcForwardHealthReadiness(input: {
         }
         const command = await input.probe(attempt);
         let outcome = classifyWindowsMxcForwardHealthObservation(command);
-        if (outcome === "relay-not-ready" && input.forwardActive?.() === false) {
+        if (input.forwardActive?.() === false) {
           outcome = "terminal";
         }
         attempts.push({ attempt, outcome });
