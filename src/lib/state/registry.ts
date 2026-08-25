@@ -295,8 +295,7 @@ export function registerSandbox(
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
-      reservationSessionId:
-        options.pending === true ? options.reservationSessionId : undefined,
+      reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
     data.sandboxes[entry.name] = registered;
     save(
@@ -471,7 +470,13 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
-    if (!current || current.pendingRouteReservation !== true) return false;
+    if (
+      !current ||
+      current.pendingRouteReservation !== true ||
+      current.reservationSessionId !== undefined
+    ) {
+      return false;
+    }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;

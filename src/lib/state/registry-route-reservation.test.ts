@@ -403,6 +403,47 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("refuses generic pending-registration publication for a session-owned row", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      registry.registerSandbox(
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(registry.finalizePendingSandboxRegistration("alpha")).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an already-published sandbox without the same transaction receipt", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
