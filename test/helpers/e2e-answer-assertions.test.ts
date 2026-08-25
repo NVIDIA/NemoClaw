@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   compactAnswerText,
+  containsConversationalIntegerAnswer,
   containsInteger42Answer,
+  containsIntegerAnswer,
   containsReplyTokenAllowingWhitespace,
 } from "./e2e-answer-assertions.ts";
 
@@ -19,6 +21,35 @@ describe("E2E answer assertions", () => {
   it("does not match unrelated integers after whitespace normalization", () => {
     expect(containsInteger42Answer("142")).toBe(false);
     expect(containsInteger42Answer("420")).toBe(false);
+  });
+
+  it("accepts the expected integer and rejects internal tool output (#10215)", () => {
+    expect(containsConversationalIntegerAnswer("The answer is 5\n6.", 56)).toBe(true);
+    expect(
+      containsConversationalIntegerAnswer(
+        '{"type":"function","function":{"name":"read","parameters":{"value":56}}',
+        56,
+      ),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer(
+        '[{"name":"read","parameters":{"value":56}},{"name":"tts"}]',
+        56,
+      ),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer(
+        'Tool call: {"name":"read","parameters":{"value":56}}',
+        56,
+      ),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer(
+        '~~~json\n{"type":"function","function":{"name":"read","param":{"value":56}}}\n~~~',
+        56,
+      ),
+    ).toBe(false);
+    expect(containsConversationalIntegerAnswer("", 56)).toBe(false);
   });
 
   it("matches deterministic reply tokens split by streaming whitespace", () => {

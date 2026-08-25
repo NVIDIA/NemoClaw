@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { containsConversationalIntegerAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -44,10 +45,10 @@ export async function assertHermesCliAdapterLiveContract({
       timeoutMs,
     });
     expect(result.exitCode, resultText(result)).toBe(0);
-    return resultText(result);
+    return result;
   };
-  const listDefaultSessionsText = (artifactName: string) =>
-    runHermesCli(["sessions", "list"], artifactName, 60_000);
+  const listDefaultSessionsText = async (artifactName: string) =>
+    resultText(await runHermesCli(["sessions", "list"], artifactName, 60_000));
   const listDefaultSessions = async (artifactName: string) =>
     hermesSessionIds(await listDefaultSessionsText(artifactName));
   const expectNoNewDefaultSessions = async (
@@ -65,7 +66,11 @@ export async function assertHermesCliAdapterLiveContract({
       expectedSessionId,
       beforeActivityArtifact,
     );
-    await runHermesCli(args, runArtifact);
+    const result = await runHermesCli(args, runArtifact);
+    expect(
+      containsConversationalIntegerAnswer(stripAnsi(result.stdout), 56),
+      resultText(result),
+    ).toBe(true);
     const afterText = await listDefaultSessionsText(afterArtifact);
     const after = hermesSessionIds(afterText);
     expect([...after].filter((id) => !before.has(id))).toEqual([]);
@@ -87,7 +92,7 @@ export async function assertHermesCliAdapterLiveContract({
     beforeSeedSessions,
     await listDefaultSessions("phase-4-issue-5254-sessions-after-seed"),
   );
-  const resumePrompt = `N5254_${Date.now().toString(36)}_RESUME`;
+  const resumePrompt = "What is seven multiplied by eight? Reply with only the integer.";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-resume"),
     "phase-4-issue-5254-session-before-resume-metadata",
@@ -97,7 +102,7 @@ export async function assertHermesCliAdapterLiveContract({
     "phase-4-issue-5254-resume-oneshot",
     "phase-4-issue-5254-sessions-after-resume",
   );
-  const continuePrompt = `N5254_${Date.now().toString(36)}_CONTINUE`;
+  const continuePrompt = "Multiply seven by eight. Reply with only the integer.";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-continue"),
     "phase-4-issue-5254-session-before-continue-metadata",
@@ -209,8 +214,10 @@ export async function assertHermesCliAdapterLiveContract({
   );
   expect(prepareProfile.exitCode, resultText(prepareProfile)).toBe(0);
 
-  const listProfileSessionsText = (artifactName: string) =>
-    runHermesCli(["--profile", profileName, "sessions", "list"], artifactName, 60_000);
+  const listProfileSessionsText = async (artifactName: string) =>
+    resultText(
+      await runHermesCli(["--profile", profileName, "sessions", "list"], artifactName, 60_000),
+    );
   const listProfileSessions = async (artifactName: string) =>
     hermesSessionIds(await listProfileSessionsText(artifactName));
   const profileSessionsBeforeSeed = await listProfileSessions(

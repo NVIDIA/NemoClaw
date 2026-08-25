@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -519,15 +519,23 @@ export async function openclawTurn(
   sandbox: SandboxClient,
   inference: AgentTurnInference,
   progress?: Pick<TestProgress, "onOutput">,
+  options: {
+    artifactName?: string;
+    prompt?: string;
+    sessionId?: string;
+  } = {},
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
+  const prompt =
+    options.prompt ?? "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
+  const sessionId = options.sessionId ?? "e2e-turn-latency";
   const started = process.hrtime.bigint();
   const result = await sandbox.execShell(
     OPENCLAW_SANDBOX,
     trustedSandboxShellScript(
-      "openclaw agent --agent main --json --thinking off --session-id e2e-turn-latency -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'",
+      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote(prompt)}`,
     ),
     {
-      artifactName: "openclaw-agent-turn",
+      artifactName: options.artifactName ?? "openclaw-agent-turn",
       env: env(OPENCLAW_SANDBOX, "openclaw", inference),
       onOutput: progress?.onOutput,
       redactionValues: inference.redactionValues(),

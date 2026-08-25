@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import {
+  containsConversationalIntegerAnswer,
+  containsInteger42Answer,
+} from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -18,6 +21,7 @@ import {
   cleanupTurnSandbox,
   cleanupTurnSandboxes,
   env,
+  extractOpenClawAgentPayloadText,
   extractOpenClawAgentText,
   HERMES_SANDBOX,
   hermesTurnCommand,
@@ -50,7 +54,7 @@ runAgentTurnLatencyTest(
         "prepare clean inference hosts",
         "install OpenClaw sandbox",
         "validate OpenClaw inference route",
-        "run OpenClaw hosted inference turn",
+        "run OpenClaw hosted inference turns",
         "replace OpenClaw with Hermes sandbox",
         "validate Hermes inference route",
         "run Hermes hosted inference turn",
@@ -65,7 +69,7 @@ runAgentTurnLatencyTest(
     };
     await artifacts.target.declare({
       id: "agent-turn-latency",
-      boundary: "two real sandboxes + hosted inference + OpenClaw agent turn + Hermes API turn",
+      boundary: "two real sandboxes + hosted inference + OpenClaw agent turns + Hermes API turn",
       openclawSandbox: OPENCLAW_SANDBOX,
       hermesSandbox: HERMES_SANDBOX,
     });
@@ -154,7 +158,7 @@ runAgentTurnLatencyTest(
     expect(openclawConfig.exitCode, resultText(openclawConfig)).toBe(0);
     assertOpenClawConfig(openclawConfig.stdout, inference.model);
 
-    progress.phase("run OpenClaw hosted inference turn");
+    progress.phase("run OpenClaw hosted inference turns");
     const openclaw = await openclawTurn(sandbox, inference, progress);
     expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
     assertNoOpenClawTransportErrors(resultText(openclaw.result));
@@ -163,7 +167,25 @@ runAgentTurnLatencyTest(
       resultText(openclaw.result),
     ).toBe(true);
     expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
-    results.openclaw = { elapsedMs: openclaw.elapsedMs };
+
+    const openclawFollowUp = await openclawTurn(sandbox, inference, progress, {
+      artifactName: "openclaw-agent-follow-up-turn",
+      prompt: "What is seven multiplied by eight? Reply with only the integer, no extra words.",
+    });
+    expect(openclawFollowUp.result.exitCode, resultText(openclawFollowUp.result)).toBe(0);
+    assertNoOpenClawTransportErrors(resultText(openclawFollowUp.result));
+    expect(
+      containsConversationalIntegerAnswer(
+        extractOpenClawAgentPayloadText(openclawFollowUp.result.stdout),
+        56,
+      ),
+      resultText(openclawFollowUp.result),
+    ).toBe(true);
+    expect(openclawFollowUp.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+    results.openclaw = {
+      firstTurnElapsedMs: openclaw.elapsedMs,
+      followUpTurnElapsedMs: openclawFollowUp.elapsedMs,
+    };
 
     progress.phase("replace OpenClaw with Hermes sandbox");
     await host.command("node", [CLI, OPENCLAW_SANDBOX, "destroy", "--yes"], {
