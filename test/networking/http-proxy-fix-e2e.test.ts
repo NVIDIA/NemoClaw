@@ -26,7 +26,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 
 const FIX_PATH = path.resolve(
   import.meta.dirname,
-  "..",
+  "../..",
   "nemoclaw-blueprint",
   "scripts",
   "http-proxy-fix.js",

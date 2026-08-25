@@ -390,7 +390,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
   `issue-2478-crash-loop-recovery` identity-checks and terminates one live gateway process before invoking the production `connect --probe-only` path, exercising PID 1's exit-driven respawn behavior.
   The production command reports recovery and the test verifies that the terminated gateway process identity is replaced.
   The test uses a hermetic compatible endpoint to verify guard-chain restoration, `inference.local` availability, and a recovered process identity that remains unchanged for 15 seconds.
-  `test/nemoclaw-start-guard-recovery.test.ts` runs the extracted production restoration helper five times against the same runtime state.
+  `test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts` runs the extracted production restoration helper five times against the same runtime state.
   The deterministic test verifies identical restoration steps, fixed proxy environment content, read-only file modes, and one restoration warning.
   `messaging-providers` imports the installed Telegram `runtime-api.js`, sends through `sendMessageTelegram`, and verifies token rewrite plus fake Bot API capture.
   This does not reproduce `nemotron-3-super:120b` on Local Ollama or originate a Telegram inbound update after the crash.
@@ -409,6 +409,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
   Pull requests execute that WeChat audit action from the PR base SHA.
   If the PR base SHA does not contain the action, the pull request workflow fails.
   The production installer routes registry metadata lookup, archive packing, and installation through the disposable writable-cache boundary so retrieval cannot fall back to `HOME/.npm`; the trusted source cache remains read-only and the disposable copy is removed in the same image layer.
+
 - The stale nonterminal rebuild-resume repair in `src/lib/actions/sandbox/rebuild-resume-session.ts` remains a migration compatibility shim tracked against #4533's onboard FSM/resume compatibility boundary. Its removal condition is to delete it after a session-version migration proves recreate sessions are always persisted at a resumable pre-sandbox boundary; `src/lib/actions/sandbox/rebuild-resume-session.test.ts` covers the helper directly, `test/onboarding/onboard-resume-provider-recovery.test.ts` carries the onboard-suite producer-level regression for `machine.state='openclaw'`, and `src/lib/actions/sandbox/rebuild-resume-snapshot.test.ts` owns the rebuild handoff regression.
 - Production OpenClaw image build paths call `scripts/check-production-build-args.sh` before production `docker build` or `docker/build-push-action` use. `test/agents/openclaw/openclaw-dependency-review.test.ts` keeps that workflow contract documented.
 - The rebuild-reasoning cases added by this PR live in the focused `rebuild-resume-reasoning.test.ts` file; the smaller route-provenance additions remain with their `rebuild-resume-config.ts` boundary tests.

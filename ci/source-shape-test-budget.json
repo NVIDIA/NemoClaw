@@ -82,6 +82,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
+      "test": "pins $source to its current bytes at $target",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
       "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
@@ -89,11 +94,6 @@
     {
       "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
-      "test": "pins $source to its current bytes at $target",
       "category": "security"
     },
     {
