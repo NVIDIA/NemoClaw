@@ -24,7 +24,7 @@ import { stateDirectoryDiscoverySshSource } from "../helpers/snapshot-state-disc
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"));
 process.env.HOME = TMP_HOME;
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
 type SandboxStateModule = typeof import("../../src/lib/state/sandbox.js");
