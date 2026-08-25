@@ -519,7 +519,7 @@ describe("created DCode sandbox finalization", () => {
       expect(error).toHaveBeenCalledWith("  Failed files: settings.json");
       expect(error).toHaveBeenCalledWith("  Restore reason: copy failed");
       expect(error).toHaveBeenCalledWith(
-        "  State was not restored and registry metadata was not updated.",
+        "  Workspace state restoration did not complete. Registry metadata was not updated.",
       );
       expect(error).toHaveBeenCalledWith("  Remove the unregistered sandbox before retrying:");
       expect(error).toHaveBeenCalledWith('    openshell sandbox delete "dcode"');

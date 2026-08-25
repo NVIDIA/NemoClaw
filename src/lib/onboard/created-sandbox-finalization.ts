@@ -638,7 +638,7 @@ export function finalizeCreatedSandbox(
         deps.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
       }
       if (restore.error) deps.error(`  Restore reason: ${restore.error}`);
-      deps.error("  State was not restored and registry metadata was not updated.");
+      deps.error("  Workspace state restoration did not complete. Registry metadata was not updated.");
       deps.error("  Remove the unregistered sandbox before retrying:");
       deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
