@@ -11,7 +11,7 @@ import { test } from "../e2e/fixtures/workflow-e2e-test.ts";
 import { runManagedImageBuildlessE2e } from "../helpers/managed-image-buildless-e2e";
 
 function expectManagedOnlyGuide(relativePath: string): void {
-  const guide = readFileSync(path.join(import.meta.dirname, "..", "docs", relativePath), "utf8");
+  const guide = readFileSync(path.join(import.meta.dirname, "../..", "docs", relativePath), "utf8");
   expect(guide).toContain(
     "stock onboarding stops before sandbox creation and does not build a shipped Dockerfile",
   );

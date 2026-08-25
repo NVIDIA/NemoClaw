@@ -54,7 +54,7 @@ describe("sandboxName command hardening in onboard.js", () => {
   });
 
   it("runs setup-dns-proxy.sh through the argv helper instead of bash -c interpolation", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-argv-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-dns-argv.cjs");
