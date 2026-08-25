@@ -852,6 +852,26 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "prepared" });
   });
 
+  it("revalidates the OpenAI profile before reusing a Portable provider (#10155)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    fixture.gatewayProvider.setProfileState("incompatible");
+    const resumed = fixture.resolve({
+      ...freshPortableInput,
+      allowPublishedResume: true,
+      recover: true,
+    })!;
+    const mutation = await resumed.prepareGatewayMutation(gatewayMutationInput);
+
+    expect(() => createExactGatewayProvider(mutation)).toThrow(
+      "does not match NemoClaw's endpointless inference contract",
+    );
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
+    expect(fixture.events.some((event) => event.includes("provider delete"))).toBe(false);
+  });
+
   it("resumes the journaled provider-create crash window and publishes exact ownership (#9596)", async () => {
     // Crash-window state transitions:
     // S0 has no runtime, provider, journal, or receipt. Runtime preparation creates the container.

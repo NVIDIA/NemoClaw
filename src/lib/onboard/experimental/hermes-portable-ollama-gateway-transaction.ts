@@ -690,26 +690,30 @@ function exactGatewayMutation(
             throw new Error("Hermes Portable inference gateway provider intent disappeared.");
           }
           let before = readExact(input.provider);
+          const requireOpenAiProfile = () => {
+            const profile = checkOpenAiInferenceProviderProfile({
+              runOpenshell: (args, options) =>
+                runGatewayOpenshell(args, {
+                  ignoreError: true,
+                  suppressOutput: true,
+                  stdio: ["ignore", "pipe", "pipe"],
+                  timeout: options?.timeout ?? GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+                }),
+            });
+            if (!profile.ok) {
+              throw new Error(profile.messages.join("\n"));
+            }
+          };
           if (active.phase === "created" || active.phase === "committed") {
             if (!active.providerAuthority || !matchesAuthority(before, active.providerAuthority)) {
               throw new Error(
                 "Hermes Portable inference recorded gateway provider authority changed.",
               );
             }
+            requireOpenAiProfile();
             return { ok: true };
           }
-          const profile = checkOpenAiInferenceProviderProfile({
-            runOpenshell: (args, options) =>
-              runGatewayOpenshell(args, {
-                ignoreError: true,
-                suppressOutput: true,
-                stdio: ["ignore", "pipe", "pipe"],
-                timeout: options?.timeout ?? GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
-              }),
-          });
-          if (!profile.ok) {
-            throw new Error(profile.messages.join("\n"));
-          }
+          requireOpenAiProfile();
           if (active.phase === "prepared") {
             if (before.kind !== "absent") {
               throw new Error("Hermes Portable inference provider name is no longer unclaimed.");
