@@ -1404,6 +1404,7 @@ describe("createSetupNim", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(selectFromNumberedMenu).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("change its GPU or port"));
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();

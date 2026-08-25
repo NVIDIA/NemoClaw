@@ -209,6 +209,25 @@ describe("buildVllmMenuEntries", () => {
     assert.match(logs[0], /selecting the running instance/);
   });
 
+  it("preserves managed install intent when a running server conflicts with GPU selection", () => {
+    const logs: string[] = [];
+    const entries = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "DGX Station" },
+      experimental: false,
+      platform: "station",
+      hasVllmImage: true,
+      env: {
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_GPU_DEVICE: "2",
+      },
+      log: (message) => logs.push(message),
+    });
+
+    assert.equal(entries[0].key, "install-vllm");
+    assert.deepEqual(logs, []);
+  });
+
   it("does not log the override note when the user did not request install-vllm", () => {
     const logs: string[] = [];
     buildVllmMenuEntries({
