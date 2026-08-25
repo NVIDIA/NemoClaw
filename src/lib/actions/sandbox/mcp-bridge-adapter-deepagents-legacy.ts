@@ -8,6 +8,11 @@ import {
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-projection";
 import {
+  DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+  DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
+} from "./mcp-bridge/deepagents-legacy-config";
+import {
+  MANAGED_HTTP_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
@@ -24,59 +29,13 @@ import {
 // and runtime-generation suites execute the rendered helper against real files.
 // removalCondition: delete this compatibility module after supported releases can
 // no longer contain registry-owned v1 entries and the migration window has ended.
-export const DEEPAGENTS_LEGACY_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
-
-export const DEEPAGENTS_LEGACY_CONFIG_HELPERS = [
-  "LEGACY_MCP_MAX_BYTES = 262144",
-  "def legacy_fingerprint(metadata):",
-  "    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_mode, metadata.st_nlink, metadata.st_uid)",
-  "def read_legacy_config(path):",
-  "    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW",
-  "    descriptor = os.open(path, flags)",
-  "    try:",
-  "        before = os.fstat(descriptor)",
-  "        linked = os.stat(path, follow_symlinks=False)",
-  "        safe = (stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid() and stat.S_IMODE(before.st_mode) == 0o600 and before.st_nlink == 1 and (before.st_dev, before.st_ino) == (linked.st_dev, linked.st_ino))",
-  "        if not safe:",
-  "            raise ValueError('legacy MCP config has unsafe ownership, mode, type, or links')",
-  "        if before.st_size <= 0 or before.st_size > LEGACY_MCP_MAX_BYTES:",
-  "            raise ValueError('legacy MCP config has invalid size')",
-  "        chunks = []",
-  "        remaining = before.st_size",
-  "        while remaining:",
-  "            chunk = os.read(descriptor, remaining)",
-  "            if not chunk:",
-  "                break",
-  "            chunks.append(chunk)",
-  "            remaining -= len(chunk)",
-  "        after = os.fstat(descriptor)",
-  "        linked_after = os.stat(path, follow_symlinks=False)",
-  "        stable = (legacy_fingerprint(before) == legacy_fingerprint(after) and legacy_fingerprint(after) == legacy_fingerprint(linked_after))",
-  "        if remaining or not stable:",
-  "            raise ValueError('legacy MCP config changed while reading')",
-  "    finally:",
-  "        os.close(descriptor)",
-  "    raw = b''.join(chunks).decode('utf-8')",
-  "    data = strict_json_loads(raw)",
-  "    return data, legacy_fingerprint(before)",
-  "def assert_legacy_source_stable(path, identity):",
-  "    if identity is None:",
-  "        if os.path.lexists(path):",
-  "            raise ValueError('legacy MCP config appeared during mutation')",
-  "        return",
-  "    current = os.stat(path, follow_symlinks=False)",
-  "    safe = (stat.S_ISREG(current.st_mode) and current.st_uid == os.getuid() and stat.S_IMODE(current.st_mode) == 0o600 and current.st_nlink == 1 and legacy_fingerprint(current) == identity)",
-  "    if not safe:",
-  "        raise ValueError('legacy MCP config changed before mutation')",
-];
-
 export function buildDeepAgentsMcpRollbackRegisterCommand(
   entry: McpBridgeEntry,
   expectedServers: Record<string, Record<string, unknown>>,
 ): string {
   const payload = {
     server: entry.server,
-    expected: deepAgentsManagedServerConfig(entry),
+    expected: expectedServers[entry.server] ?? deepAgentsManagedServerConfig(entry),
     expectedServers,
   };
   return [
@@ -88,6 +47,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+    ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
     "if runtime_kind == 'auto':",
     "    runtime_kind = 'unknown'",
@@ -131,9 +91,15 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "    servers = data.get('mcpServers', {})",
     "    if not isinstance(servers, dict):",
     "        fail_rollback(f'Invalid managed MCP v2 server map at {config_path}')",
-    "    if any(payload['expectedServers'].get(name) != current for name, current in servers.items()):",
+    "    if any(not managed_http_server_matches(current, payload['expectedServers'].get(name), True) for name, current in servers.items()):",
     "        fail_rollback(f'Refusing to overwrite drifted managed MCP v2 projection at {config_path}')",
-    "    data = {'mcpServers': payload['expectedServers']}",
+    "    next_servers = {}",
+    "    for name, expected in payload['expectedServers'].items():",
+    "        if name != payload['server'] and name in servers:",
+    "            next_servers[name] = servers[name]",
+    "        else:",
+    "            next_servers[name] = expected",
+    "    data = {'mcpServers': next_servers}",
     "else:",
     "    servers = data.setdefault('mcpServers', {})",
     "    if not isinstance(servers, dict):",
@@ -173,7 +139,8 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
     "    fail_rollback(f'Could not verify managed MCP rollback state at {config_path}: {exc}')",
     "if is_v2:",
-    "    restored = persisted == {'mcpServers': payload['expectedServers']}",
+    "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
+    "    restored = isinstance(persisted_servers, dict) and set(persisted_servers) == set(payload['expectedServers']) and all(managed_http_server_matches(persisted_servers.get(name), expected, True) for name, expected in payload['expectedServers'].items())",
     "else:",
     "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
     "    restored = isinstance(persisted_servers, dict) and persisted_servers.get(payload['server']) == payload['expected']",
