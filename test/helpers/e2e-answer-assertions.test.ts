@@ -39,6 +39,21 @@ describe("E2E answer assertions", () => {
     ).toBe(false);
     expect(
       containsConversationalIntegerAnswer(
+        '{"id":"call_1","type":"function","function":{"name":"read","parameters":{"value":56}}}',
+        56,
+      ),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer('{"tool":"read","arguments":{"value":56}}', 56),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer(
+        '{"tool_calls":[{"function":{"arguments":{"value":56}}}]}',
+        56,
+      ),
+    ).toBe(false);
+    expect(
+      containsConversationalIntegerAnswer(
         'Tool call: {"name":"read","parameters":{"value":56}}',
         56,
       ),

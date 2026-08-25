@@ -13,12 +13,7 @@ export function containsIntegerAnswer(text: string, answer: number): boolean {
 
 export function containsConversationalIntegerAnswer(text: string, answer: number): boolean {
   const trimmed = text.trim();
-  if (
-    /[{[]\s*"(?:function|name|parameters|param|type)"\s*:/u.test(trimmed) &&
-    /"(?:function|name|parameters|param|type)"\s*:/u.test(trimmed)
-  ) {
-    return false;
-  }
+  if (/[{[]/u.test(trimmed)) return false;
   return containsIntegerAnswer(trimmed, answer);
 }
 

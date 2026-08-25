@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import {
   containsConversationalIntegerAnswer,
   containsInteger42Answer,
@@ -264,11 +262,7 @@ runAgentTurnLatencyTest(
     );
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.hermes = { elapsedMs: hermesMs };
-    await artifacts.writeJson("turn-latency-results.json", results);
     progress.phase("record hosted inference timing evidence");
-    fs.writeFileSync(
-      artifacts.pathFor("agent-turn-latency-results-legacy-path.json"),
-      `${JSON.stringify(results, null, 2)}\n`,
-    );
+    await artifacts.writeJson("turn-latency-results.json", results);
   },
 );
