@@ -19,10 +19,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentStateLockPlan } from "../../../src/lib/agent/definition-types";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "..", "..", "..", "scripts", "nemoclaw-start.sh");
 const MUTABLE_CONFIG_NORMALIZER = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "scripts",
   "lib",
   "normalize_mutable_config_perms.py",
@@ -168,7 +168,7 @@ function withMockedDockerExecFileSync<T>(
   } = {},
 ): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerExecModule = require("../src/lib/adapters/docker/exec.js") as {
+  const dockerExecModule = require("../../../src/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
     dockerSpawnSync: (args: readonly string[]) => unknown;
   };
@@ -181,8 +181,8 @@ function withMockedDockerExecFileSync<T>(
     agent: options.registryAgent ?? "openclaw",
     name: "sandbox-pod",
   } as never);
-  const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
-  const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
+  const shieldsModulePath = require.resolve("../../../src/lib/shields/index.js");
+  const privilegedExecPath = require.resolve("../../../src/lib/sandbox/privileged-exec.js");
   const transitionLockPath = require.resolve("../../../src/lib/shields/transition-lock.js");
   const priorPrivilegedExec = require.cache[privilegedExecPath];
   const priorTransitionLock = require.cache[transitionLockPath];
@@ -534,7 +534,7 @@ describe("mutable agent config permissions", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
+      const { unlockAgentConfig } = require("../../../src/lib/shields/index.js") as {
         unlockAgentConfig: (
           sandboxName: string,
           target: {
@@ -589,7 +589,7 @@ describe("mutable agent config permissions", () => {
         commands,
         () => {
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
+          const { unlockAgentConfig } = require("../../../src/lib/shields/index.js") as {
             unlockAgentConfig: (
               sandboxName: string,
               target: {
@@ -653,7 +653,7 @@ describe("mutable agent config permissions", () => {
         commands,
         () => {
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
+          const { unlockAgentConfig } = require("../../../src/lib/shields/index.js") as {
             unlockAgentConfig: (
               sandboxName: string,
               target: {
@@ -708,7 +708,7 @@ describe("mutable agent config permissions", () => {
       commands,
       () => {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { lockAgentConfig } = require("../src/lib/shields/index.js") as {
+        const { lockAgentConfig } = require("../../../src/lib/shields/index.js") as {
           lockAgentConfig: (
             sandboxName: string,
             target: {

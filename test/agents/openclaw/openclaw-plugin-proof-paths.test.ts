@@ -6,11 +6,11 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const slackProof = fs.readFileSync(
-  new URL("./e2e/lib/slack-api-proof.sh", import.meta.url),
+  new URL("../../e2e/lib/slack-api-proof.sh", import.meta.url),
   "utf8",
 );
 const discordProof = fs.readFileSync(
-  new URL("./e2e/lib/discord-rest-policy-proof.sh", import.meta.url),
+  new URL("../../e2e/lib/discord-rest-policy-proof.sh", import.meta.url),
   "utf8",
 );
 const compact = (value: string): string => value.replaceAll(/\s+/g, "");

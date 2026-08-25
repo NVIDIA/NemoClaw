@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
-const START_SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
 
 describe("legacy migration with Shields active", () => {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");

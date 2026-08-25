@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
 
 function extractShellFunction(source: string, name: string): string {
   const header = `${name}() {`;
