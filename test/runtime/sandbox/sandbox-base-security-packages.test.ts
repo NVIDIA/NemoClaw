@@ -13,7 +13,7 @@ import {
 import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
 import { stageFixedParser, useRealPatchedParser } from "../../helpers/python-parser-security-fixture";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const SECURITY_IMAGES = [
   {
     name: "OpenClaw",
