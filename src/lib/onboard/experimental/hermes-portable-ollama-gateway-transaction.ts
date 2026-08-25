@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
+import { checkOpenAiInferenceProviderProfile } from "../inference-providers/provider-profile";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
 import {
   parseHostLocalInferenceReceipt,
@@ -696,6 +697,18 @@ function exactGatewayMutation(
               );
             }
             return { ok: true };
+          }
+          const profile = checkOpenAiInferenceProviderProfile({
+            runOpenshell: (args, options) =>
+              runGatewayOpenshell(args, {
+                ignoreError: true,
+                suppressOutput: true,
+                stdio: ["ignore", "pipe", "pipe"],
+                timeout: options?.timeout ?? GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+              }),
+          });
+          if (!profile.ok) {
+            throw new Error(profile.messages.join("\n"));
           }
           if (active.phase === "prepared") {
             if (before.kind !== "absent") {

@@ -247,6 +247,8 @@ describe("credentials oclif adapter source coverage", () => {
     expect(result.failureLines.join("\n")).toContain(
       "does not match NemoClaw's endpointless inference contract",
     );
+    expect(result.failureLines.join("\n")).toContain("then retry this command");
+    expect(result.failureLines.join("\n")).not.toContain("onboarding");
     expect(result.failureLines.join("\n")).not.toContain("host-only-secret");
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
@@ -279,6 +281,8 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain("could not be read for validation");
+    expect(result.failureLines.join("\n")).toContain("then retry this command");
+    expect(result.failureLines.join("\n")).not.toContain("onboarding");
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
       ["provider", "profile", "export", "openai", "--output", "json"],
@@ -344,5 +348,27 @@ describe("credentials oclif adapter source coverage", () => {
         timeout: 30_000,
       },
     ]);
+  });
+
+  it("reports caller-neutral guidance when OpenAI profile import fails", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "import failed" });
+
+    const result = await runCredentialsAddAction({
+      provider: "openai-prod",
+      type: "openai",
+      credentials: ["OPENAI_API_KEY"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain("could not import the checked-in");
+    expect(result.failureLines.join("\n")).toContain("then retry this command");
+    expect(result.failureLines.join("\n")).not.toContain("onboarding");
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 });
