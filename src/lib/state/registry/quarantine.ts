@@ -125,7 +125,8 @@ export function normalizeSandboxQuarantineFence(
     !UUID_PATTERN.test(value.fenceId) ||
     typeof value.requestIdentity !== "string" ||
     !SHA256_PATTERN.test(value.requestIdentity) ||
-    !boundedSafeText(value.reason, 240) ||
+    typeof value.reasonDigest !== "string" ||
+    !SHA256_PATTERN.test(value.reasonDigest) ||
     !isCanonicalIsoTimestamp(value.createdAt) ||
     !isCanonicalIsoTimestamp(value.updatedAt) ||
     typeof value.phase !== "string" ||
@@ -142,7 +143,7 @@ export function normalizeSandboxQuarantineFence(
     schemaVersion: 1,
     fenceId: value.fenceId,
     requestIdentity: value.requestIdentity,
-    reason: value.reason,
+    reasonDigest: value.reasonDigest,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     phase: value.phase as SandboxQuarantinePhase,

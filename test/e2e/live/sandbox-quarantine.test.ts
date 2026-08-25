@@ -88,17 +88,19 @@ async function expectHostPortFree(
   port: number,
   artifactName: string,
 ): Promise<void> {
+  const timeoutMs = 90_000;
   const result = await host.command(
     process.execPath,
     [
       "-e",
-      'const net=require("node:net"); const server=net.createServer(); server.once("error", error => { console.error(error.code || error.message); process.exit(1); }); server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(error => process.exit(error ? 1 : 0)));',
+      'const net=require("node:net"); const port=Number(process.argv[1]); const deadline=Date.now()+Number(process.argv[2]); const attempt=()=>{ const server=net.createServer(); server.once("error", error => { if (Date.now() >= deadline) { console.error(error.code || error.message); process.exit(1); } setTimeout(attempt, 2000); }); server.listen(port, "127.0.0.1", () => server.close(error => process.exit(error ? 1 : 0))); }; attempt();',
       String(port),
+      String(timeoutMs),
     ],
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+      timeoutMs: timeoutMs + 30_000,
     },
   );
   assertExitZero(result, `host forward ${String(port)} is stopped`);
@@ -261,43 +263,12 @@ test(
         "onboard-reuse",
       ],
     ];
-    await expectDenied(host, deniedCommands[0][0], `${AGENT_NAME}-quarantine-exec-denied`, hosted);
-    await expectDenied(host, deniedCommands[1][0], `${AGENT_NAME}-quarantine-start-denied`, hosted);
-    await expectDenied(
-      host,
-      deniedCommands[2][0],
-      `${AGENT_NAME}-quarantine-recover-denied`,
-      hosted,
-    );
-    await expectDenied(
-      host,
-      deniedCommands[3][0],
-      `${AGENT_NAME}-quarantine-rebuild-denied`,
-      hosted,
-    );
-    await expectDenied(
-      host,
-      deniedCommands[4][0],
-      `${AGENT_NAME}-quarantine-restore-denied`,
-      hosted,
-    );
-    await expectDenied(
-      host,
-      deniedCommands[5][0],
-      `${AGENT_NAME}-quarantine-shields-denied`,
-      hosted,
-    );
-    await expectDenied(
-      host,
-      deniedCommands[6][0],
-      `${AGENT_NAME}-quarantine-upgrade-denied`,
-      hosted,
-    );
-    await expectDenied(
-      host,
-      deniedCommands[7][0],
-      `${AGENT_NAME}-quarantine-onboard-reuse-denied`,
-      hosted,
+    await deniedCommands.reduce(
+      (previous, [args, label]) =>
+        previous.then(() =>
+          expectDenied(host, args, `${AGENT_NAME}-quarantine-${label}-denied`, hosted),
+        ),
+      Promise.resolve(),
     );
 
     progress.phase("verify observational evidence commands and idempotent recovery");

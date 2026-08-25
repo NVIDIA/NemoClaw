@@ -105,7 +105,8 @@ export interface SandboxQuarantineFence {
   readonly fenceId: string;
   /** SHA-256 of the caller's idempotency key; the key itself is never stored. */
   readonly requestIdentity: string;
-  readonly reason: string;
+  /** SHA-256 of the operator reason; free-form reason text is never stored. */
+  readonly reasonDigest: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly phase: SandboxQuarantinePhase;

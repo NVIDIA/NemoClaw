@@ -317,7 +317,7 @@ function quarantineWithinLifecycleLock(
     return failed(boundedSafeText(error, 512, "Quarantine idempotency key is invalid."));
   }
   const requestIdentity = sha256(idempotencyKey);
-  const reason = boundedSafeText(options.reason, 240, "operator-requested quarantine");
+  const reasonDigest = sha256(options.reason);
   const sandbox = getSandbox(sandboxName);
   if (!sandbox) return failed(`Sandbox '${sandboxName}' is not registered.`);
   if (sandbox.quarantine && sandbox.quarantine.requestIdentity !== requestIdentity) {
@@ -330,7 +330,7 @@ function quarantineWithinLifecycleLock(
       fenceId: sandbox.quarantine.fenceId,
     };
   }
-  if (sandbox.quarantine && sandbox.quarantine.reason !== reason) {
+  if (sandbox.quarantine && sandbox.quarantine.reasonDigest !== reasonDigest) {
     return {
       exitCode: 1,
       status: "conflict",
@@ -421,7 +421,7 @@ function quarantineWithinLifecycleLock(
   if (priorReceipt) {
     if (
       priorReceipt.fence.requestIdentity !== requestIdentity ||
-      priorReceipt.fence.reason !== reason ||
+      priorReceipt.fence.reasonDigest !== reasonDigest ||
       priorReceipt.fence.target.sandboxName !== sandboxName ||
       priorReceipt.fence.target.gatewayName !== gatewayName ||
       priorReceipt.fence.target.gatewayPort !== gatewayPort
@@ -506,7 +506,7 @@ function quarantineWithinLifecycleLock(
         schemaVersion: 1,
         fenceId: (deps.randomId ?? randomUUID)(),
         requestIdentity,
-        reason,
+        reasonDigest,
         createdAt: startedAt,
         updatedAt: startedAt,
         phase: "fenced",
@@ -797,11 +797,6 @@ export function releaseSandboxQuarantine(
         `Cannot preserve the quarantine receipt before release: ${boundedSafeText(error, 512, "receipt write failed")}`,
       );
     }
-    if (!(deps.clearFence ?? clearSandboxQuarantine)(sandboxName, fenceId)) {
-      return failed(
-        "Sandbox quarantine authority changed before release; the fence remains active.",
-      );
-    }
     const releasedAt = (deps.now ?? (() => new Date()))().toISOString();
     const releasedReceipt = receiptFor(fence, "released", completedAt, releasedAt);
     try {
@@ -809,13 +804,18 @@ export function releaseSandboxQuarantine(
     } catch (error) {
       return {
         exitCode: 2,
-        status: "released",
+        status: "partial",
         message:
-          `Sandbox '${sandboxName}' quarantine was released without starting it, but the receipt ` +
-          `could not record release: ${boundedSafeText(error, 512, "receipt write failed")}`,
+          `Sandbox '${sandboxName}' quarantine release could not persist its final receipt; ` +
+          `the fence remains active: ${boundedSafeText(error, 512, "receipt write failed")}`,
         fenceId,
         receiptPath,
       };
+    }
+    if (!(deps.clearFence ?? clearSandboxQuarantine)(sandboxName, fenceId)) {
+      return failed(
+        "Sandbox quarantine authority changed before release; the fence remains active.",
+      );
     }
     return {
       exitCode: 0,

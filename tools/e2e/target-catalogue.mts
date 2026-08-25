@@ -1345,7 +1345,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "agents/openclaw/manifest.yaml",
       "src/lib/actions/sandbox/quarantine/",
       "src/lib/onboard/runtime-provider/quarantine.ts",
-      "src/lib/state/registry/quarantine",
+      "src/lib/state/registry/quarantine.ts",
+      "src/lib/state/registry/quarantine-operations.ts",
+      "src/lib/state/registry/quarantine-receipt.ts",
     ],
     environment: {
       ...hostedInference,
@@ -1374,7 +1376,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "agents/hermes/manifest.yaml",
       "src/lib/actions/sandbox/quarantine/",
       "src/lib/onboard/runtime-provider/quarantine.ts",
-      "src/lib/state/registry/quarantine",
+      "src/lib/state/registry/quarantine.ts",
+      "src/lib/state/registry/quarantine-operations.ts",
+      "src/lib/state/registry/quarantine-receipt.ts",
     ],
     environment: {
       ...hostedInference,
@@ -1402,7 +1406,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "agents/langchain-deepagents-code/manifest.yaml",
       "src/lib/actions/sandbox/quarantine/",
       "src/lib/onboard/runtime-provider/quarantine.ts",
-      "src/lib/state/registry/quarantine",
+      "src/lib/state/registry/quarantine.ts",
+      "src/lib/state/registry/quarantine-operations.ts",
+      "src/lib/state/registry/quarantine-receipt.ts",
     ],
     environment: {
       ...hostedInference,

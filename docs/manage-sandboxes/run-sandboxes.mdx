@@ -182,6 +182,7 @@ Commands that can reactivate, replace, restore, or upgrade the sandbox fail whil
 Read-only status and evidence commands remain available, and `destroy` keeps its existing confirmation contract.
 
 The receipt stores the SHA-256 digest of the idempotency key, not the key itself.
+It also stores only the SHA-256 digest of the operator reason, not the original text.
 Use the same reason and idempotency key to reconcile an interrupted or partial request.
 A different key conflicts with the active fence.
 If you omit `--idempotency-key`, the command generates one and prints it after the operation.
@@ -201,11 +202,10 @@ Release the exact fence when the investigation is complete.
 $$nemoclaw my-assistant quarantine release --fence-id <fence-id>
 ```
 
-Release validates the unchanged target authority and preserves the receipt before it clears the fence.
+Release validates the unchanged target authority and persists both the pre-release and final released receipts before it clears the fence.
 It never starts or recovers the sandbox.
 Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
-If release cannot validate the target or preserve the pre-release receipt, it returns a non-zero result and keeps the fence active.
-If the final receipt update fails after fence clearance, release exits `2`, and the sandbox remains stopped.
+If release cannot validate the target or persist either receipt, it returns a non-zero result and keeps the fence active for retry.
 
 Refer to [`$$nemoclaw <name> quarantine`](../../reference/commands#$$nemoclaw-name-quarantine) for flags and receipt details.
 

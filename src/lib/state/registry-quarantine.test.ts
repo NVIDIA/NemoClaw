@@ -31,7 +31,7 @@ function fence(overrides: Partial<SandboxQuarantineFence> = {}): SandboxQuaranti
     schemaVersion: 1,
     fenceId: "00000000-0000-4000-8000-000000000001",
     requestIdentity: "a".repeat(64),
-    reason: "incident investigation",
+    reasonDigest: "e".repeat(64),
     createdAt: "2026-08-25T04:00:00.000Z",
     updatedAt: "2026-08-25T04:00:00.000Z",
     phase: "fenced",
@@ -82,9 +82,9 @@ describe("sandbox quarantine registry transaction", () => {
         }),
       ).status,
     ).toBe("conflict");
-    expect(
-      beginSandboxQuarantine("alpha", fence({ reason: "same key, different request" })).status,
-    ).toBe("conflict");
+    expect(beginSandboxQuarantine("alpha", fence({ reasonDigest: "f".repeat(64) })).status).toBe(
+      "conflict",
+    );
     expect(state.registry.sandboxes.alpha?.quarantine).toEqual(first);
   });
 
@@ -122,6 +122,35 @@ describe("sandbox quarantine registry transaction", () => {
     expect(beginSandboxQuarantine("alpha", fence()).status).toBe("stale");
     expect(state.registry.sandboxes.alpha?.quarantine).toBeUndefined();
   });
+
+  it.each(["gatewayName", "gatewayPort"] as const)(
+    "fails closed when persisted %s is missing before or after publication (#10140)",
+    (field) => {
+      const active = fence();
+      state.registry.sandboxes.alpha = {
+        ...state.registry.sandboxes.alpha!,
+        [field]: undefined,
+      };
+
+      expect(beginSandboxQuarantine("alpha", active).status).toBe("stale");
+      expect(state.registry.sandboxes.alpha?.quarantine).toBeUndefined();
+
+      state.registry.sandboxes.alpha = {
+        ...state.registry.sandboxes.alpha!,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      };
+      expect(beginSandboxQuarantine("alpha", active).status).toBe("started");
+      state.registry.sandboxes.alpha = {
+        ...state.registry.sandboxes.alpha!,
+        [field]: undefined,
+      };
+
+      expect(updateSandboxQuarantine("alpha", { ...active, phase: "partial" })).toBe(false);
+      expect(releaseSandboxQuarantine("alpha", active.fenceId)).toBe(false);
+      expect(state.registry.sandboxes.alpha?.quarantine).toEqual(active);
+    },
+  );
 
   it("updates and releases only the exact active fence (#10140)", () => {
     const active = fence();

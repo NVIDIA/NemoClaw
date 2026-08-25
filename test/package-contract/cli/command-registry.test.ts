@@ -53,8 +53,9 @@ describe("command-registry", () => {
 
   describe("sandboxCommands()", () => {
     it("should return exactly 64 entries", () => {
-      // 50 visible + 14 hidden (shields×3 + config get/set/rotate-token +
-      // inference get/set).
+      // 56 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+      // inference get/set). The other 6 hidden commands are global
+      // help/version aliases and are not sandbox-scoped.
       // The visible commands include the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the

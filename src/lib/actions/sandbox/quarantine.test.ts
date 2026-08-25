@@ -27,6 +27,7 @@ const PROVIDER_HANDLE = "b".repeat(64);
 const RUNTIME_HANDLE = "c".repeat(64);
 const FENCE_ID = "00000000-0000-4000-8000-000000000001";
 const REQUEST_IDENTITY = "183735306a2ca5b4b9561a94a3139906211125523c8a7ef8c4311022991fd714";
+const REASON_DIGEST = "6b7bcde27ba06979ec8bbae17241ad1f25d4b3709600c073e72c15f52b87fce0";
 const REQUIRED_RECONCILED_OPERATIONS = [
   "receipt-persistence",
   "messaging-stop",
@@ -58,7 +59,7 @@ function crashBoundaryFence(
     schemaVersion: 1,
     fenceId: FENCE_ID,
     requestIdentity: REQUEST_IDENTITY,
-    reason: "incident investigation",
+    reasonDigest: REASON_DIGEST,
     createdAt: "2026-08-25T04:00:00.000Z",
     updatedAt: "2026-08-25T04:00:00.000Z",
     phase,
@@ -588,21 +589,30 @@ describe("sandbox quarantine", () => {
     expect(test.stopMessaging).toHaveBeenCalledOnce();
   });
 
-  it("redacts and bounds the operator reason before persistence (#10140)", () => {
+  it("persists only a digest of an opaque operator reason (#10140)", () => {
     const test = harness();
+    const opaqueReason = `opaque-${"z7Qp".repeat(80)}`;
 
-    quarantineSandbox(
+    const result = quarantineSandbox(
       "alpha",
       {
-        reason: `unexpected activity token=reason-secret ${"x".repeat(400)}`,
+        reason: opaqueReason,
         idempotencyKey: "incident-42",
       },
       test.deps,
     );
 
-    const persistedReason = test.current().quarantine?.reason ?? "";
-    expect(persistedReason).not.toContain("reason-secret");
-    expect(Buffer.byteLength(persistedReason, "utf8")).toBeLessThanOrEqual(240);
+    const persisted = JSON.stringify({ result, sandbox: test.current() });
+    expect(persisted).not.toContain(opaqueReason);
+    expect(test.current().quarantine?.reasonDigest).toMatch(/^[a-f0-9]{64}$/u);
+
+    const conflict = quarantineSandbox(
+      "alpha",
+      { reason: `${opaqueReason}-changed`, idempotencyKey: "incident-42" },
+      test.deps,
+    );
+    expect(conflict.status).toBe("conflict");
+    expect(JSON.stringify(conflict)).not.toContain(opaqueReason);
   });
 
   it("keeps a secret canary out of state, receipts, output, errors, and logs (#10140)", () => {
@@ -626,7 +636,7 @@ describe("sandbox quarantine", () => {
     const result = quarantineSandbox(
       "alpha",
       {
-        reason: `incident api_key=${canary}`,
+        reason: canary,
         idempotencyKey: "incident-42",
       },
       { ...test.deps, log, stopMessaging },
@@ -816,7 +826,7 @@ describe("sandbox quarantine", () => {
       schemaVersion: 1,
       fenceId: FENCE_ID,
       requestIdentity: "183735306a2ca5b4b9561a94a3139906211125523c8a7ef8c4311022991fd714",
-      reason: "incident investigation",
+      reasonDigest: REASON_DIGEST,
       createdAt: "2026-08-25T04:00:00.000Z",
       updatedAt: "2026-08-25T04:00:00.000Z",
       phase: "fenced",
@@ -868,8 +878,8 @@ describe("sandbox quarantine", () => {
     const releaseOrder: string[] = [];
     const deps: QuarantineSandboxDeps = {
       ...test.deps,
-      writeReceipt: vi.fn(() => {
-        releaseOrder.push("receipt");
+      writeReceipt: vi.fn((_path, receipt) => {
+        releaseOrder.push(`receipt-${receipt.status}`);
       }),
       clearFence: vi.fn(() => {
         releaseOrder.push("release");
@@ -880,8 +890,51 @@ describe("sandbox quarantine", () => {
     const result = releaseSandboxQuarantine("alpha", FENCE_ID, deps);
 
     expect(result.status).toBe("released");
-    expect(releaseOrder.slice(0, 2)).toEqual(["receipt", "release"]);
+    expect(releaseOrder).toEqual(["receipt-quarantined", "receipt-released", "release"]);
     expect(test.stop).toHaveBeenCalledTimes(1);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it("keeps release retryable when the final receipt write fails (#10140)", () => {
+    const test = harness();
+    quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+    const persistedStatuses: SandboxQuarantineReceipt["status"][] = [];
+    const writeReceipt = vi
+      .fn((_path: string, receipt: SandboxQuarantineReceipt) => {
+        persistedStatuses.push(receipt.status);
+      })
+      .mockImplementationOnce((_path, receipt) => {
+        persistedStatuses.push(receipt.status);
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("disk full");
+      });
+    const clearFence = vi.fn(() => true);
+
+    const failedRelease = releaseSandboxQuarantine("alpha", FENCE_ID, {
+      ...test.deps,
+      clearFence,
+      writeReceipt,
+    });
+
+    expect(failedRelease).toMatchObject({ exitCode: 2, status: "partial" });
+    expect(failedRelease.message).toContain("fence remains active");
+    expect(clearFence).not.toHaveBeenCalled();
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+
+    const retriedRelease = releaseSandboxQuarantine("alpha", FENCE_ID, {
+      ...test.deps,
+      clearFence,
+      writeReceipt,
+    });
+
+    expect(retriedRelease).toMatchObject({ exitCode: 0, status: "released" });
+    expect(clearFence).toHaveBeenCalledOnce();
+    expect(persistedStatuses.filter((status) => status === "released")).toHaveLength(1);
     expect(test.start).not.toHaveBeenCalled();
   });
 

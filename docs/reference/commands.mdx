@@ -1966,7 +1966,8 @@ $$nemoclaw my-assistant quarantine --reason "unexpected outbound activity" [--id
 ```
 
 The command requires `--reason <text>`.
-The reason is stored in the receipt, so it must not contain credentials, prompts, messages, or workspace content.
+NemoClaw stores only the SHA-256 digest of the reason in the fence and receipt, so retries can detect a changed reason without persisting the original text.
+The reason still passes through your shell command line, so do not include credentials, prompts, messages, or workspace content.
 
 Use `--idempotency-key <key>` to give retries a stable request identity.
 The receipt stores only the SHA-256 digest of this value.
@@ -1998,7 +1999,7 @@ The existing `destroy` confirmation and exact-target cleanup contract remains av
 Pass `--json` to return the result, fence, operation journal, and receipt metadata as JSON.
 The receipt path is under the selected gateway's NemoClaw state directory.
 Receipts use private host permissions and reject symbolic links.
-Receipt fields and diagnostics are bounded and redacted, but you must still keep the reason and idempotency key secret-free.
+Receipt fields and diagnostics are bounded and redacted, and neither the reason nor idempotency key is stored in plaintext.
 
 For the operator workflow, refer to [Quarantine a Sandbox](../manage-sandboxes/operate-sandboxes/run-sandboxes#quarantine-a-sandbox).
 
@@ -2012,12 +2013,12 @@ $$nemoclaw my-assistant quarantine release --fence-id <fence-id> [--json]
 
 The required `--fence-id <id>` value must match the active fence.
 NemoClaw validates that the runtime-provider authority still matches the fenced target.
-It preserves the quarantine receipt before it clears the fence.
-A failure to preserve the pre-release receipt or changed target authority stops release and leaves the fence active.
+It preserves both the pre-release receipt and the final released receipt before it clears the fence.
+A receipt write failure or changed target authority stops release and leaves the fence active for retry.
 
 A successful release exits `0` and leaves the sandbox stopped.
 Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
-If the final receipt update fails after fence clearance, release exits `2`, and the sandbox remains stopped.
+If the final receipt update fails, release exits `2`, the fence remains active, and retrying the same release can finish safely.
 Pass `--json` to return the release result and receipt metadata as JSON.
 
 ### `$$nemoclaw <name> start`
@@ -2079,7 +2080,7 @@ The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `ag
 The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
 Other states identify agent drift, changed or removed baseline content, an unreadable baseline or live policy, or a live policy that contains the excluded key.
 The `quarantine` value is `null` when no fence is active.
-An active value contains the phase, exact fence target, bounded operation journal, and secret-free reason.
+An active value contains the phase, exact fence target, bounded operation journal, and SHA-256 reason digest.
 `baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.

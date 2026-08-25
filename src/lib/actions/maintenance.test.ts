@@ -34,6 +34,16 @@ async function runSandboxMutationAction(
 }
 
 vi.mock("../state/registry", () => ({
+  assertSandboxActivationAllowed: (
+    sandboxName: string,
+    _action: string,
+    getSandbox: typeof mocks.getSandbox,
+  ) => {
+    expect(
+      getSandbox(sandboxName)?.quarantine,
+      `Sandbox '${sandboxName}' is quarantined`,
+    ).toBeUndefined();
+  },
   isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
     entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,

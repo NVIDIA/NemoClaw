@@ -54,7 +54,7 @@ describe("launch readiness quarantine fence", () => {
         schemaVersion: 1,
         fenceId: "00000000-0000-4000-8000-000000000001",
         requestIdentity: "e".repeat(64),
-        reason: "incident investigation",
+        reasonDigest: "f".repeat(64),
         createdAt: "2026-08-25T04:00:00.000Z",
         updatedAt: "2026-08-25T04:00:00.000Z",
         phase: "fenced",

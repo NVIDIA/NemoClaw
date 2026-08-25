@@ -213,6 +213,7 @@ describe("Portable OpenClaw pairing settlement", () => {
     const getSandbox = vi
       .fn()
       .mockReturnValueOnce(ENTRY)
+      .mockReturnValueOnce(ENTRY)
       .mockReturnValue({ ...ENTRY, policyPresetsFinalized: undefined });
     const scope = settlementDeps({ getSandbox });
 
@@ -221,7 +222,7 @@ describe("Portable OpenClaw pairing settlement", () => {
       reason: "portable-policy-incomplete",
     });
     expect(scope.calls).toEqual(["sandbox-lock", "gateway-lock"]);
-    expect(getSandbox).toHaveBeenCalledTimes(2);
+    expect(getSandbox).toHaveBeenCalledTimes(3);
     expect(scope.observePairing).not.toHaveBeenCalled();
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).not.toHaveBeenCalled();

@@ -23,7 +23,7 @@ export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
   };
   static flags = {
     reason: Flags.string({
-      description: "Secret-free operator reason recorded in the quarantine receipt",
+      description: "Operator reason; the receipt stores only its SHA-256 digest",
       required: true,
     }),
     "idempotency-key": Flags.string({

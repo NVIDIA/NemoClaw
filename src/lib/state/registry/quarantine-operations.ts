@@ -23,8 +23,10 @@ function persistedGatewayBindingMatches(
   target: SandboxQuarantineTarget,
 ): boolean {
   return (
-    (typeof entry.gatewayPort !== "number" || entry.gatewayPort === target.gatewayPort) &&
-    (typeof entry.gatewayName !== "string" || entry.gatewayName === target.gatewayName)
+    typeof entry.gatewayPort === "number" &&
+    typeof entry.gatewayName === "string" &&
+    entry.gatewayPort === target.gatewayPort &&
+    entry.gatewayName === target.gatewayName
   );
 }
 
@@ -86,7 +88,7 @@ export function beginSandboxQuarantine(
     if (current.quarantine) {
       const sameRequest =
         current.quarantine.requestIdentity === fence.requestIdentity &&
-        current.quarantine.reason === fence.reason &&
+        current.quarantine.reasonDigest === fence.reasonDigest &&
         isDeepStrictEqual(current.quarantine.target, fence.target);
       return sameRequest
         ? { status: "existing", fence: current.quarantine }

@@ -92,13 +92,21 @@ describe("all-agent quarantine qualification", () => {
     (agentName) => {
       const qualification = loadAgent(agentName, {}).quarantineQualification;
       expect(qualification, agentName).not.toBeNull();
-      expect(catalogueTarget(qualification!.liveE2eTarget)).toMatchObject({
+      const target = catalogueTarget(qualification!.liveE2eTarget);
+      expect(target).toMatchObject({
         id: qualification!.liveE2eTarget,
         agentRuntime: agentName,
         testFile: "test/e2e/live/sandbox-quarantine.test.ts",
         prAdvisorSelectable: true,
         releaseRequired: true,
       });
+      expect(target.owningPaths).toEqual(
+        expect.arrayContaining([
+          "src/lib/state/registry/quarantine.ts",
+          "src/lib/state/registry/quarantine-operations.ts",
+          "src/lib/state/registry/quarantine-receipt.ts",
+        ]),
+      );
       expect(quarantineQualifiedAgent(loadAgent(agentName, {}))).toMatchObject({
         exitCode: 0,
         status: "quarantined",
