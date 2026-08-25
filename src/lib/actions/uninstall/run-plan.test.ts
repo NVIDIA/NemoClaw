@@ -1098,7 +1098,7 @@ describe("uninstall run plan", () => {
         expect(fs.existsSync(stateDir)).toBe(false);
         expect(logs).toContain(`Removed ${stateDir}`);
         expect(logs).toContain(
-          "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
+          "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; skipping fresh sandbox backups and purging user data under ~/.nemoclaw/.",
         );
         expectNoPreserveSignals(logs);
       } finally {
@@ -1118,7 +1118,9 @@ describe("uninstall run plan", () => {
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
         expect(logs).toContain(`Removed ${stateDir}`);
-        expect(logs).toContain("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
+        expect(logs).toContain(
+          "--destroy-user-data set; skipping fresh sandbox backups and purging user data under ~/.nemoclaw/.",
+        );
         expectNoPreserveSignals(logs);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -1137,8 +1139,14 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
-        expect(logs).toContain("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
-        expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
+        expect(logs).toContain(
+          "--destroy-user-data set; skipping fresh sandbox backups and purging user data under ~/.nemoclaw/.",
+        );
+        expect(
+          logs.every(
+            (line) => line !== "Also remove them and skip eligible fresh sandbox backups? [y/N]",
+          ),
+        ).toBe(true);
         expect(readLine).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -1157,16 +1165,20 @@ describe("uninstall run plan", () => {
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
         expect(logs).toContain(
-          "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)",
+          "  · ~/.nemoclaw (skips fresh sandbox backups and removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)",
         );
         expect(
           logs.every(
             (line) =>
               line !==
-              "  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)",
+              "  · ~/.nemoclaw (backs up eligible non-portable sandboxes and preserves rebuild-backups/, backups/, sandboxes.json)",
           ),
         ).toBe(true);
-        expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
+        expect(
+          logs.every(
+            (line) => line !== "Also remove them and skip eligible fresh sandbox backups? [y/N]",
+          ),
+        ).toBe(true);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -1188,7 +1200,7 @@ describe("uninstall run plan", () => {
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
         expect(logs).toContain(
-          "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)",
+          "  · ~/.nemoclaw (skips fresh sandbox backups and removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)",
         );
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -1208,12 +1220,14 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
-        expect(logs).toContain("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
+        expect(logs).toContain(
+          "--destroy-user-data set; skipping fresh sandbox backups and purging user data under ~/.nemoclaw/.",
+        );
         expect(
           logs.every(
             (line) =>
               line !==
-              "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
+              "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; skipping fresh sandbox backups and purging user data under ~/.nemoclaw/.",
           ),
         ).toBe(true);
       } finally {
@@ -1259,7 +1273,9 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
-        expect(logs).toContain("Also remove them? [y/N]");
+        expect(logs).toContain(
+          "Also remove them and skip eligible fresh sandbox backups? [y/N]",
+        );
         expect(logs).toContain("Acknowledged; purging user data.");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -1306,7 +1322,11 @@ describe("uninstall run plan", () => {
         expect(logs).toContain(
           `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,
         );
-        expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
+        expect(
+          logs.every(
+            (line) => line !== "Also remove them and skip eligible fresh sandbox backups? [y/N]",
+          ),
+        ).toBe(true);
         expect(readLine).toHaveBeenCalledTimes(1);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });

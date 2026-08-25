@@ -98,6 +98,7 @@ vi.mock("../domain/lifecycle/options", () => ({
 
 import {
   backupAll,
+  backupAllUnderPortableHostFence,
   garbageCollectImages,
   rebuildBackupsDirectory,
   shouldSkipUnreachableSandboxBackup,
@@ -647,6 +648,32 @@ describe("backupAll", () => {
     expect(errorOutput).toContain("rerun the installer or");
     expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
     expect(errorOutput).not.toContain("prepare the upgrade manually");
+  });
+
+  it("uses uninstall retry guidance when a required sandbox is skipped", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(
+      backupAllUnderPortableHostFence({
+        purpose: "pre-uninstall",
+        requireAll: true,
+        sandboxNames: ["sb-stopped"],
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("Strict pre-uninstall backup");
+    expect(errorOutput).toContain("rerun the original uninstall command");
+    expect(errorOutput).not.toContain("rerun the installer or");
   });
 
   it("starts a stopped container, backs it up, and returns it to stopped so strict mode passes (#6500)", async () => {

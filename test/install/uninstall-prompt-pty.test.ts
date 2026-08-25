@@ -114,7 +114,7 @@ describe.runIf(ptySupported)("uninstall confirm prompts under a pseudo-TTY (#518
       await pty.waitForOutput("Proceed? [y/N]");
       await sleep(300);
       pty.write("y\n");
-      await pty.waitForOutput("Also remove them? [y/N]");
+      await pty.waitForOutput("Also remove them and skip eligible fresh sandbox backups? [y/N]");
       await sleep(300);
       expect(pty.isAlive()).toBe(true);
       pty.write("n\n");
