@@ -423,6 +423,11 @@ export async function upgradeSandboxes(
   ) {
     if (unobservedOwnGatewaySandboxes.length > 0) {
       printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
+      // #10211: `--check` is read-only, so scripts gate on the exit code
+      // rather than parsing output. An orphan is actionable — it needs
+      // `upgrade-sandboxes` to reconcile — so it must not report the same
+      // exit code as a clean run.
+      if (checkOnly) process.exit(1);
       return;
     }
     console.log("  All sandboxes are up to date.");
@@ -484,7 +489,10 @@ export async function upgradeSandboxes(
     // Check mode must agree with auto mode on the orphan diagnosis (#6520).
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
-    return;
+    // #10211: reached only when stale, unknown, a prepared recovery, or a
+    // rejected recovery was found — never the "all up to date" case above.
+    // `--check` is read-only, so scripts gate on the exit code.
+    process.exit(1);
   }
 
   const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
