@@ -56,7 +56,7 @@ describe("rebuild uses the registry target instead of stale session state", () =
 
 describe("rebuild forwards its stored custom Dockerfile", () => {
   it("passes the registry Dockerfile to recreate onboarding (#2301)", async () => {
-    const fromDockerfile = path.resolve(import.meta.dirname, "..", "Dockerfile");
+    const fromDockerfile = path.resolve(import.meta.dirname, "../../..", "Dockerfile");
     const harness = createRebuildFlowHarness({ sandboxEntry: { fromDockerfile } });
 
     await expect(

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
 const registryModulePath = path.join(repoRoot, "src", "lib", "state", "registry.ts");
 

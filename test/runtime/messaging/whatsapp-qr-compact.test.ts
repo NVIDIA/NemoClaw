@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 const PRELOAD_SOURCE = path.join(
   REPO_ROOT,

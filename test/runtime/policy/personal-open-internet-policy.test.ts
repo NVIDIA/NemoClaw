@@ -8,9 +8,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import * as policies from "../src/lib/policy";
-import { ROOT } from "../src/lib/runner";
-import * as registry from "../src/lib/state/registry";
+import * as policies from "../../../src/lib/policy";
+import { ROOT } from "../../../src/lib/runner";
+import * as registry from "../../../src/lib/state/registry";
 
 type Endpoint = {
   allowed_ips?: string[];

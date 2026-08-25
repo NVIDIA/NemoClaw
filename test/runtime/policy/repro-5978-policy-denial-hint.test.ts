@@ -32,9 +32,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../src/lib/name-validation.js";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../../src/lib/name-validation.js";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 
 // Opt-in container E2E: drives the EXACT reporter workflow against the real
