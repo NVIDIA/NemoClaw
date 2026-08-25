@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const WORKFLOW_ROOTS = [".github/actions", ".github/workflows"];
-const TEST_PATH_PATTERN = /\btest\/[A-Za-z0-9_./-]+\.test\.(?:js|ts)\b/gu;
+const TEST_PATH_PATTERN = /\btest\/[A-Za-z0-9_./-]+\.test\.(?:[cm]?js|[cm]?ts)\b/gu;
 
 function yamlFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
