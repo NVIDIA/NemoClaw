@@ -33,11 +33,11 @@ const SKIP_DIRS = new Set([".git", "node_modules"]);
 // repository build output. The self-audit below prevents this list growing or
 // retaining an exemption after the fixture no longer needs one.
 const FIXTURE_EXCLUSIONS = new Set([
-  "test/dist-sourcemaps.test.ts",
+  "test/repository/dist-sourcemaps.test.ts",
   "test/install/install-cdi-repair.test.ts",
   "test/installer-integration/install-managed-cli-reuse.test.ts",
   "test/installer-integration/install-preflight.test.ts",
-  "test/stale-dist-check.test.ts",
+  "test/repository/stale-dist-check.test.ts",
 ]);
 const EXCLUDED_PREFIXES = [
   // Live/branch E2E validates installed artifacts rather than unit-test imports.

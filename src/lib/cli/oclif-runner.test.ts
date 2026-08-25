@@ -256,7 +256,7 @@ describe("runOclifArgv", () => {
     // delegate to oclif's handler, which performs the graceful exit 0.
     // This mocks handleOclif to assert delegation; the runtime counterpart
     // (real `nemoclaw sandbox --help` → exit 0 through the actual binary) is
-    // locked by test/exit-code-user-error-surfaces.test.ts
+    // locked by test/cli/exit-code-user-error-surfaces.test.ts
     // ("a native-route --help stays a clean exit 0").
     class ExitError extends Error {
       oclif = { exit: 0 };
