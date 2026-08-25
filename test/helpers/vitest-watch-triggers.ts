@@ -61,7 +61,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)docs\/reference\/troubleshooting\.mdx$/,
-    testsToRun: runTests("test/policy-finality-docs.test.ts"),
+    testsToRun: runTests("test/runtime/policy/policy-finality-docs.test.ts"),
   },
   {
     pattern:
@@ -110,7 +110,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/sandbox-provisioning.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning.test.ts",
     ),
   },
   {

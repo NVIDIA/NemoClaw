@@ -197,7 +197,7 @@
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/managed-gateway-control.test.ts",
-        "test/nemoclaw-start-guard-recovery.test.ts",
+        "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
       ]
@@ -273,7 +273,7 @@
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
-        "test/gateway-state.test.ts",
+        "test/runtime/gateway/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"

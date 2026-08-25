@@ -86,7 +86,7 @@ function personalSupersededAgentRequiredPresets(agent: string | null | undefined
  * itself takes `agent` and `env` (OTEL endpoint locality) inputs that the YAML
  * cannot evaluate at parse time.
  *
- * Regression test: `test/policy-tiers-onboard.test.ts` exercises
+ * Regression test: `test/runtime/policy/policy-tiers-onboard.test.ts` exercises
  * `setupPoliciesWithSelection` end-to-end for restricted + OpenClaw across
  * fresh-onboard, preservation, resume, and OTEL-enabled / OTEL-disabled paths,
  * including stale-applied OTEL-local cleanup with the current env disabled;
