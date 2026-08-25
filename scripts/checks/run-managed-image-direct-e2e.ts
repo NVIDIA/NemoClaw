@@ -608,13 +608,16 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     }
     if (input.agent === "openclaw") {
       const parsed = JSON.parse(config) as {
-        agents?: { defaults?: { heartbeat?: { every?: unknown } } };
+        agents?: {
+          defaults?: { heartbeat?: { every?: unknown; isolatedSession?: unknown } };
+        };
       };
       if (
         parsed.agents?.defaults?.heartbeat?.every !==
-        MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY
+          MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY ||
+        parsed.agents?.defaults?.heartbeat?.isolatedSession !== true
       ) {
-        throw new Error("managed OpenClaw configuration lost the requested heartbeat interval");
+        throw new Error("managed OpenClaw configuration lost the isolated heartbeat settings");
       }
       docker([
         "exec",

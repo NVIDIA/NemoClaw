@@ -815,7 +815,7 @@ describe("managed startup agent environment", () => {
     expect(openclawConfig).toMatchObject({
       agents: {
         defaults: {
-          heartbeat: { every: "30m" },
+          heartbeat: { every: "30m", isolatedSession: true },
           subagents: { maxSpawnDepth: 3 },
           timeoutSeconds: 900,
         },

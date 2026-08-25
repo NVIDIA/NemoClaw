@@ -444,7 +444,7 @@ export function managedImageOpenShellProbe(
     "/usr/local/bin/node",
     "-e",
     JSON.stringify(
-      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(c?.agents?.defaults?.heartbeat?.every!==process.argv[2])process.exit(1);",
+      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const h=c?.agents?.defaults?.heartbeat;if(h?.every!==process.argv[2]||h?.isolatedSession!==true)process.exit(1);",
     ),
     JSON.stringify(managedConfigPath("openclaw")),
     JSON.stringify(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
@@ -471,7 +471,7 @@ export function managedImageOpenShellProbe(
     ),
     ...(agent === "openclaw"
       ? [
-          probeStep("OpenClaw managed heartbeat interval", heartbeatProbe),
+          probeStep("OpenClaw managed isolated heartbeat", heartbeatProbe),
           probeStep(
             "OpenClaw managed configuration hash",
             "cd /sandbox/.openclaw && sha256sum --check .config-hash >/dev/null",

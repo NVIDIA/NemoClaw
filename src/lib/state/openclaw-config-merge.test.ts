@@ -104,7 +104,7 @@ describe("mergeOpenClawRestoredConfig", () => {
       {
         agents: {
           defaults: {
-            heartbeat: { every: "30m" },
+            heartbeat: { every: "30m", isolatedSession: false },
             thinkingDefault: "off",
           },
         },
@@ -112,14 +112,14 @@ describe("mergeOpenClawRestoredConfig", () => {
       {
         agents: {
           defaults: {
-            heartbeat: { every: "2m" },
+            heartbeat: { every: "2m", isolatedSession: true },
           },
         },
       },
     ) as { agents: { defaults: Record<string, unknown> } };
 
     expect(merged.agents.defaults).toEqual({
-      heartbeat: { every: "2m" },
+      heartbeat: { every: "2m", isolatedSession: true },
       thinkingDefault: "off",
     });
   });

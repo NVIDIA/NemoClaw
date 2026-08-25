@@ -521,6 +521,14 @@ describe("protected managed-image runtime contract", () => {
     },
   );
 
+  it("binds the OpenClaw probe to the isolated heartbeat and config hash (#10262)", () => {
+    const probe = managedImageOpenShellProbe("openclaw");
+
+    expect(probe).toContain("isolatedSession");
+    expect(probe).toContain("OpenClaw managed isolated heartbeat");
+    expect(probe).toContain("sha256sum --check .config-hash");
+  });
+
   it("rewrites only the inference route while preserving the managed agent profile", () => {
     const profile = managedStartupE2eProfile("hermes", false, true, true);
     const route = resolveManagedImageLocalInferenceRoute("nim");

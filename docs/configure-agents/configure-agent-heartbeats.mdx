@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure OpenClaw Agent Heartbeats"
 sidebar-title: "Configure Agent Heartbeats"
-description: "Configure or disable periodic OpenClaw main-session agent turns in a NemoClaw sandbox."
+description: "Configure or disable periodic OpenClaw isolated-session agent turns in a NemoClaw sandbox."
 description-agent: "Configures OpenClaw heartbeat cadence through NemoClaw onboarding. Use when changing periodic agent wake-ups or disabling heartbeat instructions."
 keywords: ["nemoclaw heartbeat", "openclaw heartbeat", "HEARTBEAT.md"]
 content:
@@ -11,7 +11,7 @@ content:
 agent-variants: ["openclaw"]
 ---
 
-OpenClaw heartbeats run periodic main-session agent turns.
+Heartbeats configured through NemoClaw run as periodic isolated-session agent turns.
 Configure their cadence before onboarding or recreating the sandbox.
 
 ## Set the Heartbeat Cadence
@@ -24,7 +24,8 @@ export NEMOCLAW_AGENT_HEARTBEAT_EVERY=2h
 nemoclaw onboard
 ```
 
-At each interval, the agent wakes to review follow-ups and read `HEARTBEAT.md` when that file exists in the workspace.
+At each interval, the agent wakes in a dedicated heartbeat session to review follow-ups and read `HEARTBEAT.md` when that file exists in the workspace.
+NemoClaw sets OpenClaw's `agents.defaults.heartbeat.isolatedSession` option so ordinary main-session activity cannot substitute for a scheduled heartbeat.
 
 ## Disable Heartbeats
 
