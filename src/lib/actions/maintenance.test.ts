@@ -354,7 +354,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: "sb-stopped",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.getSandbox.mockReturnValue({
       name: "sb-stopped",
       quarantine: {
