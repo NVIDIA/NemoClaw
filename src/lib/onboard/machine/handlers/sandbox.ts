@@ -569,6 +569,10 @@ export function apfCreateIntentFields(
     : {};
 }
 
+export function apfCreateFingerprintFields(requested: boolean): readonly string[] {
+  return requested ? ["apf-interceptor"] : [];
+}
+
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
   readonly sandboxName: string | null;
@@ -929,7 +933,7 @@ class SandboxStateFlow<
     const lightFingerprint = [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       policyFingerprint,
-      this.options.apfInterceptorRequested === true ? "apf-interceptor" : "caller-policy",
+      ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
       this.options.provider,
       this.options.model,
       this.options.preferredInferenceApi ?? "default",

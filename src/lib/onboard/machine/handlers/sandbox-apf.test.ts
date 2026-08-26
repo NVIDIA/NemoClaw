@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
-import { apfCreateIntentFields, handleSandboxState } from "./sandbox";
+import { apfCreateFingerprintFields, apfCreateIntentFields, handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("APF sandbox create selection", () => {
@@ -14,6 +14,11 @@ describe("APF sandbox create selection", () => {
       deferSandboxEffectsUntilPolicyVerification: true,
     });
     expect(apfCreateIntentFields(false)).toEqual({});
+  });
+
+  it("adds a checkpoint fingerprint field only for APF creation (#9833)", () => {
+    expect(apfCreateFingerprintFields(false)).toEqual([]);
+    expect(apfCreateFingerprintFields(true)).toEqual(["apf-interceptor"]);
   });
 
   it("rejects fresh creation before credential staging until the exact gate exists (#9833)", async () => {
