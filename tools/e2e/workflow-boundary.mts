@@ -1179,7 +1179,7 @@ function validateFreeStandingJobSelector(
       ? ["generate-matrix", "openshell-dev-artifact"]
       : jobName === "cloud-onboard"
         ? ["base-image-publication", "generate-matrix"]
-      : "generate-matrix";
+        : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -2590,7 +2590,7 @@ function validateExactPrManagedImageCatalogBoundary(
   );
   if (
     managedCatalog?.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+      "${{ inputs.checkout_sha != '' && inputs.checkout_sha != '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
     !isDeepStrictEqual(asRecord(managedCatalog?.env), {
       BASE_SHA: "${{ inputs.base_sha }}",
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -2603,6 +2603,22 @@ function validateExactPrManagedImageCatalogBoundary(
   ) {
     errors.push("manual PR E2E must resolve the exact candidate managed-image publication");
   }
+  const reusedManagedCatalog = requireStep(
+    errors,
+    generateSteps,
+    "Assemble exact 7eccb19 managed-image catalog",
+  );
+  if (
+    reusedManagedCatalog?.if !==
+      "${{ inputs.checkout_sha == '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+    !stringValue(reusedManagedCatalog?.run).includes(
+      "managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}",
+    ) ||
+    !stringValue(reusedManagedCatalog?.run).includes("7eccb19f378d0bf27e8a237849be6d7e14f4088c") ||
+    !stringValue(reusedManagedCatalog?.run).includes("runId: 32919684299")
+  ) {
+    errors.push("manual PR E2E must bind the exact reusable 7eccb19 managed-image cohort");
+  }
   if (
     generate &&
     managedCatalog &&
@@ -2611,6 +2627,15 @@ function validateExactPrManagedImageCatalogBoundary(
       generateSteps.indexOf(managedCatalog) >= generateSteps.indexOf(generateCheckout))
   ) {
     errors.push("exact managed-image publication must resolve before candidate checkout");
+  }
+  if (
+    generate &&
+    reusedManagedCatalog &&
+    generateCheckout &&
+    (generateSteps.indexOf(reusedManagedCatalog) <= generateSteps.indexOf(generate) ||
+      generateSteps.indexOf(reusedManagedCatalog) >= generateSteps.indexOf(generateCheckout))
+  ) {
+    errors.push("reused managed-image publication must resolve before candidate checkout");
   }
 }
 
@@ -2838,12 +2863,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(
-    errors,
-    generateSteps,
-    generate,
-    generateCheckout,
-  );
+  validateExactPrManagedImageCatalogBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
