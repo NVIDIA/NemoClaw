@@ -26,7 +26,15 @@ import {
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
 } from "./mcp-bridge-adapter-openclaw";
-import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import {
+  mcpAdapterCredentialRevisionUnavailableError,
+  mcpAdapterCredentialRevisionUnstableError,
+  type McpAttachedCredentialRevision,
+  observeMcpCredentialRevision,
+} from "./mcp-bridge-provider-readiness";
+import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
+
+const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
 
 export {
   buildDeepAgentsMcpRegisterCommand,
@@ -162,6 +170,56 @@ export function registerAgentAdapter(
       );
       return;
   }
+}
+
+/** Register one adapter and converge it on the credential revision exposed by fresh execs. */
+export function registerAgentAdapterAtCurrentCredentialRevision(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+  entry: McpBridgeEntry,
+  envValues: Record<string, string>,
+  initialCredentialRevision: McpAttachedCredentialRevision,
+  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
+): McpAttachedCredentialRevision {
+  const timeoutSeconds = Number.parseInt(
+    process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
+    10,
+  );
+  let credentialRevision = initialCredentialRevision;
+  let replaceExisting = options.replaceExisting === true;
+  let registrationRequired = true;
+  let stableObservations = 0;
+  const converged = waitForMcpBridgeCondition(
+    () => {
+      if (registrationRequired) {
+        registerAgentAdapter(sandboxName, adapter, entry, envValues, {
+          replaceExisting,
+          teardownRollback: options.teardownRollback === true,
+          credentialRevision,
+        });
+        registrationRequired = false;
+      }
+      const observation = observeMcpCredentialRevision(sandboxName, entry);
+      if (observation === "absent" || observation === "canonical") {
+        throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
+      }
+      if (observation !== credentialRevision) {
+        credentialRevision = observation;
+        replaceExisting = true;
+        registrationRequired = true;
+        stableObservations = 0;
+        return false;
+      }
+      stableObservations += 1;
+      return stableObservations >= STABLE_CREDENTIAL_REVISION_OBSERVATIONS;
+    },
+    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
+    1_000,
+  );
+  if (!converged) {
+    throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+  }
+  return credentialRevision;
 }
 
 export function unregisterAgentAdapter(
