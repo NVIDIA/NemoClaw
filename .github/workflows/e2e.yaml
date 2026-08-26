@@ -596,7 +596,7 @@ jobs:
           import { assembleManagedImageCatalog } from "./tools/e2e/pr-managed-image-publication.mts";
 
           const revision = "933f105eb370acd42c5dc625548efe18ffd07e01";
-          const release = "v0.0.114-145-g933f105eb3";
+          const release = "v0.0.114-145-g933f105eb";
           const cohort = "ghrun-32935745132-1";
           const contracts = [
             {
