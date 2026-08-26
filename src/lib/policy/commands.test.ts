@@ -4,8 +4,12 @@
 import { describe, expect, it } from "vitest";
 
 const {
+  buildGlobalPolicyGetFullJsonArgs,
+  buildGlobalPolicyListArgs,
+  buildPolicyGetArgs,
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
+  buildPolicyGetFullJsonArgs,
   buildPolicySetCommand,
 } = require("./commands.js") as typeof import("./commands.js");
 
@@ -28,7 +32,7 @@ describe("OpenShell policy command builders", () => {
     ]);
   });
 
-  it("pins policy operations to the selected gateway", () => {
+  it("pins policy operations and authority reads to the selected gateway", () => {
     expect(buildPolicyGetCommand("alpha", "nemoclaw").slice(1)).toEqual([
       "policy",
       "get",
@@ -54,6 +58,43 @@ describe("OpenShell policy command builders", () => {
       "/tmp/policy.yaml",
       "--wait",
       "alpha",
+    ]);
+    expect(buildPolicyGetArgs("alpha", "nemoclaw")).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "alpha",
+    ]);
+    expect(buildPolicyGetFullJsonArgs("alpha", "nemoclaw")).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--full",
+      "--output",
+      "json",
+      "alpha",
+    ]);
+    expect(buildGlobalPolicyGetFullJsonArgs("nemoclaw")).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--global",
+      "--full",
+      "--output",
+      "json",
+    ]);
+    expect(buildGlobalPolicyListArgs("nemoclaw")).toEqual([
+      "policy",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--global",
+      "--limit",
+      "1",
     ]);
   });
 });

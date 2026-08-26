@@ -134,7 +134,6 @@ const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
-  ["buildPolicyGetFullJsonCommand", "full"],
   ["buildPolicyGetFullJsonArgs", "full"],
 ]);
 
