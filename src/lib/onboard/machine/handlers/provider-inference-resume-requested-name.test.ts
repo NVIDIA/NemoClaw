@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
+import { applySessionRecovery } from "../../session-recovery";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, createDeps } from "./provider-inference.test-support";
 
@@ -48,6 +49,19 @@ describe("resume with an operator-requested sandbox name (#8953)", () => {
   it("re-reserves a completed sandbox route when resuming a failed session (#10236)", async () => {
     const session = interruptedResumeSession();
     session.status = "failed";
+    session.machine = {
+      ...session.machine,
+      state: "failed",
+    };
+    session.failure = {
+      step: "policies",
+      message: "interrupted",
+      recordedAt: "2026-08-26T00:00:00.000Z",
+    };
+    session.steps.policies.status = "failed";
+    applySessionRecovery(session, "2026-08-26T00:01:00.000Z");
+    session.failure = null;
+    session.status = "in_progress";
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
 
