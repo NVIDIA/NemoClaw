@@ -67,6 +67,15 @@ function cleanupTempFile(filePath: string): void {
   }
 }
 
+function fsyncDirectory(dirPath: string): void {
+  const directoryDescriptor = fs.openSync(dirPath, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(directoryDescriptor);
+  } finally {
+    fs.closeSync(directoryDescriptor);
+  }
+}
+
 function buildRemediation(): string {
   const home = process.env.HOME ?? os.homedir();
   const nemoclawDir = nemoclawStateRoot(home, GATEWAY_PORT);
@@ -370,37 +379,57 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
   return content;
 }
 
-function writeConfigFileWithDurability(
-  filePath: string,
-  data: SerializableConfig,
-  durable: boolean,
-): void {
+export function writeConfigFile(filePath: string, data: SerializableConfig): void {
   const dirPath = path.dirname(filePath);
   ensureConfigDir(dirPath);
 
   const tmpFile = `${filePath}.tmp.${String(process.pid)}`;
+  const backupFile = `${filePath}.rollback.${String(process.pid)}`;
+  let backupCreated = false;
+  let replacementRenamed = false;
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), { mode: 0o600 });
-    if (durable) {
-      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-      const fileFd = fs.openSync(tmpFile, fs.constants.O_RDONLY | noFollow);
-      try {
-        fs.fsyncSync(fileFd);
-      } finally {
-        fs.closeSync(fileFd);
-      }
+    const fileDescriptor = fs.openSync(tmpFile, "r");
+    try {
+      fs.fsyncSync(fileDescriptor);
+    } finally {
+      fs.closeSync(fileDescriptor);
+    }
+    fs.rmSync(backupFile, { force: true });
+    try {
+      fs.linkSync(filePath, backupFile);
+      backupCreated = true;
+      fsyncDirectory(dirPath);
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
     }
     fs.renameSync(tmpFile, filePath);
-    if (durable) {
-      const directoryFd = fs.openSync(dirPath, fs.constants.O_RDONLY);
+    replacementRenamed = true;
+    try {
+      fsyncDirectory(dirPath);
+    } catch (commitError) {
       try {
-        fs.fsyncSync(directoryFd);
-      } finally {
-        fs.closeSync(directoryFd);
+        if (backupCreated) {
+          fs.renameSync(backupFile, filePath);
+          backupCreated = false;
+        } else {
+          fs.rmSync(filePath, { force: true });
+        }
+        fsyncDirectory(dirPath);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [commitError, rollbackError],
+          `Could not make config replacement durable or restore '${filePath}'`,
+        );
       }
+      throw commitError;
+    }
+    if (backupCreated) {
+      cleanupTempFile(backupFile);
     }
   } catch (error) {
     cleanupTempFile(tmpFile);
+    if (backupCreated && !replacementRenamed) cleanupTempFile(backupFile);
     const errnoError = error instanceof Error ? error : null;
     if (isPermissionError(errnoError)) {
       throw new ConfigPermissionError(
@@ -413,11 +442,7 @@ function writeConfigFileWithDurability(
   }
 }
 
-export function writeConfigFile(filePath: string, data: SerializableConfig): void {
-  writeConfigFileWithDurability(filePath, data, false);
-}
-
 /** Atomically publish a config and make its renamed directory entry crash-durable. */
 export function writeConfigFileDurable(filePath: string, data: SerializableConfig): void {
-  writeConfigFileWithDurability(filePath, data, true);
+  writeConfigFile(filePath, data);
 }

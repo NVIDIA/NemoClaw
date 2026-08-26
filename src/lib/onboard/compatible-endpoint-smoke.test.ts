@@ -123,6 +123,7 @@ function runProviderNeutralScript(options: {
   denial?: unknown;
   denialBytes?: readonly number[];
   denialOversized?: boolean;
+  directError?: "connection-refused" | "dns" | "timeout";
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -139,13 +140,18 @@ function runProviderNeutralScript(options: {
     ? 'b"x" * 1048577'
     : `bytes(${JSON.stringify(denialBytes)})`;
   const prelude = `
+import errno
 import io
 import json
+import socket
 import urllib.error
 import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
 denial_bytes = ${denialBody}
+direct_error = ${
+  options.directError === undefined ? "None" : JSON.stringify(options.directError)
+}
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -167,6 +173,12 @@ class FakeOpener:
             if not responses:
                 raise RuntimeError("test response queue exhausted")
             return FakeResponse(200, responses.pop(0))
+        if direct_error == "connection-refused":
+            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
+        if direct_error == "dns":
+            raise urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "not known"))
+        if direct_error == "timeout":
+            raise urllib.error.URLError(TimeoutError("timed out"))
         raise urllib.error.HTTPError(
             request.full_url,
             403,
@@ -481,6 +493,30 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
   });
+
+  it.each(
+    allAgentProofAuthorities,
+  )("accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)", ({
+    authority,
+  }) => {
+    const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+  });
+
+  it.each(["dns", "timeout"] as const)(
+    "does not accept a %s transport error as a direct-host deny proof (#9211)",
+    (directError) => {
+      const result = runProviderNeutralScript({
+        authority: allAgentProofAuthorities[0].authority,
+        directError,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("direct host inference deny could not be proven");
+    },
+  );
 
   it.each(allAgentProofAuthorities)("rejects a cross-wired response model for $agentName", ({
     authority,

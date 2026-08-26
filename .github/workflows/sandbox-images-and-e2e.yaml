@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Build and Test Sandbox Images
+name: Images / Sandbox Images
 
 on:
   # Manual dispatch is the branch-validation path. Non-main refs set
@@ -26,6 +26,7 @@ permissions:
 
 jobs:
   build-sandbox-images:
+    name: Build / amd64
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -132,6 +133,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   build-hermes-sandbox-image:
+    name: Build and validate / Hermes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -259,6 +261,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   test-hermes-sandbox-image:
+    name: Test / Hermes secret boundary and root entrypoint
     runs-on: ubuntu-latest
     needs: build-hermes-sandbox-image
     timeout-minutes: 90
@@ -345,6 +348,7 @@ jobs:
           docker system df || true
 
   messaging-plan-image-boundary:
+    name: Messaging / Test image boundary
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -418,6 +422,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
   state-dir-guard-metadata:
+    name: State Directory / Test metadata guard
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [build-sandbox-images, build-hermes-sandbox-image]
@@ -472,6 +477,7 @@ jobs:
         if: always()
         uses: ./.github/actions/upload-e2e-artifacts
   build-sandbox-images-arm64:
+    name: Build / arm64
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -501,6 +507,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   test-e2e-sandbox:
+    name: Test / CLI, blueprint, migration, and state lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -520,6 +527,7 @@ jobs:
         run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
 
   test-e2e-gateway-isolation:
+    name: Test / Gateway isolation and glibc lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -554,6 +562,7 @@ jobs:
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
 
   runtime-overrides:
+    name: Runtime / Test overrides
     runs-on: ubuntu-latest
     # The live target owns 45 minutes; retain 15 minutes for setup, image
     # transfer, and the always-running artifact upload.
@@ -587,6 +596,7 @@ jobs:
         uses: ./.github/actions/upload-e2e-artifacts
 
   test-e2e-port-overrides:
+    name: Test / Port overrides
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images

@@ -592,10 +592,15 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  const {
+    policyAuthority: _sourcePolicyAuthority,
+    policyCreationReceipt: _sourcePolicyCreationReceipt,
+    ...cloneSourceEntry
+  } = srcEntry as SandboxEntry;
   try {
     registry.registerSandbox(
       {
-        ...srcEntry,
+        ...cloneSourceEntry,
         name: dstName,
         createdAt: new Date().toISOString(),
         policies: [],
@@ -1824,6 +1829,7 @@ async function runSnapshotRestoreUnlocked(
         registry.getSandbox(targetSandbox)?.agent,
         result.restoredFiles,
         resolvedSnapshot?.stateFiles ?? [],
+        CLI_NAME,
       );
     } else {
       console.error(`  Restore failed.`);

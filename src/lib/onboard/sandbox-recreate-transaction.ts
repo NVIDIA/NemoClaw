@@ -339,8 +339,10 @@ export function createCreatedSandboxLifecycle(
   runtime: SandboxRecreateRuntime,
   target: CreatedSandboxLifecycleTarget,
   observe: ObserveCreatedSandbox,
+  generationOverride?: string,
 ): CreatedSandboxLifecycle {
-  const generation = runtime.targetGeneration ?? randomUUID();
+  const generation = runtime.targetGeneration ?? generationOverride ?? randomUUID();
+  requireLifecycleGeneration(target.sandboxName, generation);
   return {
     generation,
     capture: (lifecycleRegistrationFields) => {
@@ -459,6 +461,16 @@ function baseCheckpoint(session: Session): OnboardCheckpoint {
 
 function activeTransaction(session: Session): CheckpointSandboxRecreateTransaction | null {
   return baseCheckpoint(session).sandboxRecreate;
+}
+
+export function selectSandboxRecreateTargetIntentFingerprint(
+  transaction: CheckpointSandboxRecreateTransaction | null,
+  requestedTargetIntentFingerprint: string,
+  handedOffTargetIntentFingerprint: string | null | undefined,
+): string {
+  return transaction && transaction.targetIntentFingerprint === handedOffTargetIntentFingerprint
+    ? transaction.targetIntentFingerprint
+    : requestedTargetIntentFingerprint;
 }
 
 function assertSameTransaction(

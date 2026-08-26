@@ -108,7 +108,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
     { scenario: "lifecycle" },
     { scenario: "mutation authority" },
     { scenario: "state mutation" },
-    { scenario: "bootstrap" },
     { scenario: "snapshot" },
     { scenario: "recovery" },
     { scenario: "cleanup" },
@@ -132,7 +131,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
           lifecycle: provider.lifecycle,
           "mutation authority": provider.mutationAuthority,
           "state mutation": provider.stateMutation,
-          bootstrap: provider.bootstrap,
           snapshot: provider.snapshot,
           recovery: provider.recovery,
           cleanup: provider.cleanup,
@@ -144,13 +142,51 @@ describe("inactive OpenShell MXC runtime provider", () => {
 
       expect(provider.preflightDoctor.preflightLifecycle("start", {} as never)).toMatchObject({
         exitCode: 1,
-        message: expect.stringMatching(/has not passed live E2E/u),
+        message: expect.stringMatching(/direct start and stop/u),
       });
       expect(() => requireRuntimeProviderMutationAuthority(provider, "registration")).toThrow(
         /does not authorize 'registration'/u,
       );
     },
   );
+
+  it("exposes native-artifact bootstrap without enabling direct lifecycle or cleanup (#8178)", () => {
+    const provider = candidateBundle();
+
+    expect(provider.bootstrap).toMatchObject({
+      providerId: "mxc",
+      supported: true,
+      bootstrapKind: "native-artifact",
+      contractVersion: 3,
+    });
+    expect(provider.lifecycle).toMatchObject({
+      providerId: "mxc",
+      supported: false,
+      reason: expect.stringMatching(/direct start and stop/u),
+    });
+    expect(provider.cleanup).toMatchObject({
+      providerId: "mxc",
+      supported: false,
+      reason: expect.stringMatching(/immutable resource handle/u),
+    });
+    expect(provider.mutationAuthority).toMatchObject({ supported: false });
+    expect(provider.capabilities).toMatchObject({
+      directLifecycle: false,
+      workloadImageCleanup: false,
+    });
+  });
+
+  it("rejects the version-2 separated native-artifact bootstrap operations contract (#8178)", () => {
+    const provider = candidateBundle();
+    const obsolete = {
+      ...provider,
+      bootstrap: { ...provider.bootstrap, contractVersion: 2 },
+    } as unknown as typeof provider;
+
+    expect(() => createRuntimeProviderBundleRegistry([["mxc", obsolete]])).toThrow(
+      /native-artifact bootstrap has an unsupported contract version/u,
+    );
+  });
 
   it("rejects a native-artifact profile with an unaccepted agent (#8178)", () => {
     const provider = candidateBundle();

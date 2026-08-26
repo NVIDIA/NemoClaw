@@ -3,10 +3,12 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  inferenceSelectionRegistryFields,
+  normalizeInferenceSelection,
+} from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
@@ -70,7 +72,6 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
-  policyAuthority?: SandboxPolicyAuthority;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -98,19 +99,24 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  policyAuthority?: SandboxEntry["policyAuthority"];
+  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   portableLifecycle?: boolean;
+  reservationSessionId?: string;
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
-  reservationSessionId?: string;
+  verifiedCreate?: NonNullable<
+    NonNullable<Parameters<typeof registry.registerSandbox>[2]>["verifiedCreate"]
+  >;
   registerSandbox?(
     entry: SandboxEntry,
     routeReservation?: QualifiedSandboxInferenceRouteReservation,
-    options?: { pending?: boolean; reservationSessionId?: string },
+    options?: Parameters<typeof registry.registerSandbox>[2],
   ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -277,6 +283,9 @@ export function buildCreatedSandboxRegistryEntry(
       : {}),
     policies: input.appliedPolicies,
     ...(input.policyAuthority !== undefined ? { policyAuthority: input.policyAuthority } : {}),
+    ...(input.policyCreationReceipt !== undefined
+      ? { policyCreationReceipt: input.policyCreationReceipt }
+      : {}),
     baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -332,6 +341,10 @@ export function loadOnboardCommandResumeSession(): {
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
+  const pendingRoute =
+    input.reservationSessionId && pending
+      ? registry.normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(pending))
+      : null;
   const pendingHostLocalInferenceReceipt =
     input.hostLocalInferenceReceipt !== undefined
       ? input.hostLocalInferenceReceipt
@@ -342,6 +355,9 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       : pending?.hostLocalInferenceProvenance;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    inferenceSelection: pendingRoute
+      ? { ...input.inferenceSelection, ...pendingRoute }
+      : input.inferenceSelection,
     ...(pendingHostLocalInferenceReceipt === undefined
       ? {}
       : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
@@ -377,12 +393,19 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
-  const pendingOptions = input.reservationSessionId
-    ? { pending: true as const, reservationSessionId: input.reservationSessionId }
-    : undefined;
+  const pendingOptions =
+    input.reservationSessionId && !input.verifiedCreate
+      ? {
+          pending: true as const,
+          reservationSessionId: input.reservationSessionId,
+        }
+      : undefined;
+  const registrationOptions = input.verifiedCreate
+    ? { verifiedCreate: input.verifiedCreate }
+    : pendingOptions;
   const registered =
-    input.inferenceRouteReservation || pendingOptions
-      ? writeRegistry(entry, input.inferenceRouteReservation, pendingOptions)
+    input.inferenceRouteReservation || registrationOptions
+      ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
       : writeRegistry(entry);
   return registered ?? entry;
 }

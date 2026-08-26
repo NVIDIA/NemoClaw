@@ -81,6 +81,10 @@ export interface HermesPortablePodmanCapture {
   (args: readonly string[], timeoutMs: number): HermesPortablePodmanResult;
 }
 
+export interface HermesPortableAuthenticatedHealthCapture {
+  (script: string, timeoutMs: number): HermesPortablePodmanResult;
+}
+
 export interface HermesPortableContainerInspection {
   readonly authority: HermesPortableContainerAuthority;
   readonly labels: Readonly<Record<string, string>>;
@@ -90,6 +94,7 @@ export interface HermesPortableContainerInspection {
 
 export interface HermesPortableContainerDeps {
   readonly podman: HermesPortablePodmanCapture;
+  readonly authenticatedHealth?: HermesPortableAuthenticatedHealthCapture;
   readonly socketAuthority?: PodmanSocketAuthorityDeps;
   readonly assertSocketAuthority?: typeof assertPodmanSocketAuthority;
   readonly now?: () => number;
@@ -383,18 +388,11 @@ export function observeHermesPortableAuthenticatedHealth(
     fail("authenticated health requires the exact container to be running and unpaused");
   }
   assertSocket(receipt, deps);
+  if (!deps.authenticatedHealth) {
+    fail("authenticated Hermes health observer is unavailable");
+  }
   const output = requireCommand(
-    deps.podman(
-      [
-        "container",
-        "exec",
-        receipt.container.containerId,
-        "python3",
-        "-c",
-        AUTHENTICATED_HEALTH_SCRIPT,
-      ],
-      MUTATION_TIMEOUT_MS,
-    ),
+    deps.authenticatedHealth(AUTHENTICATED_HEALTH_SCRIPT, MUTATION_TIMEOUT_MS),
     "authenticated Hermes health probe",
   );
   assertSocket(receipt, deps);

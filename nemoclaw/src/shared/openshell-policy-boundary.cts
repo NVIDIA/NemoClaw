@@ -15,12 +15,41 @@ export interface ParsedOpenShellPolicy {
   readonly policy: ValidatedOpenShellPolicyMapping;
 }
 
-export type OpenShellPolicyAuthority = "nemoclaw-managed" | "externally-managed";
+export type OpenShellPolicyAuthority = "nemoclaw-managed" | "externally-managed" | "owner-unknown";
+
+export interface OpenShellPolicyIdentity {
+  readonly hash: string;
+  readonly activeVersion: number;
+}
+
+/** Secret-free proof that NemoClaw created and verified one sandbox policy. */
+export interface NemoClawPolicyCreationReceipt {
+  readonly schemaVersion: 1;
+  readonly origin: "sandbox-create";
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly policyHash: string;
+  readonly policyVersion: number;
+}
 
 export interface SandboxPolicyAuthorityInspection {
   readonly authority: OpenShellPolicyAuthority;
   readonly effectivePolicy: OpenShellPolicyMapping;
+  readonly policyIdentity: OpenShellPolicyIdentity;
 }
+
+/** Result of checking whether a verified active global policy exists. */
+export type ActiveGlobalPolicyInspection =
+  | { readonly state: "absent" }
+  | {
+      readonly state: "active";
+      readonly inspection: SandboxPolicyAuthorityInspection & {
+        readonly authority: "externally-managed";
+      };
+    };
 
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
@@ -30,7 +59,96 @@ function isMapping(value: unknown): value is OpenShellPolicyMapping {
 }
 
 function isPolicyAuthority(value: unknown): value is OpenShellPolicyAuthority {
-  return value === "nemoclaw-managed" || value === "externally-managed";
+  return (
+    value === "nemoclaw-managed" || value === "externally-managed" || value === "owner-unknown"
+  );
+}
+
+const RECEIPT_KEYS = new Set([
+  "schemaVersion",
+  "origin",
+  "gatewayName",
+  "gatewayPort",
+  "sandboxName",
+  "lifecycleGeneration",
+  "sandboxIdentityFingerprint",
+  "policyHash",
+  "policyVersion",
+]);
+const RECEIPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const RECEIPT_POLICY_HASH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function parsePolicyIdentity(metadata: OpenShellPolicyMapping): OpenShellPolicyIdentity {
+  if (
+    typeof metadata.hash !== "string" ||
+    !RECEIPT_POLICY_HASH_PATTERN.test(metadata.hash) ||
+    !positiveInteger(metadata.active_version)
+  ) {
+    throw new Error("OpenShell returned invalid sandbox policy identity metadata");
+  }
+  return { hash: metadata.hash, activeVersion: metadata.active_version };
+}
+
+/** Parse a complete receipt. Pending, extended, or malformed values fail closed. */
+export function parseNemoClawPolicyCreationReceipt(value: unknown): NemoClawPolicyCreationReceipt {
+  if (
+    !isMapping(value) ||
+    Object.keys(value).some((key) => !RECEIPT_KEYS.has(key)) ||
+    value.schemaVersion !== 1 ||
+    value.origin !== "sandbox-create" ||
+    typeof value.gatewayName !== "string" ||
+    !RECEIPT_NAME_PATTERN.test(value.gatewayName) ||
+    !positiveInteger(value.gatewayPort) ||
+    value.gatewayPort > 65_535 ||
+    typeof value.sandboxName !== "string" ||
+    !RECEIPT_NAME_PATTERN.test(value.sandboxName) ||
+    typeof value.lifecycleGeneration !== "string" ||
+    !UUID_PATTERN.test(value.lifecycleGeneration) ||
+    typeof value.sandboxIdentityFingerprint !== "string" ||
+    !SHA256_PATTERN.test(value.sandboxIdentityFingerprint) ||
+    typeof value.policyHash !== "string" ||
+    !RECEIPT_POLICY_HASH_PATTERN.test(value.policyHash) ||
+    !positiveInteger(value.policyVersion)
+  ) {
+    throw new Error("NemoClaw policy creation receipt is unavailable or invalid");
+  }
+  return {
+    schemaVersion: 1,
+    origin: "sandbox-create",
+    gatewayName: value.gatewayName,
+    gatewayPort: value.gatewayPort,
+    sandboxName: value.sandboxName,
+    lifecycleGeneration: value.lifecycleGeneration,
+    sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
+    policyHash: value.policyHash,
+    policyVersion: value.policyVersion,
+  };
+}
+
+/** Require a receipt to describe the exact live policy boundary being used. */
+export function assertNemoClawPolicyCreationReceiptMatches(
+  value: unknown,
+  expected: Omit<NemoClawPolicyCreationReceipt, "schemaVersion">,
+): NemoClawPolicyCreationReceipt {
+  const receipt = parseNemoClawPolicyCreationReceipt(value);
+  if (
+    receipt.gatewayName !== expected.gatewayName ||
+    receipt.gatewayPort !== expected.gatewayPort ||
+    receipt.sandboxName !== expected.sandboxName ||
+    receipt.lifecycleGeneration !== expected.lifecycleGeneration ||
+    receipt.sandboxIdentityFingerprint !== expected.sandboxIdentityFingerprint ||
+    receipt.policyHash !== expected.policyHash ||
+    receipt.policyVersion !== expected.policyVersion
+  ) {
+    throw new Error("NemoClaw policy creation receipt does not match the live sandbox policy");
+  }
+  return receipt;
 }
 
 function parseJsonMapping(source: string, invalidMessage: string): OpenShellPolicyMapping {
@@ -68,15 +186,16 @@ export function parseSandboxPolicyAuthorityMetadata(
     throw new Error("OpenShell returned invalid sandbox policy authority metadata");
   }
   return {
-    authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
+    authority: metadata.policy_source === "sandbox" ? "owner-unknown" : "externally-managed",
     effectivePolicy: metadata.policy,
+    policyIdentity: parsePolicyIdentity(metadata),
   };
 }
 
-/** Parse machine-readable global policy metadata after history proves a revision exists. */
-export function parseGlobalPolicyAuthorityMetadata(
+/** Parse one global policy revision without treating absence as NemoClaw ownership. */
+export function parseActiveGlobalPolicyAuthorityMetadata(
   raw: string,
-): SandboxPolicyAuthorityInspection {
+): ActiveGlobalPolicyInspection {
   if (raw.trim().length === 0) {
     throw new Error("OpenShell returned empty global policy authority metadata");
   }
@@ -86,26 +205,32 @@ export function parseGlobalPolicyAuthorityMetadata(
   );
   if (
     metadata.scope !== "global" ||
-    Object.hasOwn(metadata, "sandbox") ||
-    metadata.policy_source !== "global"
+    (metadata.status !== "loaded" && metadata.status !== "superseded") ||
+    metadata.policy_source !== "global" ||
+    Object.hasOwn(metadata, "sandbox")
   ) {
     throw new Error("OpenShell returned invalid global policy authority metadata");
   }
-  if (metadata.status === "superseded") {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
-  }
-  if (metadata.status !== "loaded" || !isMapping(metadata.policy)) {
+  if (metadata.status === "superseded") return { state: "absent" };
+  if (!isMapping(metadata.policy)) {
     throw new Error("OpenShell returned invalid global policy authority metadata");
   }
-  return { authority: "externally-managed", effectivePolicy: metadata.policy };
+  return {
+    state: "active",
+    inspection: {
+      authority: "externally-managed",
+      effectivePolicy: metadata.policy,
+      policyIdentity: parsePolicyIdentity(metadata),
+    },
+  };
 }
 
 /** Require durable and observed policy authority to describe the same owner. */
 export function assertMatchingPolicyAuthority(recorded: unknown, observed: unknown): void {
-  if (!isPolicyAuthority(recorded)) {
+  if (!isPolicyAuthority(recorded) || recorded === "owner-unknown") {
     throw new Error("the recorded policy authority is unavailable or invalid");
   }
-  if (!isPolicyAuthority(observed)) {
+  if (!isPolicyAuthority(observed) || observed === "owner-unknown") {
     throw new Error("the observed OpenShell policy authority is unavailable or invalid");
   }
   if (recorded !== observed) {
@@ -138,6 +263,11 @@ function policyValuesEqual(left: unknown, right: unknown): boolean {
         policyValuesEqual(left[key], right[key]),
     )
   );
+}
+
+/** Compare two parsed policy values without serializing their contents. */
+export function openShellPolicyValuesEqual(left: unknown, right: unknown): boolean {
+  return policyValuesEqual(left, right);
 }
 
 function formatPolicyKeys(keys: readonly string[]): string {
@@ -224,6 +354,9 @@ export function assertExternalPolicyRequirementContainment(
 ): void {
   if (!isPolicyAuthority(inspection.authority)) {
     throw new Error("the observed OpenShell policy authority is invalid");
+  }
+  if (inspection.authority === "owner-unknown") {
+    throw new Error("the observed OpenShell policy authority is unknown");
   }
   if (inspection.authority === "nemoclaw-managed") return;
   assertPolicyRequirementContainmentForOwner(
