@@ -98,6 +98,19 @@ describe("sandbox workload preparation", () => {
     }
   });
 
+  it("rejects a truncated installed source revision (#8379)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-truncated-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), "a".repeat(39));
+    try {
+      expect(() => installedManagedImageCatalogRevision({}, fixtureRoot)).toThrow(
+        "Could not resolve the immutable NemoClaw source revision.",
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("keeps a matching tagged install on its release catalog", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-build-"));
     fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.0.97" }));
