@@ -55,6 +55,7 @@ function publicFetchSessionJsonLines(
   options: {
     callId?: string;
     details?: Record<string, unknown>;
+    extraToolArguments?: Record<string, unknown>;
     extraToolName?: string;
     isError?: boolean;
     maxChars?: number | null;
@@ -74,7 +75,14 @@ function publicFetchSessionJsonLines(
       arguments: { url: PUBLIC_FETCH_URL, ...(maxChars === null ? {} : { maxChars }) },
     },
     ...(options.extraToolName
-      ? [{ type: "toolCall", id: "call-extra-1", name: options.extraToolName, arguments: {} }]
+      ? [
+          {
+            type: "toolCall",
+            id: "call-extra-1",
+            name: options.extraToolName,
+            arguments: options.extraToolArguments ?? {},
+          },
+        ]
       : []),
   ];
   return [
@@ -398,6 +406,23 @@ describe("common-egress agent parsing and classification helpers", () => {
       matches: true,
       projectedTargetEvidence: false,
       qualifyingWebFetchResults: 1,
+    });
+  });
+
+  it("rejects projected evidence that hides a forbidden session tool and search provider", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        extraToolArguments: { provider: "brave", query: "public reference" },
+        extraToolName: "web_search",
+      }),
+      directPublicFetchTrajectoryWithProjection(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      forbiddenProviderMentions: ["brave"],
+      forbiddenToolNames: ["web_search"],
+      matches: false,
     });
   });
 

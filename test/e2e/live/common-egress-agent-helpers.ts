@@ -432,15 +432,24 @@ export function reduceOpenClawToolEvidence(
   const allowedWrapperIdParts = new Set<string>();
   const controlTargetViolationIds = new Set<string>();
   const sessionCallIds = new Set<string>();
+  const sessionToolNames = new Set<string>();
   for (const document of sessionDocuments) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
+    collectProviderMentions(message);
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const blockValue of message.content) {
       const block = asRecord(blockValue);
       if (block?.type !== "toolCall") continue;
       const id = normalizedId(block.id ?? block.toolCallId ?? block.tool_call_id);
       const name = normalizedName(block.name ?? block.toolName ?? block.tool_name);
+      if (name) {
+        if (sessionToolNames.size < MAX_RECORDS || sessionToolNames.has(name)) {
+          sessionToolNames.add(name);
+        } else {
+          addError("session tool name limit exceeded");
+        }
+      }
       if (!id) {
         if (name === "tool_call" || name === "tool_describe") {
           addError("control tool call has no bounded id");
@@ -533,6 +542,14 @@ export function reduceOpenClawToolEvidence(
         ...(target ? { target } : {}),
       });
     }
+  }
+  for (const name of sessionToolNames) {
+    if (toolCalls.some((record) => record.name === name)) continue;
+    if (toolCalls.length >= MAX_RECORDS) {
+      addError("tool record limit exceeded");
+      break;
+    }
+    toolCalls.push({ name });
   }
 
   const expectedUrl = normalizedUrl(expectedFetch?.url);
