@@ -208,7 +208,7 @@ and exact-staging Launchable job own its product coverage:
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
 The retired nightly caller no longer runs. The explicit
-`E2E / Issue 9880 Staging Reproduction` workflow is a temporary issue-specific
+`E2E / Issue 9880` workflow is a temporary issue-specific
 exception: its host-side Vitest controller reads the accepted staging image handoff,
 creates a temporary workspace on the configured Launchable, runs five bounded fresh
 OpenClaw CLI sessions against the baked image, deletes the workspace, and uploads

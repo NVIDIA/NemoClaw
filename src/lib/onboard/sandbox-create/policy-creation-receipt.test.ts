@@ -4,7 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
-import { verifyCreatedSandboxPolicyCreationReceipt } from "./policy-creation-receipt";
+import {
+  revalidateCreatedSandboxPolicyRegistration,
+  verifyCreatedApfInterceptorPolicyRegistration,
+  verifyCreatedSandboxPolicyCreationReceipt,
+} from "./policy-creation-receipt";
 
 const POLICY = "version: 1\nnetwork_policies:\n  github:\n    endpoints: []\n";
 const NATIVE_GPU_POLICY = `version: 1
@@ -219,5 +223,90 @@ describe("created sandbox policy receipt", () => {
         readFile: vi.fn(() => POLICY) as never,
       }),
     ).toThrow(/policy identity changed/u);
+  });
+
+  it("records a contained APF-selected sandbox policy as external without provenance (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(metadata());
+
+    expect(
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toEqual({
+      policyAuthority: "externally-managed",
+      policyCreationReceipt: null,
+      observedPolicyAuthority: "owner-unknown",
+      policyIdentity: { hash: "sha256:effective", activeVersion: 4 },
+    });
+  });
+
+  it("revalidates APF-selected owner-unknown containment without changing attribution (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata());
+
+    const registration = {
+      policyAuthority: "externally-managed" as const,
+      policyCreationReceipt: null,
+      observedPolicyAuthority: "owner-unknown" as const,
+      policyIdentity: { hash: "sha256:effective", activeVersion: 4 },
+    };
+    expect(
+      revalidateCreatedSandboxPolicyRegistration(
+        {
+          ...INPUT,
+          operation: "continue APF-selected onboarding",
+          registration,
+        },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toBe(registration);
+  });
+
+  it("refuses a global policy source for APF-selected creation (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata({ policy_source: "global" }));
+
+    expect(() =>
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toThrow(/does not match the selected read-only policy source/u);
+  });
+
+  it("refuses an APF-selected policy that omits required entries (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata({ policy: { version: 1, network_policies: {} } }));
+
+    expect(() =>
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toThrow(/verified policy must supply the exact required entries/u);
+  });
+
+  it.each([
+    ["hash", { hash: "sha256:replacement" }],
+    ["active version", { active_version: 5 }],
+  ])("refuses an APF-selected policy with a changed %s (#9833)", (_field, change) => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(metadata(change));
+
+    expect(() =>
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toThrow(/effective sandbox policy changed during verification/u);
   });
 });

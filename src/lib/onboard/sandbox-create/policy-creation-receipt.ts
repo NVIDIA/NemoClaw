@@ -5,6 +5,7 @@ import fs from "node:fs";
 
 import {
   assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
   inspectSandboxPolicyAuthority,
@@ -168,9 +169,10 @@ function readRequiredPolicy(
   }
 }
 
-function verifyExternalPolicyBoundary(
-  input: CreatedSandboxPolicyRegistrationInput,
+function verifyReadOnlyPolicyBoundary(
+  input: Omit<CreatedSandboxPolicyRegistrationInput, "plannedAuthority">,
   deps: CreatedSandboxPolicyReceiptDeps,
+  observedAuthority: "externally-managed" | "owner-unknown",
 ): VerifiedSandboxPolicyRegistration {
   assertOpenShellGatewayPortBinding({
     gatewayName: input.gatewayName,
@@ -181,13 +183,17 @@ function verifyExternalPolicyBoundary(
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
   });
-  if (before.authority !== "externally-managed") {
+  if (before.authority !== observedAuthority) {
     throw new PolicyAuthorityRefusalError(
-      `Refusing to ${input.operation}: the created sandbox policy authority is not externally controlled.`,
+      `Refusing to ${input.operation}: the created sandbox policy authority does not match the selected read-only policy source.`,
       before.authority,
     );
   }
-  assertExternalPolicyRequirements({
+  const assertRequirements =
+    observedAuthority === "owner-unknown"
+      ? assertObservedPolicyRequirements
+      : assertExternalPolicyRequirements;
+  assertRequirements({
     inspection: before,
     requiredPolicy,
     operation: input.operation,
@@ -207,7 +213,7 @@ function verifyExternalPolicyBoundary(
       after.authority,
     );
   }
-  assertExternalPolicyRequirements({
+  assertRequirements({
     inspection: after,
     requiredPolicy,
     operation: input.operation,
@@ -216,9 +222,24 @@ function verifyExternalPolicyBoundary(
   return {
     policyAuthority: "externally-managed",
     policyCreationReceipt: null,
-    observedPolicyAuthority: "externally-managed",
+    observedPolicyAuthority: observedAuthority,
     policyIdentity: { ...before.policyIdentity },
   };
+}
+
+function verifyExternalPolicyBoundary(
+  input: CreatedSandboxPolicyRegistrationInput,
+  deps: CreatedSandboxPolicyReceiptDeps,
+): VerifiedSandboxPolicyRegistration {
+  return verifyReadOnlyPolicyBoundary(input, deps, "externally-managed");
+}
+
+/** Verify a policyless APF-selected create without claiming APF provenance. */
+export function verifyCreatedApfInterceptorPolicyRegistration(
+  input: Omit<CreatedSandboxPolicyRegistrationInput, "plannedAuthority">,
+  deps: CreatedSandboxPolicyReceiptDeps = {},
+): VerifiedSandboxPolicyRegistration {
+  return verifyReadOnlyPolicyBoundary(input, deps, "owner-unknown");
 }
 
 /** Prove the post-create policy before any unrelated create effects run. */
@@ -288,7 +309,11 @@ export function revalidateCreatedSandboxPolicyRegistration(
     );
   }
   const requiredPolicy = readRequiredPolicy(input.policySourcePath, input.operation, deps);
-  assertExternalPolicyRequirements({
+  const assertRequirements =
+    registration.observedPolicyAuthority === "owner-unknown"
+      ? assertObservedPolicyRequirements
+      : assertExternalPolicyRequirements;
+  assertRequirements({
     inspection: before,
     requiredPolicy,
     operation: input.operation,

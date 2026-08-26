@@ -597,6 +597,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
+    name: "Base Image Publication / Verify",
     needs: "generate-matrix",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
@@ -865,7 +866,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
-  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
+  if (job.name !== "Results / Require selected jobs" || job.if !== expectedCondition) {
     errors.push("relevant-e2e must be the stable aggregate check for main pushes");
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
