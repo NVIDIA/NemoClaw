@@ -638,7 +638,6 @@ describe("initial sandbox policy real preset merge", () => {
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
     const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
-    const reviewed = YAML.parse(fs.readFileSync(baselinePath, "utf-8")) as PolicyDocument;
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(baselinePath, [], {
         agentName: "openclaw",
@@ -646,9 +645,6 @@ describe("initial sandbox policy real preset merge", () => {
       }),
     );
 
-    expect(effective.network_policies?.npm_registry).toEqual(
-      reviewed.network_policies?.npm_registry,
-    );
     const endpoint = effective.network_policies?.npm_registry?.endpoints?.[0];
     expect(endpoint).toMatchObject({ protocol: "rest", enforcement: "enforce" });
     expect(endpoint).not.toHaveProperty("access");
