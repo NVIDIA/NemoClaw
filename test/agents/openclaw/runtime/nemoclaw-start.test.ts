@@ -3288,7 +3288,8 @@ describe("Telegram diagnostics (#2766)", () => {
     const block = src
       .slice(start, end)
       .replaceAll("/tmp/gateway.log", gatewayLog)
-      .replaceAll("/tmp/auto-pair.log", autoPairLog);
+      .replaceAll("/tmp/auto-pair.log", autoPairLog)
+      .replaceAll("/tmp/nemoclaw-auto-pair-status.json", `${autoPairLog}.status`);
     return kind === "non-root"
       ? `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${block}fi\n`
       : block;
@@ -3346,10 +3347,8 @@ describe("Telegram diagnostics (#2766)", () => {
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
         'setpriv() { while [ "$1" != "--" ]; do shift; done; shift; "$@"; }',
-        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
-        // in sandbox-init.sh; the test scaffolding doesn't source that, so
-        // initialize them here because this scaffolding does not source the
-        // shared privilege-transition helper.
+        // Test scaffolding skips sandbox-init.sh, so define the shared
+        // privilege-transition prefixes here.
         "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
         "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
@@ -3361,10 +3360,9 @@ describe("Telegram diagnostics (#2766)", () => {
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
         '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
-        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log").replaceAll(
-          "/tmp/auto-pair.log",
-          autoPairLog,
-        )}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
+        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log")
+          .replaceAll("/tmp/auto-pair.log", autoPairLog)
+          .replaceAll("/tmp/nemoclaw-auto-pair-status.json", `${autoPairLog}.status`)}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
       ].join("\n"),
       { mode: 0o700 },
     );

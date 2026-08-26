@@ -37,12 +37,18 @@ function autoPairPythonScript(
   tmpDir: string,
   options: { realTime?: boolean } = {},
 ): string {
-  const script = startScriptHeredoc(src, "PYAUTOPAIR").replace(
-    "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
-    `APPROVAL_POLICY_FILE = ${JSON.stringify(trustedApprovalPolicyFile(tmpDir))}`,
-  );
-  if (options.realTime) return script;
-  return script
+  const statusPath = path.join(tmpDir, "auto-pair-status.json");
+  fs.writeFileSync(statusPath, "", { mode: 0o600 });
+  const script = startScriptHeredoc(src, "PYAUTOPAIR")
+    .replace(
+      "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+      `APPROVAL_POLICY_FILE = ${JSON.stringify(trustedApprovalPolicyFile(tmpDir))}`,
+    )
+    .replace(
+      "STATUS_PATH = '/tmp/nemoclaw-auto-pair-status.json'",
+      `STATUS_PATH = ${JSON.stringify(statusPath)}`,
+    );
+  const simulatedTimeScript = script
     .replaceAll("time.time()", "_nemoclaw_test_time()")
     .replaceAll("time.sleep(", "_nemoclaw_test_sleep(")
     .replace(
@@ -53,17 +59,21 @@ _nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
 def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
 `,
     );
+  return options.realTime ? script : simulatedTimeScript;
 }
+
+type SettlementDeps = NonNullable<Parameters<typeof settleOrdinaryOpenClawPairing>[1]>;
+type RaceTiming = "watcher-first" | "host-first";
 
 describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it.each([
-    ["watcher settles before the host observes the request", true],
-    ["host observes the request before the watcher settles", false],
+    ["watcher settles before the host observes the request", "watcher-first"],
+    ["host observes the request before the watcher settles", "host-first"],
   ] as const)(
     "keeps the watcher as the only scope approver when %s (#10269)",
-    async (_timing, watcherFirst) => {
+    async (_label, timing: RaceTiming) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-single-approver-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const stateDir = path.join(tmpDir, "state");
@@ -138,8 +148,8 @@ exit 2
       const waitFor = async (predicate: () => boolean, label: string) => {
         const deadline = Date.now() + 5_000;
         while (!predicate()) {
-          if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}.`);
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          expect(Date.now(), `Timed out waiting for ${label}.`).toBeLessThan(deadline);
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
         }
       };
       const startWatcher = () => {
@@ -167,12 +177,39 @@ exit 2
         });
         return child;
       };
+      const timingStrategy = {
+        "watcher-first": {
+          prepare: async () => {
+            watcher = startWatcher();
+            await waitFor(() => fs.existsSync(listLog), "the watcher's first observation");
+          },
+          afterWarmup: async () => {
+            await waitFor(
+              () => fs.readFileSync(phaseFile, "utf-8").trim() === "settled",
+              "the watcher to settle before host observation",
+            );
+          },
+          afterSettlementStarted: async () => {},
+        },
+        "host-first": {
+          prepare: async () => {},
+          afterWarmup: async () => {},
+          afterSettlementStarted: async () => {
+            await pendingObserved;
+            watcher = startWatcher();
+          },
+        },
+      } satisfies Record<
+        RaceTiming,
+        {
+          prepare(): Promise<void>;
+          afterWarmup(): Promise<void>;
+          afterSettlementStarted(): Promise<void>;
+        }
+      >;
 
       try {
-        if (watcherFirst) {
-          watcher = startWatcher();
-          await waitFor(() => fs.existsSync(listLog), "the watcher's first observation");
-        }
+        await timingStrategy[timing].prepare();
 
         const target = {
           gatewayName: "nemoclaw",
@@ -181,25 +218,25 @@ exit 2
           stateDirectory: stateDir,
           version: "2026.7.1",
         };
-        const deps = {
+        const deps: SettlementDeps & { runApproval(): void } = {
           getTarget: () => target,
           observePairing: () => {
             const state = fs.readFileSync(phaseFile, "utf-8").trim() as
               | "pairing-only"
               | "scope-upgrade-pending"
               | "settled";
-            if (state === "scope-upgrade-pending") reportPendingObserved();
+            const reportState = {
+              "pairing-only": () => {},
+              "scope-upgrade-pending": reportPendingObserved,
+              settled: () => {},
+            };
+            reportState[state]();
             return { state, deviceIdentitySha256: canonicalCli.deviceId };
           },
           runWarmup: async () => {
             warmupRuns += 1;
             fs.writeFileSync(phaseFile, "scope-upgrade-pending");
-            if (watcherFirst) {
-              await waitFor(
-                () => fs.readFileSync(phaseFile, "utf-8").trim() === "settled",
-                "the watcher to settle before host observation",
-              );
-            }
+            await timingStrategy[timing].afterWarmup();
             return "request-issued" as const;
           },
           readWatcherStatus: () => ({
@@ -210,7 +247,9 @@ exit 2
           withSandboxLock: async (_name, operation) => operation(),
           withGatewayLock: async (_name, operation) => operation(),
           now: () => performance.now(),
-          sleep: async () => new Promise((resolve) => setTimeout(resolve, 10)),
+          sleep: async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          },
           // The current state machine ignores this legacy dependency. Keeping
           // it in the harness makes the test fail against the two-owner design.
           runApproval: () => {
@@ -221,32 +260,39 @@ exit 2
         };
 
         const settlement = settleOrdinaryOpenClawPairing("alpha", deps);
-        if (!watcherFirst) {
-          await pendingObserved;
-          watcher = startWatcher();
-        }
+        await timingStrategy[timing].afterSettlementStarted();
 
         await expect(settlement).resolves.toEqual({ kind: "settled" });
+        const approvalReceipt = `[auto-pair] approved request=${requestId} client=cli mode=cli`;
+        await waitFor(
+          () => watcherOutput.includes(approvalReceipt),
+          "the watcher approval receipt",
+        );
         expect(warmupRuns).toBe(1);
         expect(hostApprovalAttempts).toBe(0);
         expect(fs.readFileSync(phaseFile, "utf-8").trim()).toBe("settled");
         expect(fs.readFileSync(approvalLog, "utf-8").trim().split("\n")).toEqual([
           `watcher:${requestId}`,
         ]);
+        const publishedStatus = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "auto-pair-status.json"), "utf-8"),
+        ) as Record<string, unknown>;
+        expect(Object.keys(publishedStatus).sort()).toEqual(["schemaVersion", "state"]);
+        expect(publishedStatus.schemaVersion).toBe(1);
+        expect(["approval-completed", "canonical-settled"]).toContain(publishedStatus.state);
+        expect(watcherOutput).toContain(approvalReceipt);
       } finally {
-        if (watcher && watcher.exitCode === null) watcher.kill("SIGTERM");
-        if (watcher && watcher.exitCode === null) {
-          await Promise.race([
-            new Promise((resolve) => watcher?.once("close", resolve)),
-            new Promise((resolve) => setTimeout(resolve, 2_000)),
-          ]);
-        }
+        watcher?.kill("SIGTERM");
+        const watcherClosed =
+          watcher?.exitCode === null
+            ? new Promise<void>((resolve) => watcher?.once("close", () => resolve()))
+            : Promise.resolve();
+        await Promise.race([
+          watcherClosed,
+          new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+        ]);
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
-
-      expect(watcherOutput).toContain(
-        `[auto-pair] approved request=${requestId} client=cli mode=cli`,
-      );
     },
     30_000,
   );

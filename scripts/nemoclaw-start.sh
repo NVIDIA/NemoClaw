@@ -2656,6 +2656,7 @@ import sys
 import time
 
 LAST_SANITIZED_STATUS = None
+STATUS_PATH = '/tmp/nemoclaw-auto-pair-status.json'
 
 
 def publish_status(state):
@@ -2663,10 +2664,38 @@ def publish_status(state):
     if state == LAST_SANITIZED_STATUS:
         return
     LAST_SANITIZED_STATUS = state
-    print('[auto-pair-status] ' + json.dumps({
+    status = json.dumps({
         'schemaVersion': 1,
         'state': state,
-    }, separators=(',', ':')), flush=True)
+    }, separators=(',', ':'))
+    print('[auto-pair-status] ' + status, flush=True)
+    status_fd = None
+    try:
+        status_fd = os.open(
+            STATUS_PATH,
+            os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        metadata = os.fstat(status_fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise OSError('unsafe watcher status metadata')
+        os.ftruncate(status_fd, 0)
+        remaining = status.encode('utf-8')
+        while remaining:
+            written = os.write(status_fd, remaining)
+            if written <= 0:
+                raise OSError('watcher status write made no progress')
+            remaining = remaining[written:]
+    except Exception:
+        pass
+    finally:
+        if status_fd is not None:
+            os.close(status_fd)
 
 
 print('[auto-pair] watcher started', flush=True)
@@ -2745,32 +2774,8 @@ DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 # as `operator.admin` are still rejected by the device approval policy, and
 # requests that need them must be approved through a separate operator path.
 SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
-# SOURCE_OF_TRUTH_REVIEW (auto-pair slow-mode cadence default 30s → 5s):
-#
-#   * Source boundary: the single SLOW_INTERVAL global above is the only
-#     steady-state inter-poll wait for the in-sandbox auto-pair watcher
-#     after the canonical CLI baseline settles. The watcher's faster pre-settlement
-#     cadence (1s) is unaffected.
-#   * Invalid state at the old default: a late
-#     `openclaw tui` / `openclaw agent` allowlisted scope upgrade lands
-#     inside a 30s window and waits up to one full SLOW_INTERVAL before
-#     the watcher polls. Two sibling sandboxes onboarded back-to-back
-#     each hit this window and both fall back to embedded mode (#5343).
-#   * Source-fix constraint: the 5s default is a bounded 6x increase in
-#     steady-state `openclaw devices list --json` calls per sandbox — at
-#     most one extra call per 5s vs. per 30s, which the gateway connect
-#     handler tolerates easily; the bounded fast-reentry counter above
-#     keeps cascading upgrades from exceeding this cadence.
-#   * Migration: operators who relied on the old cadence (load-sensitive
-#     gateways, large multi-sandbox deployments) can restore it by
-#     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
-#     environment; the PR body calls this out under "Changes" too.
-#   * Regression test: test/agents/openclaw/runtime/nemoclaw-start.test.ts's late-CLI fixture
-#     covers the new default deterministically; #5343 Phase 5 covers it
-#     end to end.
-#   * Removal condition: when OpenClaw signals scope-upgrade requests via
-#     a push channel rather than a poll, the cadence becomes irrelevant
-#     and the variable retires.
+# Fast reentry temporarily restores 1s polling after a fresh allowlisted
+# request; canonical settlement and approval policy remain unchanged.
 FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
 FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
 FAST_REENTRY_REMAINING = 0
@@ -3387,9 +3392,13 @@ prepare_auto_pair_log() {
   if [ "$(id -u)" -eq 0 ]; then
     # PID 1 opens the redirection after CAP_DAC_OVERRIDE is gone, then passes
     # the already-open descriptor to the stepped-down watcher.
-    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root || return 1
+    # The watcher owns this credential-free diagnostic channel. The host reads
+    # it through OpenShell as the same sandbox policy user.
+    _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-auto-pair-status.json 600 sandbox:sandbox || return 1
   else
-    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 || return 1
+    _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-auto-pair-status.json 600 || return 1
   fi
 }
 

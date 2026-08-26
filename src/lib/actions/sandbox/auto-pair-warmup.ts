@@ -41,6 +41,7 @@ export const WARMUP_PROBE_TIMEOUT_S = 10;
 
 const WARMUP_RESULT_MARKER = "NEMOCLAW_OPENCLAW_WARMUP_RESULT=";
 const WATCHER_STATUS_MARKER = "NEMOCLAW_OPENCLAW_WATCHER_STATUS=";
+export const AUTO_PAIR_STATUS_PATH = "/tmp/nemoclaw-auto-pair-status.json";
 
 export const WATCHER_STATUS_TIMEOUT_MS = 10_000;
 
@@ -124,6 +125,7 @@ command -v python3 >/dev/null 2>&1 || { printf '${WATCHER_STATUS_MARKER}{"schema
 python3 - <<'PYSTATUS'
 import json
 import os
+import stat
 
 allowed_states = {
     'running', 'request-not-produced', 'request-observed', 'request-rejected',
@@ -131,27 +133,38 @@ allowed_states = {
     'canonical-settled', 'stopped',
 }
 state = 'unavailable'
+status_fd = None
 try:
-    with open('/tmp/auto-pair.log', 'rb') as handle:
-        handle.seek(0, 2)
-        size = handle.tell()
-        handle.seek(max(0, size - 131072))
-        lines = handle.read().decode('utf-8', 'replace').splitlines()
-    for line in reversed(lines):
-        prefix = '[auto-pair-status] '
-        if not line.startswith(prefix):
-            continue
-        value = json.loads(line[len(prefix):])
-        if (
-            isinstance(value, dict)
-            and set(value) == {'schemaVersion', 'state'}
-            and value.get('schemaVersion') == 1
-            and value.get('state') in allowed_states
-        ):
-            state = value['state']
-            break
+    status_fd = os.open(
+        ${JSON.stringify(AUTO_PAIR_STATUS_PATH)},
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    metadata = os.fstat(status_fd)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size > 4096
+    ):
+        raise OSError('unsafe watcher status metadata')
+    raw = os.read(status_fd, 4097)
+    if len(raw) > 4096:
+        raise OSError('oversized watcher status')
+    value = json.loads(raw.decode('utf-8'))
+    if (
+        isinstance(value, dict)
+        and set(value) == {'schemaVersion', 'state'}
+        and value.get('schemaVersion') == 1
+        and value.get('state') in allowed_states
+    ):
+        state = value['state']
 except Exception:
     pass
+finally:
+    if status_fd is not None:
+        os.close(status_fd)
 
 watcher_active = False
 try:

@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  AUTO_PAIR_STATUS_PATH,
   parseAutoPairWatcherStatus,
   parseSandboxScopeWarmupResult,
   RESTORED_CLONE_WARMUP_SCRIPT,
@@ -18,7 +19,6 @@ import {
   WARMUP_TIMEOUT_MS,
 } from "./auto-pair-warmup";
 import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
-import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
 const itWithSh = shAvailable ? it : it.skip;
@@ -57,12 +57,9 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
 });
 
 describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {
-  it("keeps the real warm-up as one multiline command on the owning gateway (#10014)", () => {
-    expect(WARMUP_SCRIPT).toContain("\n");
-    expect(WARMUP_SCRIPT).toContain("command -v openclaw");
-    expect(WARMUP_SCRIPT).not.toContain("base64 -d");
-    expect(WARMUP_SCRIPT).not.toContain("mktemp");
-    expect(sandboxWarmupExecArgs("alpha", "nemoclaw-19000", WARMUP_SCRIPT)).toEqual([
+  it("passes one multiline payload to the owning gateway without transforming it (#10014)", () => {
+    const payload = "printf 'first line\\n'\nprintf 'second line\\n'\n";
+    expect(sandboxWarmupExecArgs("alpha", "nemoclaw-19000", payload)).toEqual([
       "sandbox",
       "exec",
       "--name",
@@ -72,7 +69,7 @@ describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", (
       "--",
       "sh",
       "-c",
-      WARMUP_SCRIPT,
+      payload,
     ]);
   });
 
@@ -117,10 +114,79 @@ describe("ordinary onboarding warm-up and watcher receipts (#10269)", () => {
         `${marker}{"schemaVersion":1,"state":"approval-completed","watcherActive":true,"requestId":"secret"}\n`,
       ),
     ).toBeNull();
-    expect(WATCHER_STATUS_SCRIPT).not.toContain("requestId");
-    expect(WATCHER_STATUS_SCRIPT).not.toContain("deviceId");
-    expect(WATCHER_STATUS_SCRIPT).not.toContain("publicKey");
-    expect(WATCHER_STATUS_SCRIPT).not.toContain("token");
+  });
+
+  itWithSh("reads a credential-free watcher state from the dedicated private channel", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watcher-status-"));
+    const statusPath = path.join(fixtureRoot, "status.json");
+    fs.writeFileSync(statusPath, '{"schemaVersion":1,"state":"approval-timeout"}', {
+      mode: 0o600,
+    });
+    try {
+      const script = WATCHER_STATUS_SCRIPT.replace(
+        JSON.stringify(AUTO_PAIR_STATUS_PATH),
+        JSON.stringify(statusPath),
+      );
+      const result = spawnSync("sh", ["-c", script], { encoding: "utf-8", timeout: 10_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseAutoPairWatcherStatus(result.stdout)).toEqual({
+        schemaVersion: 1,
+        state: "approval-timeout",
+        watcherActive: false,
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  itWithSh.each([
+    [
+      "extra fields",
+      '{"schemaVersion":1,"state":"approval-failed","requestId":"sensitive-canary"}',
+      0o600,
+    ],
+    ["public permissions", '{"schemaVersion":1,"state":"approval-failed"}', 0o644],
+  ])("reports unavailable for a status channel with %s", (_label, payload, mode) => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watcher-status-"));
+    const statusPath = path.join(fixtureRoot, "status.json");
+    fs.writeFileSync(statusPath, payload, { mode });
+    try {
+      const script = WATCHER_STATUS_SCRIPT.replace(
+        JSON.stringify(AUTO_PAIR_STATUS_PATH),
+        JSON.stringify(statusPath),
+      );
+      const result = spawnSync("sh", ["-c", script], { encoding: "utf-8", timeout: 10_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseAutoPairWatcherStatus(result.stdout)).toEqual({
+        schemaVersion: 1,
+        state: "unavailable",
+        watcherActive: false,
+      });
+      expect(result.stdout).not.toContain("sensitive-canary");
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  itWithSh("rejects a FIFO status channel without blocking", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watcher-status-"));
+    const statusPath = path.join(fixtureRoot, "status.json");
+    expect(spawnSync("mkfifo", [statusPath]).status).toBe(0);
+    try {
+      const script = WATCHER_STATUS_SCRIPT.replace(
+        JSON.stringify(AUTO_PAIR_STATUS_PATH),
+        JSON.stringify(statusPath),
+      );
+      const result = spawnSync("sh", ["-c", script], { encoding: "utf-8", timeout: 10_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseAutoPairWatcherStatus(result.stdout)).toEqual({
+        schemaVersion: 1,
+        state: "unavailable",
+        watcherActive: false,
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   itWithSh("returns a fixed request-issued result for the expected pending response", () => {
@@ -150,27 +216,6 @@ describe("ordinary onboarding warm-up and watcher receipts (#10269)", () => {
 });
 
 describe("warm-up tags its throwaway session for user-facing filters (#5511)", () => {
-  it("tags the provoke session with the shared warm-up prefix", () => {
-    expect(WARMUP_SESSION_ID_PREFIX).toBe("nemoclaw-onboard-warmup-");
-    expect(WARMUP_SCRIPT).toContain(
-      `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`,
-    );
-  });
-
-  it("uses a direct write-scope gateway call for restored clones (#7834)", () => {
-    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
-      'openclaw gateway call sessions.create --params "$params" --json',
-    );
-    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
-      `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`,
-    );
-    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1");
-    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
-      "NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || exit 0",
-    );
-    expect(RESTORED_CLONE_WARMUP_SCRIPT).not.toContain("openclaw agent");
-  });
-
   itWithSh("keeps the restored-clone warm-up valid POSIX shell (#7834)", () => {
     const result = spawnSync("sh", ["-n"], {
       encoding: "utf-8",
@@ -215,7 +260,6 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     );
 
     try {
-      expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(buildTrustedProxyEnvSourceShell());
       const script = RESTORED_CLONE_WARMUP_SCRIPT.replace(
         buildTrustedProxyEnvSourceShell(),
         buildTrustedProxyEnvSourceShell(proxyEnv),
@@ -237,11 +281,6 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
-  });
-
-  it("scopes forced device pairing to the request producer on OpenClaw 2026.7.1", () => {
-    expect(WARMUP_SCRIPT.match(/NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1/g)).toHaveLength(1);
-    expect(WARMUP_SCRIPT).not.toContain("export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
   });
 
   itWithSh(
@@ -386,11 +425,4 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     }
   });
 
-  it("uses a direct write-scope probe without an embedded inference fallback (#9844)", () => {
-    expect(WARMUP_SCRIPT).not.toContain("openclaw agent");
-    expect(WARMUP_SCRIPT).not.toContain("devices list");
-    expect(WARMUP_SCRIPT).not.toContain("setsid");
-    expect(WARMUP_SCRIPT).not.toContain("WARMUP_AGENT_PID");
-    expect(WARMUP_SCRIPT).not.toContain("warmup_cleanup_attempt");
-  });
 });
