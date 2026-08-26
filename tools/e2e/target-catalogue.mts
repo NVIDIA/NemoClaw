@@ -621,7 +621,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/policy-selection.ts",
       "src/lib/onboard/policy-tier-suppression.ts",
       "src/lib/policy/index.ts",
-      "test/e2e/live/personal-egress-live-proof.ts",
     ],
     shard: "openclaw-personal-public-fetch",
     selector: "^common-egress.+C4.+$",

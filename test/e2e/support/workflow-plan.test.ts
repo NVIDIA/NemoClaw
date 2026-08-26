@@ -711,20 +711,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it.each([
-    "test/e2e/live/openclaw-agent-assertion.ts",
-    "test/e2e/live/personal-egress-live-proof.ts",
-  ])(
-    "selects both Personal public-fetch proof owners for a shared helper change: %s",
-    (changedFile) => {
-      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+  it("selects only the catalogue Personal public-fetch owner for an assertion change", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-agent-assertion.ts"] },
+    );
 
-      expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
-      expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-        "common-egress-agent-openclaw-personal-public-fetch",
-      );
-    },
-  );
+    expect(plan.matrix.map((row) => row.id)).not.toContain("ubuntu-repo-cloud-openclaw");
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "common-egress-agent-openclaw-personal-public-fetch",
+    );
+  });
 
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });

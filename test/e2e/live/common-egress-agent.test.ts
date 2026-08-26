@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -37,7 +38,6 @@ import {
   runPersonalPublicFetchAgentAssertion,
   type OpenClawAgentAssertionEvidence,
 } from "./openclaw-agent-assertion.ts";
-import { assertPersonalRuntimeEgress } from "./personal-egress-live-proof.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 //
@@ -103,6 +103,98 @@ function commandEnv(extra: NemoEnv = {}): NemoEnv {
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
   };
+}
+
+async function assertPersonalRuntimeEgress(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactPrefix: string,
+  phases: {
+    beforeDeniedTargets?: () => void;
+    beforePublicFetch?: () => void;
+  } = {},
+): Promise<void> {
+  const policy = await sandbox.openshell(["policy", "get", "--full", sandboxName], {
+    artifactName: `${artifactPrefix}-policy`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(policy.exitCode, text(policy)).toBe(0);
+  expect(parseOpenShellPolicy(policy.stdout).yamlBody).toContain("personal_open_internet");
+
+  const absentBraveAndTavilyApiKeys = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      'test -z "${BRAVE_API_KEY:-}" && test -z "${TAVILY_API_KEY:-}" && printf "PERSONAL_BRAVE_TAVILY_API_KEYS_ABSENT\\n"',
+    ),
+    {
+      artifactName: `${artifactPrefix}-absent-brave-tavily-api-keys`,
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(absentBraveAndTavilyApiKeys.exitCode, text(absentBraveAndTavilyApiKeys)).toBe(0);
+  expect(absentBraveAndTavilyApiKeys.stdout).toContain("PERSONAL_BRAVE_TAVILY_API_KEYS_ABSENT");
+
+  phases.beforePublicFetch?.();
+  const publicFetch = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(String.raw`
+set -eu
+curl_bin="$(command -v curl)"
+test -n "$curl_bin"
+curl_body="$(mktemp)"
+trap 'rm -f "$curl_body"' EXIT
+"$curl_bin" -fsSL --max-time 30 -o "$curl_body" https://example.com/
+grep -Fq 'Example Domain' "$curl_body"
+printf 'PERSONAL_PUBLIC_CURL_OK curl=%s\n' "$curl_bin"
+`),
+    {
+      artifactName: `${artifactPrefix}-public-curl`,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(publicFetch.exitCode, text(publicFetch)).toBe(0);
+  expect(publicFetch.stdout).toContain("PERSONAL_PUBLIC_CURL_OK");
+
+  phases.beforeDeniedTargets?.();
+  const deniedTargets = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(String.raw`
+set -eu
+probe_denied() {
+  label="$1"
+  target="$2"
+  body="/tmp/nemoclaw-personal-denial-$label.body"
+  stderr="/tmp/nemoclaw-personal-denial-$label.stderr"
+  rm -f "$body" "$stderr"
+  set +e
+  status="$(curl --noproxy '' -sS -o "$body" -w '%{http_code}' --connect-timeout 5 --max-time 10 "$target" 2>"$stderr")"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] || [ "$status" != "403" ]; then
+    printf 'PERSONAL_DENIAL_FAILED label=%s status=%s rc=%s\n' "$label" "$status" "$rc" >&2
+    head -c 1000 "$body" 2>/dev/null || true
+    head -c 1000 "$stderr" >&2 2>/dev/null || true
+    rm -f "$body" "$stderr"
+    return 1
+  fi
+  rm -f "$body" "$stderr"
+  printf 'PERSONAL_DENIAL_OK label=%s status=%s rc=%s\n' "$label" "$status" "$rc"
+}
+probe_denied loopback http://127.0.0.1:80/
+probe_denied link-local http://169.254.169.254/latest/meta-data/
+`),
+    {
+      artifactName: `${artifactPrefix}-loopback-link-local-denial`,
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(deniedTargets.exitCode, text(deniedTargets)).toBe(0);
+  expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=loopback");
+  expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=link-local");
 }
 
 function httpStatusFromResponse(raw: string): string {

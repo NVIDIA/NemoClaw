@@ -804,7 +804,8 @@ export function assessPersonalPublicFetchToolEvidence(
     matches:
       evidence.errors.length === 0 &&
       evidence.controlTargetViolations === 0 &&
-      evidence.finalStatuses.includes("success") &&
+      evidence.finalStatuses.length === 1 &&
+      evidence.finalStatuses[0] === "success" &&
       evidence.unexpectedWebFetchCalls === 0 &&
       evidence.unexpectedWebFetchExecutions === 0 &&
       evidence.unexpectedWebFetchResults === 0 &&
@@ -851,7 +852,7 @@ export function projectPersonalPublicFetchToolEvidenceArtifact(
     controlTargetViolations: evidence.controlTargetViolations,
     errorCount: evidence.errors.length,
     finalStatusCount: evidence.finalStatuses.length,
-    finalSuccess: evidence.finalStatuses.includes("success"),
+    finalSuccess: evidence.finalStatuses.length === 1 && evidence.finalStatuses[0] === "success",
     forbiddenProviderMentionCount: assessment.forbiddenProviderMentions.length,
     forbiddenToolCount: assessment.forbiddenToolNames.length,
     matches: assessment.matches,
@@ -897,7 +898,7 @@ export async function validateOpenClawAgentAttemptEvidence(
       const diagnostic = [
         `errors=${toolEvidence.errors.length}`,
         `finalStatuses=${toolEvidence.finalStatuses.length}`,
-        `finalSuccess=${toolEvidence.finalStatuses.includes("success")}`,
+        `finalSuccess=${assessment.finalSuccess}`,
         `projectedTarget=${assessment.projectedTargetEvidence}`,
         `controlTargetViolations=${assessment.controlTargetViolations}`,
         `webFetchCalls=${assessment.webFetchCalls}`,

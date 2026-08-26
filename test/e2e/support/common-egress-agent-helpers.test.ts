@@ -759,6 +759,36 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(recordToolEvidence).toHaveBeenCalledWith(result.evidence?.toolEvidence);
   });
 
+  it("rejects conflicting successful and failed terminal statuses", async () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines(),
+      [
+        publicFetchTrajectory(),
+        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "failed" } }),
+      ].join("\n"),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    const result = await validateOpenClawAgentAttemptEvidence(
+      publicFetchAttemptValidationOptions({
+        reduceToolEvidence: vi.fn().mockResolvedValue({
+          exitCode: 0,
+          stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+        }),
+      }),
+    );
+
+    expect(evidence.finalStatuses).toEqual(["failed", "success"]);
+    expect(projectPersonalPublicFetchToolEvidenceArtifact(evidence)).toMatchObject({
+      finalStatusCount: 2,
+      finalSuccess: false,
+      matches: false,
+    });
+    expect(result).toMatchObject({
+      attempt: { passed: false, failureClass: "deterministic" },
+      failure: expect.stringContaining("finalSuccess=false"),
+    });
+  });
+
   it("preserves a failed OpenClaw classification before evidence collection", async () => {
     const reduceToolEvidence = vi.fn();
     const result = await validateOpenClawAgentAttemptEvidence(
