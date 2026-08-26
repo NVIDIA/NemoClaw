@@ -142,6 +142,14 @@ with tempfile.TemporaryDirectory() as root:
     release_path = os.path.join(durable, gate.RELEASE_NAME)
     write(release_path, release, 0o444)
     results["released"] = gate._run("admit")
+    original_replace = gate.os.replace
+
+    def fail_release_ack_replace(*_args, **_kwargs):
+        raise OSError("sensitive fixture detail")
+
+    gate.os.replace = fail_release_ack_replace
+    results["release_ack_write_failure"] = code(lambda: gate._run("acknowledge"))
+    gate.os.replace = original_replace
     results["release_ack_nonce"] = gate._run("acknowledge")
     release_ack_pending = os.path.join(
         candidate_directory, gate.RELEASE_ACK_PENDING_NAME
@@ -212,6 +220,7 @@ describe("runtime state mutation startup gate", () => {
       retry_wait: "retry-wait",
       retry_wrong_transaction: "retry-permit-mismatch",
       released: "released",
+      release_ack_write_failure: "release-ack-write-failed",
       release_ack_nonce: "b".repeat(64),
       release_ack_committed: "b".repeat(64),
       foreign_parent_ack: "gate-start-mismatch",
