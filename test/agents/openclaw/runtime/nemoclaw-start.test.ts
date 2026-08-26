@@ -9,13 +9,38 @@ import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
+import { createCanonicalCliFixture, setupLateCliFixture } from "./auto-pair-settlement-fixture";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "../../..", "scripts", "lib");
 const INSTALLED_APPROVAL_POLICY = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py";
-const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "../../..", "nemoclaw-blueprint", "scripts");
-const CHANNEL_RUNTIME_SCRIPTS = path.join(import.meta.dirname, "..", "../../..", "src/lib/messaging/channels");
-const JSON5_MODULE = path.join(import.meta.dirname, "..", "../../..", "nemoclaw", "node_modules", "json5");
+const PRELOAD_SCRIPTS = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "nemoclaw-blueprint",
+  "scripts",
+);
+const CHANNEL_RUNTIME_SCRIPTS = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "src/lib/messaging/channels",
+);
+const JSON5_MODULE = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "nemoclaw",
+  "node_modules",
+  "json5",
+);
 
 function runtimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
@@ -321,7 +346,6 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stderr).not.toContain(token);
   });
 
-
   it("runs runtime preloads and scans before explicit non-root commands", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
@@ -408,46 +432,47 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).not.toContain("true");
   });
 
-  it.each(
-    ["workspace", "memory", "credentials", "flows", "telegram", "media"],
-  )("repairs writable OpenClaw state directories in non-root mode [%s]", (dir) => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const match = src.match(/fix_openclaw_ownership\(\) \{([\s\S]*?)^\s*\}/m);
-    if (!match) {
-      throw new Error("Expected fix_openclaw_ownership in scripts/nemoclaw-start.sh");
-    }
-    const fn = `fix_openclaw_ownership() {${match[1]}\n}`;
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-ownership-"));
-    const openclawDir = path.join(tmpDir, ".openclaw");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    fs.mkdirSync(openclawDir, { recursive: true });
-    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n", { mode: 0o644 });
-    fs.writeFileSync(path.join(openclawDir, ".config-hash"), "hash\n", { mode: 0o644 });
-    fs.writeFileSync(
-      scriptPath,
-      ["#!/usr/bin/env bash", "set -euo pipefail", fn, "fix_openclaw_ownership"].join("\n"),
-      { mode: 0o700 },
-    );
-    try {
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        timeout: 5000,
-        env: { ...process.env, HOME: tmpDir },
-      });
-      expect(result.status).toBe(0);
-      expect(fs.statSync(path.join(openclawDir, dir)).isDirectory()).toBe(true);
-      expect((fs.statSync(openclawDir).mode & 0o777).toString(8)).toBe("770");
-      expect(fs.statSync(openclawDir).mode & 0o2000).toBe(0o2000);
-      expect((fs.statSync(path.join(openclawDir, "openclaw.json")).mode & 0o777).toString(8)).toBe(
-        "660",
+  it.each(["workspace", "memory", "credentials", "flows", "telegram", "media"])(
+    "repairs writable OpenClaw state directories in non-root mode [%s]",
+    (dir) => {
+      const src = fs.readFileSync(START_SCRIPT, "utf-8");
+      const match = src.match(/fix_openclaw_ownership\(\) \{([\s\S]*?)^\s*\}/m);
+      if (!match) {
+        throw new Error("Expected fix_openclaw_ownership in scripts/nemoclaw-start.sh");
+      }
+      const fn = `fix_openclaw_ownership() {${match[1]}\n}`;
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-ownership-"));
+      const openclawDir = path.join(tmpDir, ".openclaw");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      fs.mkdirSync(openclawDir, { recursive: true });
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n", { mode: 0o644 });
+      fs.writeFileSync(path.join(openclawDir, ".config-hash"), "hash\n", { mode: 0o644 });
+      fs.writeFileSync(
+        scriptPath,
+        ["#!/usr/bin/env bash", "set -euo pipefail", fn, "fix_openclaw_ownership"].join("\n"),
+        { mode: 0o700 },
       );
-      expect((fs.statSync(path.join(openclawDir, ".config-hash")).mode & 0o777).toString(8)).toBe(
-        "660",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        const result = spawnSync("bash", [scriptPath], {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, HOME: tmpDir },
+        });
+        expect(result.status).toBe(0);
+        expect(fs.statSync(path.join(openclawDir, dir)).isDirectory()).toBe(true);
+        expect((fs.statSync(openclawDir).mode & 0o777).toString(8)).toBe("770");
+        expect(fs.statSync(openclawDir).mode & 0o2000).toBe(0o2000);
+        expect(
+          (fs.statSync(path.join(openclawDir, "openclaw.json")).mode & 0o777).toString(8),
+        ).toBe("660");
+        expect((fs.statSync(path.join(openclawDir, ".config-hash")).mode & 0o777).toString(8)).toBe(
+          "660",
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("nemoclaw-start gateway token export (#1114)", () => {
@@ -1433,7 +1458,10 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     });
     const pairedJson = JSON.stringify({
       pending: [],
-      paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }, { clientId: "cli", clientMode: "cli" }],
+      paired: [
+        { clientId: "openclaw-control-ui", clientMode: "webchat" },
+        { clientId: "cli", clientMode: "cli" },
+      ],
     });
     fs.writeFileSync(
       fakeOpenclaw,
@@ -1487,9 +1515,7 @@ exit 2
       expect(run.stdout).toContain("[auto-pair] approved request=ok-agent-cli client=cli mode=cli");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=other-client mode=webchat");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
-      expect(run.stdout).toContain(
-        "[auto-pair] browser pairing converged; entering slow-mode approvals=2",
-      );
+      expect(run.stdout).not.toContain("entering slow-mode");
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
         "ok-browser",
         "ok-agent-cli",
@@ -1512,72 +1538,18 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
     return autoPairPythonScript(src);
   }
 
-  // Shared late-CLI poll timeline:
-  //   1-2:  first-time browser pairing request pending.
-  //   3-6:  browser paired, nothing pending (watcher converges to slow mode).
-  //   7-10: late CLI scope upgrade arrives.
-  //   11+:  cli paired alongside browser.
-  function setupLateCliFixture(prefix: string): {
-    tmpDir: string;
-    fakeOpenclaw: string;
-    approveLog: string;
-  } {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    const fakeOpenclaw = path.join(tmpDir, "openclaw");
-    const stateFile = path.join(tmpDir, "list-count");
-    const approveLog = path.join(tmpDir, "approvals.log");
-    const browserClient = { clientId: "openclaw-control-ui", clientMode: "webchat" };
-    const cliClient = { clientId: "cli", clientMode: "cli" };
-    const initialPending = JSON.stringify({
-      pending: [{ requestId: "browser-pair", ...browserClient }],
-      paired: [],
-    });
-    const browserPaired = JSON.stringify({ pending: [], paired: [browserClient] });
-    const lateCli = JSON.stringify({
-      pending: [
-        { requestId: "late-cli", ...cliClient },
-        { requestId: "late-cli-b", ...cliClient },
-      ],
-      paired: [browserClient],
-    });
-    const allPaired = JSON.stringify({ pending: [], paired: [browserClient, cliClient] });
-    fs.writeFileSync(
-      fakeOpenclaw,
-      `#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
-  count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
-  count=$((count + 1))
-  echo "$count" > ${JSON.stringify(stateFile)}
-  if [ "$count" -le 2 ]; then printf '%s\n' ${JSON.stringify(initialPending)}
-  elif [ "$count" -le 6 ]; then printf '%s\n' ${JSON.stringify(browserPaired)}
-  elif [ "$count" -le 10 ]; then printf '%s\n' ${JSON.stringify(lateCli)}
-  else printf '%s\n' ${JSON.stringify(allPaired)}; fi
-  exit 0
-fi
-if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
-  echo "$3" >> ${JSON.stringify(approveLog)}
-  printf '{}\n'
-  exit 0
-fi
-echo "unexpected: $*" >&2
-exit 2
-`,
-      { mode: 0o755 },
+  it("stays fast through browser pairing and slows only after the canonical CLI baseline", () => {
+    const { tmpDir, fakeOpenclaw, approveLog, stateDir } = setupLateCliFixture(
+      "nemoclaw-auto-pair-slow-",
     );
-    return { tmpDir, fakeOpenclaw, approveLog };
-  }
-
-  it("approves concurrent late CLI scope upgrades after browser pairing converges and drops back to fast cadence", () => {
-    const { tmpDir, fakeOpenclaw, approveLog } = setupLateCliFixture("nemoclaw-auto-pair-slow-");
     try {
       const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_STATE_DIR: stateDir,
           // SLOW_INTERVAL > FAST_REENTRY_INTERVAL exposes any regression.
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "5",
           NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
@@ -1589,20 +1561,18 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] approved request=browser-pair client=openclaw-control-ui mode=webchat",
       );
-      expect(run.stdout).toContain(
-        "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
-      );
-      // Concurrent late wave — proxy for two sibling sandboxes' upgrades.
+      expect(run.stdout).not.toContain("browser pairing converged");
+      // Concurrent late wave is handled before the fast-to-slow transition.
       expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
       expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
       expect(run.stdout).toContain("watcher deadline reached approvals=3");
-      // Single marker per poll wave, transition after convergence.
-      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=slow");
-      const convergedAt = run.stdout.indexOf("browser pairing converged");
-      const bumpedAt = run.stdout.indexOf("fast-reentry bumped polls=3 approved=3 mode=slow");
-      expect(bumpedAt).toBeGreaterThan(convergedAt);
-      const slowMarkerRe = /fast-reentry bumped polls=3 approved=3 mode=slow/g;
-      expect(run.stdout.match(slowMarkerRe)?.length).toBe(1);
+      expect(run.stdout).toContain(
+        "[auto-pair] canonical CLI baseline settled; entering slow-mode approvals=3",
+      );
+      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=fast");
+      const approvedAt = run.stdout.indexOf("approved request=late-cli-b");
+      const settledAt = run.stdout.indexOf("canonical CLI baseline settled");
+      expect(settledAt).toBeGreaterThan(approvedAt);
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
         "browser-pair",
         "late-cli",
@@ -1616,19 +1586,17 @@ exit 2
   it("rejects unknown clients in slow-mode keepalive", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-evil-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateDir = path.join(tmpDir, "state");
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
-
-    // Non-browser paired entry — exercises the `devices paired` slow-mode
-    // transition (not the browser-specific one) so we can prove the
-    // allowlist still rejects rogue clients in either convergence path.
+    const canonicalCli = createCanonicalCliFixture(stateDir);
     const initialPaired = JSON.stringify({
       pending: [],
-      paired: [{ clientId: "paired-cli", clientMode: "cli" }],
+      paired: [canonicalCli],
     });
     const evilLate = JSON.stringify({
       pending: [{ requestId: "evil-late", clientId: "evil-client", clientMode: "unknown" }],
-      paired: [{ clientId: "paired-cli", clientMode: "cli" }],
+      paired: [canonicalCli],
     });
 
     fs.writeFileSync(
@@ -1663,7 +1631,7 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          OPENCLAW_STATE_DIR: stateDir,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -1671,7 +1639,7 @@ exit 2
       });
       expect(run.status).toBe(0);
       expect(run.stdout).toContain(
-        "[auto-pair] devices paired (1); entering slow-mode approvals=0",
+        "[auto-pair] canonical CLI baseline settled; entering slow-mode approvals=0",
       );
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       // Critical: never approved.
@@ -1722,7 +1690,6 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -1794,7 +1761,6 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_APPROVAL_POLICY_DIR: maliciousPolicyDir,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -1811,7 +1777,7 @@ exit 2
     }
   }, 30_000);
 
-  it("falls back to fast-deadline transition when no convergence signal arrives", () => {
+  it("keeps fast polling when no canonical CLI baseline appears (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-fastdl-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
@@ -1842,17 +1808,15 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          // Fast deadline is already past at startup, so the watcher
-          // immediately enters slow mode without needing convergence.
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 20_000,
       });
       expect(run.status).toBe(0);
+      expect(run.stdout).not.toContain("entering slow-mode");
       expect(run.stdout).toContain(
-        "[auto-pair] fast-mode deadline reached; switching to slow-mode approvals=0",
+        '[auto-pair-status] {"schemaVersion":1,"state":"request-not-produced"}',
       );
       expect(run.stdout).toContain("watcher deadline reached approvals=0");
       expect(fs.existsSync(approveLog)).toBe(false);
@@ -1861,14 +1825,7 @@ exit 2
     }
   }, 30_000);
 
-  it("fast-deadline transitions to slow-mode even while pending requests are sticky", () => {
-    // Regression for the Codex review finding: a permanently-pending
-    // request (rejected unknown client added to HANDLED, or approve
-    // failure that never clears) used to hold the watcher in the
-    // 1s-polling pending branch for the full DEADLINE, recreating the
-    // NemoClaw#2484 connect-handler pile-up on an 8h timeline. The
-    // fast-deadline transition must apply even when `pending` stays
-    // non-empty.
+  it("keeps a rejected sticky request in fast mode without approving it (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sticky-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
@@ -1902,20 +1859,13 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          // Fast deadline already past — slow-mode transition must fire
-          // on the very next poll even though pending is non-empty.
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 20_000,
       });
       expect(run.status).toBe(0);
-      // First poll: rejects the evil client, then evaluates fast-deadline
-      // before the pending-branch continue, and transitions to slow mode.
-      expect(run.stdout).toContain(
-        "[auto-pair] fast-mode deadline reached; switching to slow-mode approvals=0",
-      );
+      expect(run.stdout).not.toContain("entering slow-mode");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain("watcher deadline reached approvals=0");
       // Unknown client was never approved.
@@ -1952,7 +1902,6 @@ exit 0
           OPENCLAW_BIN: fakeOpenclaw,
           // Watcher must finish well before the test timeout while still
           // exercising a genuine subprocess.run timeout.
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
           NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
@@ -2030,7 +1979,6 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "3",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
           NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.75",
@@ -2102,7 +2050,6 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
           NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
@@ -2264,9 +2211,7 @@ describe("NC-2227-01: legacy migration behavior", () => {
     }
   });
 
-  it.each(
-    ["workspace-existing", "workspace-main", "workspace-alpha", "workspace-beta"],
-  )(
+  it.each(["workspace-existing", "workspace-main", "workspace-alpha", "workspace-beta"])(
     "provisions only canonical workspace paths from OpenClaw config [%s]",
     (name) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workspaces-"));
@@ -2373,7 +2318,11 @@ describe("seed_default_workspace_templates (#3240)", () => {
     try {
       const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
       expect(result.status).toBe(0);
-      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
+      expect(
+        ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every(
+          (name) => fs.existsSync(path.join(workspaceDir, name)),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
       expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
         "# SOUL.md template content\n",
@@ -2489,7 +2438,11 @@ describe("seed_default_workspace_templates (#3240)", () => {
         env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
       });
       expect(result.status).toBe(0);
-      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
+      expect(
+        ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every(
+          (name) => !fs.existsSync(path.join(workspaceDir, name)),
+        ),
+      ).toBe(true);
       expect(result.stderr).toContain("openclaw workspace templates dir not found");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2617,7 +2570,11 @@ describe("seed_default_workspace_templates (#3240)", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
       expect(result.stderr).toContain("skipping default workspace template seed");
-      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
+      expect(
+        ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every(
+          (name) => !fs.existsSync(path.join(workspaceDir, name)),
+        ),
+      ).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3141,15 +3098,13 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it.each(
-    [
-        "GITHUB_TOKEN",
-        "AWS_SECRET_ACCESS_KEY",
-        "NPM_TOKEN",
-        "KUBECONFIG",
-        "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
-      ],
-  )(
+  it.each([
+    "GITHUB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "NPM_TOKEN",
+    "KUBECONFIG",
+    "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+  ])(
     "refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox [%s]",
     (blocked) => {
       // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
@@ -3333,8 +3288,11 @@ describe("Telegram diagnostics (#2766)", () => {
     const block = src
       .slice(start, end)
       .replaceAll("/tmp/gateway.log", gatewayLog)
-      .replaceAll("/tmp/auto-pair.log", autoPairLog);
-    return kind === "non-root" ? `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${block}fi\n` : block;
+      .replaceAll("/tmp/auto-pair.log", autoPairLog)
+      .replaceAll("/tmp/nemoclaw-auto-pair-status.json", `${autoPairLog}.status`);
+    return kind === "non-root"
+      ? `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${block}fi\n`
+      : block;
   }
 
   function runPreGatewaySetup(kind: EntryKind) {
@@ -3389,10 +3347,8 @@ describe("Telegram diagnostics (#2766)", () => {
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
         'setpriv() { while [ "$1" != "--" ]; do shift; done; shift; "$@"; }',
-        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
-        // in sandbox-init.sh; the test scaffolding doesn't source that, so
-        // initialize them here because this scaffolding does not source the
-        // shared privilege-transition helper.
+        // Test scaffolding skips sandbox-init.sh, so define the shared
+        // privilege-transition prefixes here.
         "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
         "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
@@ -3404,10 +3360,9 @@ describe("Telegram diagnostics (#2766)", () => {
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
         '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
-        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log").replaceAll(
-          "/tmp/auto-pair.log",
-          autoPairLog,
-        )}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
+        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log")
+          .replaceAll("/tmp/auto-pair.log", autoPairLog)
+          .replaceAll("/tmp/nemoclaw-auto-pair-status.json", `${autoPairLog}.status`)}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
       ].join("\n"),
       { mode: 0o700 },
     );
