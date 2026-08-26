@@ -131,6 +131,34 @@ else
   fail "setpriv/gosu runtime contract failed: $OUT"
 fi
 
+# ── Test 7a: Auto-pair status crosses the real privilege boundary ─
+
+info "7a. Auto-pair status is sandbox-readable while the credential-bearing log stays private"
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  {
+    sed -n "/^_nemoclaw_safe_replace_tmp_file() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^_nemoclaw_safe_create_tmp_file() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^prepare_auto_pair_log() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/prepare-auto-pair-files.sh
+  test -s /tmp/prepare-auto-pair-files.sh
+  source /tmp/prepare-auto-pair-files.sh
+  prepare_auto_pair_log
+  [ "$(stat -c "%a %U:%G" /tmp/auto-pair.log)" = "600 root:root" ]
+  [ "$(stat -c "%a %U:%G" /tmp/nemoclaw-auto-pair-status.json)" = "600 sandbox:sandbox" ]
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -eu -c "
+    test ! -r /tmp/auto-pair.log
+    printf \"%s\" \"{\\\"schemaVersion\\\":1,\\\"state\\\":\\\"approval-completed\\\"}\" >/tmp/nemoclaw-auto-pair-status.json
+    grep -Fqx \"{\\\"schemaVersion\\\":1,\\\"state\\\":\\\"approval-completed\\\"}\" /tmp/nemoclaw-auto-pair-status.json
+  "
+  printf "AUTO_PAIR_STATUS_BOUNDARY_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "AUTO_PAIR_STATUS_BOUNDARY_OK"; then
+  pass "sandbox can publish fixed-schema status without access to the auto-pair log"
+else
+  fail "auto-pair status privilege-boundary contract failed: $OUT"
+fi
+
 # ── Test 8: Entrypoint PATH is locked to system dirs ─────────────
 
 info "8. Entrypoint locks PATH to system directories"
