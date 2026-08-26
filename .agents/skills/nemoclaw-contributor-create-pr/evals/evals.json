@@ -23,6 +23,17 @@
     ]
   },
   {
+    "id": "positive-missing-hook-fallback",
+    "question": "Publish my committed NemoClaw branch. The targeted tests passed, but this checkout has no executable Git hooks.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A successful Git command does not prove that a missing hook ran. The publication workflow must run the complete diff fallback before pushing.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not treat a successful `git commit` or `git push` command as hook evidence.",
+      "Refreshes `origin/main` and runs `npm run validate:pr` before pushing."
+    ]
+  },
+  {
     "id": "negative-implementation",
     "question": "Implement NVIDIA/NemoClaw issue #8378 and add the tests. Do not open a pull request yet.",
     "expected_skill": "nemoclaw-contributor-implement-issue",

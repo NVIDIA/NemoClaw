@@ -88,13 +88,25 @@ Apply these push conditions:
 
 ### Hook Evidence
 
-If the commits and push used the installed hooks, use the hook results as verification:
+Before relying on normal hooks instead of the fallback:
+
+1. Resolve the repository hook directory with `git rev-parse --git-path hooks`.
+2. Confirm that `pre-commit`, `commit-msg`, and `pre-push` are executable.
+3. Confirm that the commit command did not use `--no-verify`.
+4. Confirm that the commit trace records successful `pre-commit` and `commit-msg` results.
+5. Prepare the push command without `--no-verify`.
+
+Do not infer that hooks ran from a successful `git commit` or `git push` command.
+When all five conditions hold, rely on normal hooks for these checks:
 
 - `pre-commit` runs cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation.
 - `commit-msg` runs commitlint.
 - `pre-push` runs path-scoped incremental type checks for affected CLI and plugin surfaces plus checked-JavaScript checks.
 
-Run the fallback command if the hooks were skipped, missing, failed, or uncertain.
+After the push, record the successful `pre-push` result as verification.
+
+Run the fallback command before pushing if a hook is missing, not executable, bypassed, failed,
+unrecorded, or uncertain.
 The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff:
 
 ```bash
