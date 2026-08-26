@@ -1208,7 +1208,7 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it(
-    "reuses sandbox when messaging providers already exist in gateway",
+    "reuses sandbox without refreshing unselected ambient messaging providers (#10277)",
     {
       timeout: 60_000,
     },
@@ -1289,19 +1289,14 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Reuse refreshes credentials only after the mock returns the endpointless identity.
+      // Existing gateway providers do not select messaging for this onboarding request.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) =>
-          e.command.includes("my-assistant-discord-bridge"),
-        ),
-        "should upsert discord provider on reuse to refresh credentials",
-      );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-slack-bridge")),
-        "should upsert slack provider on reuse to refresh credentials",
+      assert.equal(
+        providerUpserts.length,
+        0,
+        "should not refresh ambient messaging providers without a selected channel plan",
       );
     },
   );
@@ -1442,7 +1437,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "creates no messaging providers when enabledChannels is empty",
+    "does not create messaging providers from ambient credentials without a selected plan (#10277)",
     {
       timeout: 60_000,
     },
@@ -1519,9 +1514,9 @@ const { createSandbox } = require(${onboardPath});
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
-  // Empty array — user deselected all channels
+  // No selected messaging plan — ambient repository credentials are unrelated to this request.
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1552,7 +1547,7 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(
         providerCommands.length,
         0,
-        "no providers should be created when enabledChannels is empty",
+        "no providers should be created without a selected messaging plan",
       );
 
       // Sandbox create should have no --provider flags for messaging bridges

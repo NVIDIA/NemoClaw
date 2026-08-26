@@ -3,10 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
-import {
-  registerAgentAdapterAtCurrentCredentialRevision,
-  unregisterAgentAdapter,
-} from "./mcp-bridge-adapters";
+import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import {
   observeMcpCredentialRevision,
@@ -51,10 +48,7 @@ export function scrubManagedMcpAdapterOrThrow(
       `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'.`,
     );
   }
-  return {
-    ...entry,
-    ...(credentialRevision ? { credentialRevision } : {}),
-  };
+  return { ...entry, credentialRevision };
 }
 
 /** Restore scrubbed adapter entries without hiding failures from provider rollback. */
@@ -65,10 +59,11 @@ export function rollbackScrubbedMcpAdapters(
 ): string[] {
   const failures: string[] = [];
   for (const entry of entries) {
-    let credentialRevision: McpAttachedCredentialRevision | undefined;
+    let credentialRevision = entry.credentialRevision;
     try {
       const current = observeMcpCredentialRevision(sandboxName, entry);
       if (current !== "absent" && current !== "canonical") credentialRevision = current;
+      if (current === "canonical") credentialRevision = undefined;
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
       continue;
@@ -80,15 +75,15 @@ export function rollbackScrubbedMcpAdapters(
       continue;
     }
     try {
-      registerAgentAdapterAtCurrentCredentialRevision(
+      registerAgentAdapter(
         sandboxName,
         resolveManagedMcpAdapter(sandbox, entry),
         entry,
         {},
-        credentialRevision,
         {
           replaceExisting: true,
           teardownRollback: true,
+          credentialRevision,
         },
       );
     } catch (error) {
