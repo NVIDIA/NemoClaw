@@ -62,6 +62,10 @@ async function withTemporaryDirectory(
   }
 }
 
+function canonicalPathInExistingParent(filePath: string): string {
+  return path.join(fs.realpathSync.native(path.dirname(filePath)), path.basename(filePath));
+}
+
 function waitForClose(
   child: ChildProcess,
   timeoutMilliseconds = 8_000,
@@ -144,7 +148,12 @@ function installFixtureGh(directory: string): string {
   return binDirectory;
 }
 
-type BlockedCollectorMode = "normal" | "cleanup-failure" | "termination-failure";
+type CollectorFixtureMode =
+  | "normal"
+  | "cleanup-failure"
+  | "termination-failure"
+  | "parent-replacement"
+  | "staging-replacement";
 
 type CollectorInvocation = {
   child: ChildProcess;
@@ -158,7 +167,7 @@ type CollectorInvocation = {
 
 function installCollectorDriver(
   directory: string,
-  mode: BlockedCollectorMode = "normal",
+  mode: CollectorFixtureMode = "normal",
 ): { driverPath: string; workerMarkerPath: string; workerSelfMarkerPath: string } {
   const workerMarkerPath = path.join(directory, "snapshot-worker-started");
   const workerSelfMarkerPath = path.join(directory, "snapshot-worker-self-started");
@@ -168,6 +177,7 @@ function installCollectorDriver(
     driverPath,
     [
       'import fs from "node:fs";',
+      'import path from "node:path";',
       `import { runGitHubSnapshotCollector } from ${JSON.stringify(collectorUrl)};`,
       "const writeAtomicMarker = (markerPath, value) => {",
       "  const markerTemporaryPath = `${markerPath}.${process.pid}.tmp`;",
@@ -196,6 +206,17 @@ function installCollectorDriver(
       '  terminateWorkerTree: mode === "termination-failure" ? () => new Promise(() => undefined) : undefined,',
       '  treeTerminationTimeoutMilliseconds: mode === "termination-failure" ? 50 : undefined,',
       '  workerCloseTimeoutMilliseconds: mode === "termination-failure" ? 50 : undefined,',
+      '  beforePublish: mode === "parent-replacement" ? (_temporaryPath, outputPath) => {',
+      "    const outputParentPath = path.dirname(outputPath);",
+      "    fs.renameSync(outputParentPath, process.env.SNAPSHOT_MOVED_PARENT);",
+      "    fs.mkdirSync(outputParentPath, { mode: 0o700 });",
+      '    fs.writeFileSync(path.join(outputParentPath, "replacement-sentinel"), "replacement parent\\n", { mode: 0o600 });',
+      '  } : mode === "staging-replacement" ? (temporaryPath) => {',
+      "    const stagingDirectoryPath = path.dirname(temporaryPath);",
+      "    fs.renameSync(stagingDirectoryPath, process.env.SNAPSHOT_MOVED_STAGE);",
+      "    fs.mkdirSync(stagingDirectoryPath, { mode: 0o700 });",
+      '    fs.writeFileSync(temporaryPath, "replacement stage\\n", { mode: 0o600 });',
+      "  } : undefined,",
       "};",
       "await runGitHubSnapshotCollector(collectorArguments, runtime);",
       "",
@@ -209,7 +230,7 @@ function startCollectorInvocation(options: {
   binDirectory: string;
   markerPath: string;
   outputPath: string;
-  mode?: BlockedCollectorMode;
+  mode?: CollectorFixtureMode;
   arguments?: string[];
   suppliedArguments?: string[];
   environment?: NodeJS.ProcessEnv;
@@ -270,7 +291,7 @@ function startCollectorInvocation(options: {
 
 function startBlockedCollector(
   directory: string,
-  mode: BlockedCollectorMode = "normal",
+  mode: CollectorFixtureMode = "normal",
 ): CollectorInvocation {
   const binDirectory = path.join(directory, "bin");
   const markerPath = path.join(directory, "fake-gh-started");
@@ -562,7 +583,7 @@ describe("GitHub snapshot output", () => {
           expect(code).toBe(0);
           expect(terminatingSignal).toBeNull();
           expect(invocation.stdout()).toContain(
-            `GitHub snapshot written: ${JSON.stringify(outputPath)}`,
+            `GitHub snapshot written: ${JSON.stringify(canonicalPathInExistingParent(outputPath))}`,
           );
           const snapshot = JSON.parse(fs.readFileSync(outputPath, "utf8")) as Record<
             string,
@@ -613,7 +634,7 @@ describe("GitHub snapshot output", () => {
           expect(code).toBe(0);
           expect(terminatingSignal).toBeNull();
           expect(invocation.stdout()).toContain(
-            `GitHub snapshot written: ${JSON.stringify(publishedOutputPath)}`,
+            `GitHub snapshot written: ${JSON.stringify(canonicalPathInExistingParent(publishedOutputPath))}`,
           );
           expect(fs.existsSync(publishedOutputPath)).toBe(true);
           expect(fs.existsSync(wrapperOutputPath)).toBe(false);
@@ -622,6 +643,115 @@ describe("GitHub snapshot output", () => {
             unknown
           >;
           expect(fs.readFileSync(publishedOutputPath, "utf8")).toBe(canonicalJson(snapshot));
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the completed worker stage when the output parent identity changes before publication",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputParentPath = path.join(directory, "trusted-output-parent");
+        const movedParentPath = path.join(directory, "moved-output-parent");
+        const outputPath = path.join(outputParentPath, "snapshot.json");
+        const binDirectory = installFixtureGh(directory);
+        fs.mkdirSync(outputParentPath, { mode: 0o700 });
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "parent-replacement-fixture-gh-marker"),
+          outputPath,
+          mode: "parent-replacement",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
+            SNAPSHOT_MOVED_PARENT: movedParentPath,
+          },
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain("Protected output parent identity changed");
+          expect(invocation.stderr()).toContain("Preserved invocation-created staging directory");
+          expect(fs.existsSync(outputPath)).toBe(false);
+          expect(fs.existsSync(path.join(movedParentPath, "snapshot.json"))).toBe(false);
+          expect(fs.readFileSync(path.join(outputParentPath, "replacement-sentinel"), "utf8")).toBe(
+            "replacement parent\n",
+          );
+          const stagingDirectories = fs
+            .readdirSync(movedParentPath)
+            .filter((name) => name.includes(".nemoclaw-stage-"));
+          expect(stagingDirectories).toHaveLength(1);
+          const witnessPath = path.join(movedParentPath, stagingDirectories[0], "snapshot.json");
+          const snapshot = JSON.parse(fs.readFileSync(witnessPath, "utf8")) as Record<
+            string,
+            unknown
+          >;
+          expect(fs.readFileSync(witnessPath, "utf8")).toBe(canonicalJson(snapshot));
+          expect(fs.statSync(witnessPath).mode & 0o777).toBe(0o600);
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the original and replacement staging directories when identity changes before publication",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputParentPath = path.join(directory, "trusted-output-parent");
+        const movedStagePath = path.join(directory, "moved-original-stage");
+        const outputPath = path.join(outputParentPath, "snapshot.json");
+        const binDirectory = installFixtureGh(directory);
+        fs.mkdirSync(outputParentPath, { mode: 0o700 });
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "stage-replacement-fixture-gh-marker"),
+          outputPath,
+          mode: "staging-replacement",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
+            SNAPSHOT_MOVED_STAGE: movedStagePath,
+          },
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain(
+            "Snapshot staging-directory boundary is not trusted",
+          );
+          expect(fs.existsSync(outputPath)).toBe(false);
+          const replacementStageNames = fs
+            .readdirSync(outputParentPath)
+            .filter((name) => name.includes(".nemoclaw-stage-"));
+          expect(replacementStageNames).toHaveLength(1);
+          expect(
+            fs.readFileSync(
+              path.join(outputParentPath, replacementStageNames[0], "snapshot.json"),
+              "utf8",
+            ),
+          ).toBe("replacement stage\n");
+          const witnessPath = path.join(movedStagePath, "snapshot.json");
+          const snapshot = JSON.parse(fs.readFileSync(witnessPath, "utf8")) as Record<
+            string,
+            unknown
+          >;
+          expect(fs.readFileSync(witnessPath, "utf8")).toBe(canonicalJson(snapshot));
+          expect(fs.statSync(witnessPath).mode & 0o777).toBe(0o600);
         } finally {
           await stopCollectorFixture(invocation);
         }
@@ -652,7 +782,7 @@ describe("GitHub snapshot output", () => {
           const [code] = await waitForClose(invocation.child);
           expect(code).not.toBe(0);
           expect(invocation.stderr()).toContain(
-            `Snapshot output already exists and will not be overwritten: ${JSON.stringify(outputPath)}`,
+            `Snapshot output already exists and will not be overwritten: ${JSON.stringify(canonicalPathInExistingParent(outputPath))}`,
           );
           expect(fs.readFileSync(outputPath)).toEqual(sentinel);
           expect(fs.existsSync(ghMarkerPath)).toBe(false);
@@ -661,6 +791,160 @@ describe("GitHub snapshot output", () => {
           ).toEqual([]);
         } finally {
           await stopCollectorFixture(invocation, { expectWorker: false });
+        }
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a non-0700 output parent before collection without changing its mode",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputParentPath = path.join(directory, "shared-output-parent");
+        const outputPath = path.join(outputParentPath, "snapshot.json");
+        const ghMarkerPath = path.join(directory, "unexpected-mode-gh-invocation");
+        const binDirectory = installFailFastGh(directory, ghMarkerPath);
+        fs.mkdirSync(outputParentPath, { mode: 0o700 });
+        fs.chmodSync(outputParentPath, 0o750);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: ghMarkerPath,
+          outputPath,
+          directEntrypoint: true,
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toMatch(
+            /Protected output parent must be owned by effective UID .* with mode 0700/u,
+          );
+          expect(fs.statSync(outputParentPath).mode & 0o777).toBe(0o750);
+          expect(fs.existsSync(outputPath)).toBe(false);
+          expect(fs.existsSync(ghMarkerPath)).toBe(false);
+          expect(fs.readdirSync(outputParentPath)).toEqual([]);
+        } finally {
+          await stopCollectorFixture(invocation, { expectWorker: false });
+          fs.chmodSync(outputParentPath, 0o700);
+        }
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a symbolic-link output-parent chain without changing its referent",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const realParentPath = path.join(directory, "real-output-parent");
+        const aliasParentPath = path.join(directory, "alias-output-parent");
+        const outputPath = path.join(aliasParentPath, "snapshot.json");
+        const sentinelPath = path.join(realParentPath, "referent-sentinel");
+        const ghMarkerPath = path.join(directory, "unexpected-symlink-gh-invocation");
+        const binDirectory = installFailFastGh(directory, ghMarkerPath);
+        fs.mkdirSync(realParentPath, { mode: 0o700 });
+        fs.writeFileSync(sentinelPath, "referent bytes\n", { mode: 0o600 });
+        fs.symlinkSync(realParentPath, aliasParentPath);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: ghMarkerPath,
+          outputPath,
+          directEntrypoint: true,
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain(
+            "Protected output parent contains an untrusted symbolic-link path",
+          );
+          expect(fs.lstatSync(aliasParentPath).isSymbolicLink()).toBe(true);
+          expect(fs.readFileSync(sentinelPath, "utf8")).toBe("referent bytes\n");
+          expect(fs.existsSync(path.join(realParentPath, "snapshot.json"))).toBe(false);
+          expect(fs.existsSync(ghMarkerPath)).toBe(false);
+          expect(fs.readdirSync(realParentPath)).toEqual(["referent-sentinel"]);
+        } finally {
+          await stopCollectorFixture(invocation, { expectWorker: false });
+        }
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not create a missing output parent through a symbolic-link referent",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const realParentPath = path.join(directory, "real-output-parent");
+        const aliasParentPath = path.join(directory, "alias-output-parent");
+        const outputPath = path.join(aliasParentPath, "missing-parent", "snapshot.json");
+        const ghMarkerPath = path.join(directory, "unexpected-missing-parent-gh-invocation");
+        const binDirectory = installFailFastGh(directory, ghMarkerPath);
+        fs.mkdirSync(realParentPath, { mode: 0o700 });
+        fs.symlinkSync(realParentPath, aliasParentPath);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: ghMarkerPath,
+          outputPath,
+          directEntrypoint: true,
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain("Could not resolve protected output directory");
+          expect(fs.existsSync(path.join(realParentPath, "missing-parent"))).toBe(false);
+          expect(fs.existsSync(ghMarkerPath)).toBe(false);
+          expect(fs.readdirSync(realParentPath)).toEqual([]);
+        } finally {
+          await stopCollectorFixture(invocation, { expectWorker: false });
+        }
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an output ancestor that permits an untrusted pathname swap",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const mutableAncestorPath = path.join(directory, "mutable-ancestor");
+        const outputParentPath = path.join(mutableAncestorPath, "run");
+        const outputPath = path.join(outputParentPath, "snapshot.json");
+        const ghMarkerPath = path.join(directory, "unexpected-ancestor-gh-invocation");
+        const binDirectory = installFailFastGh(directory, ghMarkerPath);
+        fs.mkdirSync(outputParentPath, { recursive: true, mode: 0o700 });
+        fs.chmodSync(mutableAncestorPath, 0o777);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: ghMarkerPath,
+          outputPath,
+          directEntrypoint: true,
+        });
+
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain(
+            "Protected output ancestor permits an untrusted pathname swap",
+          );
+          expect(fs.statSync(mutableAncestorPath).mode & 0o777).toBe(0o777);
+          expect(fs.statSync(outputParentPath).mode & 0o777).toBe(0o700);
+          expect(fs.existsSync(outputPath)).toBe(false);
+          expect(fs.existsSync(ghMarkerPath)).toBe(false);
+          expect(fs.readdirSync(outputParentPath)).toEqual([]);
+        } finally {
+          await stopCollectorFixture(invocation, { expectWorker: false });
+          fs.chmodSync(mutableAncestorPath, 0o700);
         }
       });
     },
@@ -737,7 +1021,9 @@ describe("GitHub snapshot output", () => {
         }),
       );
 
-      expect(failure.message).toContain(`staging failed for ${JSON.stringify(outputPath)}`);
+      expect(failure.message).toContain(
+        `staging failed for ${JSON.stringify(canonicalPathInExistingParent(outputPath))}`,
+      );
       expect(failure.message).toContain("injected staging failure");
       expect(failure.message).toMatch(/Removed invocation-created temporary path ".*\\n.*"/u);
       expect(fs.existsSync(outputPath)).toBe(false);
@@ -802,7 +1088,7 @@ describe("GitHub snapshot output", () => {
       );
 
       expect(failure.message).toContain(
-        `Preserved possible snapshot target ${JSON.stringify(outputPath)}. Preserved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
+        `Preserved possible snapshot target ${JSON.stringify(canonicalPathInExistingParent(outputPath))}. Preserved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
       );
       expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(temporaryPath));
       expect(fs.statSync(outputPath).ino).toBe(fs.statSync(temporaryPath).ino);
@@ -829,7 +1115,7 @@ describe("GitHub snapshot output", () => {
       );
 
       expect(failure.message).toContain(
-        `Preserved published snapshot target ${JSON.stringify(outputPath)}. Unresolved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
+        `Preserved published snapshot target ${JSON.stringify(canonicalPathInExistingParent(outputPath))}. Unresolved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
       );
       expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(temporaryPath));
       expect(fs.statSync(outputPath).ino).toBe(fs.statSync(temporaryPath).ino);
@@ -854,10 +1140,11 @@ describe("GitHub snapshot output", () => {
         }),
       );
 
-      expect(failure.message).toContain(JSON.stringify(outputPath));
+      const canonicalOutputPath = canonicalPathInExistingParent(outputPath);
+      expect(failure.message).toContain(JSON.stringify(canonicalOutputPath));
       expect(failure.message).toContain(JSON.stringify(temporaryPath));
       expect(failure.message).toContain("EIO during link");
-      expect(failure.message).not.toContain(outputPath);
+      expect(failure.message).not.toContain(canonicalOutputPath);
       expect(failure.message).not.toContain(temporaryPath);
       expect(failure.message.split("\n")).toHaveLength(1);
     });
@@ -905,7 +1192,7 @@ describe("GitHub snapshot output", () => {
             expect(code).toBe(exitCode);
             expect(terminatingSignal).toBeNull();
             expect(invocation.stderr()).toContain(
-              `${signal} interrupted GitHub snapshot collection for ${JSON.stringify(invocation.outputPath)}`,
+              `${signal} interrupted GitHub snapshot collection for ${JSON.stringify(canonicalPathInExistingParent(invocation.outputPath))}`,
             );
             expect(invocation.stderr()).toMatch(
               /Invocation-created temporary path is absent ".*\\n.*"/u,
@@ -953,10 +1240,12 @@ describe("GitHub snapshot output", () => {
           expect(fs.existsSync(witnessPath)).toBe(true);
           expect(fs.statSync(stagingDirectory).mode & 0o777).toBe(0o700);
           expect(invocation.stderr()).toContain(
-            `Unresolved invocation-created temporary path ${JSON.stringify(witnessPath)}: EACCES during unlink. Preserved invocation-created staging directory ${JSON.stringify(stagingDirectory)} because its temporary path remains unresolved`,
+            `Unresolved invocation-created temporary path ${JSON.stringify(canonicalPathInExistingParent(witnessPath))}: EACCES during unlink. Preserved invocation-created staging directory ${JSON.stringify(canonicalPathInExistingParent(stagingDirectory))} because its temporary path remains unresolved`,
           );
-          expect(invocation.stderr()).not.toContain(witnessPath);
-          expect(invocation.stderr()).not.toContain(stagingDirectory);
+          expect(invocation.stderr()).not.toContain(canonicalPathInExistingParent(witnessPath));
+          expect(invocation.stderr()).not.toContain(
+            canonicalPathInExistingParent(stagingDirectory),
+          );
           await vi.waitFor(
             () =>
               expect(() => process.kill(fakeGhProcessId, 0)).toThrow(
@@ -993,9 +1282,11 @@ describe("GitHub snapshot output", () => {
           const witnessPath = path.join(stagingDirectory, "snapshot.json");
           expect(invocation.stderr()).toContain("Worker-tree termination was not confirmed");
           expect(invocation.stderr()).toContain(
-            `Invocation-created temporary path is absent ${JSON.stringify(witnessPath)}. Preserved invocation-created staging directory ${JSON.stringify(stagingDirectory)}`,
+            `Invocation-created temporary path is absent ${JSON.stringify(canonicalPathInExistingParent(witnessPath))}. Preserved invocation-created staging directory ${JSON.stringify(canonicalPathInExistingParent(stagingDirectory))}`,
           );
-          expect(invocation.stderr()).not.toContain(stagingDirectory);
+          expect(invocation.stderr()).not.toContain(
+            canonicalPathInExistingParent(stagingDirectory),
+          );
         } finally {
           await stopCollectorFixture(invocation);
         }

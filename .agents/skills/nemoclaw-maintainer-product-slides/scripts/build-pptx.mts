@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-import Ajv2020 from "ajv/dist/2020.js";
 
 import { buildSlideModel } from "./build-slide-model.mts";
 import { verifyDocumentationEvidence } from "./collect-doc-evidence.mts";
@@ -29,7 +26,7 @@ import {
   roadmapEpicDisplayText,
   roadmapFocusText,
 } from "./compare-output-parity.mts";
-import { canonicalJson, canonicalSha256, validateSlideModel } from "./validate-slide-model.mts";
+import { canonicalJson, sha256Text, validateSlideModel } from "./validate-slide-model.mts";
 
 type DynamicValue = ReturnType<typeof JSON.parse>;
 type ManagedRole = (typeof MANAGED_ROLES)[number];
@@ -1336,7 +1333,7 @@ async function validateTemplateWorkflowInputs({
     requireAbsentPath(workflow.starterLayoutDir, "template starter layout directory"),
     requireAbsentPath(workflow.finalLayoutDir, "template final layout directory"),
   ]);
-  if (roleMap.templateFrameMapSha256 !== sha256Bytes(frameMapBytes)) {
+  if (roleMap.templateFrameMapSha256 !== sha256Text(frameMapBytes)) {
     throw new Error("Runtime role map does not match the exact template frame-map hash");
   }
   validateTemplateSourceInventoryBinding({
@@ -2591,101 +2588,34 @@ export async function runTemplateFidelityWorkflow({
   });
 }
 
-function sha256Bytes(value: string | Buffer | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function modelHashInput(value: DynamicValue): DynamicValue {
-  if (Array.isArray(value)) return value.map(modelHashInput);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => key !== "managedNotes" && key !== "modelSha256")
-      .map(([key, child]) => [key, modelHashInput(child)]),
-  );
-}
-
-function verifyModel(model: DynamicValue, mode: ValidationMode): void {
-  if (model.kind !== "nemoclaw-product-slides" || model.schemaVersion !== 1) {
-    throw new Error("Input is not a NemoClaw product-slide model");
-  }
-  if (canonicalSha256(modelHashInput(model)) !== model.modelSha256) {
-    throw new Error("Slide model hash mismatch");
-  }
-  const slides = model.slides as DynamicValue[];
-  const singletonRoles = slides.slice(-2).map((slide) => slide.role);
-  const roadmapSlides = slides.slice(0, -2);
-  if (
-    roadmapSlides.length < 2 ||
-    roadmapSlides.length % 2 !== 0 ||
-    JSON.stringify(singletonRoles) !== JSON.stringify(["markitecture", "weekly-release"])
-  ) {
-    throw new Error("Slide model roles are missing or out of order");
-  }
-  for (let index = 0; index < roadmapSlides.length; index += 2) {
-    const pageIndex = index / 2 + 1;
-    const executive = roadmapSlides[index];
-    const capability = roadmapSlides[index + 1];
-    if (
-      executive.role !== "roadmap-executive" ||
-      capability.role !== "roadmap-capability" ||
-      executive.instanceId !== `roadmap-executive.${pageIndex}` ||
-      capability.instanceId !== `roadmap-capability.${pageIndex}` ||
-      executive.pageIndex !== pageIndex ||
-      capability.pageIndex !== pageIndex ||
-      executive.pageCount !== roadmapSlides.length / 2 ||
-      capability.pageCount !== roadmapSlides.length / 2
-    ) {
-      throw new Error("Slide model roadmap page instances are missing or out of order");
-    }
-  }
-  if (mode === "publish" && model.publication?.eligible !== true) {
-    throw new Error("Publication requires an eligible shared model");
-  }
-}
-
-function validDateTime(value: string): boolean {
-  return (
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value) &&
-    !Number.isNaN(Date.parse(value))
-  );
-}
-
-function validUri(value: string): boolean {
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 export function validatePptxModel(
   model: DynamicValue,
   schema: DynamicValue,
   mode: ValidationMode = "preview",
 ): void {
-  const ajv = new Ajv2020({
-    allErrors: true,
-    strict: true,
-    formats: {
-      "date-time": { type: "string", validate: validDateTime },
-      uri: { type: "string", validate: validUri },
-    },
-  });
-  const validate = ajv.compile(schema);
-  if (!validate(model)) {
-    const details = (validate.errors ?? [])
-      .map(
-        (error) =>
-          `${error.instancePath || "/"} [${error.keyword}] ${error.message ?? "is invalid"}`,
-      )
-      .join("; ");
+  const result = validateSlideModel(model, schema, mode);
+  const schemaErrors = result.errors.filter((error) => error.code === "SCHEMA_INVALID");
+  if (schemaErrors.length > 0) {
+    const details = schemaErrors.map((error) => error.message).join("; ");
     throw new Error(`Slide model schema validation failed: ${details}`);
   }
-  verifyModel(model, mode);
-  const semantic = validateSlideModel(model, schema, mode);
-  if (!semantic.valid) {
-    const details = semantic.errors
+  if (model.kind !== "nemoclaw-product-slides" || model.schemaVersion !== 1) {
+    throw new Error("Input is not a NemoClaw product-slide model");
+  }
+  if (result.errors.some((error) => error.code === "MODEL_HASH_MISMATCH")) {
+    throw new Error("Slide model hash mismatch");
+  }
+  if (result.errors.some((error) => error.code === "ROLE_ORDER_INVALID")) {
+    throw new Error("Slide model roles are missing or out of order");
+  }
+  if (result.errors.some((error) => error.code === "ROADMAP_PAGE_BINDING_INVALID")) {
+    throw new Error("Slide model roadmap page instances are missing or out of order");
+  }
+  if (mode === "publish" && model.publication?.eligible !== true) {
+    throw new Error("Publication requires an eligible shared model");
+  }
+  if (!result.valid) {
+    const details = result.errors
       .slice(0, 5)
       .map((error) => `${error.code}: ${error.message}`)
       .join("; ");
@@ -3533,7 +3463,7 @@ export function hyperlinkInventoryFromSlideXml(
             .join(""),
         )
         .join("\n");
-      if (protectedHashes.has(sha256Bytes(objectText))) {
+      if (protectedHashes.has(sha256Text(objectText))) {
         managedSlideXml = managedSlideXml.replace(textObject, "");
       }
     }
@@ -4121,7 +4051,7 @@ async function themePackageContractFromZip(zip: DynamicValue): Promise<ThemePack
     await Promise.all(
       themePaths.map(async (entry) => [
         entry,
-        sha256Bytes(await zip.file(entry).async("nodebuffer")),
+        sha256Text(await zip.file(entry).async("nodebuffer")),
       ]),
     ),
   );
@@ -4148,7 +4078,7 @@ async function mediaSha256InventoryFromZip(zip: DynamicValue): Promise<string[]>
     await Promise.all(
       Object.keys(zip.files)
         .filter((entry) => /^ppt\/media\/[^/]+$/u.test(entry) && !zip.files[entry].dir)
-        .map(async (entry) => sha256Bytes(await zip.file(entry).async("nodebuffer"))),
+        .map(async (entry) => sha256Text(await zip.file(entry).async("nodebuffer"))),
     )
   ).sort(compareUtf16);
 }
@@ -4873,7 +4803,7 @@ export async function freezePptxArtifactInput(filePath: string): Promise<FrozenP
   });
   return {
     ...staged,
-    sha256: sha256Bytes(artifactBytes),
+    sha256: sha256Text(artifactBytes),
     sourcePath,
   };
 }
@@ -5429,7 +5359,7 @@ export async function validatePptxPublicationFiles({
     previewPptxPath,
     previewPptxSha256: verifiedPreviewPptxSha256,
     parityReceiptPath,
-    parityReceiptSha256: sha256Bytes(parityReceiptBytes),
+    parityReceiptSha256: sha256Text(parityReceiptBytes),
     managedSlideIds: model.slides.map(modelSlideIdentity),
   };
   validatePptxParityReceipt({
@@ -5441,8 +5371,8 @@ export async function validatePptxPublicationFiles({
     pptxReadback,
     googleReadbackPath,
     pptxReadbackPath,
-    googleReadbackSha256: sha256Bytes(googleReadbackBytes),
-    pptxReadbackSha256: sha256Bytes(pptxReadbackBytes),
+    googleReadbackSha256: sha256Text(googleReadbackBytes),
+    pptxReadbackSha256: sha256Text(pptxReadbackBytes),
   });
   validatePptxPublicationInputs({ approval, evidence, current: boundCurrent });
   return {
@@ -6017,8 +5947,8 @@ export async function buildPptx(
     protectedDirectories: protectedOutputDirectories,
   });
   for (const output of outputPaths) await requirePowerPointOutputAbsent(path.resolve(output.value));
-  const templateSha256 = sha256Bytes(templateBytes);
-  const roleMapSha256 = sha256Bytes(roleMapBytes);
+  const templateSha256 = sha256Text(templateBytes);
+  const roleMapSha256 = sha256Text(roleMapBytes);
   if (
     roleMap.schemaVersion !== 1 ||
     roleMap.templateFingerprint !== model.templateFingerprint ||
@@ -6385,7 +6315,7 @@ export async function buildPptx(
         data: inspect.ndjson,
       });
     }
-    const artifactSha256 = sha256Bytes(await fs.readFile(stagedOutput.path));
+    const artifactSha256 = sha256Text(await fs.readFile(stagedOutput.path));
     const hyperlinkInventoryByRole = await hyperlinkInventoryByRoleFromPptx(
       JSZip,
       stagedOutput.path,

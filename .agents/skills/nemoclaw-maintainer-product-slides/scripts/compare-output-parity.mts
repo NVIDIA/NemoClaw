@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { canonicalJson } from "./validate-slide-model.mts";
+import { canonicalJson, sha256Text } from "./validate-slide-model.mts";
 
 export const NATIVE_KINDS = {
   "roadmap-executive": ["line", "shape", "text"],
@@ -157,10 +156,6 @@ export function normalizeNativeKinds(role: string, nativeObjectKinds: readonly s
     else normalized.add(kind);
   }
   return [...normalized].sort();
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function slideContent(slide: ModelSlide): {
@@ -1048,7 +1043,7 @@ export function classifyArtifactTextInventories(
         expectedCounts.set(value, remaining - 1);
       } else if (forbidden && containsCapabilityForbiddenText(value, forbidden)) {
         unexpected.push(value);
-      } else if (inheritedTemplateText.has(value) || protectedHashes.has(sha256(value))) {
+      } else if (inheritedTemplateText.has(value) || protectedHashes.has(sha256Text(value))) {
         protectedText.push(value);
       } else unexpected.push(value);
     }
@@ -1248,7 +1243,7 @@ function protectedVisibleTextDigestProjection(readback: unknown): DynamicValue |
     slides: projection.slides.map(
       (slide: { role: ManagedRole; visibleTextInventory: string[] }) => ({
         ...slideIdentityFields(slide),
-        visibleTextSha256: slide.visibleTextInventory.map(sha256).sort(),
+        visibleTextSha256: slide.visibleTextInventory.map(sha256Text).sort(),
       }),
     ),
   };
@@ -1737,30 +1732,30 @@ export function compareParity(
     schemaVersion: 1,
     equal: errors.length === 0,
     modelSha256: typedModel.modelSha256,
-    expectedProjectionSha256: sha256(expectedBytes),
-    googleProjectionSha256: sha256(googleBytes),
-    pptxProjectionSha256: sha256(pptxBytes),
-    googleVisibleTextSha256: googleVisibleTextBytes ? sha256(googleVisibleTextBytes) : null,
-    pptxVisibleTextSha256: pptxVisibleTextBytes ? sha256(pptxVisibleTextBytes) : null,
-    expectedHyperlinkSha256: sha256(expectedHyperlinkBytes),
-    googleHyperlinkSha256: googleHyperlinkBytes ? sha256(googleHyperlinkBytes) : null,
-    pptxHyperlinkSha256: pptxHyperlinkBytes ? sha256(pptxHyperlinkBytes) : null,
-    expectedConnectorSha256: sha256(expectedConnectorBytes),
-    googleConnectorSha256: googleConnectorBytes ? sha256(googleConnectorBytes) : null,
-    pptxConnectorSha256: pptxConnectorBytes ? sha256(pptxConnectorBytes) : null,
-    expectedCapabilityStructureSha256: sha256(expectedCapabilityStructureBytes),
+    expectedProjectionSha256: sha256Text(expectedBytes),
+    googleProjectionSha256: sha256Text(googleBytes),
+    pptxProjectionSha256: sha256Text(pptxBytes),
+    googleVisibleTextSha256: googleVisibleTextBytes ? sha256Text(googleVisibleTextBytes) : null,
+    pptxVisibleTextSha256: pptxVisibleTextBytes ? sha256Text(pptxVisibleTextBytes) : null,
+    expectedHyperlinkSha256: sha256Text(expectedHyperlinkBytes),
+    googleHyperlinkSha256: googleHyperlinkBytes ? sha256Text(googleHyperlinkBytes) : null,
+    pptxHyperlinkSha256: pptxHyperlinkBytes ? sha256Text(pptxHyperlinkBytes) : null,
+    expectedConnectorSha256: sha256Text(expectedConnectorBytes),
+    googleConnectorSha256: googleConnectorBytes ? sha256Text(googleConnectorBytes) : null,
+    pptxConnectorSha256: pptxConnectorBytes ? sha256Text(pptxConnectorBytes) : null,
+    expectedCapabilityStructureSha256: sha256Text(expectedCapabilityStructureBytes),
     googleCapabilityStructureSha256: googleCapabilityStructureBytes
-      ? sha256(googleCapabilityStructureBytes)
+      ? sha256Text(googleCapabilityStructureBytes)
       : null,
     pptxCapabilityStructureSha256: pptxCapabilityStructureBytes
-      ? sha256(pptxCapabilityStructureBytes)
+      ? sha256Text(pptxCapabilityStructureBytes)
       : null,
-    expectedWeeklyMilestoneStructureSha256: sha256(expectedWeeklyMilestoneStructureBytes),
+    expectedWeeklyMilestoneStructureSha256: sha256Text(expectedWeeklyMilestoneStructureBytes),
     googleWeeklyMilestoneStructureSha256: googleWeeklyMilestoneStructureBytes
-      ? sha256(googleWeeklyMilestoneStructureBytes)
+      ? sha256Text(googleWeeklyMilestoneStructureBytes)
       : null,
     pptxWeeklyMilestoneStructureSha256: pptxWeeklyMilestoneStructureBytes
-      ? sha256(pptxWeeklyMilestoneStructureBytes)
+      ? sha256Text(pptxWeeklyMilestoneStructureBytes)
       : null,
     errors,
   };

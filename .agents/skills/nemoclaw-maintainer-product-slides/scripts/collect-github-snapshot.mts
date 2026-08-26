@@ -11,16 +11,21 @@ import {
   linkSync,
   lstatSync,
   mkdtempSync,
-  mkdirSync,
   openSync,
   readFileSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  prepareProtectedOutputBoundary,
+  protectedOutputBoundaryFailure,
+  type ProtectedOutputBoundary,
+} from "./protected-output.mts";
 import {
   canonicalJson,
   canonicalSha256,
@@ -566,6 +571,13 @@ class SnapshotInterruptionError extends Error {
   }
 }
 
+class SnapshotPublicationBoundaryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SnapshotPublicationBoundaryError";
+  }
+}
+
 type TemporaryCleanup = {
   detail: string;
   unresolved: boolean;
@@ -609,21 +621,6 @@ function quotePath(filePath: string): string {
   return escapeDiagnosticControls(JSON.stringify(filePath));
 }
 
-function assertSnapshotOutputAbsent(outputPath: string): void {
-  try {
-    lstatSync(outputPath);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return;
-    throw new Error(
-      `Could not inspect snapshot output ${quotePath(outputPath)}: ${errorMessage(error)}`,
-      { cause: error },
-    );
-  }
-  throw new Error(
-    `Snapshot output already exists and will not be overwritten: ${quotePath(outputPath)}`,
-  );
-}
-
 function createPrivateSnapshotStage(
   outputPath: string,
   operations: SnapshotOutputOperations,
@@ -645,18 +642,6 @@ function createPrivateSnapshotStage(
     }
   }
   throw new Error(`Could not allocate a unique snapshot staging path for ${quotePath(outputPath)}`);
-}
-
-function ensureSnapshotOutputParent(outputPath: string): void {
-  const parentPath = path.dirname(outputPath);
-  try {
-    mkdirSync(parentPath, { recursive: true, mode: 0o700 });
-  } catch (error) {
-    throw new Error(
-      `Could not create snapshot output directory ${quotePath(parentPath)}: ${errorMessage(error)}`,
-      { cause: error },
-    );
-  }
 }
 
 function sameFile(
@@ -791,18 +776,29 @@ function reconcileLinkFailure(
   throw new Error(`${message}. ${cleanup.detail}.`, { cause });
 }
 
+type SnapshotFinalizationOptions = {
+  beforeLink?: SnapshotOutputOptions["beforeLink"];
+  assertBoundary?: () => void;
+  confirmPublication?: () => void;
+};
+
 function finalizeSnapshotStage(
   temporaryPath: string,
   outputPath: string,
   operations: SnapshotOutputOperations,
-  beforeLink?: SnapshotOutputOptions["beforeLink"],
+  options: SnapshotFinalizationOptions = {},
 ): void {
   try {
-    beforeLink?.(temporaryPath, outputPath);
+    options.beforeLink?.(temporaryPath, outputPath);
+    options.assertBoundary?.();
     operations.link(temporaryPath, outputPath);
   } catch (error) {
+    if (error instanceof SnapshotPublicationBoundaryError) throw error;
+    options.assertBoundary?.();
     reconcileLinkFailure(temporaryPath, outputPath, error, operations);
   }
+
+  options.confirmPublication?.();
 
   const cleanup = removeTemporaryPath(temporaryPath, operations);
   if (cleanup.unresolved) {
@@ -817,9 +813,8 @@ export function writeGitHubSnapshotOutput(
   requestedOutputPath: string,
   options: SnapshotOutputOptions = {},
 ): void {
-  const outputPath = path.resolve(requestedOutputPath);
-  ensureSnapshotOutputParent(outputPath);
-  assertSnapshotOutputAbsent(outputPath);
+  const outputBoundary = prepareProtectedOutputBoundary(requestedOutputPath, "Snapshot");
+  const outputPath = outputBoundary.outputPath;
 
   const operations = {
     ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
@@ -843,7 +838,17 @@ export function writeGitHubSnapshotOutput(
       { cause: error },
     );
   }
-  finalizeSnapshotStage(stage.temporaryPath, outputPath, operations, options.beforeLink);
+  finalizeSnapshotStage(stage.temporaryPath, outputPath, operations, {
+    beforeLink: options.beforeLink,
+    assertBoundary: () => {
+      const boundaryFailure = protectedOutputBoundaryFailure(outputBoundary);
+      if (boundaryFailure) {
+        throw new SnapshotPublicationBoundaryError(
+          `${boundaryFailure}. Preserved invocation-created temporary path ${quotePath(stage.temporaryPath)}`,
+        );
+      }
+    },
+  });
 }
 
 function validUtcDateTime(value: unknown): value is string {
@@ -2579,7 +2584,13 @@ export type SnapshotWorkerResult = {
   receipt?: SnapshotWorkerReceipt;
   failure?: unknown;
 };
-type SnapshotStagingWorkspace = { directory: string; temporaryPath: string };
+type SnapshotStagingWorkspace = {
+  outputBoundary: ProtectedOutputBoundary;
+  directory: string;
+  directoryIdentity: { dev: bigint; ino: bigint };
+  temporaryPath: string;
+  temporaryIdentity?: { dev: bigint; ino: bigint };
+};
 type SnapshotWorkerObservation = {
   wait: Promise<SnapshotWorkerResult>;
   detach: () => void;
@@ -2591,6 +2602,7 @@ type PromiseSettlement<T> =
 
 export type SnapshotCollectorRuntime = {
   outputOperations?: Partial<SnapshotOutputOperations>;
+  beforePublish?: (temporaryPath: string, outputPath: string) => void;
   onWorkerSpawn?: (worker: ChildProcess) => void;
   terminateWorkerTree?: (worker: ChildProcess, signal: SnapshotSignal) => Promise<boolean>;
   treeTerminationTimeoutMilliseconds?: number;
@@ -2600,14 +2612,161 @@ export type SnapshotCollectorRuntime = {
 const TREE_TERMINATION_TIMEOUT_MILLISECONDS = 4_500;
 const WORKER_CLOSE_TIMEOUT_MILLISECONDS = 500;
 
-function createSnapshotStagingWorkspace(outputPath: string): SnapshotStagingWorkspace {
+type SnapshotPathState =
+  | { kind: "present"; metadata: BigIntStats }
+  | { kind: "absent" }
+  | { kind: "unknown"; error: unknown };
+
+function snapshotPathState(filePath: string): SnapshotPathState {
+  try {
+    return { kind: "present", metadata: lstatSync(filePath, { bigint: true }) };
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? { kind: "absent" } : { kind: "unknown", error };
+  }
+}
+
+function snapshotIdentity(metadata: Pick<BigIntStats, "dev" | "ino">): {
+  dev: bigint;
+  ino: bigint;
+} {
+  return { dev: metadata.dev, ino: metadata.ino };
+}
+
+function hasExactSnapshotDirectoryMode(metadata: Pick<BigIntStats, "mode">): boolean {
+  return (metadata.mode & 0o7777n) === 0o700n;
+}
+
+function hasExactSnapshotFileMode(metadata: Pick<BigIntStats, "mode">): boolean {
+  return (metadata.mode & 0o7777n) === 0o600n;
+}
+
+function snapshotPathStateDetail(
+  label: string,
+  filePath: string,
+  state: SnapshotPathState,
+): string {
+  if (state.kind === "present") return `Preserved ${label} ${quotePath(filePath)}`;
+  if (state.kind === "absent") return `${label} is absent ${quotePath(filePath)}`;
+  return `${label} status is unknown for ${quotePath(filePath)}: ${errorMessage(state.error)}`;
+}
+
+function snapshotStagingWorkspaceBoundary(workspace: SnapshotStagingWorkspace): TemporaryCleanup {
+  const parentFailure = protectedOutputBoundaryFailure(workspace.outputBoundary);
+  if (parentFailure) {
+    return {
+      detail: `${parentFailure}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`,
+      unresolved: true,
+    };
+  }
+  const directoryState = snapshotPathState(workspace.directory);
+  if (
+    directoryState.kind !== "present" ||
+    !directoryState.metadata.isDirectory() ||
+    directoryState.metadata.uid !== workspace.outputBoundary.ownerUid ||
+    !hasExactSnapshotDirectoryMode(directoryState.metadata) ||
+    !sameFile(directoryState.metadata, workspace.directoryIdentity)
+  ) {
+    return {
+      detail: `${snapshotPathStateDetail("Possible invocation-created staging directory", workspace.directory, directoryState)}. Snapshot staging-directory boundary is not trusted`,
+      unresolved: true,
+    };
+  }
+  return { detail: "Snapshot staging-directory boundary is trusted", unresolved: false };
+}
+
+function snapshotTemporaryIdentity(
+  workspace: SnapshotStagingWorkspace,
+):
+  | { kind: "present"; identity: { dev: bigint; ino: bigint } }
+  | { kind: "absent" }
+  | { kind: "unresolved"; detail: string } {
+  const temporaryState = snapshotPathState(workspace.temporaryPath);
+  if (temporaryState.kind === "absent") return { kind: "absent" };
+  if (
+    temporaryState.kind !== "present" ||
+    !temporaryState.metadata.isFile() ||
+    temporaryState.metadata.uid !== workspace.outputBoundary.ownerUid ||
+    !hasExactSnapshotFileMode(temporaryState.metadata)
+  ) {
+    return {
+      kind: "unresolved",
+      detail: `${snapshotPathStateDetail("Possible invocation-created temporary path", workspace.temporaryPath, temporaryState)}. Snapshot staging-file ownership is not trusted`,
+    };
+  }
+  const identity = snapshotIdentity(temporaryState.metadata);
+  if (workspace.temporaryIdentity && !sameFile(identity, workspace.temporaryIdentity)) {
+    return {
+      kind: "unresolved",
+      detail: `Snapshot staging-file identity changed. Preserved possible invocation-created temporary path ${quotePath(workspace.temporaryPath)}`,
+    };
+  }
+  return { kind: "present", identity };
+}
+
+function recordSnapshotTemporaryIdentity(workspace: SnapshotStagingWorkspace): void {
+  const boundary = snapshotStagingWorkspaceBoundary(workspace);
+  if (boundary.unresolved) throw new SnapshotPublicationBoundaryError(boundary.detail);
+  const temporary = snapshotTemporaryIdentity(workspace);
+  if (temporary.kind !== "present") {
+    const detail =
+      temporary.kind === "absent"
+        ? `Invocation-created temporary path is absent ${quotePath(workspace.temporaryPath)}`
+        : temporary.detail;
+    throw new SnapshotPublicationBoundaryError(
+      `${detail}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`,
+    );
+  }
+  workspace.temporaryIdentity = temporary.identity;
+}
+
+function confirmSnapshotPublication(
+  workspace: SnapshotStagingWorkspace,
+  outputPath: string,
+  operations: SnapshotOutputOperations,
+): void {
+  recordSnapshotTemporaryIdentity(workspace);
+  const target = fileIdentity(outputPath, operations);
+  if (
+    target.kind !== "present" ||
+    !workspace.temporaryIdentity ||
+    !sameFile(target.identity, workspace.temporaryIdentity)
+  ) {
+    throw new SnapshotPublicationBoundaryError(
+      `Snapshot link completed for ${quotePath(outputPath)}, but publication ownership could not be confirmed. ${pathStateDetail("possible snapshot target", outputPath, target)}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`,
+    );
+  }
+}
+
+function createSnapshotStagingWorkspace(
+  outputBoundary: ProtectedOutputBoundary,
+): SnapshotStagingWorkspace {
+  const outputPath = outputBoundary.outputPath;
   const prefix = path.join(
-    path.dirname(outputPath),
+    outputBoundary.outputParentPath,
     `.${path.basename(outputPath)}.nemoclaw-stage-`,
   );
   try {
     const directory = mkdtempSync(prefix);
-    return { directory, temporaryPath: path.join(directory, "snapshot.json") };
+    const directoryState = snapshotPathState(directory);
+    if (
+      directoryState.kind !== "present" ||
+      !directoryState.metadata.isDirectory() ||
+      directoryState.metadata.uid !== outputBoundary.ownerUid ||
+      !hasExactSnapshotDirectoryMode(directoryState.metadata)
+    ) {
+      throw new SnapshotPublicationBoundaryError(
+        `Snapshot staging directory could not be identified. ${snapshotPathStateDetail("Possible invocation-created staging directory", directory, directoryState)}`,
+      );
+    }
+    const workspace = {
+      outputBoundary,
+      directory,
+      directoryIdentity: snapshotIdentity(directoryState.metadata),
+      temporaryPath: path.join(directory, "snapshot.json"),
+    };
+    const boundary = snapshotStagingWorkspaceBoundary(workspace);
+    if (boundary.unresolved) throw new SnapshotPublicationBoundaryError(boundary.detail);
+    return workspace;
   } catch (error) {
     throw new Error(
       `Could not create private snapshot staging directory from ${quotePath(prefix)}: ${errorMessage(error)}`,
@@ -2620,37 +2779,57 @@ function cleanupStagingWorkspace(
   workspace: SnapshotStagingWorkspace,
   operations: SnapshotOutputOperations,
 ): TemporaryCleanup {
-  const temporary = removeTemporaryPath(workspace.temporaryPath, operations);
-  if (temporary.unresolved) {
+  const boundary = snapshotStagingWorkspaceBoundary(workspace);
+  if (boundary.unresolved) return boundary;
+  const temporary = snapshotTemporaryIdentity(workspace);
+  if (temporary.kind === "unresolved") {
     return {
-      detail: `${temporary.detail}. Preserved invocation-created staging directory ${quotePath(workspace.directory)} because its temporary path remains unresolved`,
+      detail: `${temporary.detail}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`,
       unresolved: true,
     };
   }
+  let temporaryDetail = `Invocation-created temporary path is absent ${quotePath(workspace.temporaryPath)}`;
+  if (temporary.kind === "present") {
+    workspace.temporaryIdentity ??= temporary.identity;
+    const removal = removeTemporaryPath(workspace.temporaryPath, operations);
+    if (removal.unresolved) {
+      return {
+        detail: `${removal.detail}. Preserved invocation-created staging directory ${quotePath(workspace.directory)} because its temporary path remains unresolved`,
+        unresolved: true,
+      };
+    }
+    temporaryDetail = removal.detail;
+  }
+  const finalBoundary = snapshotStagingWorkspaceBoundary(workspace);
+  if (finalBoundary.unresolved) return finalBoundary;
   try {
     rmdirSync(workspace.directory);
     return {
-      detail: `${temporary.detail}. Removed invocation-created staging directory ${quotePath(workspace.directory)}`,
+      detail: `${temporaryDetail}. Removed invocation-created staging directory ${quotePath(workspace.directory)}`,
       unresolved: false,
     };
   } catch (error) {
     return {
-      detail: `${temporary.detail}. Unresolved invocation-created staging directory ${quotePath(workspace.directory)}: ${errorMessage(error)}`,
+      detail: `${temporaryDetail}. Unresolved invocation-created staging directory ${quotePath(workspace.directory)}: ${errorMessage(error)}`,
       unresolved: true,
     };
   }
 }
 
 function stagingWorkspaceState(workspace: SnapshotStagingWorkspace): string {
-  const temporary = fileIdentity(workspace.temporaryPath, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
-  return `${pathStateDetail("invocation-created temporary path", workspace.temporaryPath, temporary)}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`;
+  const temporary = snapshotPathState(workspace.temporaryPath);
+  return `${snapshotPathStateDetail("Invocation-created temporary path", workspace.temporaryPath, temporary)}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`;
 }
 
 function cleanupWorkspaceAfterFinalization(workspace: SnapshotStagingWorkspace): TemporaryCleanup {
-  const temporary = fileIdentity(workspace.temporaryPath, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
+  const boundary = snapshotStagingWorkspaceBoundary(workspace);
+  if (boundary.unresolved) return boundary;
+  const temporary = snapshotPathState(workspace.temporaryPath);
   if (temporary.kind !== "absent") {
     return { detail: stagingWorkspaceState(workspace), unresolved: true };
   }
+  const finalBoundary = snapshotStagingWorkspaceBoundary(workspace);
+  if (finalBoundary.unresolved) return finalBoundary;
   try {
     rmdirSync(workspace.directory);
     return {
@@ -2874,9 +3053,15 @@ function runSnapshotWorker(options: CliOptions): void {
   if (!path.isAbsolute(options.snapshotWorkerPath)) {
     throw new Error("The supervised snapshot staging path must be absolute");
   }
-  const snapshot = collectGitHubSnapshot(options);
-  const descriptor = DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS.open(
+  const stagingBoundary = prepareProtectedOutputBoundary(
     options.snapshotWorkerPath,
+    "GitHub snapshot staging",
+  );
+  const snapshot = collectGitHubSnapshot(options);
+  const boundaryFailure = protectedOutputBoundaryFailure(stagingBoundary);
+  if (boundaryFailure) throw new SnapshotPublicationBoundaryError(boundaryFailure);
+  const descriptor = DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS.open(
+    stagingBoundary.outputPath,
     fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0),
     0o600,
   );
@@ -2895,9 +3080,8 @@ export async function runGitHubSnapshotCollector(
     return;
   }
   if (!options.output) throw new Error("--output is required");
-  const outputPath = path.resolve(options.output);
-  ensureSnapshotOutputParent(outputPath);
-  assertSnapshotOutputAbsent(outputPath);
+  const outputBoundary = prepareProtectedOutputBoundary(options.output, "Snapshot");
+  const outputPath = outputBoundary.outputPath;
   const outputOperations = {
     ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
     ...runtime.outputOperations,
@@ -2932,7 +3116,7 @@ export async function runGitHubSnapshotCollector(
   try {
     await new Promise<void>((resolve) => setImmediate(resolve));
     if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "setup");
-    workspace = createSnapshotStagingWorkspace(outputPath);
+    workspace = createSnapshotStagingWorkspace(outputBoundary);
     await new Promise<void>((resolve) => setImmediate(resolve));
     if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "setup");
 
@@ -2977,10 +3161,17 @@ export async function runGitHubSnapshotCollector(
     workerTreeConfirmed = true;
     activeWorker = undefined;
     if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "collection");
+    recordSnapshotTemporaryIdentity(workspace);
+    const completedWorkspace = workspace;
 
     finalizationStarted = true;
     try {
-      finalizeSnapshotStage(workspace.temporaryPath, outputPath, outputOperations);
+      finalizeSnapshotStage(completedWorkspace.temporaryPath, outputPath, outputOperations, {
+        beforeLink: runtime.beforePublish,
+        assertBoundary: () => recordSnapshotTemporaryIdentity(completedWorkspace),
+        confirmPublication: () =>
+          confirmSnapshotPublication(completedWorkspace, outputPath, outputOperations),
+      });
     } catch (error) {
       const workspaceState = cleanupWorkspaceAfterFinalization(workspace);
       throw new Error(`${errorMessage(error)}. ${workspaceState.detail}.`, {

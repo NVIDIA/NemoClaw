@@ -350,7 +350,7 @@ function ajvFinding(error: ErrorObject): ValidationFinding {
   const location = error.instancePath || "/";
   return finding(
     "SCHEMA_INVALID",
-    `${location} ${error.message ?? "does not match the slide-model schema"}`,
+    `${location} [${error.keyword}] ${error.message ?? "does not match the slide-model schema"}`,
     "Correct the source model and rebuild it before rendering.",
   );
 }
@@ -1424,10 +1424,16 @@ export function validateSlideModel(
   let calculatedHash: string | null = null;
   let invariantErrors: ValidationFinding[] = [];
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    calculatedHash = calculateModelSha256(value);
-    invariantErrors = structuralFindings(value as Record<string, unknown>, calculatedHash);
-    if (mode === "publish") {
-      invariantErrors.push(...publicationInvariantFindings(value as Record<string, unknown>));
+    try {
+      calculatedHash = calculateModelSha256(value);
+      invariantErrors = structuralFindings(value as Record<string, unknown>, calculatedHash);
+      if (mode === "publish") {
+        invariantErrors.push(...publicationInvariantFindings(value as Record<string, unknown>));
+      }
+    } catch (error) {
+      if (schemaValid) throw error;
+      calculatedHash = null;
+      invariantErrors = [];
     }
   }
   const errors = [...schemaErrors, ...invariantErrors];

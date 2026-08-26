@@ -1033,6 +1033,24 @@ Add the exact artifact and readback bindings from the [parity receipt](#parity-r
 
 ## Publish PowerPoint
 
+Create a new owner-only directory for the published deck before creating its approval and
+validation evidence:
+
+```bash
+PUBLISH_OUTPUT_DIR="/absolute/path/to/new-product-slides-publication-directory"
+unset PUBLISH_OUTPUT
+mkdir -m 700 "$PUBLISH_OUTPUT_DIR" &&
+  PUBLISH_OUTPUT_DIR="$(cd "$PUBLISH_OUTPUT_DIR" && pwd -P)" &&
+  PUBLISH_OUTPUT="$PUBLISH_OUTPUT_DIR/product-slides-published.pptx"
+```
+
+The directory path must be absent before `mkdir`.
+Create it outside the checkout and `SLIDE_RUN`, under a parent that another account cannot modify.
+Do not reuse or change the permissions of an existing directory.
+The publication parent must remain owned by the invoking account with mode `0700`.
+Use the exact normalized `$PUBLISH_OUTPUT` value in the validation evidence and approval.
+The published deck then remains after routine `SLIDE_RUN` cleanup.
+
 Publish only after all of these conditions are true:
 
 - the user approved the exact output path and evidence hashes;
@@ -1090,7 +1108,7 @@ TMP_DIR="$TMP_DIR" \
   --template-workspace "$PUBLISH_TEMPLATE_WORKSPACE" \
   --template-frame-map "$PUBLISH_TEMPLATE_WORKSPACE/template-frame-map.json" \
   --role-map "$SLIDE_RUN/pptx-role-map.json" \
-  --output "/absolute/path/to/product-slides-published.pptx" \
+  --output "$PUBLISH_OUTPUT" \
   --preview-dir "$SLIDE_RUN/published-preview-images" \
   --layout-dir "$SLIDE_RUN/published-layout-readback" \
   --readback "$SLIDE_RUN/published-pptx-readback.json" \

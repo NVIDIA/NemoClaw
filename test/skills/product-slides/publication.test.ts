@@ -563,6 +563,58 @@ describe("NemoClaw product slide refresh and publication contracts", () => {
     }
   });
 
+  it("reports a null slide as a PowerPoint schema failure", () => {
+    const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
+    const model = buildSyntheticModel();
+    model.slides = [null];
+
+    expect(() => validatePptxModel(model, schema, "preview")).toThrow(
+      /schema validation failed: .*\/slides\/0 \[type\]/u,
+    );
+  });
+
+  it("reports a calendar-overflow timestamp as a PowerPoint schema failure", () => {
+    const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
+    const model = buildSyntheticModel();
+    const timestamp = "2026-02-30T00:00:00.000Z";
+    expect(Number.isNaN(Date.parse(timestamp))).toBe(false);
+    model.asOf = timestamp;
+    model.modelSha256 = calculateModelSha256(model);
+
+    expect(() => validatePptxModel(model, schema, "preview")).toThrow(
+      /schema validation failed.*format/u,
+    );
+  });
+
+  it("reports a model hash mismatch in the PowerPoint entrypoint", () => {
+    const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
+    const model = buildSyntheticModel();
+    model.modelSha256 = "0".repeat(64);
+
+    expect(() => validatePptxModel(model, schema, "preview")).toThrow("Slide model hash mismatch");
+  });
+
+  it("requires an eligible model for PowerPoint publication", () => {
+    const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
+    const model = buildSyntheticModel();
+    model.publication = {
+      eligible: false,
+      blockers: [
+        {
+          code: "SYNTHETIC_BLOCKER",
+          message: "Synthetic publication blocker.",
+          remediation: "Resolve the synthetic blocker.",
+        },
+      ],
+      findings: [],
+    };
+    model.modelSha256 = calculateModelSha256(model);
+
+    expect(() => validatePptxModel(model, schema, "publish")).toThrow(
+      "Publication requires an eligible shared model",
+    );
+  });
+
   it("requires every frozen model source for PowerPoint publication", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-publish-sources-"));
     try {

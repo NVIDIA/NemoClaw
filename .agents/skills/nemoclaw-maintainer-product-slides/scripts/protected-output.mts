@@ -19,8 +19,16 @@ import {
 import type { BigIntStats } from "node:fs";
 import path from "node:path";
 
-type FileIdentity = { dev: bigint; ino: bigint };
+export type ProtectedOutputIdentity = { dev: bigint; ino: bigint };
+type FileIdentity = ProtectedOutputIdentity;
 type FileMetadata = BigIntStats;
+
+export type ProtectedOutputBoundary = {
+  outputPath: string;
+  outputParentPath: string;
+  outputParentIdentity: ProtectedOutputIdentity;
+  ownerUid: bigint;
+};
 
 type PathState =
   | { kind: "present"; metadata: FileMetadata }
@@ -236,16 +244,23 @@ function canonicalOutputPath(requestedOutputPath: string): string {
   return path.join(canonicalParent, path.basename(resolvedPath));
 }
 
-export function assertProtectedOutputAbsent(
+export function prepareProtectedOutputBoundary(
   requestedOutputPath: string,
   artifactName: string,
-): string {
+): ProtectedOutputBoundary {
   const outputPath = canonicalOutputPath(requestedOutputPath);
-  trustedOutputParent(outputPath);
+  const outputParent = trustedOutputParent(outputPath);
   try {
     lstatSync(outputPath);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") return outputPath;
+    if (errorCode(error) === "ENOENT") {
+      return {
+        outputPath,
+        outputParentPath: outputParent.directoryPath,
+        outputParentIdentity: outputParent.directoryIdentity,
+        ownerUid: outputParent.ownerUid,
+      };
+    }
     throw new Error(
       `Could not inspect ${artifactName} output ${quotePath(outputPath)}: ${errorMessage(error)}`,
     );
@@ -253,6 +268,29 @@ export function assertProtectedOutputAbsent(
   throw new Error(
     `${artifactName} output already exists and will not be overwritten: ${quotePath(outputPath)}`,
   );
+}
+
+export function protectedOutputBoundaryFailure(boundary: ProtectedOutputBoundary): string | null {
+  let currentParent: ReturnType<typeof trustedOutputParent>;
+  try {
+    currentParent = trustedOutputParent(boundary.outputPath);
+  } catch (error) {
+    return `Protected output parent is no longer trusted: ${errorMessage(error)}`;
+  }
+  if (
+    currentParent.ownerUid !== boundary.ownerUid ||
+    !sameFile(currentParent.directoryIdentity, boundary.outputParentIdentity)
+  ) {
+    return `Protected output parent identity changed: ${quotePath(boundary.outputParentPath)}`;
+  }
+  return null;
+}
+
+export function assertProtectedOutputAbsent(
+  requestedOutputPath: string,
+  artifactName: string,
+): string {
+  return prepareProtectedOutputBoundary(requestedOutputPath, artifactName).outputPath;
 }
 
 function createStagingWorkspace(
