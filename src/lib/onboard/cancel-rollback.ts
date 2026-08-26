@@ -31,7 +31,10 @@ export interface SandboxCancelRollbackDeps {
   /** Delete the OpenShell sandbox container. Returns true when the delete succeeded. */
   deleteSandboxContainer(sandboxName: string, gatewayName?: string): boolean;
   /** Prove a pending create checkpoint immediately before its name-based delete. */
-  prepareSandboxContainerDeletion?(sandboxName: string): { readonly gatewayName: string } | null;
+  prepareSandboxContainerDeletion?(sandboxName: string): {
+    readonly gatewayName: string;
+    readonly sandboxIdentityFingerprint: string;
+  } | null;
   /** Remove the sandbox entry from the NemoClaw registry (clears default). */
   removeSandboxFromRegistry(sandboxName: string): void;
   /**
@@ -60,6 +63,7 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   deleteSucceeded: boolean,
+  sandboxIdentityFingerprint?: string,
 ): string[] {
   if (deleteSucceeded) {
     return [
@@ -69,9 +73,14 @@ export function buildCancelRollbackMessage(
   }
   return [
     "",
-    `  Onboarding cancelled — unregistered incomplete sandbox '${sandboxName}'.`,
-    "  The sandbox container may still be running. Remove it with:",
-    `    openshell sandbox delete "${sandboxName}"`,
+    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because OpenShell did not confirm its deletion.`,
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
+          "  Preserve this fingerprint and give it to an OpenShell administrator for identity-bound recovery.",
+        ]
+      : ["  Preserve its registry and onboarding recovery state for identity-bound recovery."]),
+    "  Do not delete this sandbox by mutable sandbox name.",
   ];
 }
 
@@ -118,7 +127,10 @@ export function installSandboxCancelRollback(
       ) {
         throw new Error("pending sandbox policy verification identity changed");
       }
-      return { gatewayName: checkpoint.gatewayName };
+      return {
+        gatewayName: checkpoint.gatewayName,
+        sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      };
     },
     deleteSandboxContainer: (name, gatewayName) =>
       opts.runOpenshell(
@@ -181,7 +193,10 @@ export function createSandboxCancelRollback(
       const sandboxName = armedSandboxName;
       armedSandboxName = null;
 
-      let deletionAuthority: { readonly gatewayName: string } | null = null;
+      let deletionAuthority: {
+        readonly gatewayName: string;
+        readonly sandboxIdentityFingerprint: string;
+      } | null = null;
       try {
         deletionAuthority = deps.prepareSandboxContainerDeletion?.(sandboxName) ?? null;
       } catch {
@@ -192,16 +207,28 @@ export function createSandboxCancelRollback(
         return;
       }
 
-      // Delete the container first, then unregister regardless of the delete
-      // result — leaving a registry entry pointing at a half-built sandbox is
-      // worse than an orphaned container the operator can clean up manually.
-      const deleteSucceeded = deletionAuthority
-        ? deps.deleteSandboxContainer(sandboxName, deletionAuthority.gatewayName)
-        : deps.deleteSandboxContainer(sandboxName);
+      let deleteSucceeded = false;
+      try {
+        deleteSucceeded = deletionAuthority
+          ? deps.deleteSandboxContainer(sandboxName, deletionAuthority.gatewayName)
+          : deps.deleteSandboxContainer(sandboxName);
+      } catch {
+        deleteSucceeded = false;
+      }
+      if (!deleteSucceeded) {
+        for (const line of buildCancelRollbackMessage(
+          sandboxName,
+          false,
+          deletionAuthority?.sandboxIdentityFingerprint,
+        )) {
+          deps.log(line);
+        }
+        return;
+      }
       deps.removeSandboxFromRegistry(sandboxName);
       // Discard the aborted session so `nemoclaw list` recovery doesn't resurrect it.
       deps.clearOnboardSession();
-      for (const line of buildCancelRollbackMessage(sandboxName, deleteSucceeded)) {
+      for (const line of buildCancelRollbackMessage(sandboxName, true)) {
         deps.log(line);
       }
     },
