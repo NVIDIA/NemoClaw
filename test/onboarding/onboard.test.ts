@@ -1011,7 +1011,7 @@ catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
       reference: image + "@" + digest,
       source: {
         repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-        revision: "a".repeat(40),
+        revision: process.env.NEMOCLAW_E2E_EXPECTED_SHA?.trim() || "a".repeat(40),
         release,
         cohort: "ghrun-9068-1",
       },
