@@ -3391,7 +3391,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   if (!livePolicy) {
     console.warn(
       `  Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
-        `'${authority.gatewayName}'; credential-bound messaging routes will be omitted.`,
+        `'${authority.gatewayName}'; credential-bound messaging routes cannot be verified.`,
     );
   }
   const composedPolicy = composeCredentialBoundMessagingPolicies(

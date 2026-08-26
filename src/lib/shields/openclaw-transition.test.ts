@@ -647,7 +647,8 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       `sandbox '${sandboxName}', channel 'slack': ` +
         "the live policy credential-provider set is partial or mismatched; expected 2, found 1. " +
         "Recovery: " +
-        `run \`nemoclaw ${sandboxName} channels add slack\` and choose rebuild when prompted.`,
+        `run \`nemoclaw ${sandboxName} channels add slack\`; approve the rebuild prompt in an ` +
+        `interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in non-interactive mode.`,
     );
   });
 

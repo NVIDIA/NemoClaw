@@ -248,7 +248,9 @@ describe("applyPermissivePolicy", () => {
       expect(observed.result.stderr).toContain(
         `sandbox '${sandboxName}', channel 'telegram': ` +
           "the live policy has no credential providers; expected 1. Recovery: " +
-          `run \`nemoclaw ${sandboxName} channels add telegram\` and choose rebuild when prompted.`,
+          `run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild prompt in ` +
+          `an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
+          "non-interactive mode.",
       );
       expect(observed.result.stderr).not.toContain("channel 'slack'");
     } finally {
@@ -256,23 +258,52 @@ describe("applyPermissivePolicy", () => {
     }
   });
 
-  it("reports an unreadable live policy before omitting credential-bound routes (#10153)", () => {
+  it("rejects an unreadable live policy when the channel plan is unavailable (#10153)", () => {
     const sandboxName = "unreadable-openclaw";
     const observed = runPermissivePolicy({
       agent: "openclaw",
+      expectPolicySet: false,
       livePolicyStatus: 23,
       policySetStatus: 0,
       sandboxName,
     });
     try {
-      expect(observed.result.status).toBe(0);
+      expect(observed.result.status).not.toBe(0);
       expect(observed.result.stderr).toContain(
         `Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
-          "'nemoclaw'; credential-bound messaging routes will be omitted.",
+          "'nemoclaw'; credential-bound messaging routes cannot be verified.",
       );
-      const policy = YAML.parse(observed.policy);
-      expect(policy.network_policies.telegram_bot).toBeUndefined();
-      expect(policy.network_policies.slack).toBeUndefined();
+      expect(observed.result.stderr).toContain(
+        `run \`nemoclaw ${sandboxName} channels add <channel>\`; approve the rebuild prompt in ` +
+          `an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
+          "non-interactive mode.",
+      );
+    } finally {
+      observed.cleanup();
+    }
+  });
+
+  it("rejects a live credential-free route when the channel plan is unavailable (#10153)", () => {
+    const sandboxName = "missing-free-route";
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      expectPolicySet: false,
+      livePolicy: YAML.stringify({
+        network_policies: {
+          whatsapp: { endpoints: [{ host: "web.whatsapp.com", port: 443 }] },
+        },
+      }),
+      policySetStatus: 0,
+      sandboxName,
+    });
+    try {
+      expect(observed.result.status).not.toBe(0);
+      expect(observed.result.stderr).toContain(
+        `sandbox '${sandboxName}', channel 'whatsapp' because the channel plan is unavailable. ` +
+          `Recovery: run \`nemoclaw ${sandboxName} channels add whatsapp\`; approve the rebuild ` +
+          `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
+          "afterward in non-interactive mode.",
+      );
     } finally {
       observed.cleanup();
     }
@@ -297,8 +328,9 @@ describe("applyPermissivePolicy", () => {
       expect(observed.result.status).not.toBe(0);
       expect(observed.result.stderr).toContain(
         `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
-          `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\` and choose rebuild ` +
-          "when prompted.",
+          `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild ` +
+          `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
+          "afterward in non-interactive mode.",
       );
     } finally {
       observed.cleanup();

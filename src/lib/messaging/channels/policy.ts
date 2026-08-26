@@ -201,13 +201,30 @@ function removeMessagingPolicy(
   }
 }
 
+function messagingRouteRecoveryAction(sandboxName: string, channelId: string): string {
+  return (
+    `run \`nemoclaw ${sandboxName} channels add ${channelId}\`; approve the rebuild prompt ` +
+    `in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
+    "non-interactive mode"
+  );
+}
+
+function livePolicyContainsMessagingRoute(
+  networkPolicies: Record<string, unknown>,
+  policy: MessagingPolicy,
+): boolean {
+  return [...new Set([policy.presetName, ...policy.policyKeys])].some((policyName) =>
+    Object.hasOwn(networkPolicies, policyName),
+  );
+}
+
 /**
  * Compose every enabled messaging route from its channel-owned policy. Routes
  * with credential bindings require the exact provider set in the live policy;
  * routes without bindings do not. A missing plan rejects the transition when
- * the live policy still carries a messaging provider. Disabled channels and
- * missing, partial, or mismatched provider state omit the route instead of
- * submitting unresolved bindings.
+ * the live policy is unreadable or carries any messaging route. Disabled
+ * channels and missing, partial, or mismatched provider state omit the route
+ * instead of submitting unresolved bindings.
  */
 export function composeCredentialBoundMessagingPolicies(
   targetPolicyYaml: string,
@@ -231,23 +248,32 @@ export function composeCredentialBoundMessagingPolicies(
     throw new Error("Credential-bound messaging target policy must contain network_policies");
   }
   const networkPolicies = targetPolicies as Record<string, unknown>;
+  if (enabledChannels === null) {
+    const liveNetworkPolicies = objectRecord(live?.network_policies);
+    if (!liveNetworkPolicies) {
+      throw new Error(
+        `Cannot compose messaging routes for sandbox '${sandboxName}' because the channel plan ` +
+          `is unavailable and the live policy could not be read. Recovery: ` +
+          `${messagingRouteRecoveryAction(sandboxName, "<channel>")}.`,
+      );
+    }
+    const liveMessagingPolicy = messagingPolicies.find((policy) =>
+      livePolicyContainsMessagingRoute(liveNetworkPolicies, policy),
+    );
+    if (liveMessagingPolicy) {
+      const channelId = normalizeMessagingChannelId(liveMessagingPolicy.channelId);
+      throw new Error(
+        `Cannot compose the messaging route for sandbox '${sandboxName}', channel ` +
+          `'${channelId}' because the channel plan is unavailable. Recovery: ` +
+          `${messagingRouteRecoveryAction(sandboxName, channelId)}.`,
+      );
+    }
+    for (const policy of messagingPolicies) removeMessagingPolicy(networkPolicies, policy);
+    return YAML.stringify(target);
+  }
   for (const policy of messagingPolicies) {
     const channelId = normalizeMessagingChannelId(policy.channelId);
     const materializedPolicy = loadMaterializedMessagingPolicy(policy, sandboxName, agent);
-    if (enabledChannels === null) {
-      const liveProviderCount = listNetworkPolicyCredentialProviders(live, policy.policyKeys).size;
-      const routeUsesCredentialBindings =
-        materializedPolicy === null || materializedPolicy.credentialProviders.size > 0;
-      if (routeUsesCredentialBindings && liveProviderCount > 0) {
-        throw new Error(
-          `Cannot compose the credential-bound messaging route for sandbox '${sandboxName}', ` +
-            `channel '${channelId}' because the channel plan is unavailable. Recovery: run ` +
-            `\`nemoclaw ${sandboxName} channels add ${channelId}\` and choose rebuild when prompted.`,
-        );
-      }
-      removeMessagingPolicy(networkPolicies, policy);
-      continue;
-    }
     const channelEnabled = enabledChannels.has(channelId);
     if (!channelEnabled) {
       removeMessagingPolicy(networkPolicies, policy);
@@ -263,9 +289,7 @@ export function composeCredentialBoundMessagingPolicies(
       reportOmission?.({
         channelId,
         reason: providerReason ?? "the channel policy could not be materialized",
-        recoveryAction:
-          `run \`nemoclaw ${sandboxName} channels add ${channelId}\` ` +
-          "and choose rebuild when prompted",
+        recoveryAction: messagingRouteRecoveryAction(sandboxName, channelId),
       });
     } else {
       Object.assign(networkPolicies, materializedPolicy.networkPolicies);

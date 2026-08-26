@@ -54,13 +54,22 @@ const MESSAGING_PERMISSIVE_BY_AGENT: Record<MessagingAgentId, string> = {
   openclaw: OPENCLAW_MESSAGING_PERMISSIVE,
 };
 
-const CREDENTIAL_FREE_ROUTE_CASES = [
+const SHIELDS_CREDENTIAL_FREE_ROUTE_CASES = [
   ["whatsapp", "enabled", true],
   ["whatsapp", "disabled", false],
-  ["googlechat", "enabled", true],
-  ["googlechat", "disabled", false],
-  ["teams", "enabled", true],
-  ["teams", "disabled", false],
+] as const;
+
+const MISSING_PLAN_SHIELDS_CASES = [
+  [
+    "a live credential-free WhatsApp route",
+    YAML.stringify({
+      network_policies: {
+        whatsapp: { endpoints: [{ host: "web.whatsapp.com", port: 443 }] },
+      },
+    }),
+    "channel 'whatsapp'",
+  ],
+  ["an unreadable live policy", "", "the live policy could not be read"],
 ] as const;
 
 const SLACK_PROVIDER_CASES = (["openclaw", "hermes"] as const).flatMap((agent) => {
@@ -281,7 +290,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
-  it.each(CREDENTIAL_FREE_ROUTE_CASES)(
+  it.each(SHIELDS_CREDENTIAL_FREE_ROUTE_CASES)(
     "keeps the OpenClaw %s route %s in Shields down (#10153)",
     (channelId, _state, enabled) => {
       let stagedPolicy = "";
@@ -303,6 +312,28 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       });
       const policies = YAML.parse(stagedPolicy).network_policies;
       expect(policies[channelId] !== undefined).toBe(enabled);
+    },
+  );
+
+  it.each(MISSING_PLAN_SHIELDS_CASES)(
+    "rejects Shields down without staging when the plan is unavailable with %s (#10153)",
+    (_case, livePolicyYaml, expectedFailure) => {
+      const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+      let failure = "";
+      try {
+        buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
+          livePolicyYaml,
+          messagingAgent: "openclaw",
+          messagingPlan: null,
+          readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+          sandboxName: "missing-plan",
+          writeTempPolicy,
+        });
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      expect(failure).toContain(expectedFailure);
+      expect(writeTempPolicy).not.toHaveBeenCalled();
     },
   );
 
