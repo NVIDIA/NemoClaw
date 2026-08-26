@@ -129,6 +129,8 @@ export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSe
   readonly profiles?: readonly MessagingBridgeProfile[];
   /** Injected for tests; defaults to a synchronous wait. */
   readonly sleep?: (milliseconds: number) => void;
+  /** Injected for tests; defaults to `Date.now`. */
+  readonly now?: () => number;
 }
 
 // Result of gateway-refresh configuration. `ok:false` when a bridge token def is
@@ -600,6 +602,9 @@ function buildRefreshMaterial(
 //   and it reads as a channel auth failure rather than an onboarding order bug.
 const BRIDGE_MINT_POLL_ATTEMPTS = 50;
 const BRIDGE_MINT_POLL_INTERVAL_MS = 3_000;
+const BRIDGE_MINT_STATUS_TIMEOUT_MS = 15_000;
+// Attempts alone do not bound the wait: each probe also spends command time.
+const BRIDGE_MINT_DEADLINE_MS = 300_000;
 const BRIDGE_MINT_STATUS_REFRESHED = "refreshed";
 const ANSI_STYLE_PATTERN = /\u001B\[[0-9;]*m/g;
 
@@ -633,17 +638,28 @@ function waitForMintedBridgeCredential(
   deps: ConfigureMessagingBridgeRefreshesDeps,
 ): MessagingBridgeRefreshResult {
   const sleep = deps.sleep ?? sleepSync;
+  const now = deps.now ?? (() => Date.now());
   // The mint runs on the gateway's own sweep, so this can sit for a minute.
   (deps.log ?? console.error)(`  Waiting for the gateway to mint ${credentialKey}…`);
+  const deadline = now() + BRIDGE_MINT_DEADLINE_MS;
   let status = "";
-  for (let attempt = 0; attempt < BRIDGE_MINT_POLL_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < BRIDGE_MINT_POLL_ATTEMPTS && now() < deadline; attempt += 1) {
     const result = deps.runOpenshell(
       ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
       // suppressOutput: the runner re-emits piped child output; without it every
       // poll reprints the whole status table into the onboarding transcript.
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
+        timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
+      },
     );
-    status = refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey);
+    // A nonzero probe can still print a stale table; only trust a clean read.
+    status =
+      result.status === 0
+        ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
+        : "";
     if (status === BRIDGE_MINT_STATUS_REFRESHED) return { ok: true };
     sleep(BRIDGE_MINT_POLL_INTERVAL_MS);
   }

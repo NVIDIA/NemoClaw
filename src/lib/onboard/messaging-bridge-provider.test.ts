@@ -395,6 +395,66 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("configured");
   });
+
+  it("rejects a refreshed row printed by a failed status command", () => {
+    // A nonzero probe can still print a stale table; trusting it would create
+    // the sandbox against an unminted credential.
+    const runOpenshell = vi.fn((args: string[], _opts: unknown) => ({
+      status: args[1] === "refresh" && args[2] === "status" ? 1 : 0,
+      stdout: MINTED_STATUS_TABLE,
+    }));
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("unknown");
+  });
+
+  it("stops at the overall deadline when each probe burns command time", () => {
+    // Attempts alone do not bound the wait: a hanging probe spends its own time.
+    let clock = 0;
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => {
+      clock += 60_000;
+      return { status: 0, stdout: PENDING_STATUS_TABLE };
+    });
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+      now: () => clock,
+    });
+    expect(result.ok).toBe(false);
+    // Six probes at a minute each cross the five-minute deadline well before
+    // the fifty-attempt cap.
+    expect(
+      runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length,
+    ).toBeLessThan(10);
+  });
+
+  it("bounds each status probe with a command timeout", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: MINTED_STATUS_TABLE,
+    }));
+    configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    const statusCall = runOpenshell.mock.calls.find((call) => call[0][2] === "status");
+    expect(statusCall?.[1]).toMatchObject({ timeout: 15_000 });
+  });
 });
 
 describe("refreshStatusForCredential", () => {
