@@ -454,10 +454,16 @@ export function resolveOnboardOptions(
   const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
-  try {
-    toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
-  } catch (error) {
-    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  if (experimentalProfile && flags["tool-disclosure"] === undefined) {
+    // The hosted installer exports the generic default. Fresh Portable owns
+    // direct disclosure, while resume keeps the recorded sandbox selection.
+    toolDisclosure = resume ? null : "direct";
+  } else {
+    try {
+      toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+    } catch (error) {
+      fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   return {

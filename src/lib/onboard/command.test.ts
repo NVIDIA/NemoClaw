@@ -426,7 +426,40 @@ describe("onboard command options", () => {
       noOllamaAutostart: true,
       noGpu: false,
       sandboxGpu: null,
+      toolDisclosure: "direct",
     });
+  });
+
+  it("uses direct disclosure for fresh Portable when the installer exports its generic default (#9211)", async () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_TOOL_DISCLOSURE: "progressive" };
+    const observed: Array<string | null> = [];
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => null,
+      runOnboard: async (options) => {
+        observed.push(options.toolDisclosure);
+      },
+    });
+
+    expect(observed).toEqual(["direct"]);
+    expect(env.NEMOCLAW_TOOL_DISCLOSURE).toBe("progressive");
+  });
+
+  it("keeps an explicit Portable disclosure selection and defers resume to durable state (#9211)", () => {
+    const env = { NEMOCLAW_TOOL_DISCLOSURE: "progressive" };
+
+    expect(
+      resolve({ "experimental-profile": "portable", "tool-disclosure": "progressive" }, { env })
+        .toolDisclosure,
+    ).toBe("progressive");
+    expect(
+      resolve(
+        { "experimental-profile": "portable", resume: true },
+        { env, resumeIntent: { effectiveResume: true, snapshot: null } },
+      ).toolDisclosure,
+    ).toBeNull();
   });
 
   it("allows an exact portable checkpoint profile on resume (#9035)", () => {
