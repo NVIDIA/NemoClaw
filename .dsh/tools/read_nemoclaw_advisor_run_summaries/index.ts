@@ -56,7 +56,13 @@ export default async function read_nemoclaw_advisor_run_summaries(input: {
   const failures = [];
   for (const raw of selected) {
     const artifactId = Number(raw.id ?? 0);
-    const artifactName = String(raw.name ?? "").slice(0, 300);
+    const projectedArtifactName = await tools.project_diagnostic_text({
+      lines: [String(raw.name ?? "")],
+      maxLines: 1,
+      maxCharacters: 300,
+      maxLineCharacters: 300,
+    });
+    const artifactName = projectedArtifactName.text.replaceAll("\n", " ");
     if (!Number.isSafeInteger(artifactId) || artifactId < 1 || raw.expired) {
       failures.push({
         artifactId: Number.isSafeInteger(artifactId) ? artifactId : 0,
@@ -99,7 +105,12 @@ for entry in "\${entries[@]}"; do
   esac
 done
 [ -n "\$summary" ] || { echo 'artifact has no summary Markdown file' >&2; exit 24; }
+set +e
 unzip -p "\$zip" "\$summary" | head -c ${maxCharacters + 1} > "\$tmp/summary"
+pipe_status=("\${PIPESTATUS[@]}")
+set -e
+[ "\${pipe_status[1]}" -eq 0 ] || exit "\${pipe_status[1]}"
+[ "\${pipe_status[0]}" -eq 0 ] || [ "\${pipe_status[0]}" -eq 141 ] || exit "\${pipe_status[0]}"
 printf '%s\n' "\$summary"
 base64 -w 0 "\$tmp/summary"`;
     const result = await tools.bash({
@@ -133,7 +144,13 @@ base64 -w 0 "\$tmp/summary"`;
       });
       continue;
     }
-    const entry = result.stdout.text.slice(0, newline).slice(0, 1000);
+    const projectedEntry = await tools.project_diagnostic_text({
+      lines: [result.stdout.text.slice(0, newline)],
+      maxLines: 1,
+      maxCharacters: 1000,
+      maxLineCharacters: 1000,
+    });
+    const entry = projectedEntry.text.replaceAll("\n", " ");
     let decoded = "";
     try {
       decoded = Buffer.from(result.stdout.text.slice(newline + 1).trim(), "base64").toString(
