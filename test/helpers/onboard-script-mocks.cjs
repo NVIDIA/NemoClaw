@@ -469,6 +469,10 @@ function mockManagedImageCatalog() {
   const contract = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/contract.ts"),
   );
+  const { getBuildIdentity } = require(path.resolve(__dirname, "../../src/lib/core/version.ts"));
+  const sourceRevision = getBuildIdentity({
+    rootDir: path.resolve(__dirname, "../.."),
+  }).sourceRevision;
   catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
     Object.fromEntries(
       contract.SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
@@ -485,7 +489,7 @@ function mockManagedImageCatalog() {
             reference: `${image}@${digest}`,
             source: {
               repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-              revision: "a".repeat(40),
+              revision: sourceRevision,
               release,
               cohort: "ghrun-9068-1",
             },

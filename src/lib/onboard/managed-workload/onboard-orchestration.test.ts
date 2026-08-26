@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
 
@@ -14,6 +14,9 @@ const preparationState = vi.hoisted(() => ({
   useUnavailableCatalog: false,
 }));
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
+const INSTALLED_REVISION = vi.hoisted(() => "d".repeat(40));
+const releaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-root-"));
+fs.writeFileSync(path.join(releaseRoot, ".version"), "0.0.0\n");
 
 vi.mock("../workload/preparation", async (importOriginal) => {
   const original = await importOriginal<typeof import("../workload/preparation")>();
@@ -30,7 +33,10 @@ vi.mock("../workload/preparation", async (importOriginal) => {
   return { ...original, prepareSandboxWorkloadSource };
 });
 
-vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
+vi.mock("../../core/version", () => ({
+  getBuildIdentity: () => ({ nemoclawVersion: "0.0.0", sourceRevision: INSTALLED_REVISION }),
+  getVersion: () => "v0.0.0",
+}));
 
 import {
   createManagedHermesStateVolumeOnboardLifecycle,
@@ -71,7 +77,7 @@ function createFreshOnboardingRuntime(
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
       customDockerfilePath: null,
-      rootDir: "/tmp/nemoclaw",
+      rootDir: releaseRoot,
       model: "model",
       provider: "provider",
       preferredInferenceApi: null,
@@ -118,6 +124,10 @@ async function expectUnsupportedHermesPortableSources(
 }
 
 describe("managed workload onboard orchestration", () => {
+  afterAll(() => {
+    fs.rmSync(releaseRoot, { force: true, recursive: true });
+  });
+
   it("activates stock managed images only for shipped agents outside Portable", () => {
     expect(
       shouldActivateStockManagedRuntime({
@@ -293,6 +303,17 @@ describe("managed workload onboard orchestration", () => {
     await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
     expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty("catalogRevision");
+  });
+
+  it("retains an exact installed revision outside GitHub Actions", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      NEMOCLAW_INSTALL_REF: INSTALLED_REVISION,
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ catalogRevision: INSTALLED_REVISION }),
+    );
   });
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {

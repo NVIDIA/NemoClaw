@@ -16,8 +16,10 @@ import {
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  classifyWindowsMxcForwardHealthObservation,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
+  observeWindowsMxcForwardHealthReadiness,
   parseWindowsMxcOpenClawQualificationEnvironment,
   parseOpenClawExactChatReply,
   parseOpenClawHealthResult,
@@ -33,6 +35,7 @@ import {
   sha256File,
   shouldRetrySandboxDelete,
   withWindowsMxcLocalSetupOwnership,
+  windowsMxcOpenClawStartupPreconditionsPass,
   withoutOpenShellGatewaySelection,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
 
@@ -521,6 +524,240 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }] } }),
       ),
     ).toBe(false);
+  });
+
+  it("observes forwarded health again only after the exact relay readiness signal (#8178)", async () => {
+    const results = [
+      {
+        exitCode: 1,
+        stderr: "",
+        stdout: JSON.stringify({
+          ok: false,
+          error: {
+            type: "gateway_transport_error",
+            kind: "closed",
+            code: 1006,
+            reason: "no close reason",
+          },
+        }),
+      },
+      { exitCode: 0, stderr: "", stdout: JSON.stringify({ ok: true }) },
+    ];
+    const delays: number[] = [];
+
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 25,
+      probe: async (attempt) => results[attempt - 1]!,
+      sleep: async (delay) => {
+        delays.push(delay);
+      },
+    });
+
+    expect(observed.evidence).toEqual({
+      schemaVersion: 1,
+      operation: "windows-mxc-forward-authenticated-health",
+      maxAttempts: 3,
+      delayMs: 25,
+      attempts: [
+        { attempt: 1, outcome: "relay-not-ready" },
+        { attempt: 2, outcome: "ready" },
+      ],
+      outcome: "ready",
+    });
+    expect(delays).toEqual([25]);
+  });
+
+  it.each([
+    {
+      scenario: "authentication failure",
+      result: {
+        exitCode: 1,
+        stderr: "",
+        stdout: JSON.stringify({
+          ok: false,
+          error: { type: "gateway_auth_error", message: "unauthorized" },
+        }),
+      },
+    },
+    {
+      scenario: "transport timeout",
+      result: {
+        exitCode: 1,
+        stderr: "",
+        stdout: JSON.stringify({
+          ok: false,
+          error: {
+            type: "gateway_transport_error",
+            kind: "timeout",
+            timeoutMs: 10_000,
+          },
+        }),
+      },
+    },
+    {
+      scenario: "different close reason",
+      result: {
+        exitCode: 1,
+        stderr: "",
+        stdout: JSON.stringify({
+          ok: false,
+          error: {
+            type: "gateway_transport_error",
+            kind: "closed",
+            code: 1006,
+            reason: "policy denied",
+          },
+        }),
+      },
+    },
+    {
+      scenario: "malformed output",
+      result: { exitCode: 1, stderr: "", stdout: "not json" },
+    },
+  ])("does not observe forwarded health again after $scenario (#8178)", async ({ result }) => {
+    let probes = 0;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 0,
+      probe: async () => {
+        probes += 1;
+        return result;
+      },
+    });
+
+    expect(classifyWindowsMxcForwardHealthObservation(result)).toBe("terminal");
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([{ attempt: 1, outcome: "terminal" }]);
+    expect(probes).toBe(1);
+  });
+
+  it("fails forwarded health after the bounded relay readiness observations (#8178)", async () => {
+    const relayNotReady = {
+      exitCode: 1,
+      stderr: "",
+      stdout: JSON.stringify({
+        ok: false,
+        error: {
+          type: "gateway_transport_error",
+          kind: "closed",
+          code: 1006,
+          reason: "no close reason",
+        },
+      }),
+    };
+
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 2,
+      delayMs: 0,
+      probe: async () => relayNotReady,
+    });
+
+    expect(observed.evidence.outcome).toBe("exhausted");
+    expect(observed.evidence.attempts).toEqual([
+      { attempt: 1, outcome: "relay-not-ready" },
+      { attempt: 2, outcome: "relay-not-ready" },
+    ]);
+  });
+
+  it("stops forwarded health observations after the owned forward exits (#8178)", async () => {
+    let probes = 0;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 0,
+      forwardActive: () => false,
+      probe: async () => {
+        probes += 1;
+        return { exitCode: 0, stderr: "", stdout: JSON.stringify({ ok: true }) };
+      },
+    });
+
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([{ attempt: 1, outcome: "terminal" }]);
+    expect(probes).toBe(0);
+  });
+
+  it("does not probe again when the owned forward exits during the retry delay (#8178)", async () => {
+    let forwardActive = true;
+    let probes = 0;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 25,
+      forwardActive: () => forwardActive,
+      probe: async () => {
+        probes += 1;
+        return {
+          exitCode: 1,
+          stderr: "",
+          stdout: JSON.stringify({
+            ok: false,
+            error: {
+              type: "gateway_transport_error",
+              kind: "closed",
+              code: 1006,
+              reason: "no close reason",
+            },
+          }),
+        };
+      },
+      sleep: async () => {
+        forwardActive = false;
+      },
+    });
+
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([
+      { attempt: 1, outcome: "relay-not-ready" },
+      { attempt: 2, outcome: "terminal" },
+    ]);
+    expect(probes).toBe(1);
+  });
+
+  it("rejects healthy output when the owned forward exits during the probe (#8178)", async () => {
+    let forwardActive = true;
+    const observed = await observeWindowsMxcForwardHealthReadiness({
+      attempts: 3,
+      delayMs: 0,
+      forwardActive: () => forwardActive,
+      probe: async () => {
+        forwardActive = false;
+        return { exitCode: 0, stderr: "", stdout: JSON.stringify({ ok: true }) };
+      },
+    });
+
+    expect(observed.evidence.outcome).toBe("terminal");
+    expect(observed.evidence.attempts).toEqual([{ attempt: 1, outcome: "terminal" }]);
+  });
+
+  it.each([
+    "filesystemControlWrite",
+    "filesystemDeniedWrite",
+    "openClawHealth",
+    "openClawProcessPresentWhileReady",
+    "registryPresentWhileReady",
+  ] as const)("does not start forwarding when %s fails (#8178)", (failedCheck) => {
+    const checks = {
+      filesystemControlWrite: true,
+      filesystemDeniedWrite: true,
+      openClawHealth: true,
+      openClawProcessPresentWhileReady: true,
+      registryPresentWhileReady: true,
+    };
+    checks[failedCheck] = false;
+
+    expect(windowsMxcOpenClawStartupPreconditionsPass(checks)).toBe(false);
+  });
+
+  it("allows forwarding after all OpenClaw startup preconditions pass (#8178)", () => {
+    expect(
+      windowsMxcOpenClawStartupPreconditionsPass({
+        filesystemControlWrite: true,
+        filesystemDeniedWrite: true,
+        openClawHealth: true,
+        openClawProcessPresentWhileReady: true,
+        registryPresentWhileReady: true,
+      }),
+    ).toBe(true);
   });
 
   it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(
