@@ -7,7 +7,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_DOCKER_DRIVER_NETWORK_NAME } from "../onboard/experimental/docker-network-authority";
+import { resolveDockerDriverNetworkName } from "../onboard/experimental/docker-network-authority";
 import { requireCuaServiceEndpoints } from "./service-endpoints";
 
 const RELAY_MARKER = "--nemoclaw-cua-service-relay";
@@ -31,16 +31,20 @@ function statePath(sandboxName: string, home = os.homedir()): string {
   return path.join(home, ".local", "state", "nemoclaw", "cua-relays", `${sandboxName}.json`);
 }
 
-function resolveBridgeAddress(): string {
-  const raw = dockerCapture(
+/** Resolve the selected OpenShell Docker bridge listener address. */
+export function resolveCuaServiceRelayBridgeAddress(
+  env: NodeJS.ProcessEnv,
+  capture: typeof dockerCapture = dockerCapture,
+): string {
+  const raw = capture(
     [
       "network",
       "inspect",
       "--format",
       "{{(index .IPAM.Config 0).Gateway}}",
-      DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+      resolveDockerDriverNetworkName(env),
     ],
-    { ignoreError: true },
+    { ignoreError: true, timeout: READY_TIMEOUT_MS },
   ).trim();
   if (!/^(?:10|172\.(?:1[6-9]|2[0-9]|3[01])|192\.168)(?:\.[0-9]{1,3}){2}$/u.test(raw)) {
     throw new Error("NemoCUA could not resolve the OpenShell bridge address for its service relay");
@@ -114,7 +118,7 @@ function targetHost(endpoint: string): string {
   return host === "localhost" ? host : "127.0.0.1";
 }
 
-export function stopCuaServiceRelay(sandboxName: string): void {
+export function stopCuaServiceRelay(sandboxName: string, removeState = false): void {
   const file = statePath(sandboxName);
   const state = readState(file);
   if (state && processOwnsRelay(state)) {
@@ -127,21 +131,18 @@ export function stopCuaServiceRelay(sandboxName: string): void {
       throw new Error("NemoCUA service relay did not stop; ownership state was preserved");
     }
   }
-  fs.rmSync(file, { force: true });
+  if (removeState) fs.rmSync(file, { force: true });
 }
 
-function waitForReady(childPid: number, readyPath: string): void {
+function waitForReady(childPid: number, file: string): void {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    const state = readState(file);
+    if (state?.pid === childPid && processOwnsRelay(state)) return;
     try {
       process.kill(childPid, 0);
     } catch {
       break;
-    }
-    try {
-      if (fs.readFileSync(readyPath, "utf8").trim() === "ready") return;
-    } catch {
-      // Child has not committed listener readiness yet.
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
@@ -163,7 +164,7 @@ export function ensureCuaServiceRelay(
   const configured = Object.keys(env).some(
     (key) => key.startsWith("NEMOCLAW_CUA_") && key.endsWith("_ENDPOINT"),
   );
-  const endpoints = configured
+  const requested = configured
     ? requireCuaServiceEndpoints(env).map((endpoint) => ({
         role: endpoint.role,
         targetHost: targetHost(
@@ -171,25 +172,20 @@ export function ensureCuaServiceRelay(
         ),
         port: endpoint.port,
       }))
-    : previous?.endpoints;
+    : undefined;
+  if (previous && requested && JSON.stringify(previous.endpoints) !== JSON.stringify(requested)) {
+    throw new Error("NemoCUA service endpoints differ from the sandbox relay state");
+  }
+  const endpoints = previous?.endpoints ?? requested;
   if (!validEndpoints(endpoints)) {
     throw new Error(
       "NemoCUA service relay state is missing; rerun onboarding with all endpoint inputs",
     );
   }
-  const bindHost = resolveBridgeAddress();
-  if (
-    previous &&
-    processOwnsRelay(previous) &&
-    previous.bindHost === bindHost &&
-    JSON.stringify(previous.endpoints) === JSON.stringify(endpoints)
-  ) {
-    return;
-  }
+  const bindHost = resolveCuaServiceRelayBridgeAddress(env);
+  if (previous && processOwnsRelay(previous) && previous.bindHost === bindHost) return;
   if (previous) stopCuaServiceRelay(sandboxName);
-  const directory = path.dirname(file);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const readyPath = path.join(directory, `.${sandboxName}.${process.pid}.ready`);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const child = spawn(
     process.execPath,
     [
@@ -198,26 +194,18 @@ export function ensureCuaServiceRelay(
       sandboxName,
       bindHost,
       Buffer.from(JSON.stringify(endpoints)).toString("base64url"),
-      readyPath,
+      file,
     ],
     { detached: true, stdio: "ignore" },
   );
   if (!child.pid) throw new Error("NemoCUA service relay did not return a process ID");
   try {
-    waitForReady(child.pid, readyPath);
+    waitForReady(child.pid, file);
     try {
       process.kill(child.pid, 0);
     } catch {
       throw new Error("NemoCUA service relay exited after listener readiness");
     }
-    const state: RelayState = {
-      version: STATE_VERSION,
-      sandboxName,
-      bindHost,
-      pid: child.pid,
-      endpoints,
-    };
-    fs.writeFileSync(file, `${JSON.stringify(state)}\n`, { mode: 0o600 });
     child.unref();
   } catch (error) {
     try {
@@ -225,17 +213,16 @@ export function ensureCuaServiceRelay(
     } catch {
       // Child already exited after a bind or state-write failure.
     }
-    fs.rmSync(file, { force: true });
+    if (!readState(file)) fs.rmSync(file, { force: true });
     throw error;
-  } finally {
-    fs.rmSync(readyPath, { force: true });
   }
 }
 
 export async function runCuaServiceRelay(
   bindHost: string,
   endpoints: RelayEndpoint[],
-  readyPath: string,
+  stateFile?: string,
+  state?: Omit<RelayState, "pid">,
 ): Promise<net.Server[]> {
   if (!validEndpoints(endpoints)) throw new Error("Invalid NemoCUA relay endpoint descriptor");
   const servers = endpoints.map((endpoint) => {
@@ -254,7 +241,17 @@ export async function runCuaServiceRelay(
         server.listen(endpoints[index]?.port, bindHost, resolve);
       });
     }
-    fs.writeFileSync(readyPath, "ready\n", { mode: 0o600 });
+    if (stateFile && state) {
+      const temporary = `${stateFile}.${String(process.pid)}.tmp`;
+      try {
+        fs.writeFileSync(temporary, `${JSON.stringify({ ...state, pid: process.pid })}\n`, {
+          mode: 0o600,
+        });
+        fs.renameSync(temporary, stateFile);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+    }
     return servers;
   } catch (error) {
     await Promise.all(
@@ -274,7 +271,10 @@ if (process.argv[2] === RELAY_MARKER) {
   const endpoints = JSON.parse(
     Buffer.from(process.argv[5] ?? "", "base64url").toString("utf8"),
   ) as RelayEndpoint[];
-  void runCuaServiceRelay(process.argv[4] as string, endpoints, process.argv[6] as string).catch(
-    () => process.exit(1),
-  );
+  void runCuaServiceRelay(process.argv[4] as string, endpoints, process.argv[6] as string, {
+    version: STATE_VERSION,
+    sandboxName: process.argv[3] as string,
+    bindHost: process.argv[4] as string,
+    endpoints,
+  }).catch(() => process.exit(1));
 }

@@ -116,7 +116,7 @@ export type CleanupSandboxServicesDeps = {
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
-  stopCuaServiceRelay?: (sandboxName: string) => void;
+  stopCuaServiceRelay?: (sandboxName: string, removeState?: boolean) => void;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -241,7 +241,7 @@ export function cleanupSandboxServices(
       deps.stopCuaServiceRelay ??
       (require("../../cua/service-relay") as typeof import("../../cua/service-relay"))
         .stopCuaServiceRelay;
-    stopRelay(validatedSandboxName);
+    stopRelay(validatedSandboxName, true);
   }
 
   if (stopHostServices) {
