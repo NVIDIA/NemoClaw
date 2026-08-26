@@ -151,6 +151,7 @@ console.log(JSON.stringify({
       configInputCopyIndex < optionalPluginInstallIndex &&
       integrationPluginCopyIndex < optionalPluginInstallIndex,
     messagingInputsAfterOptional:
+      optionalPluginInstallIndex >= 0 &&
       messagingInputCopyIndex > optionalPluginInstallIndex &&
       messagingInputCopyIndex < messagingPluginInstallIndex,
     candidateRuntimeExcludesMessaging:
