@@ -12,6 +12,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -611,8 +612,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^common-egress.+C3.+$",
   }),
   commonEgressTarget({
-    displayName: "Networking: Personal permits a keyless public stock fetch",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public stock endpoint",
+    displayName: "Networking: Personal public fetch without Brave Search or Tavily Search API keys",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public Wikidata endpoint",
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
@@ -621,9 +622,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/policy-selection.ts",
       "src/lib/onboard/policy-tier-suppression.ts",
       "src/lib/policy/index.ts",
-      "test/e2e/live/personal-egress-live-proof.ts",
     ],
-    shard: "openclaw-personal-stock-price",
+    shard: "openclaw-personal-public-fetch",
     selector: "^common-egress.+C4.+$",
     environment: {
       BRAVE_API_KEY: "",
@@ -1721,7 +1721,8 @@ export function validateE2eTargetCatalogue(
 validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE);
 
 export function catalogueTarget(id: string): E2eCatalogueTarget {
-  const entry = E2E_TARGET_CATALOGUE.find((candidate) => candidate.id === id);
+  const canonicalId = normalizeE2eSelectorId(id);
+  const entry = E2E_TARGET_CATALOGUE.find((candidate) => candidate.id === canonicalId);
   if (!entry) throw new Error(`Unknown catalogue E2E target: ${id}`);
   return entry;
 }

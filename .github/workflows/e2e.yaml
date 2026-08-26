@@ -2993,7 +2993,7 @@ jobs:
 
   catalogue-standard:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3007,6 +3007,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3033,7 +3034,7 @@ jobs:
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3047,6 +3048,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3074,7 +3076,7 @@ jobs:
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3088,6 +3090,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3115,7 +3118,7 @@ jobs:
 
   catalogue-github-read:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3129,6 +3132,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3155,7 +3159,7 @@ jobs:
 
   catalogue-brave-nvidia-inference:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3170,6 +3174,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}

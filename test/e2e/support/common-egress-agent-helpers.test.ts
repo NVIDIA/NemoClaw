@@ -10,57 +10,54 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   agentReplyContainsToken,
-  assessPersonalStockToolEvidence,
+  assessPersonalPublicFetchToolEvidence,
   buildOpenClawToolEvidenceReducerScript,
   classifyHermesAgentAssertion,
   classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   isHermesTransientAgentFailure,
-  nvdaPersonalStockReplyMatchesEvidence,
   parseChatContent,
-  parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
   parseOpenClawToolEvidence,
-  projectNvdaPersonalStockReplyEvidence,
-  projectPersonalStockToolEvidenceArtifact,
+  projectOpenClawAgentFailureArtifact,
+  projectPersonalPublicFetchToolEvidenceArtifact,
   reduceOpenClawToolEvidence,
   runHermesAgentAssertionRetry,
   runOpenClawAgentAssertionRetry,
-  type NvdaPersonalStockReply,
   type OpenClawAgentAttemptEvidenceOptions,
+  type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
-  type PersonalStockToolEvidenceArtifact,
+  type PersonalPublicFetchToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "../live/common-egress-agent-helpers.ts";
 
-const STOCK_SOURCE_URL =
-  "https://query1.finance.yahoo.com/v8/finance/chart/NVDA?credential=must-not-remain";
-const STOCK_REPLY = {
-  status: "NVDA_PERSONAL_AGENT_OK",
-  symbol: "NVDA",
-  price: 192.38,
-  source_url: STOCK_SOURCE_URL,
-  as_of: "2026-08-17T15:59:00Z",
-} satisfies NvdaPersonalStockReply;
+const PUBLIC_FETCH_URL =
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json&test=must-not-remain";
+const PUBLIC_FETCH_EXPECTATION = {
+  content: "United States",
+  url: PUBLIC_FETCH_URL,
+} satisfies OpenClawPublicFetchExpectation;
+const REDUCER_SECRET_SENTINEL = "nvidia-api-key-must-not-remain";
 
-function stockPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function publicFetchPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    url: STOCK_SOURCE_URL,
-    finalUrl: STOCK_SOURCE_URL,
+    url: PUBLIC_FETCH_URL,
+    finalUrl: PUBLIC_FETCH_URL,
     status: 200,
     contentType: "application/json",
     extractor: "json",
     externalContent: { untrusted: true, source: "web_fetch", wrapped: true },
     fetchedAt: "2026-08-17T16:00:00Z",
-    text: '{"symbol":"NVDA","regularMarketPrice":192.38,"regularMarketTime":1786982340}',
+    text: '{"entities":{"Q30":{"labels":{"en":{"value":"United States"}}}}}',
     ...overrides,
   };
 }
 
-function stockSessionJsonLines(
+function publicFetchSessionJsonLines(
   options: {
     callId?: string;
     details?: Record<string, unknown>;
+    extraToolArguments?: Record<string, unknown>;
     extraToolName?: string;
     isError?: boolean;
     maxChars?: number | null;
@@ -70,17 +67,24 @@ function stockSessionJsonLines(
   } = {},
 ): string {
   const callId = options.callId ?? "call-web-fetch-1";
-  const payload = options.payload ?? stockPayload();
+  const payload = options.payload ?? publicFetchPayload();
   const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
   const content = [
     {
       type: "toolCall",
       id: callId,
       name: "web_fetch",
-      arguments: { url: STOCK_SOURCE_URL, ...(maxChars === null ? {} : { maxChars }) },
+      arguments: { url: PUBLIC_FETCH_URL, ...(maxChars === null ? {} : { maxChars }) },
     },
     ...(options.extraToolName
-      ? [{ type: "toolCall", id: "call-extra-1", name: options.extraToolName, arguments: {} }]
+      ? [
+          {
+            type: "toolCall",
+            id: "call-extra-1",
+            name: options.extraToolName,
+            arguments: options.extraToolArguments ?? {},
+          },
+        ]
       : []),
   ];
   return [
@@ -99,30 +103,30 @@ function stockSessionJsonLines(
   ].join("\n");
 }
 
-function stockTrajectory(extraToolName?: string): string {
+function publicFetchTrajectory(extraToolName?: string): string {
   return JSON.stringify({
     type: "trace.artifacts",
     data: {
       finalStatus: "success",
       toolMetas: [
-        { toolName: "web_fetch", meta: STOCK_SOURCE_URL },
+        { toolName: "web_fetch", meta: PUBLIC_FETCH_URL },
         ...(extraToolName ? [{ toolName: extraToolName, meta: {} }] : []),
       ],
     },
   });
 }
 
-function directStockTrajectoryWithProjection(): string {
-  const messagesSnapshot = stockSessionJsonLines()
+function directPublicFetchTrajectoryWithProjection(): string {
+  const messagesSnapshot = publicFetchSessionJsonLines()
     .split("\n")
     .map((line) => (JSON.parse(line) as { message: unknown }).message);
   return [
     JSON.stringify({ type: "model.completed", data: { messagesSnapshot } }),
-    stockTrajectory(),
+    publicFetchTrajectory(),
   ].join("\n");
 }
 
-function progressiveStockSessionJsonLines(
+function progressivePublicFetchSessionJsonLines(
   options: { maxChars?: number | null; wrapperTargetId?: string } = {},
 ): string {
   const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
@@ -138,7 +142,7 @@ function progressiveStockSessionJsonLines(
       name: "tool_call",
       arguments: {
         id: options.wrapperTargetId ?? "openclaw:core:web_fetch",
-        args: { url: STOCK_SOURCE_URL, ...(maxChars === null ? {} : { maxChars }) },
+        args: { url: PUBLIC_FETCH_URL, ...(maxChars === null ? {} : { maxChars }) },
       },
     },
   ];
@@ -162,7 +166,7 @@ function progressiveStockSessionJsonLines(
     .join("\n");
 }
 
-function progressiveStockTrajectory(
+function progressivePublicFetchTrajectory(
   options: {
     maxChars?: number | null;
     payload?: Record<string, unknown>;
@@ -171,14 +175,14 @@ function progressiveStockTrajectory(
     wrapperTargetId?: string;
   } = {},
 ): string {
-  const payload = options.payload ?? stockPayload();
+  const payload = options.payload ?? publicFetchPayload();
   const projectedTargetName = options.projectedTargetName ?? "web_fetch";
   const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
   const targetArguments = {
-    url: STOCK_SOURCE_URL,
+    url: PUBLIC_FETCH_URL,
     ...(maxChars === null ? {} : { maxChars }),
   };
-  const sessionMessages = progressiveStockSessionJsonLines(options)
+  const sessionMessages = progressivePublicFetchSessionJsonLines(options)
     .split("\n")
     .map((line) => (JSON.parse(line) as { message: unknown }).message);
   const targetCallId = `tool_search_code:${
@@ -215,7 +219,7 @@ function progressiveStockTrajectory(
         toolMetas: [
           { toolName: "tool_search", meta: {} },
           { toolName: "tool_describe", meta: {} },
-          { toolName: projectedTargetName, meta: STOCK_SOURCE_URL },
+          { toolName: projectedTargetName, meta: PUBLIC_FETCH_URL },
           { toolName: "tool_call", meta: {} },
         ],
       },
@@ -223,38 +227,36 @@ function progressiveStockTrajectory(
   ].join("\n");
 }
 
-function stockAttemptValidationOptions(
+function publicFetchAttemptValidationOptions(
   overrides: Partial<OpenClawAgentAttemptEvidenceOptions> = {},
 ): OpenClawAgentAttemptEvidenceOptions {
   const evidence = reduceOpenClawToolEvidence(
-    stockSessionJsonLines(),
-    stockTrajectory(),
-    STOCK_REPLY,
+    publicFetchSessionJsonLines(),
+    publicFetchTrajectory(),
+    PUBLIC_FETCH_EXPECTATION,
   );
   return {
     classification: { passed: true },
-    label: "personal-stock",
+    label: "personal-public-fetch",
+    recordToolEvidenceReductionFailure: vi.fn().mockResolvedValue(undefined),
     recordToolEvidence: vi.fn().mockResolvedValue(undefined),
     reduceToolEvidence: vi.fn().mockResolvedValue({
       exitCode: 0,
       stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
     }),
-    reply: JSON.stringify(STOCK_REPLY),
-    replyValidator: (reply, evidence) =>
-      evidence !== undefined &&
-      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse(STOCK_REPLY.as_of)),
-    toolEvidenceValidator: (candidate) => assessPersonalStockToolEvidence(candidate).matches,
+    reply: "PERSONAL_PUBLIC_FETCH_OK",
+    toolEvidenceValidator: (candidate) => assessPersonalPublicFetchToolEvidence(candidate).matches,
     ...overrides,
   };
 }
 
-async function expectAggregateStockFailure(
+async function expectAggregatePublicFetchFailure(
   evidence: OpenClawToolEvidence,
-  countName: keyof PersonalStockToolEvidenceArtifact["webFetchResultCounts"],
+  countName: keyof PersonalPublicFetchToolEvidenceArtifact["webFetchResultCounts"],
 ): Promise<void> {
-  const artifact = projectPersonalStockToolEvidenceArtifact(evidence);
+  const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
   const result = await validateOpenClawAgentAttemptEvidence(
-    stockAttemptValidationOptions({
+    publicFetchAttemptValidationOptions({
       reduceToolEvidence: vi.fn().mockResolvedValue({
         exitCode: 0,
         stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
@@ -267,11 +269,9 @@ async function expectAggregateStockFailure(
   expect(artifact.qualifyingWebFetchResults).toBe(0);
   expect(result.failure).toContain(`${countName}=0`);
   for (const sensitiveValue of [
-    STOCK_SOURCE_URL,
-    String(STOCK_REPLY.price),
-    STOCK_REPLY.as_of,
-    stockPayload().text as string,
-    evidence.expectedStockFingerprint!,
+    PUBLIC_FETCH_URL,
+    PUBLIC_FETCH_EXPECTATION.content,
+    publicFetchPayload().text as string,
     "must-not-remain",
     "web_fetch",
   ]) {
@@ -294,6 +294,14 @@ describe("common-egress agent parsing and classification helpers", () => {
     ).toContain("REFERENCE_AGENT_OK");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify([
+          { payloads: [{ text: "FIRST_AGENT_REPLY" }] },
+          { result: { payloads: [{ text: "SECOND_AGENT_REPLY" }] } },
+        ]),
+      ),
+    ).toBe("FIRST_AGENT_REPLY\nSECOND_AGENT_REPLY");
+    expect(
+      parseOpenClawAgentText(
         `openclaw log line\n${JSON.stringify({
           result: { payloads: [{ text: "HERMES_REFERENCE_AGENT_OK" }] },
         })}\n`,
@@ -301,45 +309,43 @@ describe("common-egress agent parsing and classification helpers", () => {
     ).toContain("HERMES_REFERENCE_AGENT_OK");
   });
 
-  it("reduces OpenClaw stock-fetch traces without retaining fetched content or URL queries", () => {
-    const source = "query1.finance.yahoo.com";
+  it("reduces OpenClaw public-fetch traces without retaining fetched content or URL queries", () => {
+    const source = "www.wikidata.org";
     const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines(),
-      stockTrajectory(),
-      STOCK_REPLY,
+      publicFetchSessionJsonLines(),
+      publicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
     );
 
     expect(evidence).toEqual({
       schemaVersion: 1,
       controlTargetViolations: 0,
       errors: [],
-      expectedStockFingerprint: expect.stringMatching(/^[0-9a-f]{8}$/u),
       finalStatuses: ["success"],
       projectedTargetEvidence: false,
       providerMentions: [],
       toolCalls: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolExecutions: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolResults: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
+      unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchExecutions: 0,
+      unexpectedWebFetchResults: 0,
       webFetchResults: [
         {
-          asOfMatches: true,
-          directFetch: true,
+          expectedContentMatches: true,
+          expectedUrlMatches: true,
           httpSuccess: true,
           maxCharsWithinLimit: true,
           paired: true,
-          priceMatches: true,
           resultSuccess: true,
-          sourceUrlMatches: true,
-          symbolMatches: true,
           target: { hostname: source, protocol: "https:" },
         },
       ],
     });
-    expect(JSON.stringify(evidence)).not.toContain("credential");
-    expect(JSON.stringify(evidence)).not.toContain("regularMarketPrice");
-    expect(JSON.stringify(evidence)).not.toContain("192.38");
-    expect(JSON.stringify(evidence)).not.toContain("/v8/finance/chart");
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
+    expect(JSON.stringify(evidence)).not.toContain("United States");
+    expect(JSON.stringify(evidence)).not.toContain("/w/api.php");
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       forbiddenProviderMentions: [],
       forbiddenToolNames: [],
       matches: true,
@@ -352,9 +358,6 @@ describe("common-egress agent parsing and classification helpers", () => {
         `log line\n__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
       ),
     ).toEqual(evidence);
-    expect(buildOpenClawToolEvidenceReducerScript(STOCK_REPLY)).toContain(
-      "__NEMOCLAW_TOOL_EVIDENCE__=",
-    );
   });
 
   it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
@@ -362,12 +365,17 @@ describe("common-egress agent parsing and classification helpers", () => {
     try {
       const sessionPath = join(directory, "session.jsonl");
       const trajectoryPath = join(directory, "trajectory.jsonl");
-      writeFileSync(sessionPath, `${stockSessionJsonLines()}\n`);
-      writeFileSync(trajectoryPath, `${stockTrajectory()}\n`);
+      writeFileSync(sessionPath, `${publicFetchSessionJsonLines()}\n`);
+      writeFileSync(trajectoryPath, `${publicFetchTrajectory()}\n`);
 
       const result = spawnSync(
         process.execPath,
-        ["-e", buildOpenClawToolEvidenceReducerScript(STOCK_REPLY), sessionPath, trajectoryPath],
+        [
+          "-e",
+          buildOpenClawToolEvidenceReducerScript(PUBLIC_FETCH_EXPECTATION),
+          sessionPath,
+          trajectoryPath,
+        ],
         { encoding: "utf8" },
       );
 
@@ -375,20 +383,20 @@ describe("common-egress agent parsing and classification helpers", () => {
       expect(parseOpenClawToolEvidence(result.stdout)).toMatchObject({
         errors: [],
         finalStatuses: ["success"],
-        toolCalls: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
-        toolExecutions: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
-        toolResults: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
+        toolCalls: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
+        toolExecutions: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
+        toolResults: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
         webFetchResults: [
           expect.objectContaining({
-            directFetch: true,
+            expectedContentMatches: true,
+            expectedUrlMatches: true,
             paired: true,
-            priceMatches: true,
             resultSuccess: true,
-            sourceUrlMatches: true,
           }),
         ],
       });
-      expect(result.stdout).not.toContain("credential");
+      expect(result.stdout).not.toContain("must-not-remain");
+      expect(result.stdout).not.toContain("United States");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -396,15 +404,15 @@ describe("common-egress agent parsing and classification helpers", () => {
 
   it("uses a direct-call model snapshot for complete results without granting control tools", () => {
     const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines({
+      publicFetchSessionJsonLines({
         details: { persistedDetailsTruncated: true },
-        payload: stockPayload({ text: "persisted result was truncated" }),
+        payload: publicFetchPayload({ text: "persisted result was truncated" }),
       }),
-      directStockTrajectoryWithProjection(),
-      STOCK_REPLY,
+      directPublicFetchTrajectoryWithProjection(),
+      PUBLIC_FETCH_EXPECTATION,
     );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       forbiddenToolNames: [],
       matches: true,
       projectedTargetEvidence: false,
@@ -412,11 +420,86 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
   });
 
+  it("rejects projected evidence that hides a forbidden session tool and search provider", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        extraToolArguments: { provider: "brave", query: "public reference" },
+        extraToolName: "web_search",
+      }),
+      directPublicFetchTrajectoryWithProjection(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      forbiddenProviderMentions: ["brave"],
+      forbiddenToolNames: ["web_search"],
+      matches: false,
+    });
+  });
+
+  it("rejects projected evidence that hides a different public fetch target", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        extraToolArguments: { maxChars: 8_000, url: "https://example.com/" },
+        extraToolName: "web_fetch",
+      }),
+      directPublicFetchTrajectoryWithProjection(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 1,
+      unexpectedWebFetchCalls: 1,
+    });
+  });
+
+  it("rejects a public fetch redirected away from the fixed target", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        payload: publicFetchPayload({ finalUrl: "https://example.com/redirected" }),
+      }),
+      publicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(evidence.webFetchResults).toContainEqual(
+      expect.objectContaining({ expectedContentMatches: true, expectedUrlMatches: false }),
+    );
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 0,
+      unexpectedWebFetchResults: 1,
+    });
+  });
+
+  it("rejects a different public fetch target recorded only as a tool execution", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines(),
+      [
+        directPublicFetchTrajectoryWithProjection(),
+        JSON.stringify({
+          type: "trace.artifacts",
+          data: {
+            toolMetas: [{ toolName: "web_fetch", meta: "https://example.com/" }],
+          },
+        }),
+      ].join("\n"),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 1,
+      unexpectedWebFetchExecutions: 1,
+    });
+  });
+
   it("accepts a progressive Tool Search wrapper only with projected web_fetch proof", () => {
     const evidence = reduceOpenClawToolEvidence(
-      progressiveStockSessionJsonLines(),
-      progressiveStockTrajectory(),
-      STOCK_REPLY,
+      progressivePublicFetchSessionJsonLines(),
+      progressivePublicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
     );
 
     expect(evidence.errors).toEqual([]);
@@ -436,7 +519,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       "web_fetch",
       "tool_call",
     ]);
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       forbiddenProviderMentions: [],
       forbiddenToolNames: [],
       matches: true,
@@ -444,12 +527,12 @@ describe("common-egress agent parsing and classification helpers", () => {
       webFetchCalls: 1,
       webFetchExecutions: 1,
     });
-    expect(JSON.stringify(evidence)).not.toContain("credential");
-    expect(JSON.stringify(evidence)).not.toContain("192.38");
+    expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
+    expect(JSON.stringify(evidence)).not.toContain("United States");
   });
 
   it("rejects progressive controls without a projected target call and result", () => {
-    const trajectory = progressiveStockTrajectory()
+    const trajectory = progressivePublicFetchTrajectory()
       .split("\n")
       .map((line) => JSON.parse(line) as { data?: Record<string, unknown>; type?: string })
       .map((event) =>
@@ -471,12 +554,12 @@ describe("common-egress agent parsing and classification helpers", () => {
       )
       .join("\n");
     const evidence = reduceOpenClawToolEvidence(
-      progressiveStockSessionJsonLines(),
+      progressivePublicFetchSessionJsonLines(),
       trajectory,
-      STOCK_REPLY,
+      PUBLIC_FETCH_EXPECTATION,
     );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       matches: false,
       qualifyingWebFetchResults: 0,
       webFetchCalls: 0,
@@ -486,14 +569,14 @@ describe("common-egress agent parsing and classification helpers", () => {
   it("rejects fallback controls that target exec beside an otherwise valid direct fetch", () => {
     const evidence = reduceOpenClawToolEvidence(
       [
-        stockSessionJsonLines(),
-        progressiveStockSessionJsonLines({ wrapperTargetId: "openclaw:core:exec" }),
+        publicFetchSessionJsonLines(),
+        progressivePublicFetchSessionJsonLines({ wrapperTargetId: "openclaw:core:exec" }),
       ].join("\n"),
-      stockTrajectory("tool_call"),
-      STOCK_REPLY,
+      publicFetchTrajectory("tool_call"),
+      PUBLIC_FETCH_EXPECTATION,
     );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       controlTargetViolations: 1,
       forbiddenToolNames: ["tool_call", "tool_describe", "tool_search"],
       matches: false,
@@ -505,54 +588,57 @@ describe("common-egress agent parsing and classification helpers", () => {
   it.each([
     {
       name: "an oversized direct fetch",
-      session: stockSessionJsonLines({ maxChars: 8_001 }),
-      trajectory: stockTrajectory(),
+      session: publicFetchSessionJsonLines({ maxChars: 8_001 }),
+      trajectory: publicFetchTrajectory(),
     },
     {
       name: "an oversized progressive fetch",
-      session: progressiveStockSessionJsonLines({ maxChars: 8_001 }),
-      trajectory: progressiveStockTrajectory({ maxChars: 8_001 }),
+      session: progressivePublicFetchSessionJsonLines({ maxChars: 8_001 }),
+      trajectory: progressivePublicFetchTrajectory({ maxChars: 8_001 }),
     },
     {
       name: "a direct fetch that omits maxChars",
-      session: stockSessionJsonLines({ maxChars: null }),
-      trajectory: stockTrajectory(),
+      session: publicFetchSessionJsonLines({ maxChars: null }),
+      trajectory: publicFetchTrajectory(),
     },
   ])("rejects $name", ({ session, trajectory }) => {
-    const evidence = reduceOpenClawToolEvidence(session, trajectory, STOCK_REPLY);
+    const evidence = reduceOpenClawToolEvidence(session, trajectory, PUBLIC_FETCH_EXPECTATION);
 
     expect(evidence.webFetchResults).toContainEqual(
       expect.objectContaining({ maxCharsWithinLimit: false }),
     );
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       matches: false,
       qualifyingWebFetchResults: 0,
     });
   });
 
   it.each([
-    { name: "a forbidden projected target", projectedTargetName: "exec", payload: stockPayload() },
     {
-      name: "a provider-backed projected fetch",
+      name: "a forbidden projected target",
+      projectedTargetName: "exec",
+      payload: publicFetchPayload(),
+    },
+    {
+      name: "a Brave Search-backed projected fetch",
       projectedTargetName: "web_fetch",
-      payload: stockPayload({
-        extractor: "firecrawl",
+      payload: publicFetchPayload({
         externalContent: {
           untrusted: true,
           source: "web_fetch",
-          provider: "firecrawl",
+          provider: "brave",
           wrapped: true,
         },
       }),
     },
   ])("rejects $name behind progressive controls", ({ payload, projectedTargetName }) => {
     const evidence = reduceOpenClawToolEvidence(
-      progressiveStockSessionJsonLines(),
-      progressiveStockTrajectory({ payload, projectedTargetName }),
-      STOCK_REPLY,
+      progressivePublicFetchSessionJsonLines(),
+      progressivePublicFetchTrajectory({ payload, projectedTargetName }),
+      PUBLIC_FETCH_EXPECTATION,
     );
 
-    expect(assessPersonalStockToolEvidence(evidence).matches).toBe(false);
+    expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(false);
   });
 
   it.each([
@@ -572,12 +658,12 @@ describe("common-egress agent parsing and classification helpers", () => {
     "rejects $name even with a complete projected web_fetch result",
     ({ controlTargetViolations, projectedParentCallId, wrapperTargetId }) => {
       const evidence = reduceOpenClawToolEvidence(
-        progressiveStockSessionJsonLines({ wrapperTargetId }),
-        progressiveStockTrajectory({ projectedParentCallId, wrapperTargetId }),
-        STOCK_REPLY,
+        progressivePublicFetchSessionJsonLines({ wrapperTargetId }),
+        progressivePublicFetchTrajectory({ projectedParentCallId, wrapperTargetId }),
+        PUBLIC_FETCH_EXPECTATION,
       );
 
-      expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
         controlTargetViolations,
         matches: false,
         projectedTargetEvidence: false,
@@ -585,14 +671,13 @@ describe("common-egress agent parsing and classification helpers", () => {
     },
   );
 
-  it("projects upload-safe stock evidence and keeps failure diagnostics aggregate-only", async () => {
-    const providerSentinel = "provider-secret-sentinel";
+  it("projects public-fetch evidence without fetched content or URL queries and keeps diagnostics aggregate-only", async () => {
+    const providerSentinel = "brave";
     const toolSentinel = "tool-secret-sentinel";
     const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines({
+      publicFetchSessionJsonLines({
         extraToolName: toolSentinel,
-        payload: stockPayload({
-          extractor: "firecrawl",
+        payload: publicFetchPayload({
           externalContent: {
             untrusted: true,
             source: "web_fetch",
@@ -601,10 +686,10 @@ describe("common-egress agent parsing and classification helpers", () => {
           },
         }),
       }),
-      stockTrajectory(toolSentinel),
-      STOCK_REPLY,
+      publicFetchTrajectory(toolSentinel),
+      PUBLIC_FETCH_EXPECTATION,
     );
-    const artifact = projectPersonalStockToolEvidenceArtifact(evidence);
+    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
     const serialized = JSON.stringify(artifact);
 
     expect(artifact).toMatchObject({
@@ -613,29 +698,28 @@ describe("common-egress agent parsing and classification helpers", () => {
       forbiddenProviderMentionCount: 1,
       forbiddenToolCount: 1,
       matches: false,
-      publicHttpsTargets: [{ hostname: "query1.finance.yahoo.com", protocol: "https:" }],
+      publicHttpsTargets: [{ hostname: "www.wikidata.org", protocol: "https:" }],
+      unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchExecutions: 0,
+      unexpectedWebFetchResults: 0,
       webFetchResultCounts: {
-        asOfMatches: 1,
-        directFetch: 0,
+        expectedContentMatches: 1,
+        expectedUrlMatches: 1,
         httpSuccess: 1,
         maxCharsWithinLimit: 1,
         paired: 1,
-        priceMatches: 1,
         publicHttpsTarget: 1,
         resultSuccess: 1,
-        sourceUrlMatches: 1,
-        symbolMatches: 1,
         total: 1,
       },
     });
     expect(serialized).not.toContain(providerSentinel);
     expect(serialized).not.toContain(toolSentinel);
-    expect(serialized).not.toContain("credential");
-    expect(evidence.expectedStockFingerprint).not.toBeNull();
-    expect(serialized).not.toContain(evidence.expectedStockFingerprint!);
+    expect(serialized).not.toContain("must-not-remain");
+    expect(serialized).not.toContain("United States");
 
     const result = await validateOpenClawAgentAttemptEvidence(
-      stockAttemptValidationOptions({
+      publicFetchAttemptValidationOptions({
         reduceToolEvidence: vi.fn().mockResolvedValue({
           exitCode: 0,
           stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
@@ -649,66 +733,93 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
-    { predicate: "asOfMatches", countName: "asOfMatches" },
-    { predicate: "directFetch", countName: "directFetch" },
+    { predicate: "expectedContentMatches", countName: "expectedContentMatches" },
+    { predicate: "expectedUrlMatches", countName: "expectedUrlMatches" },
     { predicate: "httpSuccess", countName: "httpSuccess" },
     { predicate: "maxCharsWithinLimit", countName: "maxCharsWithinLimit" },
     { predicate: "paired", countName: "paired" },
-    { predicate: "priceMatches", countName: "priceMatches" },
     { predicate: "resultSuccess", countName: "resultSuccess" },
-    { predicate: "sourceUrlMatches", countName: "sourceUrlMatches" },
-    { predicate: "symbolMatches", countName: "symbolMatches" },
   ] as const)(
     "projects a zero $countName count when only $predicate is false",
     async ({ predicate, countName }) => {
       const evidence = reduceOpenClawToolEvidence(
-        stockSessionJsonLines(),
-        stockTrajectory(),
-        STOCK_REPLY,
+        publicFetchSessionJsonLines(),
+        publicFetchTrajectory(),
+        PUBLIC_FETCH_EXPECTATION,
       );
       const candidate = structuredClone(evidence) as OpenClawToolEvidence;
       candidate.webFetchResults[0]![predicate] = false;
 
-      await expectAggregateStockFailure(candidate, countName);
+      await expectAggregatePublicFetchFailure(candidate, countName);
     },
   );
 
   it("projects a zero public-target count for a non-public result target", async () => {
     const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines(),
-      stockTrajectory(),
-      STOCK_REPLY,
+      publicFetchSessionJsonLines(),
+      publicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
     );
     const candidate = structuredClone(evidence);
     candidate.webFetchResults[0]!.target = { hostname: "127.0.0.1", protocol: "https:" };
 
-    await expectAggregateStockFailure(candidate, "publicHttpsTarget");
+    await expectAggregatePublicFetchFailure(candidate, "publicHttpsTarget");
   });
 
-  it("validates and records a successful Personal stock-fetch attempt", async () => {
+  it("validates and records a successful Personal public-fetch attempt", async () => {
     const recordToolEvidence = vi.fn().mockResolvedValue(undefined);
     const reduceToolEvidence = vi
       .fn()
-      .mockImplementation(stockAttemptValidationOptions().reduceToolEvidence);
+      .mockImplementation(publicFetchAttemptValidationOptions().reduceToolEvidence);
     const result = await validateOpenClawAgentAttemptEvidence(
-      stockAttemptValidationOptions({ recordToolEvidence, reduceToolEvidence }),
+      publicFetchAttemptValidationOptions({ recordToolEvidence, reduceToolEvidence }),
     );
 
     expect(result).toMatchObject({
       attempt: { passed: true },
       evidence: {
-        reply: JSON.stringify(STOCK_REPLY),
+        reply: "PERSONAL_PUBLIC_FETCH_OK",
         toolEvidence: { errors: [], finalStatuses: ["success"] },
       },
     });
-    expect(reduceToolEvidence).toHaveBeenCalledWith(STOCK_REPLY);
+    expect(reduceToolEvidence).toHaveBeenCalledWith();
     expect(recordToolEvidence).toHaveBeenCalledWith(result.evidence?.toolEvidence);
+  });
+
+  it("rejects conflicting successful and failed terminal statuses", async () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines(),
+      [
+        publicFetchTrajectory(),
+        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "failed" } }),
+      ].join("\n"),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    const result = await validateOpenClawAgentAttemptEvidence(
+      publicFetchAttemptValidationOptions({
+        reduceToolEvidence: vi.fn().mockResolvedValue({
+          exitCode: 0,
+          stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+        }),
+      }),
+    );
+
+    expect(evidence.finalStatuses).toEqual(["failed", "success"]);
+    expect(projectPersonalPublicFetchToolEvidenceArtifact(evidence)).toMatchObject({
+      finalStatusCount: 2,
+      finalSuccess: false,
+      matches: false,
+    });
+    expect(result).toMatchObject({
+      attempt: { passed: false, failureClass: "deterministic" },
+      failure: expect.stringContaining("finalSuccess=false"),
+    });
   });
 
   it("preserves a failed OpenClaw classification before evidence collection", async () => {
     const reduceToolEvidence = vi.fn();
     const result = await validateOpenClawAgentAttemptEvidence(
-      stockAttemptValidationOptions({
+      publicFetchAttemptValidationOptions({
         classification: {
           passed: false,
           failureClass: "transient-external",
@@ -728,12 +839,35 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(reduceToolEvidence).not.toHaveBeenCalled();
   });
 
+  it("projects a bounded agent-command failure before reducer execution", () => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      2,
+      { passed: false, failureClass: "authentication" },
+      {
+        exitCode: 1,
+        signal: null,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: false,
+      },
+    );
+
+    expect(artifact).toEqual({
+      schemaVersion: 1,
+      attempt: 2,
+      diagnosticSummary: "command-exited-nonzero",
+      exitCode: 1,
+      failureClass: "authentication",
+      signal: null,
+      timedOut: false,
+    });
+    const serialized = JSON.stringify(artifact);
+    expect(serialized).not.toContain(PUBLIC_FETCH_URL);
+    expect(serialized).not.toContain(PUBLIC_FETCH_EXPECTATION.content);
+    expect(serialized).not.toContain(REDUCER_SECRET_SENTINEL);
+  });
+
   it.each([
-    {
-      name: "an invalid stock reply",
-      overrides: { reply: "not stock JSON" },
-      failure: /did not contain a valid stock quote/u,
-    },
     {
       name: "a reducer command failure",
       overrides: {
@@ -753,14 +887,9 @@ describe("common-egress agent parsing and classification helpers", () => {
       overrides: { toolEvidenceValidator: () => false },
       failure: /did not match the required trajectory/u,
     },
-    {
-      name: "a reply mismatch",
-      overrides: { replyValidator: () => false },
-      failure: /did not contain a recent fetched stock quote/u,
-    },
   ])("rejects $name deterministically", async ({ overrides, failure }) => {
     const result = await validateOpenClawAgentAttemptEvidence(
-      stockAttemptValidationOptions(overrides),
+      publicFetchAttemptValidationOptions(overrides),
     );
 
     expect(result.attempt).toEqual({ passed: false, failureClass: "deterministic" });
@@ -768,20 +897,73 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(result.evidence).toBeUndefined();
   });
 
-  it("uses parseable tool-result text when persisted OpenClaw details are capped", () => {
-    const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines({ details: { persistedDetailsTruncated: true } }),
-      stockTrajectory(),
-      STOCK_REPLY,
+  it.each([
+    {
+      name: "a reducer command failure",
+      reduced: {
+        exitCode: 2,
+        signal: "SIGTERM" as const,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: true,
+      },
+      expected: {
+        schemaVersion: 1,
+        failureClass: "command-failed",
+        exitCode: 2,
+        signal: "SIGTERM",
+        timedOut: true,
+      },
+    },
+    {
+      name: "malformed reducer output",
+      reduced: {
+        exitCode: 0,
+        signal: null,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: false,
+      },
+      expected: {
+        schemaVersion: 1,
+        failureClass: "output-invalid",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      },
+    },
+  ])("records bounded diagnostics for $name", async ({ reduced, expected }) => {
+    const recordToolEvidenceReductionFailure = vi.fn().mockResolvedValue(undefined);
+    const result = await validateOpenClawAgentAttemptEvidence(
+      publicFetchAttemptValidationOptions({
+        recordToolEvidenceReductionFailure,
+        reduceToolEvidence: vi.fn().mockResolvedValue(reduced),
+      }),
     );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(result.attempt).toEqual({ passed: false, failureClass: "deterministic" });
+    expect(recordToolEvidenceReductionFailure).toHaveBeenCalledOnce();
+    expect(recordToolEvidenceReductionFailure).toHaveBeenCalledWith(expected);
+    const serialized = JSON.stringify(recordToolEvidenceReductionFailure.mock.calls);
+    expect(serialized).not.toContain(PUBLIC_FETCH_URL);
+    expect(serialized).not.toContain(PUBLIC_FETCH_EXPECTATION.content);
+    expect(serialized).not.toContain(REDUCER_SECRET_SENTINEL);
+  });
+
+  it("uses parseable tool-result text when persisted OpenClaw details are capped", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({ details: { persistedDetailsTruncated: true } }),
+      publicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       matches: true,
       qualifyingWebFetchResults: 1,
     });
   });
 
-  it("rejects search-provider and non-public stock-fetch trajectories", () => {
+  it("rejects Brave Search or Tavily Search and non-public fetch trajectories", () => {
     const evidence = reduceOpenClawToolEvidence(
       [
         JSON.stringify({
@@ -792,7 +974,7 @@ describe("common-egress agent parsing and classification helpers", () => {
               {
                 type: "toolCall",
                 name: "web_search",
-                arguments: { provider: "brave", query: "NVDA price" },
+                arguments: { provider: "brave", query: "public reference" },
               },
               {
                 type: "toolCall",
@@ -816,7 +998,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       }),
     );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
       forbiddenProviderMentions: ["brave", "tavily"],
       forbiddenToolNames: ["web_search"],
       matches: false,
@@ -825,130 +1007,54 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(evidence.errors).toEqual(["session line 2 is not JSON", "tool call has no bounded id"]);
   });
 
-  it("accepts a recent numeric NVDA reply only when one paired fetch result supports it", () => {
-    const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines(),
-      stockTrajectory(),
-      STOCK_REPLY,
-    );
-    const reply = JSON.stringify(STOCK_REPLY);
-
-    expect(parseNvdaPersonalStockReply(`\`\`\`json\n${reply}\n\`\`\``)).toMatchObject({
-      price: 192.38,
-      source_url: STOCK_SOURCE_URL,
-      symbol: "NVDA",
-    });
-    const projectedReply = projectNvdaPersonalStockReplyEvidence(reply);
-    expect(projectedReply).toEqual({
-      as_of: STOCK_REPLY.as_of,
-      price: STOCK_REPLY.price,
-      source: { hostname: "query1.finance.yahoo.com", protocol: "https:" },
-      status: "NVDA_PERSONAL_AGENT_OK",
-      symbol: "NVDA",
-    });
-    expect(JSON.stringify(projectedReply)).not.toContain("credential");
-    expect(JSON.stringify(projectedReply)).not.toContain("/v8/finance/chart");
-    expect(
-      parseNvdaPersonalStockReply(
-        JSON.stringify({ ...STOCK_REPLY, source_url: "https://10.0.0.1/quote/NVDA" }),
-      ),
-    ).toBeNull();
-    expect(
-      parseNvdaPersonalStockReply(
-        JSON.stringify({ ...STOCK_REPLY, source_url: "https://[fd00::1]/quote/NVDA" }),
-      ),
-    ).toBeNull();
-    expect(
-      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse("2026-08-18T12:00:00Z")),
-    ).toBe(true);
-    expect(
-      nvdaPersonalStockReplyMatchesEvidence(
-        reply.replace("/v8/finance/chart/NVDA", "/v8/finance/chart/AMD"),
-        evidence,
-        Date.parse("2026-08-18T12:00:00Z"),
-      ),
-    ).toBe(false);
-    expect(
-      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse("2026-09-01T12:00:00Z")),
-    ).toBe(false);
-    expect(
-      nvdaPersonalStockReplyMatchesEvidence(
-        reply.replace('"NVDA"', '"AMD"'),
-        evidence,
-        Date.parse("2026-08-18T12:00:00Z"),
-      ),
-    ).toBe(false);
-  });
-
-  it.each([
-    "https://[::ffff:127.0.0.1]/quote/NVDA",
-    "https://[::ffff:169.254.169.254]/quote/NVDA",
-    "https://[::ffff:10.0.0.1]/quote/NVDA",
-    "https://[::ffff:192.168.1.2]/quote/NVDA",
-  ])("rejects an IPv4-mapped internal stock source: %s", (source_url) => {
-    expect(parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_url }))).toBeNull();
-  });
-
   it.each([
     {
-      name: "failed tool result followed by a fabricated reply",
-      session: stockSessionJsonLines({ isError: true }),
-      trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      name: "a failed tool result",
+      session: publicFetchSessionJsonLines({ isError: true }),
+      trajectory: publicFetchTrajectory(),
     },
     {
-      name: "unrelated content fetched from the claimed host",
-      session: stockSessionJsonLines({
-        payload: stockPayload({ text: "Public finance landing page, updated 2026-08-17." }),
+      name: "content without the fixed reference label",
+      session: publicFetchSessionJsonLines({
+        payload: publicFetchPayload({ text: '{"entities":{"Q30":{"labels":{}}}}' }),
       }),
-      trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      trajectory: publicFetchTrajectory(),
     },
     {
-      name: "provider fallback result",
-      session: stockSessionJsonLines({
-        payload: stockPayload({
-          extractor: "firecrawl",
+      name: "a Brave Search provider result",
+      session: publicFetchSessionJsonLines({
+        payload: publicFetchPayload({
           externalContent: {
             untrusted: true,
             source: "web_fetch",
-            provider: "firecrawl",
+            provider: "brave",
             wrapped: true,
           },
         }),
       }),
-      trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      trajectory: publicFetchTrajectory(),
     },
     {
       name: "mismatched tool call id",
-      session: stockSessionJsonLines({ resultCallId: "call-web-fetch-other" }),
-      trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      session: publicFetchSessionJsonLines({ resultCallId: "call-web-fetch-other" }),
+      trajectory: publicFetchTrajectory(),
     },
     {
-      name: "dummy fetch plus another tool",
-      session: stockSessionJsonLines({ extraToolName: "exec" }),
-      trajectory: stockTrajectory("exec"),
-      expected: STOCK_REPLY,
+      name: "a fetch plus another target tool",
+      session: publicFetchSessionJsonLines({ extraToolName: "exec" }),
+      trajectory: publicFetchTrajectory("exec"),
     },
     {
-      name: "fetch content without the claimed price or date",
-      session: stockSessionJsonLines({ payload: stockPayload({ text: "NVDA quote unavailable" }) }),
-      trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      name: "a result from a different URL",
+      session: publicFetchSessionJsonLines({
+        payload: publicFetchPayload({ url: "https://www.wikidata.org/wiki/Q30" }),
+      }),
+      trajectory: publicFetchTrajectory(),
     },
-  ])("rejects $name", ({ expected, session, trajectory }) => {
-    const evidence = reduceOpenClawToolEvidence(session, trajectory, expected);
+  ])("rejects $name", ({ session, trajectory }) => {
+    const evidence = reduceOpenClawToolEvidence(session, trajectory, PUBLIC_FETCH_EXPECTATION);
 
-    expect(assessPersonalStockToolEvidence(evidence).matches).toBe(false);
-    expect(
-      nvdaPersonalStockReplyMatchesEvidence(
-        JSON.stringify(expected),
-        evidence,
-        Date.parse("2026-08-18T12:00:00Z"),
-      ),
-    ).toBe(false);
+    expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(false);
   });
 
   it("Hermes response parser reads message content", () => {
