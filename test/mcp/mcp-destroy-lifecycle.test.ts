@@ -39,10 +39,7 @@ const testState = vi.hoisted(() => {
     originalEnv,
     policyApplyCalls: 0,
     removedPolicyKeys: new Set<string>(),
-    providers: new Map<
-      string,
-      { credential: string; credentialRevision?: string; id: string; resourceVersion?: number }
-    >(),
+    providers: new Map<string, { credential: string; id: string; resourceVersion?: number }>(),
     resolveHostAddresses: vi.fn(),
     attachedProviders: new Set<string>(),
     recoverNamedGatewayRuntime: vi.fn(),
@@ -1339,12 +1336,13 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       });
       registry.addCustomPolicy("alpha", ownedPolicy("github"));
       registry.addCustomPolicy("alpha", ownedPolicy("slack"));
-      // The prior process died after the first detach, so retry cannot prove
-      // the opaque credential revision needed to scrub and later restore it.
+      // Simulate a prior process dying after the first detach but before a durable
+      // prepared marker. The retry must own rollback of this already-absent binding.
       testState.attachedProviders.delete("alpha-mcp-github");
       testState.failProviderDetach = "alpha-mcp-slack";
 
       const message = await captureMessage(() => bridge[prepareFunction]("alpha"));
+
       expect(message).toContain(
         "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
       );
