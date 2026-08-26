@@ -51,12 +51,17 @@ function bootstrapInput(): RuntimeProviderNativeArtifactBootstrapInput {
   };
 }
 
-function nativeBootstrap() {
+function nativeBootstrap(operations: RuntimeProviderNativeArtifactBootstrapOperations) {
   const surface = createMxcRuntimeProviderBundle({
     hostFacts: {
       platform: "win32",
       nativeArchitecture: "x64",
       release: "10.0.28120",
+    },
+    bootstrapControlPlane: {
+      contractVersion: 1,
+      providerId: "mxc",
+      ...operations,
     },
   }).bootstrap;
   expect(surface).toMatchObject({ supported: true, bootstrapKind: "native-artifact" });
@@ -104,7 +109,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
       }),
     };
 
-    const receipt = await nativeBootstrap().run(bootstrapInput(), operations);
+    const receipt = await nativeBootstrap(operations).run(bootstrapInput());
 
     expect(observedPlan).toMatchObject({
       schemaVersion: 1,
@@ -217,58 +222,50 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
   ] as const)("rejects %s before the create boundary (#8178)", async (_label, mutate, message) => {
     const verifyAndCreate = vi.fn();
-    await expect(
-      nativeBootstrap().run(mutate(bootstrapInput()), {
-        verifyAndCreate,
-        verifyReadiness: vi.fn(),
-      }),
-    ).rejects.toThrow(message);
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate,
+      verifyReadiness: vi.fn(),
+    });
+    await expect(bootstrap.run(mutate(bootstrapInput()))).rejects.toThrow(message);
     expect(verifyAndCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects the obsolete separated verification and create operations (#8178)", async () => {
-    const verifyArtifactIdentity = vi.fn();
-    const create = vi.fn();
+  it("does not let a caller replace the provider-owned operations (#8178)", async () => {
+    const providerVerifyAndCreate = vi.fn(async () => ({
+      status: "not-created" as const,
+      reason: "create-rejected" as const,
+    }));
+    const callerVerifyAndCreate = vi.fn();
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate: providerVerifyAndCreate,
+      verifyReadiness: vi.fn(),
+    });
+    const runWithIgnoredOperations = bootstrap.run as unknown as (
+      input: RuntimeProviderNativeArtifactBootstrapInput,
+      operations: RuntimeProviderNativeArtifactBootstrapOperations,
+    ) => ReturnType<RuntimeProviderNativeArtifactBootstrapSurface["run"]>;
 
-    await expect(
-      nativeBootstrap().run(bootstrapInput(), {
-        verifyArtifactIdentity,
-        create,
-        verifyReadiness: vi.fn(),
-      } as unknown as RuntimeProviderNativeArtifactBootstrapOperations),
-    ).rejects.toThrow(/atomic artifact verification and create plus readiness operations/u);
-    expect(verifyArtifactIdentity).not.toHaveBeenCalled();
-    expect(create).not.toHaveBeenCalled();
+    const receipt = await runWithIgnoredOperations(bootstrapInput(), {
+      verifyAndCreate: callerVerifyAndCreate,
+      verifyReadiness: vi.fn(),
+    });
+
+    expect(receipt).toMatchObject({ outcome: "not-created", reason: "create-rejected" });
+    expect(providerVerifyAndCreate).toHaveBeenCalledOnce();
+    expect(callerVerifyAndCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses launch when a reparse target changes inside atomic verification and create (#8178)", async () => {
-    let resolvedExecutableTarget = "C:\\verified-artifact\\node.exe";
-    const launch = vi.fn();
+  it("reports an absent resource when the provider rejects artifact substitution (#8178)", async () => {
     const verifyReadiness = vi.fn();
-    const verifyAndCreate = vi.fn(async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
-      const verifiedTarget = resolvedExecutableTarget;
-      const createForVerifiedTarget = new Map([
-        [
-          verifiedTarget,
-          () => {
-            launch(plan.executablePath);
-            return verifiedCreateOutcome(plan);
-          },
-        ],
-      ]);
-      resolvedExecutableTarget = "C:\\substituted-artifact\\node.exe";
-      return (
-        createForVerifiedTarget.get(resolvedExecutableTarget)?.() ?? {
-          status: "not-created" as const,
-          reason: "artifact-verification-failed" as const,
-        }
-      );
-    });
+    const verifyAndCreate = vi.fn(async () => ({
+      status: "not-created" as const,
+      reason: "artifact-verification-failed" as const,
+    }));
 
-    const receipt = await nativeBootstrap().run(bootstrapInput(), {
+    const receipt = await nativeBootstrap({
       verifyAndCreate,
       verifyReadiness,
-    });
+    }).run(bootstrapInput());
 
     expect(receipt).toMatchObject({
       outcome: "not-created",
@@ -277,7 +274,6 @@ describe("inactive MXC native-artifact bootstrap", () => {
       cleanup: { attempted: false, resourceRemovalAuthorized: false },
     });
     expect(verifyAndCreate).toHaveBeenCalledOnce();
-    expect(launch).not.toHaveBeenCalled();
     expect(verifyReadiness).not.toHaveBeenCalled();
   });
 
@@ -317,10 +313,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
     "retains an ambiguous resource after $label (#8178)",
     async ({ verifyAndCreate, reason }) => {
       const verifyReadiness = vi.fn();
-      const receipt = await nativeBootstrap().run(bootstrapInput(), {
+      const receipt = await nativeBootstrap({
         verifyAndCreate,
         verifyReadiness,
-      });
+      }).run(bootstrapInput());
 
       expect(receipt).toMatchObject({
         outcome: "retained",
@@ -343,11 +339,9 @@ describe("inactive MXC native-artifact bootstrap", () => {
       verifyReadiness: vi.fn(),
     };
 
-    await nativeBootstrap().run(bootstrapInput(), operations);
-    await nativeBootstrap().run(
-      { ...bootstrapInput(), lifecycleGeneration: "generation-8" },
-      operations,
-    );
+    const bootstrap = nativeBootstrap(operations);
+    await bootstrap.run(bootstrapInput());
+    await bootstrap.run({ ...bootstrapInput(), lifecycleGeneration: "generation-8" });
 
     expect(plans).toHaveLength(2);
     expect(plans[0]!.shareDirectory).not.toBe(plans[1]!.shareDirectory);
@@ -390,10 +384,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
     },
   ])("reports fail-closed state after $label (#8178)", async ({ verifyAndCreate, expected }) => {
     const verifyReadiness = vi.fn();
-    const receipt = await nativeBootstrap().run(bootstrapInput(), {
+    const receipt = await nativeBootstrap({
       verifyAndCreate,
       verifyReadiness,
-    });
+    }).run(bootstrapInput());
 
     expect(receipt).toMatchObject({
       ...expected,
@@ -437,10 +431,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
     "retains a created or ambiguous resource after %s (#8178)",
     async (_label, verifyAndCreate, verifyReadiness, reason, verificationExpected) => {
       const verify = vi.fn(verifyReadiness);
-      const receipt = await nativeBootstrap().run(bootstrapInput(), {
+      const receipt = await nativeBootstrap({
         verifyAndCreate,
         verifyReadiness: verify,
-      });
+      }).run(bootstrapInput());
 
       expect(receipt).toMatchObject({
         outcome: "retained",

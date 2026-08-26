@@ -11,6 +11,7 @@ import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifac
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import { createMxcRuntimeProviderBundle } from "./mxc";
+import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -21,6 +22,17 @@ const NATIVE_RECEIPT = nativeArtifactWorkloadReceiptFixture(
   encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
 );
 
+function inactiveBootstrapControlPlane(): MxcNativeArtifactControlPlane {
+  return {
+    contractVersion: 1,
+    providerId: "mxc",
+    verifyAndCreate: async () => ({ status: "unknown" }),
+    verifyReadiness: async () => {
+      throw new Error("inactive test control plane has no readiness evidence");
+    },
+  };
+}
+
 function candidateBundle() {
   return createMxcRuntimeProviderBundle({
     hostFacts: {
@@ -28,6 +40,7 @@ function candidateBundle() {
       nativeArchitecture: "x64",
       release: "10.0.28000.1836",
     },
+    bootstrapControlPlane: inactiveBootstrapControlPlane(),
   });
 }
 
@@ -97,6 +110,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
         nativeArchitecture: "x64",
         release: "6.6.87.2-microsoft-standard-WSL2",
       },
+      bootstrapControlPlane: inactiveBootstrapControlPlane(),
     });
     expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
       status: "fail",
@@ -157,7 +171,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       providerId: "mxc",
       supported: true,
       bootstrapKind: "native-artifact",
-      contractVersion: 3,
+      contractVersion: 4,
     });
     expect(provider.lifecycle).toMatchObject({
       providerId: "mxc",
@@ -176,11 +190,11 @@ describe("inactive OpenShell MXC runtime provider", () => {
     });
   });
 
-  it("rejects the version-2 separated native-artifact bootstrap operations contract (#8178)", () => {
+  it("rejects the version-3 caller-supplied native-artifact operations contract (#8178)", () => {
     const provider = candidateBundle();
     const obsolete = {
       ...provider,
-      bootstrap: { ...provider.bootstrap, contractVersion: 2 },
+      bootstrap: { ...provider.bootstrap, contractVersion: 3 },
     } as unknown as typeof provider;
 
     expect(() => createRuntimeProviderBundleRegistry([["mxc", obsolete]])).toThrow(

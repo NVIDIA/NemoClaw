@@ -21,7 +21,7 @@ export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
-export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 3 as const;
+export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as const;
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
@@ -541,9 +541,9 @@ export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupport
 export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
   readonly bootstrapKind: "native-artifact";
   readonly contractVersion: typeof RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION;
+  /** Run only with the provider-owned operations bound when the bundle is constructed. */
   run(
     input: RuntimeProviderNativeArtifactBootstrapInput,
-    operations: RuntimeProviderNativeArtifactBootstrapOperations,
   ): Promise<RuntimeProviderNativeArtifactBootstrapResult>;
 }>;
 

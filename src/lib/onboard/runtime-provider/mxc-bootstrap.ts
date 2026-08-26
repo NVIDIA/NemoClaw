@@ -256,12 +256,22 @@ async function runMxcNativeArtifactBootstrap(
   return result(plan, "ready", null, "active");
 }
 
-export function createMxcNativeArtifactBootstrapSurface(): RuntimeProviderNativeArtifactBootstrapSurface {
+export function createMxcNativeArtifactBootstrapSurface(
+  operations: RuntimeProviderNativeArtifactBootstrapOperations,
+): RuntimeProviderNativeArtifactBootstrapSurface {
+  if (
+    typeof operations?.verifyAndCreate !== "function" ||
+    typeof operations.verifyReadiness !== "function"
+  ) {
+    throw new MxcNativeArtifactBootstrapError(
+      "provider-owned atomic artifact verification and create plus readiness operations are required",
+    );
+  }
   return {
     providerId: MXC_PROVIDER_ID,
     supported: true,
     bootstrapKind: "native-artifact",
     contractVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
-    run: runMxcNativeArtifactBootstrap,
+    run: (input) => runMxcNativeArtifactBootstrap(input, operations),
   };
 }
