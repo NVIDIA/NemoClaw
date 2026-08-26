@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { githubRest, githubRestPaginated } from "../advisors/github.mts";
 import {
@@ -402,6 +404,16 @@ export function declaresReplacement(text: string, currentPrNumber: number): bool
   );
 }
 
+export async function writeGitHubReviewContext(
+  env: NodeJS.ProcessEnv,
+  outputPath = env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_OUTPUT,
+): Promise<void> {
+  if (!outputPath) throw new Error("PR_REVIEW_ADVISOR_GITHUB_CONTEXT_OUTPUT is required");
+  const context = await collectGitHubReviewContext(env);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, serializePreparedGitHubContext(context), { flag: "wx", mode: 0o600 });
+}
+
 export function hasOpenPrReplacement(overlaps: readonly OpenPrOverlap[] | undefined): boolean {
   return overlaps?.some((overlap) => overlap.replacesCurrentPr) ?? false;
 }
@@ -423,4 +435,8 @@ export function extractIssueRefs(text: string, prNumber: number): number[] {
     }
   }
   return [...numbers].sort((a, b) => a - b);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await writeGitHubReviewContext(process.env);
 }
