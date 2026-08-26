@@ -85,7 +85,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
     id: RUN_ID,
     run_attempt: 1,
     workflow_id: WORKFLOW_ID,
-    name: "Images / Publish Base and Managed Images",
+    name: "Images / Base Images",
     event: "push",
     status: "completed",
     conclusion: "success",
@@ -102,7 +102,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
 function workflowMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: WORKFLOW_ID,
-    name: "Images / Publish Base and Managed Images",
+    name: "Images / Base Images",
     path: ".github/workflows/base-image.yaml",
     state: "active",
     html_url: "https://github.com/NVIDIA/NemoClaw/blob/main/.github/workflows/base-image.yaml",
@@ -505,7 +505,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be Images \/ Publish Base and Managed Images/u);
+    ).toThrow(/name must be Images \/ Base Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {

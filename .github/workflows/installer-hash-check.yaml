@@ -8,7 +8,7 @@
 # A new release-manifest allowlist entry must land on main in a prerequisite PR
 # before a later PR changes runtime selectors to that release.
 
-name: Security / Verify Installer Hashes
+name: Security / Installer Hashes
 
 run-name: >-
   ${{ github.event_name == 'pull_request' &&
@@ -32,6 +32,7 @@ permissions:
 
 jobs:
   check-hash:
+    name: Verification
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 5
