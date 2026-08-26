@@ -76,10 +76,7 @@ export type DockerGpuSupervisorReconnectDeps = {
 type DockerLifecycleReleaseDeps = Pick<
   DockerGpuSupervisorReconnectDeps,
   "runCaptureOpenshell" | "sleep"
-> & {
-  /** Corroborates a retiring lifecycle row with the stopped exact replacement. */
-  soleLabeledReplacementCorroboratesRetiringPhase?: (remainingMs: number) => boolean;
-};
+>;
 
 type DockerFinalHandoffDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
@@ -106,8 +103,9 @@ const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
 
 /**
  * Wait for OpenShell to retire the pre-replacement lifecycle record before
- * restarting the replacement. A retiring Error or Deleting row is accepted
- * only with an identity-bound Docker corroboration.
+ * restarting the replacement. The selected sandbox name must be absent from
+ * a phase-bearing list receipt because a row cannot prove which container
+ * owns the lifecycle, even when Docker still exposes the exact replacement.
  */
 export function waitForOpenShellSandboxLifecycleRelease(
   sandboxName: string,
@@ -140,20 +138,8 @@ export function waitForOpenShellSandboxLifecycleRelease(
     if (output) {
       const entries = parseLiveSandboxEntries(output);
       const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
-      const retiring = entries.some(
-        (entry) =>
-          entry.name === sandboxName && (entry.phase === "Error" || entry.phase === "Deleting"),
-      );
-      const corroborated =
-        retiring &&
-        deadline - Date.now() > 0 &&
-        deps.soleLabeledReplacementCorroboratesRetiringPhase?.(deadline - Date.now()) === true;
       const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      if (
-        explicitEmptyList ||
-        corroborated ||
-        (entries.some((entry) => entry.phase !== null) && !sandboxPresent)
-      ) {
+      if (explicitEmptyList || (entries.some((entry) => entry.phase !== null) && !sandboxPresent)) {
         return true;
       }
     }
@@ -263,19 +249,6 @@ function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
-function parseSandboxListFailurePhase(output: string, sandboxName: string): string | null {
-  if (typeof output !== "string" || !output.includes(sandboxName)) return null;
-  for (const line of output.replace(ANSI_RE, "").split(/\r?\n/)) {
-    const cols = line.trim().split(/\s+/);
-    if (cols[0] === sandboxName) {
-      return cols.find((col) => TERMINAL_SANDBOX_FAILURE_PHASES.has(col)) ?? null;
-    }
-  }
-  return null;
-}
-
 function sandboxListShowsErrorPhase(
   sandboxName: string,
   runCaptureOpenshell: RunCaptureOpenshellFn,
@@ -287,7 +260,12 @@ function sandboxListShowsErrorPhase(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    return parseSandboxListFailurePhase(list, sandboxName) !== null;
+    return parseLiveSandboxEntries(list).some(
+      (entry) =>
+        entry.name === sandboxName &&
+        entry.phase !== null &&
+        TERMINAL_SANDBOX_FAILURE_PHASES.has(entry.phase),
+    );
   } catch {
     return false;
   }

@@ -98,26 +98,40 @@ function requireFixtureInput(condition: boolean, message: string): asserts condi
   if (!condition) throw new Error(message);
 }
 
-/** Read the final machine receipt without treating recreation progress as JSON. */
+function isLegacyKeepaliveHandoffReceiptCandidate(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ["oldContainerId", "newContainerId", "startupCommand"].some((key) =>
+      Object.hasOwn(value, key),
+    )
+  );
+}
+
+/** Read one final machine receipt without treating recreation progress as JSON. */
 export function parseLegacyKeepaliveHandoffReceipt(
   output: string,
 ): LegacyKeepaliveHandoffReceipt {
-  const receiptLine = output
+  const lines = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(receiptLine ?? "");
-  } catch {
-    throw new Error("legacy keepalive fixture did not emit a final JSON handoff receipt");
-  }
+    .filter(Boolean);
+  const receiptCandidates = lines.flatMap((line, index) => {
+    try {
+      const value: unknown = JSON.parse(line);
+      return isLegacyKeepaliveHandoffReceiptCandidate(value) ? [{ index, value }] : [];
+    } catch {
+      return [];
+    }
+  });
   requireFixtureInput(
-    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed),
-    "legacy keepalive fixture handoff receipt must be an object",
+    receiptCandidates.length === 1 && receiptCandidates[0]?.index === lines.length - 1,
+    "legacy keepalive fixture must emit exactly one final JSON handoff receipt",
   );
-  const receipt = parsed as Record<string, unknown>;
+  const receipt = receiptCandidates[0].value;
   requireFixtureInput(
     DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.oldContainerId ?? "")) &&
       DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.newContainerId ?? "")) &&

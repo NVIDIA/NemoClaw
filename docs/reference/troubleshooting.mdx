@@ -1747,7 +1747,7 @@ Recovery makes at most 11 controller attempts in total.
 It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
 The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence.
 That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again.
-Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window.
 Status `137` and the Docker restart result remain terminal during that confirmation.
 The managed supervisor startup waiter accepts the four exact startup results, `SUPERVISOR_BUSY`, and the two container-transition results within its separate 11-attempt bound.
 Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
@@ -1755,6 +1755,9 @@ NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unrea
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1.
 It enters the bounded startup retry first; only an exact missing-supervisor result that remains after the bound can authorize a container-identity-pinned recreation on a supported local Docker-driver sandbox with the legacy keepalive startup.
 That recreation commits only after managed health and settle checks pass.
+At the final commit handoff, NemoClaw stops the replacement, removes the rollback container, and waits for a captured, phase-bearing `openshell sandbox list` result that omits the selected sandbox name before it restarts the replacement.
+An `Error` or `Deleting` row for the selected sandbox does not prove lifecycle release, even when Docker still exposes the exact replacement container.
+If the release proof does not arrive after the rollback container has been removed, NemoClaw leaves the replacement stopped and reports that automatic rollback is unavailable.
 To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
 If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.

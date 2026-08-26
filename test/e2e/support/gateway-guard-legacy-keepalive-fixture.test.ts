@@ -151,6 +151,21 @@ describe("gateway guard legacy keepalive fixture", () => {
   it.each([
     { name: "missing receipt", output: "Waiting for handoff\n" },
     {
+      name: "conflicting receipts",
+      output: [
+        JSON.stringify({
+          oldContainerId: OLD_CONTAINER_ID,
+          newContainerId: NEW_CONTAINER_ID,
+          startupCommand: "sleep infinity",
+        }),
+        JSON.stringify({
+          oldContainerId: NEW_CONTAINER_ID,
+          newContainerId: "c".repeat(64),
+          startupCommand: "sleep infinity",
+        }),
+      ].join("\n"),
+    },
+    {
       name: "unchanged container identity",
       output: JSON.stringify({
         oldContainerId: OLD_CONTAINER_ID,
@@ -168,7 +183,7 @@ describe("gateway guard legacy keepalive fixture", () => {
     },
   ])("rejects $name in the handoff receipt", ({ output }) => {
     expect(() => parseLegacyKeepaliveHandoffReceipt(output)).toThrow(
-      /final JSON handoff receipt|handoff receipt is invalid/u,
+      /exactly one final JSON handoff receipt|handoff receipt is invalid/u,
     );
   });
 
