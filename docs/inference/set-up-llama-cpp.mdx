@@ -115,7 +115,7 @@ Run `unset HF_TOKEN` after onboarding when no other process needs it.
 
 <Warning>
 When the artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
-It reuses locally present pinned images and a cached GGUF only after their identities verify.
+It reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their identities.
 It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>

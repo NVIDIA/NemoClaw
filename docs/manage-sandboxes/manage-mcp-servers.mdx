@@ -173,12 +173,12 @@ For immediate revocation, revoke the upstream credential first, then run `$$nemo
 
 `remove --force` may remove a modified same-name adapter entry so an operator can clear local config.
 Provider deletion still requires the recorded provider ID and credential key plus an accepted managed provider type.
-legacy `generic` providers are accepted only for cleanup.
+Legacy `generic` providers are accepted only for cleanup.
 
-Policy deletion still requires owned content.
+Policy deletion still requires live policy content to equal the recorded owned content.
 Force never claims an unowned or drifted provider or same-key live policy.
 
-For an ordinary managed entry, NemoClaw cleans up the adapter, removes the owned policy, and then detaches its provider because OpenShell rejects detach while `credential_binding.provider` still references that provider.
+For an ordinary managed entry, NemoClaw cleans up the adapter, removes the live policy only when it equals the recorded owned policy, and then detaches its provider because OpenShell rejects detach while `credential_binding.provider` still references that provider.
 For a stored legacy entry whose credential name is no longer accepted, it first detaches the provider so adapter cleanup cannot start with that credential attached.
 It deletes the provider only after detach and credential-removal checks succeed.
 

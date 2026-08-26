@@ -862,7 +862,7 @@ When that error is present, the failure output identifies the missing managed st
 If NemoClaw saves pre-rollback diagnostics, the reported directory contains the captured container logs.
 If rollback succeeds, NemoClaw restores and starts the pre-patch sandbox container.
 It does not print a sandbox deletion command for the restored sandbox.
-If the failed replacement container remains, NemoClaw prints an container Docker cleanup command.
+If the failed replacement container remains, NemoClaw prints a container-specific Docker cleanup command.
 If NemoClaw cannot confirm whether the replacement remains but retains its validated ID, it prints the same target-safe command.
 Without a validated ID, it reports cleanup as unknown and prints no deletion command.
 If rollback fails, sandbox and container state can be uncertain.
@@ -3409,7 +3409,7 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 Outside Station Express, the standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and can fall back to generating the spec directly with `nvidia-ctk`.
 Station Express never falls back to direct CDI generation.
-The generic Ubuntu, Colossus BaseOS, and AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed commit install command.
+The generic Ubuntu, Colossus BaseOS, and AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed install command pinned to that commit.
 Other factory-runtime profiles stop when the CDI device is missing without enabling or restarting the refresh units.
 If you run `$$nemoclaw onboard` directly, preflight prints the manual remediation instead.
 The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
@@ -3454,7 +3454,7 @@ Do not set `fallback`, `1`, or another legacy nonzero value for a portable run.
 | --- | --- | --- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation. |
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
-| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only an container cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
+| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only a container-specific cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
 For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that `--dns` path before it stops the original container.
@@ -3503,7 +3503,7 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks.
 If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
 When rollback succeeds, the pre-patch sandbox remains available.
-If the failed replacement may remain and NemoClaw retains its validated container ID, it prints only an container `docker rm -f` command.
+If the failed replacement may remain and NemoClaw retains its validated container ID, it prints only a container-specific `docker rm -f` command.
 When a replacement is not stably running, the failure diagnostic includes its runtime ID, inspected state, and a bounded redacted log tail when available.
 If replacement cleanup cannot be confirmed without a validated ID, onboarding reports cleanup as unknown and prints no deletion command.
 When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command.

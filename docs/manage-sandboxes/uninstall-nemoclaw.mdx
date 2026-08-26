@@ -217,11 +217,11 @@ Each receipt must have one current matching row in that file, and the file must 
 Missing, mismatched, or extra rows make NemoClaw exit nonzero before it changes a container or host state.
 An unrelated row, including a non-portable row, makes ownership ambiguous and triggers this fail-closed result before any effect, even with `--destroy-user-data`.
 An unrelated sandbox registered only with OpenShell is outside that host registry and remains usable.
-NemoClaw holds those same sorted lifecycle locks and the process-bound registry lock throughout Podman container removal, name OpenShell sandbox deletion, portable registry removal, selector cleanup, and the final retirement operation for the receipts, sandbox registry rows, and `~/.config/nemoclaw/portable/containers.conf`.
+NemoClaw holds those same sorted lifecycle locks and the process-bound registry lock throughout Podman container removal, deletion of the OpenShell sandbox with the matching name, portable registry removal, selector cleanup, and the final retirement operation for the receipts, sandbox registry rows, and `~/.config/nemoclaw/portable/containers.conf`.
 Before it retires `~/.config/nemoclaw/portable/containers.conf` or lifecycle receipts, NemoClaw revalidates the current user's local Podman socket authority and lifecycle generation.
 It also revalidates the receipt-owned sandbox containers, their expected OpenShell labels and current running state, and the managed portable registry container.
 NemoClaw uses the pinned local Podman socket to remove only the receipt-owned sandbox containers.
-Before every receipt-name OpenShell sandbox deletion, NemoClaw runs `openshell status -g <gateway>` to prove that the gateway name recorded by the matching registry row is connected.
+Before every receipt-deletion of the OpenShell sandbox with the matching name, NemoClaw runs `openshell status -g <gateway>` to prove that the gateway name recorded by the matching registry row is connected.
 It then runs `openshell sandbox delete -g <gateway> <sandbox>` for that gateway and sandbox name.
 After deletion, bounded `openshell sandbox get -g <gateway> <sandbox>` probes must verify that the sandbox is absent.
 If the single delete command returns a nonzero status, NemoClaw still performs those read-only probes.

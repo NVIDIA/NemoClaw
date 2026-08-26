@@ -337,9 +337,9 @@ It also names the supported features that may stop working before it requires ex
 NemoClaw refuses to exclude an entry that does not have a reviewed feature-impact disclosure, so a new baseline entry cannot bypass this review.
 The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
 If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
-NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the live result before publishing the durable intent.
+NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies that the live policy equals the intended result before publishing the durable intent.
 If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
-Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only a source or target state.
+Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only when the state equals the recorded source or intended target.
 An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.

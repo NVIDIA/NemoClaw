@@ -3178,7 +3178,7 @@ $$nemoclaw my-assistant mcp list [--json]
 
 Add an MCP Streamable HTTP server to a sandbox.
 Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client.
-Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit a RFC1918, CGNAT, or IPv6 unique local destination for the current command.
+Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an RFC1918, CGNAT, or IPv6 unique local destination for the current command.
 The declaration must equal the normalized host from `--url`.
 For managed MCP, use a DNS hostname for an IPv6 unique local address because NemoClaw has not qualified direct IPv6-literal MCP URLs.
 You can supply hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options.
@@ -3328,7 +3328,7 @@ For a stored legacy entry whose credential name is no longer accepted, it first 
 Deep Agents teardown does not require managed MCP capability v2 from the old image.
 For a v1 image, NemoClaw removes the registry-owned entry from the legacy `.mcp.json` while preserving unrelated user state; a replacement image must pass the v2 capability check before post-rebuild providers or policy are restored.
 The command fails closed on observed drift.
-`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the recorded ID and credential key plus an accepted managed provider type, and policy deletion still requires owned content.
+`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the recorded ID and credential key plus an accepted managed provider type, and policy deletion still requires live policy content to equal the recorded owned content.
 A legacy `generic` provider is accepted only for cleanup.
 Residuals preserve registry state.
 OpenShell `0.0.106` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.

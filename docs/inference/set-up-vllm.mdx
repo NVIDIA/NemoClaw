@@ -361,7 +361,7 @@ The registered recipe configures a 32,768-token context window, 1 concurrent seq
 It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
 The pinned post-merge runtime image was verified on one physical DGX Spark.
 The managed `/v1/models` endpoint reported `muse-glimmer`.
-A direct chat request returned text `391`, and a reasoning request returned separated reasoning in `message.reasoning`.
+A direct chat request returned `391` and no other text, and a reasoning request returned separated reasoning in `message.reasoning`.
 A required structured tool request returned a named tool call.
 A real OpenClaw TUI turn used one prompt and returned `391` through provider `inference` and model `muse-glimmer`.
 A managed stop and start preserved the image digest and managed inference route.

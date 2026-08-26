@@ -40,7 +40,7 @@ This polling is the planned extension, and the correlation module already accept
   Pass `--inventory <file>` to use an explicit `{name, version}` inventory for hermetic offline runs.
   A malformed entry fails the run instead of silently reducing the inventory.
 - Confidence is encoded instead of inferred.
-  Only an npm ecosystem, package name, and parseable semantic-version range match yields `confidence: "exact"` and `action: "investigate"`.
+  Only a match on the npm ecosystem, package name, and parseable semantic-version range yields `confidence: "exact"` and `action: "investigate"`.
   Name collisions from non-npm, CPE-derived records and unparseable ranges yield `confidence: "ambiguous"` and `action: "informational"`.
   Ambiguous matches never block or mutate a release.
 - The reviewed npm audit gate in `scripts/audit-reviewed-npm-graph.mts` remains enabled in CI.

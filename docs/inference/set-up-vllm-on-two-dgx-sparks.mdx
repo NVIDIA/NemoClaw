@@ -146,7 +146,7 @@ DGX Spark Express prints the selected topology, immutable image, pinned model re
 For optional authenticated model downloads, follow [Authenticate Hugging Face Downloads](set-up-vllm#authenticate-hugging-face-downloads) before you start the installer.
 The public model can download anonymously, but Hugging Face can rate-limit anonymous transfers.
 
-## Select an Pair
+## Select a Pair
 
 Use strict selection when you already know the pretrusted peer and want setup to stop on any missed requirement.
 The following first-install example also selects the serving preset.
@@ -192,7 +192,7 @@ The worker must remain alive while waiting at the distributed rendezvous before 
 NemoClaw passes the bearer API key only through the head container environment.
 It does not add the credential or an environment-variable expansion to the vLLM process arguments.
 The worker does not receive the API key.
-Setup commits only after both container identities remain and authenticated model inventory and chat requests succeed.
+Setup commits only after both containers retain their recorded identities and authenticated model inventory and chat requests succeed.
 
 ## Verify the Installed Route
 
