@@ -213,10 +213,15 @@ describe("platform helpers", () => {
       expect(probes).toEqual([undefined]);
     });
 
-    it("skips an unreachable Podman socket and selects a reachable Docker fallback (#8816)", () => {
+    it("selects a reachable Docker fallback and ends the scan there (#8816, #10367)", () => {
+      // Detection runs at runner import, and each probe is a synchronous
+      // Docker CLI run that a stale socket can hold for the whole probe
+      // timeout, so a settled Docker answer has to end the scan. The Podman
+      // candidate that follows is never reached, whatever it would answer.
       const podmanSocket = "/run/user/1000/podman/podman.sock";
       const dockerSocket = "/var/run/docker.sock";
       const sockets = new Set([podmanSocket, dockerSocket]);
+      const probes: Array<string | undefined> = [];
 
       expect(
         detectDockerHost({
@@ -224,16 +229,19 @@ describe("platform helpers", () => {
           platform: "linux",
           uid: 1000,
           existsSync: (candidate) => sockets.has(candidate),
-          probeDockerHost: (dockerHost) =>
-            dockerHost === `unix://${dockerSocket}`
+          probeDockerHost: (dockerHost) => {
+            probes.push(dockerHost);
+            return dockerHost === `unix://${dockerSocket}`
               ? { reachable: true, identity: "docker" }
-              : { reachable: false, identity: "unknown" },
+              : { reachable: false, identity: "unknown" };
+          },
         }),
       ).toEqual({
         dockerHost: `unix://${dockerSocket}`,
         source: "socket",
         socketPath: dockerSocket,
       });
+      expect(probes).toEqual([undefined, `unix://${dockerSocket}`]);
     });
 
     it("selects a reachable Podman fallback when no other Linux runtime is reachable (#8816)", () => {
@@ -255,38 +263,6 @@ describe("platform helpers", () => {
         source: "socket",
         socketPath,
       });
-    });
-
-    it("stops probing candidates once a Docker socket answers (#8816, #10367)", () => {
-      // Detection runs at runner import, and each probe is a synchronous
-      // Docker CLI run that a stale socket can hold for the whole probe
-      // timeout, so a settled Docker answer has to end the scan.
-      const podmanSocket = "/run/user/1000/podman/podman.sock";
-      const dockerSocket = "/var/run/docker.sock";
-      const sockets = new Set([podmanSocket, dockerSocket]);
-      const probes: Array<string | undefined> = [];
-
-      expect(
-        detectDockerHost({
-          env: {},
-          platform: "linux",
-          uid: 1000,
-          existsSync: (candidate) => sockets.has(candidate),
-          probeDockerHost: (dockerHost) => {
-            probes.push(dockerHost);
-            return dockerHost
-              ? dockerHost.includes("podman")
-                ? { reachable: true, identity: "podman" }
-                : { reachable: true, identity: "docker" }
-              : { reachable: false, identity: "unknown" };
-          },
-        }),
-      ).toEqual({
-        dockerHost: `unix://${dockerSocket}`,
-        source: "socket",
-        socketPath: dockerSocket,
-      });
-      expect(probes).toEqual([undefined, `unix://${dockerSocket}`]);
     });
 
     it("prefers Docker Desktop over an earlier Podman machine socket on macOS (#10367)", () => {
