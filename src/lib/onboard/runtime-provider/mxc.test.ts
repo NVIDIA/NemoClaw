@@ -157,7 +157,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       providerId: "mxc",
       supported: true,
       bootstrapKind: "native-artifact",
-      contractVersion: 1,
+      contractVersion: 2,
     });
     expect(provider.lifecycle).toMatchObject({
       providerId: "mxc",
@@ -174,6 +174,18 @@ describe("inactive OpenShell MXC runtime provider", () => {
       directLifecycle: false,
       workloadImageCleanup: false,
     });
+  });
+
+  it("rejects the version-1 native-artifact bootstrap operations contract (#8178)", () => {
+    const provider = candidateBundle();
+    const obsolete = {
+      ...provider,
+      bootstrap: { ...provider.bootstrap, contractVersion: 1 },
+    } as unknown as typeof provider;
+
+    expect(() => createRuntimeProviderBundleRegistry([["mxc", obsolete]])).toThrow(
+      /native-artifact bootstrap has an unsupported contract version/u,
+    );
   });
 
   it("rejects a native-artifact profile with an unaccepted agent (#8178)", () => {

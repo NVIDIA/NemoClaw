@@ -21,7 +21,7 @@ export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
-export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
@@ -144,9 +144,21 @@ export interface RuntimeProviderNativeArtifactReadinessEvidence {
   readonly ready: boolean;
 }
 
+export interface RuntimeProviderNativeArtifactIdentityEvidence {
+  readonly authoritySha256: string;
+  readonly artifactRoot: string;
+  readonly artifactDigest: string;
+  readonly executablePath: string;
+  readonly executableDigest: string;
+}
+
 export interface RuntimeProviderNativeArtifactBootstrapOperations {
+  verifyArtifactIdentity(
+    plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  ): Promise<RuntimeProviderNativeArtifactIdentityEvidence>;
   create(
     plan: RuntimeProviderNativeArtifactBootstrapPlan,
+    identity: RuntimeProviderNativeArtifactIdentityEvidence,
   ): Promise<RuntimeProviderNativeArtifactCreateOutcome>;
   verifyReadiness(
     plan: RuntimeProviderNativeArtifactBootstrapPlan,
@@ -157,6 +169,7 @@ export type RuntimeProviderNativeArtifactBootstrapResult = Readonly<{
   readonly outcome: "ready" | "not-created" | "retained";
   readonly reason:
     | null
+    | "artifact-verification-failed"
     | "create-rejected"
     | "create-outcome-unknown"
     | "create-authority-mismatch"

@@ -9,6 +9,7 @@ import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import type {
   RuntimeProviderNativeArtifactBootstrapInput,
+  RuntimeProviderNativeArtifactIdentityEvidence,
   RuntimeProviderNativeArtifactBootstrapOperations,
   RuntimeProviderNativeArtifactBootstrapPlan,
   RuntimeProviderNativeArtifactReadinessEvidence,
@@ -75,16 +76,32 @@ function readyEvidence(
   };
 }
 
+function artifactIdentityEvidence(
+  plan: RuntimeProviderNativeArtifactBootstrapPlan,
+): RuntimeProviderNativeArtifactIdentityEvidence {
+  return {
+    authoritySha256: plan.authoritySha256,
+    artifactRoot: plan.artifactRoot,
+    artifactDigest: plan.workload.artifact.digest,
+    executablePath: plan.executablePath,
+    executableDigest: plan.workload.launch.executable.digest,
+  };
+}
+
 describe("inactive MXC native-artifact bootstrap", () => {
   it("preserves drive-root launch authority across create and readiness checks (#8178)", async () => {
     let observedPlan: RuntimeProviderNativeArtifactBootstrapPlan | null = null;
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {
-      create: vi.fn(async (plan) => {
+      verifyArtifactIdentity: vi.fn(async (plan) => artifactIdentityEvidence(plan)),
+      create: vi.fn(async (plan, identity) => {
         observedPlan = plan;
         const authoritySha256 = plan.authoritySha256;
+        expect(identity).toEqual(artifactIdentityEvidence(plan));
         Reflect.set(plan, "artifactRoot", SHARE_DIRECTORY);
         Reflect.set(plan.workload.artifact, "digest", "sha256:" + "0".repeat(64));
         Reflect.set(plan.workload.launch.environmentNames, "0", "MUTATED");
+        Reflect.set(identity, "artifactDigest", "sha256:" + "0".repeat(64));
+        expect(identity.artifactDigest).toBe(NATIVE_RECEIPT.artifact.digest);
         return { status: "created" as const, authoritySha256 };
       }),
       verifyReadiness: vi.fn(async (plan) => {
@@ -180,6 +197,22 @@ describe("inactive MXC native-artifact bootstrap", () => {
       /artifact root and provider-owned writable share must remain separate/u,
     ],
     [
+      "writable share with a trailing period reused as the artifact root",
+      (input: RuntimeProviderNativeArtifactBootstrapInput) => ({
+        ...input,
+        artifactRoot: `${SHARE_DIRECTORY}.`,
+      }),
+      /artifact root must be a direct child/u,
+    ],
+    [
+      "writable share with a trailing space reused as the artifact root",
+      (input: RuntimeProviderNativeArtifactBootstrapInput) => ({
+        ...input,
+        artifactRoot: `${SHARE_DIRECTORY} `,
+      }),
+      /artifact root must be a direct child/u,
+    ],
+    [
       "OpenClaw writable mappings omitted",
       (input: RuntimeProviderNativeArtifactBootstrapInput) => ({
         ...input,
@@ -194,6 +227,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     const create = vi.fn();
     await expect(
       nativeBootstrap().run(mutate(bootstrapInput()), {
+        verifyArtifactIdentity: vi.fn(),
         create,
         verifyReadiness: vi.fn(),
       }),
@@ -201,9 +235,75 @@ describe("inactive MXC native-artifact bootstrap", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("requires provider-owned artifact verification before the create boundary (#8178)", async () => {
+    const create = vi.fn();
+
+    await expect(
+      nativeBootstrap().run(bootstrapInput(), {
+        create,
+        verifyReadiness: vi.fn(),
+      } as unknown as RuntimeProviderNativeArtifactBootstrapOperations),
+    ).rejects.toThrow(/artifact verification, create, and readiness operations/u);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "missing artifact evidence",
+      verifyArtifactIdentity: async () =>
+        undefined as unknown as RuntimeProviderNativeArtifactIdentityEvidence,
+    },
+    {
+      label: "malformed artifact evidence",
+      verifyArtifactIdentity: async () =>
+        ({
+          authoritySha256: "malformed",
+        }) as unknown as RuntimeProviderNativeArtifactIdentityEvidence,
+    },
+    {
+      label: "artifact digest drift",
+      verifyArtifactIdentity: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...artifactIdentityEvidence(plan),
+        artifactDigest: `sha256:${"0".repeat(64)}`,
+      }),
+    },
+    {
+      label: "executable digest drift",
+      verifyArtifactIdentity: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...artifactIdentityEvidence(plan),
+        executableDigest: `sha256:${"0".repeat(64)}`,
+      }),
+    },
+    {
+      label: "artifact verification failure",
+      verifyArtifactIdentity: async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
+        throw new Error("untrusted artifact verification detail");
+      },
+    },
+  ])("rejects $label before the create boundary (#8178)", async ({ verifyArtifactIdentity }) => {
+    const create = vi.fn();
+    const verifyReadiness = vi.fn();
+    const receipt = await nativeBootstrap().run(bootstrapInput(), {
+      verifyArtifactIdentity,
+      create,
+      verifyReadiness,
+    });
+
+    expect(receipt).toMatchObject({
+      outcome: "not-created",
+      reason: "artifact-verification-failed",
+      resourceState: "absent",
+      cleanup: { attempted: false, resourceRemovalAuthorized: false },
+    });
+    expect(JSON.stringify(receipt)).not.toContain("untrusted artifact verification detail");
+    expect(create).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+  });
+
   it("isolates writable shares by sandbox lifecycle generation (#8178)", async () => {
     const plans: RuntimeProviderNativeArtifactBootstrapPlan[] = [];
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {
+      verifyArtifactIdentity: vi.fn(async (plan) => artifactIdentityEvidence(plan)),
       create: vi.fn(async (plan) => {
         plans.push(plan);
         return { status: "not-created" as const };
@@ -256,6 +356,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
   ])("retains safe state after $label (#8178)", async ({ create, expected }) => {
     const verifyReadiness = vi.fn();
     const receipt = await nativeBootstrap().run(bootstrapInput(), {
+      verifyArtifactIdentity: async (plan) => artifactIdentityEvidence(plan),
       create,
       verifyReadiness,
     });
@@ -309,6 +410,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     async (_label, create, verifyReadiness, reason, verificationExpected) => {
       const verify = vi.fn(verifyReadiness);
       const receipt = await nativeBootstrap().run(bootstrapInput(), {
+        verifyArtifactIdentity: async (plan) => artifactIdentityEvidence(plan),
         create,
         verifyReadiness: verify,
       });

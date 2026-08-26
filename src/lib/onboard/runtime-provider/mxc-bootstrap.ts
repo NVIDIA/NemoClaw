@@ -10,6 +10,7 @@ import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION,
   type RuntimeProviderNativeArtifactBootstrapInput,
+  type RuntimeProviderNativeArtifactIdentityEvidence,
   type RuntimeProviderNativeArtifactBootstrapOperations,
   type RuntimeProviderNativeArtifactBootstrapPlan,
   type RuntimeProviderNativeArtifactBootstrapResult,
@@ -69,7 +70,9 @@ function requireDirectChild(
     path.win32.isAbsolute(relative) ||
     relative.startsWith("..") ||
     relative.includes("\\") ||
-    relative.includes("/")
+    relative.includes("/") ||
+    relative.endsWith(".") ||
+    relative.endsWith(" ")
   ) {
     throw new MxcNativeArtifactBootstrapError(
       `${label} must be a direct child of the ${parentLabel}`,
@@ -199,21 +202,55 @@ function result(
   });
 }
 
+async function verifyArtifactIdentity(
+  plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  operation: RuntimeProviderNativeArtifactBootstrapOperations["verifyArtifactIdentity"],
+): Promise<RuntimeProviderNativeArtifactIdentityEvidence | null> {
+  try {
+    const evidence = await operation(plan);
+    if (typeof evidence !== "object" || evidence === null) return null;
+    const identity = {
+      authoritySha256: evidence.authoritySha256,
+      artifactRoot: evidence.artifactRoot,
+      artifactDigest: evidence.artifactDigest,
+      executablePath: evidence.executablePath,
+      executableDigest: evidence.executableDigest,
+    };
+    if (
+      identity.authoritySha256 !== plan.authoritySha256 ||
+      identity.artifactRoot !== plan.artifactRoot ||
+      identity.artifactDigest !== plan.workload.artifact.digest ||
+      identity.executablePath !== plan.executablePath ||
+      identity.executableDigest !== plan.workload.launch.executable.digest
+    ) {
+      return null;
+    }
+    return frozen(identity);
+  } catch {
+    return null;
+  }
+}
+
 async function runMxcNativeArtifactBootstrap(
   input: RuntimeProviderNativeArtifactBootstrapInput,
   operations: RuntimeProviderNativeArtifactBootstrapOperations,
 ): Promise<RuntimeProviderNativeArtifactBootstrapResult> {
   if (
+    typeof operations?.verifyArtifactIdentity !== "function" ||
     typeof operations?.create !== "function" ||
     typeof operations.verifyReadiness !== "function"
   ) {
     throw new MxcNativeArtifactBootstrapError(
-      "create and readiness operations are required before bootstrap",
+      "artifact verification, create, and readiness operations are required before bootstrap",
     );
   }
   const plan = preparePlan(input);
+  const identity = await verifyArtifactIdentity(plan, operations.verifyArtifactIdentity);
+  if (identity === null) {
+    return result(plan, "not-created", "artifact-verification-failed", "absent");
+  }
   try {
-    const created = await operations.create(plan);
+    const created = await operations.create(plan, identity);
     if (created?.status === "not-created") {
       return result(plan, "not-created", "create-rejected", "absent");
     }
