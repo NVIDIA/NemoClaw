@@ -753,6 +753,7 @@ export function stopHermesPortableSandboxLifecycle(
 ): PortableDemoLifecycleStopResult {
   let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error"]);
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
+    qualify(sandboxName, context, deps, qualified.snapshot, ["Error"]);
     return { kind: "already-stopped" };
   }
   if (qualified.container.authority.running) beforeStop();

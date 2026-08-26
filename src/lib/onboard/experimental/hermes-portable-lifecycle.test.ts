@@ -679,6 +679,26 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
+  it("rejects an already-stopped container when OpenShell remains Ready (#9203)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
+    const defaultCapture = captureOpenShell.getMockImplementation()!;
+    captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.slice(0, 2).join(":") === "sandbox:list"
+        ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" }
+        : defaultCapture(args),
+    );
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees");
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
+  });
+
   it("rejects a stopped container when OpenShell remains Ready (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
