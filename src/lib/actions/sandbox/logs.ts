@@ -12,6 +12,8 @@ import {
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
   getLogsProbeTimeoutMs,
+  isBrokenPipeRelayError,
+  LOG_RELAY_BROKEN_PIPE_EXIT_CODE,
   type LogProbeResult,
   mergeTailLogLines,
   normalizeSandboxLogsOptions,
@@ -155,6 +157,16 @@ function streamSandboxFollowLogs(
   process.once("SIGTERM", () => {
     requestExitAfterSignal("SIGTERM", 143);
   });
+  // Node reports a closed downstream pipe on process.stdout asynchronously, as
+  // an `error` event rather than a throw from write(), and an unhandled one
+  // crashes the CLI. Own that channel only when this relay is the writer, so an
+  // injected writeStdout keeps whatever error handling its owner chose (#10340).
+  if (deps.writeStdout === undefined) {
+    process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+      if (!isBrokenPipeRelayError(error)) throw error;
+      requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
+    });
+  }
 
   const addSource = (label: string, args: string[], tagged = false) => {
     const spawnProcess = deps.spawn ?? spawn;
@@ -191,14 +203,7 @@ function streamSandboxFollowLogs(
 
     const emitLine = (raw: string) => {
       const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-      try {
-        writeStdout(`${tagGatewayLogLine(line)}\n`);
-      } catch {
-        // Downstream closed the pipe (`nemoclaw logs -f | head`). With raw
-        // passthrough the child took SIGPIPE and the CLI exited 141; preserve
-        // that observable code now that the relay owns the write.
-        requestExitAfterSignal("SIGTERM", 141);
-      }
+      writeStdout(`${tagGatewayLogLine(line)}\n`);
     };
     const finish = () => {
       if (drainTimer) {

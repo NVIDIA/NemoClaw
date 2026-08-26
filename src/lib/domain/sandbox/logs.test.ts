@@ -10,6 +10,8 @@ import {
   describeLogProbeResult,
   GATEWAY_LOG_SOURCE_TAG,
   getLogsProbeTimeoutMs,
+  isBrokenPipeRelayError,
+  LOG_RELAY_BROKEN_PIPE_EXIT_CODE,
   normalizeSandboxLogsOptions,
   tagGatewayLogLine,
   tagGatewayLogLines,
@@ -282,5 +284,26 @@ describe("gateway log source tagging (#10340)", () => {
 
   it("returns empty input unchanged", () => {
     expect(tagGatewayLogLines("")).toBe("");
+  });
+});
+
+describe("relay write failures (#10340)", () => {
+  it("treats a broken downstream pipe as a clean stop", () => {
+    expect(isBrokenPipeRelayError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).toBe(
+      true,
+    );
+  });
+
+  it("does not treat other write failures as a clean stop", () => {
+    expect(isBrokenPipeRelayError(Object.assign(new Error("no space"), { code: "ENOSPC" }))).toBe(
+      false,
+    );
+    expect(isBrokenPipeRelayError(new Error("plain"))).toBe(false);
+    expect(isBrokenPipeRelayError(null)).toBe(false);
+    expect(isBrokenPipeRelayError(undefined)).toBe(false);
+  });
+
+  it("reports the exit code raw passthrough produced for a broken pipe", () => {
+    expect(LOG_RELAY_BROKEN_PIPE_EXIT_CODE).toBe(141);
   });
 });

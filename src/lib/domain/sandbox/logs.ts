@@ -170,6 +170,32 @@ export function tagGatewayLogLine(line: string): string {
   return `${line.slice(0, headLength)} ${GATEWAY_LOG_SOURCE_TAG}${rest}`;
 }
 
+/**
+ * Exit code the CLI reports when the log stream's downstream reader closes the
+ * pipe first, as in `nemoclaw <name> logs --follow | head`.
+ *
+ * With raw passthrough the log child wrote to the shared stdout itself, took
+ * SIGPIPE when the reader went away, and the CLI reported 128 + SIGPIPE. Now
+ * that the relay owns the write, the parent sees EPIPE instead, so it reports
+ * the same code rather than surfacing a broken pipe as a crash (#10340).
+ */
+export const LOG_RELAY_BROKEN_PIPE_EXIT_CODE = 141;
+
+/**
+ * Decide what a failed relay write means.
+ *
+ * EPIPE is the reader hanging up, which is a normal way to stop reading a
+ * follow stream and must end the CLI cleanly. Any other write failure is a real
+ * fault and stays unhandled so it is not silently reported as a clean stop.
+ *
+ * Node delivers EPIPE on `process.stdout` asynchronously, as an `error` event
+ * rather than a throw from `write()`, so callers must route the stream's
+ * `error` event here and not rely on a try/catch around the write.
+ */
+export function isBrokenPipeRelayError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "EPIPE";
+}
+
 /** Apply `tagGatewayLogLine` to every line of a gateway-log chunk. */
 export function tagGatewayLogLines(text: string): string {
   if (!text) return text;
