@@ -630,8 +630,12 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: ["telegram"],
       }),
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn(() => {
+      runProviderPreDeleteCleanup: (revalidatePolicyRequirements) => {
+        revalidatePolicyRequirements?.("cleaning up deferred providers");
+        events.push("cleanup");
+      },
+      upsertMessagingProviders: vi.fn((_tokenDefs, options) => {
+        options.revalidatePolicyRequirements?.("upserting deferred providers");
         events.push("upsert");
         return ["sandbox-telegram-bridge"];
       }),
@@ -648,14 +652,23 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-existing-discord",
     ]);
 
-    expect(plan.activateDeferredProviderEffects?.()).toEqual([
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      events.push(`policy: ${operation}`),
+    );
+    expect(plan.activateDeferredProviderEffects?.(revalidatePolicyRequirements)).toEqual([
       "nvidia-prod",
       "sandbox-telegram-bridge",
       "sandbox-existing-discord",
       "sandbox-hermes-tools",
       "custom-provider",
     ]);
-    expect(events).toEqual(["cleanup", "upsert", "hermes"]);
+    expect(events).toEqual([
+      "policy: cleaning up deferred providers",
+      "cleanup",
+      "policy: upserting deferred providers",
+      "upsert",
+      "hermes",
+    ]);
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
