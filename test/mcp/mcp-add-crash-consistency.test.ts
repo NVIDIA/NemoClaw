@@ -237,13 +237,16 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (credentialRepublishBeforeObservationCountThisProcess === 0) {
+    const credentialRepublishCount =
+      credentialRepublishBeforeObservationCountThisProcess +
+      credentialRepublishAfterAbsenceCountThisProcess;
+    if (credentialRepublishCount === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout: credentialRepublishCount > 0 ? "v" + providerVersion() : "absent",
       stderr: "",
     };
   }
@@ -269,6 +272,10 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
+    const adapterRevision = command.match(/openshell:resolve:env:(v[0-9]+)_FAKE_MCP_SECRET/)?.[1];
+    if (adapterRevision) {
+      fs.writeFileSync(marker("adapter-revision"), adapterRevision, { mode: 0o600 });
+    }
     mark("adapter");
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
@@ -614,7 +621,7 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
-  it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
+  it("commits one bridge at the post-policy credential revision and rejects one duplicate (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
       // Create the fixture before either process loads the registry. The
@@ -631,14 +638,15 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
       const credentialRepublishCount = fs
-        .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
+        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);
+      expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).toBe("v2");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
@@ -694,7 +702,7 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  it("creates a fresh provider without an update-only prior revision observation", () => {
+  it("does not republish a projected credential before readiness observation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-no-prior-observation-"));
     try {
       const result = runAddProcess(home, "preupdate-observation-forbidden");
@@ -702,7 +710,7 @@ describe("MCP add crash consistency", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
