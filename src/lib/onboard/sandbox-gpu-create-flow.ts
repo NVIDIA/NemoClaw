@@ -213,6 +213,7 @@ export interface SandboxGpuCreateFlowInput {
   initialGpuRoute: SelectedDockerGpuRoute;
   compatibilityPolicyPath: string | null;
   dockerDriverGateway: boolean;
+  gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
@@ -244,6 +245,19 @@ export interface SandboxGpuCreateFlowInput {
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
+  /**
+   * Verify the exact sandbox created by each attempt before runtime activation,
+   * readiness, GPU, service, dashboard, or registry effects continue.
+   */
+  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
+  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+}
+
+export interface CreatedSandboxIdentity {
+  readonly sandboxId: string;
+  readonly liveIdentityFingerprint: string;
+  readonly route: SelectedDockerGpuRoute;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -388,10 +402,7 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
@@ -477,14 +488,21 @@ export async function runSandboxGpuCreateFlow(
       gpuCreateOutcome.nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
-        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
     process.exit(1);
   }
 
   let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
   if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
+    if (input.verifyCreatedSandboxBeforeEffects) {
+      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
+      if (!revalidate) {
+        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
+      }
+      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
+    }
     try {
       portableLifecycleGeneration =
         (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(

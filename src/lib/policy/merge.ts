@@ -3,14 +3,17 @@
 
 import {
   assertExternalPolicyRequirementContainment as assertCanonicalExternalPolicyRequirementContainment,
+  assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
   assertMatchingPolicyAuthority as assertCanonicalMatchingPolicyAuthority,
   assertNemoClawPolicyCreationReceiptMatches as assertCanonicalNemoClawPolicyCreationReceiptMatches,
+  parseActiveGlobalPolicyAuthorityMetadata as parseCanonicalActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt as parseCanonicalNemoClawPolicyCreationReceipt,
   openShellPolicyValuesEqual as canonicalOpenShellPolicyValuesEqual,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata as parseCanonicalSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
   type NemoClawPolicyCreationReceipt,
+  type ActiveGlobalPolicyInspection,
   type OpenShellPolicyAuthority,
   type OpenShellPolicyIdentity,
   type SandboxPolicyAuthorityInspection,
@@ -25,6 +28,8 @@ import type { JsonObject } from "../core/json-types";
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
 export const openShellPolicyValuesEqual = canonicalOpenShellPolicyValuesEqual;
 export const parseNemoClawPolicyCreationReceipt = parseCanonicalNemoClawPolicyCreationReceipt;
+export const parseActiveGlobalPolicyAuthorityMetadata =
+  parseCanonicalActiveGlobalPolicyAuthorityMetadata;
 export const assertNemoClawPolicyCreationReceiptMatches =
   assertCanonicalNemoClawPolicyCreationReceiptMatches;
 export const stripProviderComposedPolicies = stripCanonicalProviderComposedPolicies;
@@ -32,7 +37,9 @@ export const parseSandboxPolicyAuthorityMetadata = parseCanonicalSandboxPolicyAu
 export const assertMatchingPolicyAuthority = assertCanonicalMatchingPolicyAuthority;
 export const assertExternalPolicyRequirementContainment =
   assertCanonicalExternalPolicyRequirementContainment;
+export const assertPolicyRequirementContainment = assertCanonicalPolicyRequirementContainment;
 export type {
+  ActiveGlobalPolicyInspection,
   NemoClawPolicyCreationReceipt,
   OpenShellPolicyAuthority,
   OpenShellPolicyIdentity,

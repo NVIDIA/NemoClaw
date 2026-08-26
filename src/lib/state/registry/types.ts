@@ -16,6 +16,33 @@ import type { SandboxMessagingState } from "../registry-messaging";
 
 export type RecordedSandboxPolicyAuthority = Exclude<SandboxPolicyAuthority, "owner-unknown">;
 
+interface PendingSandboxPolicyVerificationBoundary {
+  readonly schemaVersion: 1;
+  readonly state: "verified-create";
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly route: "none" | "native" | "compatibility";
+  readonly policyHash: string;
+  readonly policyVersion: number;
+}
+
+/** Durable, incomplete create boundary recorded before post-create effects. */
+export type PendingSandboxPolicyVerification = PendingSandboxPolicyVerificationBoundary &
+  (
+    | {
+        readonly policyAuthority: "nemoclaw-managed";
+        readonly observedPolicyAuthority: "owner-unknown";
+        readonly policyCreationReceipt: NemoClawPolicyCreationReceipt;
+      }
+    | {
+        readonly policyAuthority: "externally-managed";
+        readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
+        readonly policyCreationReceipt?: never;
+      }
+  );
 export interface CustomPolicyEntry {
   name: string;
   content: string;
@@ -127,6 +154,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   policyAuthority?: RecordedSandboxPolicyAuthority;
   /** Exact, secret-free proof that NemoClaw created this sandbox policy. */
   policyCreationReceipt?: NemoClawPolicyCreationReceipt;
+  /** Verified create boundary retained until final registration publishes atomically. */
+  pendingPolicyVerification?: PendingSandboxPolicyVerification;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */

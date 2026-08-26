@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
-import { loadAgent } from "../../agent/defs";
 import {
   createOnboardPolicyAuthorityBindings,
   qualifySandboxPolicyAuthority,
@@ -20,37 +19,31 @@ const requiredPolicy = {
 };
 
 describe("sandbox policy authority preflight", () => {
-  it("preflights policy authority for the default OpenClaw agent (#9833)", () => {
-    const inspectSandboxForCreate = vi.fn(() => ({ existingEntry: null, liveExists: false }));
-    const loadDefaultAgent = vi.fn((name: string) => loadAgent(name));
+  it("normalizes a null default agent before policy preflight (#9833)", () => {
+    const openclaw = { name: "openclaw" };
+    const loadAgent = vi.fn(() => openclaw);
+    const getAgentPolicyPath = vi.fn(() => "/unused/openclaw-policy.yaml");
     const bindings = createOnboardPolicyAuthorityBindings(
       {
-        GATEWAY_NAME: "nemoclaw-18080",
-        ROOT: "/unused",
-        agentDefs: { loadAgent: loadDefaultAgent },
-        agentOnboard: { getAgentPolicyPath: vi.fn(() => null) },
-        inspectSandboxForCreate,
+        GATEWAY_NAME: "nemoclaw",
+        ROOT: "/repo",
+        agentDefs: { loadAgent: loadAgent as never },
+        agentOnboard: { getAgentPolicyPath: getAgentPolicyPath as never },
+        inspectSandboxForCreate: () => ({ existingEntry: null, liveExists: false }),
         onboardSession: {
           loadSession: () => null,
-          updateSession: (mutator) => {
-            const session: { policyAuthority?: "nemoclaw-managed" | "externally-managed" } = {};
-            mutator(session);
-            return session;
-          },
+          updateSession: vi.fn(),
         },
       },
       null,
       {
-        inspectGlobalPolicyAuthority: () => ({
-          authority: "nemoclaw-managed",
-          effectivePolicy: {},
-        }),
+        inspectActiveGlobalPolicy: () => ({ state: "absent" }),
       },
     );
 
     expect(() =>
       bindings.preflightPolicyRequirements({
-        gatewayName: "nemoclaw-18080",
+        gatewayName: "nemoclaw",
         sandboxName: null,
         agent: null,
         selectedMessagingChannels: [],
@@ -59,11 +52,10 @@ describe("sandbox policy authority preflight", () => {
         provider: null,
         webSearchConfig: null,
         observabilityEnabled: false,
-        operation: "select an inference provider",
+        operation: "prepare the default sandbox",
       }),
     ).not.toThrow();
-    expect(loadDefaultAgent).toHaveBeenCalledExactlyOnceWith("openclaw");
-    expect(inspectSandboxForCreate).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(loadAgent).toHaveBeenCalledExactlyOnceWith("openclaw");
   });
 
   it("includes every final selected policy requirement (#9833)", () => {
@@ -97,12 +89,7 @@ describe("sandbox policy authority preflight", () => {
       effectivePolicy: {
         network_policies: { required_route: { endpoints: ["example.com"] } },
       },
-    }));
-    const inspectGlobal = vi.fn(() => ({
-      authority: "externally-managed" as const,
-      effectivePolicy: {
-        network_policies: { required_route: { endpoints: ["example.com"] } },
-      },
+      policyIdentity: { hash: "sha256:external", activeVersion: 1 },
     }));
 
     const result = qualifySandboxPolicyAuthority(
@@ -115,7 +102,6 @@ describe("sandbox policy authority preflight", () => {
         operation: "prepare sandbox 'demo'",
       },
       {
-        inspectGlobalPolicyAuthority: inspectGlobal,
         inspectSandboxPolicyAuthority: inspectSandbox,
       },
     );
@@ -125,7 +111,6 @@ describe("sandbox policy authority preflight", () => {
       sandboxName: "demo",
       gatewayName: "nemoclaw",
     });
-    expect(inspectGlobal).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
   });
 
   it("stops before cleanup-owning callers when external requirements are missing (#9833)", () => {
@@ -142,9 +127,13 @@ describe("sandbox policy authority preflight", () => {
           operation: "create sandbox 'demo'",
         },
         {
-          inspectGlobalPolicyAuthority: () => ({
-            authority: "externally-managed",
-            effectivePolicy: { network_policies: {} },
+          inspectActiveGlobalPolicy: () => ({
+            state: "active",
+            inspection: {
+              authority: "externally-managed",
+              effectivePolicy: { network_policies: {} },
+              policyIdentity: { hash: "sha256:external", activeVersion: 1 },
+            },
           }),
         },
       ),
@@ -167,9 +156,13 @@ describe("sandbox policy authority preflight", () => {
           operation: "create sandbox 'demo'",
         },
         {
-          inspectGlobalPolicyAuthority: () => ({
-            authority: "externally-managed",
-            effectivePolicy: { network_policies: {} },
+          inspectActiveGlobalPolicy: () => ({
+            state: "active",
+            inspection: {
+              authority: "externally-managed",
+              effectivePolicy: { network_policies: {} },
+              policyIdentity: { hash: "sha256:external", activeVersion: 1 },
+            },
           }),
         },
       );
@@ -204,12 +197,9 @@ describe("sandbox policy authority preflight", () => {
         },
         {
           inspectSandboxPolicyAuthority: () => ({
-            authority: "nemoclaw-managed",
-            effectivePolicy: {},
-          }),
-          inspectGlobalPolicyAuthority: () => ({
             authority: "externally-managed",
-            effectivePolicy: { network_policies: {} },
+            effectivePolicy: {},
+            policyIdentity: { hash: "sha256:external", activeVersion: 1 },
           }),
         },
       ),
@@ -231,10 +221,7 @@ describe("sandbox policy authority preflight", () => {
           operation: "create sandbox 'demo'",
         },
         {
-          inspectGlobalPolicyAuthority: () => ({
-            authority: "nemoclaw-managed",
-            effectivePolicy: {},
-          }),
+          inspectActiveGlobalPolicy: () => ({ state: "absent" }),
         },
       ).authority,
     ).toBe("nemoclaw-managed");

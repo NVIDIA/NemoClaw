@@ -41,6 +41,16 @@ export interface SandboxPolicyAuthorityInspection {
   readonly policyIdentity: OpenShellPolicyIdentity;
 }
 
+/** Result of checking whether a verified active global policy exists. */
+export type ActiveGlobalPolicyInspection =
+  | { readonly state: "absent" }
+  | {
+      readonly state: "active";
+      readonly inspection: SandboxPolicyAuthorityInspection & {
+        readonly authority: "externally-managed";
+      };
+    };
+
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 
@@ -182,10 +192,10 @@ export function parseSandboxPolicyAuthorityMetadata(
   };
 }
 
-/** Parse machine-readable global policy metadata after history proves a revision exists. */
-export function parseGlobalPolicyAuthorityMetadata(
+/** Parse one global policy revision without treating absence as NemoClaw ownership. */
+export function parseActiveGlobalPolicyAuthorityMetadata(
   raw: string,
-): SandboxPolicyAuthorityInspection {
+): ActiveGlobalPolicyInspection {
   if (raw.trim().length === 0) {
     throw new Error("OpenShell returned empty global policy authority metadata");
   }
@@ -195,18 +205,24 @@ export function parseGlobalPolicyAuthorityMetadata(
   );
   if (
     metadata.scope !== "global" ||
-    Object.hasOwn(metadata, "sandbox") ||
-    metadata.policy_source !== "global"
+    (metadata.status !== "loaded" && metadata.status !== "superseded") ||
+    metadata.policy_source !== "global" ||
+    Object.hasOwn(metadata, "sandbox")
   ) {
     throw new Error("OpenShell returned invalid global policy authority metadata");
   }
-  if (metadata.status === "superseded") {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
-  }
-  if (metadata.status !== "loaded" || !isMapping(metadata.policy)) {
+  if (metadata.status === "superseded") return { state: "absent" };
+  if (!isMapping(metadata.policy)) {
     throw new Error("OpenShell returned invalid global policy authority metadata");
   }
-  return { authority: "externally-managed", effectivePolicy: metadata.policy };
+  return {
+    state: "active",
+    inspection: {
+      authority: "externally-managed",
+      effectivePolicy: metadata.policy,
+      policyIdentity: parsePolicyIdentity(metadata),
+    },
+  };
 }
 
 /** Require durable and observed policy authority to describe the same owner. */

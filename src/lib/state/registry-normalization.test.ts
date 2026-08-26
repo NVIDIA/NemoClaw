@@ -368,13 +368,106 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes.external?.policyAuthority).toBe("externally-managed");
   });
 
+  it("round-trips only complete non-authorizing create checkpoints (#9833)", async () => {
+    const managed = createManagedPolicyEntry("managed-pending");
+    const managedCheckpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: managed.gatewayName,
+      gatewayPort: managed.gatewayPort,
+      sandboxName: managed.name,
+      lifecycleGeneration: managed.lifecycleGeneration,
+      sandboxIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: managed.policyCreationReceipt.policyHash,
+      policyVersion: managed.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: managed.policyCreationReceipt,
+    };
+    const externalCheckpoint = {
+      ...managedCheckpoint,
+      policyAuthority: "externally-managed" as const,
+      observedPolicyAuthority: "externally-managed" as const,
+      sandboxName: "external-pending",
+      policyHash: "sha256:external",
+      policyCreationReceipt: undefined,
+    };
+    const registry = await loadRegistryWith({
+      "managed-pending": {
+        name: "managed-pending",
+        pendingRouteReservation: true,
+        reservationSessionId: "managed-session",
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: managedCheckpoint,
+      },
+      "external-pending": {
+        name: "external-pending",
+        pendingRouteReservation: true,
+        reservationSessionId: "external-session",
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: externalCheckpoint,
+      },
+    });
+
+    expect(registry.getSandbox("managed-pending")?.pendingPolicyVerification).toEqual(
+      managedCheckpoint,
+    );
+    expect(registry.getSandbox("external-pending")?.pendingPolicyVerification).toEqual(
+      externalCheckpoint,
+    );
+    expect(registry.getDefault()).toBeNull();
+  });
+
+  it.each([
+    ["ownerless", {}],
+    ["authorizing", { reservationSessionId: "session", policyAuthority: "externally-managed" }],
+    ["wrong-lifecycle", { reservationSessionId: "session", lifecycleGeneration: "changed" }],
+  ])("rejects a %s persisted create checkpoint (#9833)", async (_label, overrides) => {
+    const managed = createManagedPolicyEntry("pending");
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: managed.gatewayName,
+      gatewayPort: managed.gatewayPort,
+      sandboxName: managed.name,
+      lifecycleGeneration: managed.lifecycleGeneration,
+      sandboxIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: managed.policyCreationReceipt.policyHash,
+      policyVersion: managed.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: managed.policyCreationReceipt,
+    };
+    const registry = await loadRegistryWith({
+      pending: {
+        name: "pending",
+        pendingRouteReservation: true,
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: checkpoint,
+        ...overrides,
+      },
+    });
+
+    expect(() => registry.getSandbox("pending")).toThrow(/pending policy verification/u);
+  });
+
   it("clears NemoClaw policy attribution from externally managed rows (#9833)", async () => {
     const attribution = createPolicyAttribution();
     const registry = await loadRegistryWith({
       legacy: { name: "legacy", ...attribution, policyTier: "strict" },
       managed: {
         ...createManagedPolicyEntry("managed"),
-        name: "managed",
         ...attribution,
         policyTier: "strict",
       },
@@ -500,16 +593,23 @@ describe("sandbox registry normalization", () => {
     registry.restoreSandboxEntry(managed);
     expect(registry.getSandbox("managed")).toEqual(managed);
 
-    registry.reserveSandboxInferenceRoute("managed", {
+    const replacementSelection = {
       provider: "compatible-endpoint",
       model: "model-b",
       endpointUrl: "https://api.example.test/v1",
+      endpointSource: null,
       credentialEnv: "CUSTOM_API_KEY",
       preferredInferenceApi: "openai-responses",
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      nimContainer: null,
       gatewayName: "nemoclaw",
-    });
+      reservationSessionId: "session-owner",
+    } as const;
+    registry.reserveSandboxInferenceRoute("managed", replacementSelection);
     const replacementLifecycle = {
       ...createManagedPolicyEntry("managed", 2),
+      ...replacementSelection,
       lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
       lifecycleLiveIdentityFingerprint: "e".repeat(64),
     };
@@ -518,7 +618,36 @@ describe("sandbox registry normalization", () => {
       lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
       sandboxIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
     };
-    expect(registry.registerSandbox(replacementLifecycle)).toMatchObject({
+    const createReservation = registry.qualifyPendingSandboxCreateReservation(
+      {
+        sandboxName: "managed",
+        gatewayName: "nemoclaw",
+        sessionId: "session-owner",
+        selection: replacementSelection,
+      },
+      registry.getSandbox("managed"),
+    );
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "managed",
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      sandboxIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: replacementLifecycle.policyCreationReceipt.policyHash,
+      policyVersion: replacementLifecycle.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: replacementLifecycle.policyCreationReceipt,
+    };
+    registry.recordPendingSandboxPolicyVerification(createReservation, checkpoint);
+    expect(
+      registry.registerSandbox(replacementLifecycle, undefined, {
+        verifiedCreate: { reservation: createReservation, checkpoint },
+      }),
+    ).toMatchObject({
       lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
       policyCreationReceipt: replacementLifecycle.policyCreationReceipt,
@@ -584,12 +713,9 @@ describe("sandbox policy authority normalization", () => {
     expect(normalizeSandboxPolicyAuthority(input)).toBe(expected);
   });
 
-  it.each(["sandbox", "owner-unknown", null, {}])(
-    "rejects invalid policy authority %j (#9833)",
-    (input) => {
-      expect(() => normalizeSandboxPolicyAuthority(input)).toThrow(/invalid policy authority/i);
-    },
-  );
+  it.each(["sandbox", null, {}])("rejects invalid policy authority %j (#9833)", (input) => {
+    expect(() => normalizeSandboxPolicyAuthority(input)).toThrow(/invalid policy authority/i);
+  });
 });
 
 describe("custom policy pin receipt normalization (#8176)", () => {

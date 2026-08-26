@@ -43,6 +43,11 @@ function metadata(overrides: Partial<Record<string, unknown>> = {}): {
   };
 }
 
+function gatewayInfo(): { status: number; output: string; stdout: string; stderr: string } {
+  const output = "Gateway endpoint: http://127.0.0.1:8080\n";
+  return { status: 0, output, stdout: output, stderr: "" };
+}
+
 describe("created sandbox policy receipt", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -54,6 +59,7 @@ describe("created sandbox policy receipt", () => {
 
   it("binds the exact supplied policy to the verified create identity (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
       .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
       .mockReturnValueOnce(metadata());
@@ -78,6 +84,7 @@ describe("created sandbox policy receipt", () => {
   it("refuses a live base policy that differs from the create source (#9833)", () => {
     const captureOpenshell = vi
       .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
       .mockReturnValueOnce({
         status: 0,
@@ -91,11 +98,12 @@ describe("created sandbox policy receipt", () => {
         readFile: vi.fn(() => POLICY) as never,
       }),
     ).toThrow(/live base policy does not match/u);
-    expect(captureOpenshell).toHaveBeenCalledTimes(3);
+    expect(captureOpenshell).toHaveBeenCalledTimes(4);
   });
 
   it("does not claim a verified global policy as NemoClaw-created (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata({ policy_source: "global" }))
       .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
       .mockReturnValueOnce(metadata({ policy_source: "global" }));
@@ -107,9 +115,9 @@ describe("created sandbox policy receipt", () => {
   });
 
   it("refuses incomplete OpenShell policy identity without exposing policy contents (#9833)", () => {
-    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
-      metadata({ hash: "" }),
-    );
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValue(metadata({ hash: "" }));
     let error: unknown;
     try {
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
@@ -125,6 +133,7 @@ describe("created sandbox policy receipt", () => {
 
   it("refuses an effective policy identity that changes during verification (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
       .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
       .mockReturnValueOnce(metadata({ hash: "sha256:replacement", active_version: 5 }));

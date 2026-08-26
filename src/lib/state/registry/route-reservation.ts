@@ -18,6 +18,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "name",
   "openshellDriver",
   "pendingRouteReservation",
+  "pendingPolicyVerification",
   "preferredInferenceApi",
   "provider",
   "reservationSessionId",
@@ -33,6 +34,12 @@ export interface SandboxInferenceRouteReservationAuthority {
 }
 
 export interface QualifiedSandboxInferenceRouteReservation {
+  readonly authority: SandboxInferenceRouteReservationAuthority;
+  readonly entry: SandboxEntry;
+}
+
+/** Exact pending row admitted for one sandbox create transaction. */
+export interface QualifiedPendingSandboxCreateReservation {
   readonly authority: SandboxInferenceRouteReservationAuthority;
   readonly entry: SandboxEntry;
 }
@@ -53,6 +60,42 @@ export function normalizeSandboxInferenceRouteSelection(input: InferenceSelectio
     credentialEnv: normalized.credentialEnv,
     preferredInferenceApi: normalized.preferredInferenceApi,
   };
+}
+
+/** Admit the full pending row used by a create, including preserved rebuild metadata. */
+export function qualifyPendingSandboxCreateReservation(
+  authority: SandboxInferenceRouteReservationAuthority,
+  entry: SandboxEntry | null,
+): QualifiedPendingSandboxCreateReservation {
+  if (
+    !entry ||
+    entry.pendingRouteReservation !== true ||
+    !authority.sessionId ||
+    entry.reservationSessionId !== authority.sessionId ||
+    entry.name !== authority.sandboxName ||
+    entry.gatewayName !== authority.gatewayName ||
+    !isDeepStrictEqual(
+      normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
+      normalizeSandboxInferenceRouteSelection(authority.selection),
+    )
+  ) {
+    throw new Error("The sandbox create route reservation is not owned by this onboarding session");
+  }
+  return { authority: structuredClone(authority), entry: structuredClone(entry) };
+}
+
+/** Compare the complete admitted create reservation before its first checkpoint write. */
+export function isCurrentPendingSandboxCreateReservation(
+  reservation: QualifiedPendingSandboxCreateReservation,
+  entry: SandboxEntry | null,
+): boolean {
+  if (!entry) return false;
+  try {
+    const qualified = qualifyPendingSandboxCreateReservation(reservation.authority, entry);
+    return isDeepStrictEqual(qualified.entry, reservation.entry);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -168,8 +211,14 @@ export function isCurrentSandboxInferenceRouteReservation(
   entry: SandboxEntry | null,
 ): boolean {
   const current = classifySandboxInferenceRouteReservation(reservation.authority, entry);
+  if (current.kind !== "owned") return false;
+  const { pendingPolicyVerification: currentCheckpoint, ...currentRoute } =
+    current.reservation.entry;
+  const { pendingPolicyVerification: reservedCheckpoint, ...reservedRoute } = reservation.entry;
   return (
-    current.kind === "owned" && isDeepStrictEqual(current.reservation.entry, reservation.entry)
+    isDeepStrictEqual(currentRoute, reservedRoute) &&
+    (reservedCheckpoint === undefined ||
+      isDeepStrictEqual(currentCheckpoint, reservedCheckpoint))
   );
 }
 

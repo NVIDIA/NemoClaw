@@ -117,7 +117,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
-      unclassifiedFull("buildGlobalPolicyGetFullJsonCommand"),
+      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
       {
         site: "buildPolicyGetArgs",
         view: "base",

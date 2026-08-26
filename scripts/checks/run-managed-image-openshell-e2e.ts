@@ -67,6 +67,7 @@ import {
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
 const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
 const MANAGED_AGENT_BASE_POLICIES: Record<ShippedManagedImageAgent, readonly string[]> = {
@@ -904,7 +905,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
     onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
     await onboard.startGatewayForRecovery({
-      gatewayName: "nemoclaw",
+      gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
     configureLocalInferenceRoute(onboard, input, process.env);
@@ -1024,6 +1025,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           initialGpuRoute: gpuEnabled ? "native" : "none",
           compatibilityPolicyPath: null,
           dockerDriverGateway: true,
+          gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           sandboxReadyTimeoutSecs: 240,
           createArgv: launch.createArgv,

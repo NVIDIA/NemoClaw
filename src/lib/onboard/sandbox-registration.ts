@@ -3,7 +3,6 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
@@ -70,7 +69,6 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
-  policyAuthority?: SandboxPolicyAuthority;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -108,11 +106,13 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
-  reservationSessionId?: string;
+  verifiedCreate?: NonNullable<
+    NonNullable<Parameters<typeof registry.registerSandbox>[2]>["verifiedCreate"]
+  >;
   registerSandbox?(
     entry: SandboxEntry,
     routeReservation?: QualifiedSandboxInferenceRouteReservation,
-    options?: { pending?: boolean; reservationSessionId?: string },
+    options?: Parameters<typeof registry.registerSandbox>[2],
   ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -382,12 +382,11 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
-  const pendingOptions = input.reservationSessionId
-    ? { pending: true as const, reservationSessionId: input.reservationSessionId }
-    : undefined;
   const registered =
-    input.inferenceRouteReservation || pendingOptions
-      ? writeRegistry(entry, input.inferenceRouteReservation, pendingOptions)
+    input.inferenceRouteReservation || input.verifiedCreate
+      ? writeRegistry(entry, input.inferenceRouteReservation, {
+          ...(input.verifiedCreate ? { verifiedCreate: input.verifiedCreate } : {}),
+        })
       : writeRegistry(entry);
   return registered ?? entry;
 }
