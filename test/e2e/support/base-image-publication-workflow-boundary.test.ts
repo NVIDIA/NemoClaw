@@ -30,6 +30,7 @@ type MutableJob = Record<string, unknown> & {
   outputs?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
   steps?: MutableStep[];
+  with?: Record<string, unknown>;
 };
 
 type MutableWorkflow = {

@@ -100,6 +100,7 @@ type WorkflowJob = {
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
   "timeout-minutes"?: unknown;
+  with?: Record<string, unknown>;
 };
 
 export type OperationsWorkflow = {
