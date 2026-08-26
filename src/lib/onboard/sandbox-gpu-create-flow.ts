@@ -209,14 +209,15 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
-  /** Leave the sandbox in place when cleanup would address it only by mutable name. */
-  retainSandboxOnAutomaticFailure?: boolean;
+  /** Reject every initial or fallback create attempt that carries a caller policy. */
+  requirePolicylessCreate?: true;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
   initialGpuRoute: SelectedDockerGpuRoute;
   compatibilityPolicyPath: string | null;
   dockerDriverGateway: boolean;
+  gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
@@ -248,6 +249,30 @@ export interface SandboxGpuCreateFlowInput {
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
+  /**
+   * Verify the exact sandbox created by each attempt before runtime activation,
+   * readiness, GPU, service, dashboard, or registry effects continue.
+   */
+  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
+  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+}
+
+export interface CreatedSandboxIdentity {
+  readonly sandboxId: string;
+  readonly liveIdentityFingerprint: string;
+  readonly route: SelectedDockerGpuRoute;
+}
+
+/** Refuse APF fallback when OpenShell can remove the failed sandbox only by mutable name. */
+export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
+  return {
+    safe: false,
+    reason: `APF-selected sandbox '${sandboxName}' cannot be deleted by mutable name for a compatibility retry`,
+    deleteStatus: null,
+    sandboxPresent: null,
+    containerIds: null,
+  } as const;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -364,14 +389,8 @@ export async function runSandboxGpuCreateFlow(
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
       cleanupNativeFailure: (failure) => {
-        if (input.retainSandboxOnAutomaticFailure) {
-          return {
-            safe: false,
-            reason: `sandbox '${input.sandboxName}' requires exact-identity cleanup`,
-            deleteStatus: null,
-            sandboxPresent: null,
-            containerIds: null,
-          };
+        if (input.requirePolicylessCreate) {
+          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
         }
         return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
           input.sandboxName,
@@ -488,15 +507,20 @@ export async function runSandboxGpuCreateFlow(
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
           ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-          : input.retainSandboxOnAutomaticFailure
-            ? `  NemoClaw left sandbox '${input.sandboxName}' in place because automatic cleanup cannot delete it by mutable name.`
-            : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
     process.exit(1);
   }
 
   let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
   if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
+    if (input.verifyCreatedSandboxBeforeEffects) {
+      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
+      if (!revalidate) {
+        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
+      }
+      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
+    }
     try {
       portableLifecycleGeneration =
         (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(

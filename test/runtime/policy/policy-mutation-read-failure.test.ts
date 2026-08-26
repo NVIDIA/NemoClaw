@@ -7,6 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  managedSandboxEntry,
+  POLICY_HASH,
+  POLICY_VERSION,
+  SANDBOX_IDENTITY,
+} from "./managed-policy-receipt-fixture";
+
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
@@ -45,14 +52,14 @@ describe("OpenShell policy mutation read failures", () => {
 
   beforeEach(() => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
-      authority: "nemoclaw-managed",
+      authority: "owner-unknown",
       effectivePolicy: {},
+      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
     });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      policyAuthority: "nemoclaw-managed",
-    });
+    vi.spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+      SANDBOX_IDENTITY,
+    );
+    vi.spyOn(registry, "getSandbox").mockReturnValue(managedSandboxEntry("alpha"));
   });
 
   afterEach(() => {

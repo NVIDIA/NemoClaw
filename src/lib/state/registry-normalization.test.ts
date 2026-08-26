@@ -91,6 +91,32 @@ describe("sandbox registry normalization", () => {
     };
   };
 
+  const createManagedPolicyEntry = (name: string, policyVersion = 1) => {
+    const gatewayName = "nemoclaw";
+    const gatewayPort = 8080;
+    const lifecycleGeneration = "123e4567-e89b-42d3-a456-426614174983";
+    const lifecycleLiveIdentityFingerprint = "d".repeat(64);
+    return {
+      name,
+      gatewayName,
+      gatewayPort,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint,
+      policyAuthority: "nemoclaw-managed" as const,
+      policyCreationReceipt: {
+        schemaVersion: 1 as const,
+        origin: "sandbox-create" as const,
+        gatewayName,
+        gatewayPort,
+        sandboxName: name,
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: lifecycleLiveIdentityFingerprint,
+        policyHash: `sha256:policy-${String(policyVersion)}`,
+        policyVersion,
+      },
+    };
+  };
+
   it.each([null, [], 42, "invalid"])(
     "treats a non-object top-level registry document as empty: %j",
     async (document) => {
@@ -311,10 +337,15 @@ describe("sandbox registry normalization", () => {
     expect(entry).not.toHaveProperty("policyTier");
   }
 
-  it("round-trips known policy authority while leaving legacy authority unknown (#9833)", async () => {
+  it("round-trips receipt-bound authority while removing a legacy managed claim (#9833)", async () => {
     const registry = await loadRegistryWith({
       legacy: { name: "legacy" },
-      managed: { name: "managed", policyAuthority: "nemoclaw-managed" },
+      legacyManaged: {
+        name: "legacyManaged",
+        policyAuthority: "nemoclaw-managed",
+        policies: ["weather"],
+      },
+      managed: createManagedPolicyEntry("managed"),
       external: { name: "external", policyAuthority: "externally-managed" },
     });
     registry.save(registry.load());
@@ -322,11 +353,113 @@ describe("sandbox registry normalization", () => {
       fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
     ) as { sandboxes: Record<string, Record<string, unknown>> };
     expect(registry.getSandbox("legacy")?.policyAuthority).toBeUndefined();
+    expect(registry.getSandbox("legacyManaged")).toMatchObject({ policies: ["weather"] });
+    expect(registry.getSandbox("legacyManaged")).not.toHaveProperty("policyAuthority");
+    expect(registry.getSandbox("legacyManaged")).not.toHaveProperty("policyCreationReceipt");
     expect(registry.getSandbox("managed")?.policyAuthority).toBe("nemoclaw-managed");
+    expect(registry.getSandbox("managed")?.policyCreationReceipt).toEqual(
+      createManagedPolicyEntry("managed").policyCreationReceipt,
+    );
     expect(registry.getSandbox("external")?.policyAuthority).toBe("externally-managed");
     expect(persisted.sandboxes.legacy).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.legacyManaged).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.legacyManaged).not.toHaveProperty("policyCreationReceipt");
     expect(persisted.sandboxes.managed?.policyAuthority).toBe("nemoclaw-managed");
     expect(persisted.sandboxes.external?.policyAuthority).toBe("externally-managed");
+  });
+
+  it("round-trips only complete non-authorizing create checkpoints (#9833)", async () => {
+    const managed = createManagedPolicyEntry("managed-pending");
+    const managedCheckpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: managed.gatewayName,
+      gatewayPort: managed.gatewayPort,
+      sandboxName: managed.name,
+      lifecycleGeneration: managed.lifecycleGeneration,
+      sandboxIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: managed.policyCreationReceipt.policyHash,
+      policyVersion: managed.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: managed.policyCreationReceipt,
+    };
+    const externalCheckpoint = {
+      ...managedCheckpoint,
+      policyAuthority: "externally-managed" as const,
+      observedPolicyAuthority: "externally-managed" as const,
+      sandboxName: "external-pending",
+      policyHash: "sha256:external",
+      policyCreationReceipt: undefined,
+    };
+    const registry = await loadRegistryWith({
+      "managed-pending": {
+        name: "managed-pending",
+        pendingRouteReservation: true,
+        reservationSessionId: "managed-session",
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: managedCheckpoint,
+      },
+      "external-pending": {
+        name: "external-pending",
+        pendingRouteReservation: true,
+        reservationSessionId: "external-session",
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: externalCheckpoint,
+      },
+    });
+
+    expect(registry.getSandbox("managed-pending")?.pendingPolicyVerification).toEqual(
+      managedCheckpoint,
+    );
+    expect(registry.getSandbox("external-pending")?.pendingPolicyVerification).toEqual(
+      externalCheckpoint,
+    );
+    expect(registry.getDefault()).toBeNull();
+  });
+
+  it.each([
+    ["ownerless", {}],
+    ["authorizing", { reservationSessionId: "session", policyAuthority: "externally-managed" }],
+    ["wrong-lifecycle", { reservationSessionId: "session", lifecycleGeneration: "changed" }],
+  ])("rejects a %s persisted create checkpoint (#9833)", async (_label, overrides) => {
+    const managed = createManagedPolicyEntry("pending");
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: managed.gatewayName,
+      gatewayPort: managed.gatewayPort,
+      sandboxName: managed.name,
+      lifecycleGeneration: managed.lifecycleGeneration,
+      sandboxIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: managed.policyCreationReceipt.policyHash,
+      policyVersion: managed.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: managed.policyCreationReceipt,
+    };
+    const registry = await loadRegistryWith({
+      pending: {
+        name: "pending",
+        pendingRouteReservation: true,
+        gatewayName: managed.gatewayName,
+        gatewayPort: managed.gatewayPort,
+        lifecycleGeneration: managed.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: managed.lifecycleLiveIdentityFingerprint,
+        pendingPolicyVerification: checkpoint,
+        ...overrides,
+      },
+    });
+
+    expect(() => registry.getSandbox("pending")).toThrow(/pending policy verification/u);
   });
 
   it("clears NemoClaw policy attribution from externally managed rows (#9833)", async () => {
@@ -334,9 +467,8 @@ describe("sandbox registry normalization", () => {
     const registry = await loadRegistryWith({
       legacy: { name: "legacy", ...attribution, policyTier: "strict" },
       managed: {
-        name: "managed",
+        ...createManagedPolicyEntry("managed"),
         ...attribution,
-        policyAuthority: "nemoclaw-managed",
         policyTier: "strict",
       },
       external: {
@@ -363,24 +495,163 @@ describe("sandbox registry normalization", () => {
     },
   );
 
-  it("backfills policy authority once without allowing later changes or removal (#9833)", async () => {
-    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+  it("does not backfill NemoClaw ownership and leaves external authority available (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy", policyAuthority: "nemoclaw-managed" },
+    });
 
     expect(() => registry.updateSandbox("legacy", { policyAuthority: "global" as never })).toThrow(
       /invalid policy authority/i,
     );
-    expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
-    expect(() =>
-      registry.updateSandbox("legacy", { policyAuthority: "externally-managed" }),
-    ).toThrow(/policy authority changed/u);
-    expect(() => registry.updateSandbox("legacy", { policyAuthority: undefined })).toThrow(
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toThrow(
+      /outside completed sandbox registration/u,
+    );
+    expect(registry.updateSandbox("legacy", { policyAuthority: "externally-managed" })).toBe(true);
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("externally-managed");
+    expect(() => registry.registerSandbox(createManagedPolicyEntry("legacy"))).toThrow(
       /policy authority changed/u,
     );
-    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
+  });
 
+  it("publishes and rotates only an exact completed policy creation receipt (#9833)", async () => {
+    const registry = await loadRegistryWith({});
+    const managed = createManagedPolicyEntry("managed");
+    const registered = registry.registerSandbox(managed);
+    const replacement = createManagedPolicyEntry("managed", 2).policyCreationReceipt;
+
+    expect(registered.policyCreationReceipt).toEqual(managed.policyCreationReceipt);
+    expect(() => registry.updateSandbox("managed", { policyCreationReceipt: replacement })).toThrow(
+      /outside the receipt rotation transaction/u,
+    );
+    expect(
+      registry.compareAndSetSandboxPolicyCreationReceipt(
+        "managed",
+        { ...managed.policyCreationReceipt, policyVersion: 9 },
+        replacement,
+      ),
+    ).toBe(false);
+    expect(
+      registry.compareAndSetSandboxPolicyCreationReceipt(
+        "managed",
+        managed.policyCreationReceipt,
+        replacement,
+      ),
+    ).toBe(true);
+    expect(registry.getSandbox("managed")?.policyCreationReceipt).toEqual(replacement);
     expect(() =>
-      registry.registerSandbox({ name: "legacy", policyAuthority: "externally-managed" }),
-    ).toThrow(/policy authority changed/u);
+      registry.compareAndSetSandboxPolicyCreationReceipt("managed", replacement, {
+        ...replacement,
+        lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
+      }),
+    ).toThrow(/gateway or sandbox identity/u);
+  });
+
+  it("rejects partial, mismatched, and pending policy creation receipts (#9833)", async () => {
+    const managed = createManagedPolicyEntry("managed");
+    const malformedRegistry = await loadRegistryWith({
+      malformed: {
+        ...createManagedPolicyEntry("malformed"),
+        policyCreationReceipt: { schemaVersion: 1 },
+      },
+    });
+    expect(() => malformedRegistry.getSandbox("malformed")).toThrow(
+      /invalid policy creation receipt/u,
+    );
+
+    const mismatchedRegistry = await loadRegistryWith({
+      managed: {
+        ...managed,
+        gatewayPort: 9090,
+      },
+    });
+    expect(() => mismatchedRegistry.getSandbox("managed")).toThrow(
+      /does not match its gateway and sandbox identity/u,
+    );
+
+    const registry = await loadRegistryWith({});
+    expect(() => registry.registerSandbox(managed, undefined, { pending: true })).toThrow(
+      /pending sandbox registration/u,
+    );
+    expect(() =>
+      registry.registerSandbox({ name: "managed", policyAuthority: "nemoclaw-managed" }),
+    ).toThrow(/without a complete policy creation receipt/u);
+
+    registry.registerSandbox(managed);
+    registry.reserveSandboxInferenceRoute("managed", {
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: "https://api.example.test/v1",
+      credentialEnv: "CUSTOM_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      gatewayName: "nemoclaw",
+    });
+    expect(registry.getSandbox("managed")).toMatchObject({
+      pendingRouteReservation: true,
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: managed.policyCreationReceipt,
+    });
+    registry.restoreSandboxEntry(managed);
+    expect(registry.getSandbox("managed")).toEqual(managed);
+
+    const replacementSelection = {
+      provider: "compatible-endpoint",
+      model: "model-b",
+      endpointUrl: "https://api.example.test/v1",
+      endpointSource: null,
+      credentialEnv: "CUSTOM_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      nimContainer: null,
+      gatewayName: "nemoclaw",
+      reservationSessionId: "session-owner",
+    } as const;
+    registry.reserveSandboxInferenceRoute("managed", replacementSelection);
+    const replacementLifecycle = {
+      ...createManagedPolicyEntry("managed", 2),
+      ...replacementSelection,
+      lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
+      lifecycleLiveIdentityFingerprint: "e".repeat(64),
+    };
+    replacementLifecycle.policyCreationReceipt = {
+      ...replacementLifecycle.policyCreationReceipt,
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      sandboxIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+    };
+    const createReservation = registry.qualifyPendingSandboxCreateReservation(
+      {
+        sandboxName: "managed",
+        gatewayName: "nemoclaw",
+        sessionId: "session-owner",
+        selection: replacementSelection,
+      },
+      registry.getSandbox("managed"),
+    );
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "managed",
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      sandboxIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+      route: "none" as const,
+      policyHash: replacementLifecycle.policyCreationReceipt.policyHash,
+      policyVersion: replacementLifecycle.policyCreationReceipt.policyVersion,
+      policyCreationReceipt: replacementLifecycle.policyCreationReceipt,
+    };
+    registry.recordPendingSandboxPolicyVerification(createReservation, checkpoint);
+    expect(
+      registry.registerSandbox(replacementLifecycle, undefined, {
+        verifiedCreate: { reservation: createReservation, checkpoint },
+      }),
+    ).toMatchObject({
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+      policyCreationReceipt: replacementLifecycle.policyCreationReceipt,
+    });
   });
 
   it("sets a gateway port only while the complete qualified row remains current (#10056)", async () => {

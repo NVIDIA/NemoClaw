@@ -9,6 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import * as policies from "../../../src/lib/policy";
+import {
+  managedPolicyMetadata,
+  managedRegistrationSource,
+  SANDBOX_ID,
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -87,7 +92,7 @@ describe("Teams policy preset", () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+${managedRegistrationSource("hermes-sandbox", "hermes")}
 const result = policies.applyPresets("hermes-sandbox", ["teams"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
@@ -99,9 +104,17 @@ process.stdout.write("\n__RESULT__" + JSON.stringify({
       fakeOpenshell,
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' '{"scope":"sandbox","sandbox":"hermes-sandbox","status":"effective","policy_source":"sandbox","policy":{}}'
+    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
+    exit 0
+  fi
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
     exit 0
   fi
   printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'

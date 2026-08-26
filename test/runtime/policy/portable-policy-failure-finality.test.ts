@@ -8,6 +8,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  managedPolicyMetadata,
+  managedRegistrationSource,
+  SANDBOX_ID,
+} from "../../helpers/managed-policy-receipt-fixture";
+
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
 const registryModulePath = path.join(repoRoot, "src", "lib", "state", "registry.ts");
@@ -97,30 +103,50 @@ interface PolicySetBehavior {
  * round-trippable base policy so the driven mutation reaches its submission;
  * the `policy set --wait` result is what each scenario varies.
  */
-function buildOpenshellStub(policySet: PolicySetBehavior, basePolicy: string): string {
-  const policyMetadata = JSON.stringify({
-    scope: "sandbox",
-    sandbox: SANDBOX_NAME,
-    status: "effective",
-    policy_source: "sandbox",
+function buildOpenshellStub(
+  policySet: PolicySetBehavior,
+  basePolicy: string,
+  appliedPolicyPath: string,
+): string {
+  const policyMetadata = {
+    ...JSON.parse(managedPolicyMetadata(SANDBOX_NAME)),
     policy: YAML.parse(basePolicy),
-  });
+  };
   return `#!/bin/sh
+if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
+  printf 'Name: ${SANDBOX_NAME}\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1" = "policy" ] && [ "$2" = "get" ]; then
   case " $* " in
     *" --output json "*)
       cat <<'JSON'
-${policyMetadata}
+${JSON.stringify(policyMetadata)}
 JSON
       exit 0
       ;;
   esac
+  if [ -f ${JSON.stringify(appliedPolicyPath)} ]; then
+    cat ${JSON.stringify(appliedPolicyPath)}
+    exit 0
+  fi
   cat <<'YAML'
 ${basePolicy}
 YAML
   exit 0
 fi
 if [ "$1" = "policy" ] && [ "$2" = "set" ]; then
+  ${
+    policySet.exitCode === 0
+      ? `while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      cp "$2" ${JSON.stringify(appliedPolicyPath)}
+      break
+    fi
+    shift
+  done`
+      : ":"
+  }
   cat >&2 <<'POLICY_SET_STDERR'
 ${policySet.stderr}
 POLICY_SET_STDERR
@@ -145,7 +171,7 @@ console.log(${JSON.stringify(RETURN_MARKER)} + String(returned));
 
 const APPLY_PRESETS_DRIVER =
   `const registry = require(${JSON.stringify(registryModulePath)});\n` +
-  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [] });\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
   buildDriver(`applyPresets(${JSON.stringify(SANDBOX_NAME)}, [${JSON.stringify(PRESET_NAME)}])`);
 
 /**
@@ -154,11 +180,12 @@ const APPLY_PRESETS_DRIVER =
  */
 const REMOVE_PRESET_DRIVER =
   `const registry = require(${JSON.stringify(registryModulePath)});\n` +
-  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [${JSON.stringify(PRESET_NAME)}] });\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
+  `registry.updateSandbox(${JSON.stringify(SANDBOX_NAME)}, { policies: [${JSON.stringify(PRESET_NAME)}] });\n` +
   buildDriver(`removePreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
 const APPLY_PRESET_DRIVER =
   `const registry = require(${JSON.stringify(registryModulePath)});\n` +
-  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [] });\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
   buildDriver(`applyPreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
 
 interface ChildRun {
@@ -217,10 +244,15 @@ function runPolicyMutation({ driver, policySet, basePolicy }: PolicyMutationRun)
   fs.mkdirSync(homeDir);
 
   const openshellStubPath = path.join(scratchDir, "openshell");
-  fs.writeFileSync(openshellStubPath, buildOpenshellStub(policySet, basePolicy), {
-    encoding: "utf-8",
-    mode: 0o755,
-  });
+  const appliedPolicyPath = path.join(scratchDir, "applied-policy.yaml");
+  fs.writeFileSync(
+    openshellStubPath,
+    buildOpenshellStub(policySet, basePolicy, appliedPolicyPath),
+    {
+      encoding: "utf-8",
+      mode: 0o755,
+    },
+  );
 
   const driverPath = path.join(scratchDir, "driver.js");
   fs.writeFileSync(driverPath, driver, "utf-8");

@@ -197,6 +197,8 @@ export interface SandboxStateOptions<
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
   authoritativePolicyTier?: string | null;
+  /** Keep provider and credential effects behind the exact post-create policy gate. */
+  deferSandboxEffectsUntilPolicyVerification?: boolean;
   /** Endpoint source to preserve during an authoritative rebuild. */
   endpointSource?: InferenceEndpointSource | null;
   /** Internal rebuild target fingerprint recorded by the journal opened before deletion. */
@@ -371,6 +373,7 @@ export interface SandboxStateOptions<
       hermesAuthMethod: HermesAuthMethod | null,
       inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
+      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -549,12 +552,18 @@ function applyAuthoritativeRebuildPolicyPresets(
   };
 }
 
+function deferredSandboxEffectsIntent(enabled: boolean): {
+  readonly deferSandboxEffectsUntilPolicyVerification?: true;
+} {
+  return enabled ? { deferSandboxEffectsUntilPolicyVerification: true } : {};
+}
+
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
 };
 
-/** Add APF-owned fields to a future exact-gated fresh create intent. */
+/** Add APF-owned fields to an exact-gated fresh create intent. */
 export function apfCreateIntentFields(
   requested: boolean,
 ): Pick<
@@ -1176,13 +1185,12 @@ class SandboxStateFlow<
     sandboxName: string,
   ): void {
     const sessionId = state.session?.sessionId;
-    if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) {
-      return;
-    }
+    if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
       `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,
     );
     this.deps.exitProcess(1);
+    throw new Error("exitProcess returned after route reservation ownership changed");
   }
 
   private assertRegistryMessagingPlanUnchanged(
@@ -1570,6 +1578,7 @@ class SandboxStateFlow<
     checkpoint: OnboardCheckpoint | null,
     session: Session | null,
     force = false,
+    verifiedPolicyRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (
       !this.resumesSandboxPrompts ||
@@ -1607,14 +1616,16 @@ class SandboxStateFlow<
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       async () => {
-        const revalidatePolicyRequirements = (operation: string) =>
-          this.revalidatePolicyRequirements(
-            sandboxName,
-            selectedMessagingChannels,
-            webSearchConfig,
-            session,
-            operation,
-          );
+        const revalidatePolicyRequirements =
+          verifiedPolicyRevalidation ??
+          ((operation: string) =>
+            this.revalidatePolicyRequirements(
+              sandboxName,
+              selectedMessagingChannels,
+              webSearchConfig,
+              session,
+              operation,
+            ));
         revalidatePolicyRequirements(
           `register credential providers for sandbox ${JSON.stringify(sandboxName)}`,
         );
@@ -1666,6 +1677,7 @@ class SandboxStateFlow<
     requiredBindings: readonly CheckpointProviderBinding[],
     registryAuthoritySnapshot: RegistryMessagingAuthority,
     force: boolean,
+    verifiedPolicyRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (state.selectedMessagingChannels.length === 0) return;
     const stage = async () => {
@@ -1680,6 +1692,7 @@ class SandboxStateFlow<
         state.session?.checkpoint ?? null,
         state.session,
         force,
+        verifiedPolicyRevalidation,
       );
     };
     if (this.deps.withSandboxMutationLock) {
@@ -1687,6 +1700,58 @@ class SandboxStateFlow<
     } else {
       await stage();
     }
+  }
+
+  private async activateCredentialProvidersForCreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+    webSearchProviderBindings: readonly CheckpointProviderBinding[],
+    messagingProviderBindings: readonly CheckpointProviderBinding[],
+    registryMessagingAuthority: RegistryMessagingAuthority,
+    forceMessagingProviderRegistration: boolean,
+    verifiedPolicyRevalidation?: (operation: string) => void,
+  ): Promise<SandboxStepState<WebSearchConfig>> {
+    await this.registerCompletedCredentialProviders(
+      sandboxName,
+      [],
+      state.selectedMessagingChannels,
+      state.webSearchConfig,
+      webSearchProviderBindings,
+      "web_search_provider",
+      state.session?.checkpoint ?? null,
+      state.session,
+      false,
+      verifiedPolicyRevalidation,
+    );
+    let nextState = this.checkpointProviderEffectGroup(
+      state,
+      "web_search_provider",
+      webSearchProviderBindings,
+    );
+    await this.stageMessagingProvidersForCreate(
+      sandboxName,
+      nextState,
+      messagingProviderBindings,
+      registryMessagingAuthority,
+      forceMessagingProviderRegistration,
+      verifiedPolicyRevalidation,
+    );
+    nextState = this.checkpointProviderEffectGroup(
+      nextState,
+      "messaging_providers",
+      messagingProviderBindings,
+    );
+    if (this.resumesSandboxPrompts) {
+      const session = this.deps.updateSession((current) => {
+        recordCheckpointProviderEffectGroups(current, {
+          webSearch: webSearchProviderBindings,
+          messaging: messagingProviderBindings,
+        });
+        return current;
+      });
+      nextState = { ...nextState, session };
+    }
+    return nextState;
   }
 
   private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
@@ -1788,6 +1853,7 @@ class SandboxStateFlow<
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
+      ...deferredSandboxEffectsIntent(this.deferSandboxEffectsUntilPolicyVerification()),
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
@@ -1805,7 +1871,8 @@ class SandboxStateFlow<
         "APF interceptor selection requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
       );
     }
-    if (this.deps.getSandboxRegistryEntry(sandboxName)) {
+    const registered = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (registered && registered.pendingRouteReservation !== true) {
       throw new Error(
         `APF interceptor selection cannot adopt registered sandbox '${sandboxName}'. Choose a new sandbox name.`,
       );
@@ -1816,8 +1883,12 @@ class SandboxStateFlow<
         `APF interceptor selection cannot adopt live sandbox '${sandboxName}'. Choose a new sandbox name.`,
       );
     }
-    throw new Error(
-      "APF interceptor selection requires exact post-create policy verification before credential or provider effects. This build cannot supply that boundary, so no sandbox was created.",
+  }
+
+  private deferSandboxEffectsUntilPolicyVerification(): boolean {
+    return (
+      this.options.deferSandboxEffectsUntilPolicyVerification === true ||
+      this.options.apfInterceptorRequested === true
     );
   }
 
@@ -2043,9 +2114,13 @@ class SandboxStateFlow<
     messagingPlan: SandboxMessagingPlan | null,
     registryMessagingAuthoritySnapshot: RegistryMessagingAuthority,
     decision: SandboxCreationDecision,
+    activateVerifiedCredentialProviders?: (
+      state: SandboxStepState<WebSearchConfig>,
+      revalidatePolicyRequirements: (operation: string) => void,
+    ) => Promise<SandboxStepState<WebSearchConfig>>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const resourceSelection = await this.resolveResourceProfile(initialState);
-    const state = resourceSelection.state;
+    let state = resourceSelection.state;
     const resourceProfile = resourceSelection.resourceProfile;
     const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
       this.options.agent as { name?: string } | null,
@@ -2107,7 +2182,7 @@ class SandboxStateFlow<
       let sandboxName: string;
       try {
         revalidatePolicyRequirements(`create sandbox '${requestedSandboxName}'`);
-        if (this.options.fresh) {
+        if (this.options.fresh && !this.deferSandboxEffectsUntilPolicyVerification()) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
             requestedSandboxName,
@@ -2136,6 +2211,24 @@ class SandboxStateFlow<
               this.options.hermesAuthMethod,
               this.options.session ? { sessionId: this.options.session.sessionId } : null,
               effectiveCreateIntent,
+              ...(activateVerifiedCredentialProviders
+                ? [
+                    async (
+                      verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
+                    ) => {
+                      if (this.options.fresh) {
+                        this.deps.stopStaleDashboardListenersForSandbox(
+                          this.deps.listRegistrySandboxes().sandboxes,
+                          requestedSandboxName,
+                        );
+                      }
+                      state = await activateVerifiedCredentialProviders(
+                        state,
+                        verifiedContext.revalidatePolicyRequirements,
+                      );
+                    },
+                  ]
+                : []),
             ),
         );
       } catch (error) {
@@ -2194,7 +2287,6 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
-      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>
@@ -2339,46 +2431,25 @@ class SandboxStateFlow<
       messagingProviderBindings,
     );
     nextState = this.checkpointMessaging(nextState, messaging);
-    await this.registerCompletedCredentialProviders(
-      requestedSandboxName,
-      [],
-      nextState.selectedMessagingChannels,
-      nextState.webSearchConfig,
-      webSearchProviderBindings,
-      "web_search_provider",
-      nextState.session?.checkpoint ?? null,
-      nextState.session,
-    );
-    nextState = this.checkpointProviderEffectGroup(
-      nextState,
-      "web_search_provider",
-      webSearchProviderBindings,
-    );
-    await this.stageMessagingProvidersForCreate(
-      requestedSandboxName,
-      nextState,
-      messagingProviderBindings,
-      registryMessagingAuthority,
-      shouldForceMessagingProviderRegistration(
-        messagingCredentialChanged,
-        messagingCredentialBaseline,
-        messaging.plan,
-      ),
-    );
-    nextState = this.checkpointProviderEffectGroup(
-      nextState,
-      "messaging_providers",
-      messagingProviderBindings,
-    );
-    if (this.resumesSandboxPrompts) {
-      const session = this.deps.updateSession((current) => {
-        recordCheckpointProviderEffectGroups(current, {
-          webSearch: webSearchProviderBindings,
-          messaging: messagingProviderBindings,
-        });
-        return current;
-      });
-      nextState = { ...nextState, session };
+    const activateCredentialProviders = (
+      state: SandboxStepState<WebSearchConfig>,
+      verifiedPolicyRevalidation?: (operation: string) => void,
+    ) =>
+      this.activateCredentialProvidersForCreate(
+        state,
+        requestedSandboxName,
+        webSearchProviderBindings,
+        messagingProviderBindings,
+        registryMessagingAuthority,
+        shouldForceMessagingProviderRegistration(
+          messagingCredentialChanged,
+          messagingCredentialBaseline,
+          messaging.plan,
+        ),
+        verifiedPolicyRevalidation,
+      );
+    if (!this.deferSandboxEffectsUntilPolicyVerification()) {
+      nextState = await activateCredentialProviders(nextState);
     }
     return this.createAndRecordSandbox(
       nextState,
@@ -2386,6 +2457,7 @@ class SandboxStateFlow<
       messaging.plan,
       registryMessagingAuthority,
       decision,
+      this.deferSandboxEffectsUntilPolicyVerification() ? activateCredentialProviders : undefined,
     );
   }
 

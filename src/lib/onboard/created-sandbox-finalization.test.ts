@@ -11,13 +11,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
-  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
+  createOnboardCreatedSandboxRegistration,
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
+import { pendingSandboxPolicyVerificationForBoundary } from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
@@ -28,6 +29,32 @@ afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
   for (const fixture of fixtures.splice(0)) fs.rmSync(fixture, { recursive: true, force: true });
   vi.restoreAllMocks();
+});
+
+describe("created sandbox registration authority", () => {
+  it("refuses legacy Hermes resume without an in-process verified create checkpoint (#9833)", async () => {
+    const complete = vi.fn();
+    const cleanupBuildContext = vi.fn();
+    const register = createOnboardCreatedSandboxRegistration({
+      completion: { complete },
+      createdLifecycle: {} as never,
+      cleanupBuildContext,
+      manageDashboard: false,
+      sandboxGpuEnabled: false,
+    });
+
+    await expect(
+      register(
+        null,
+        { lifecycleGeneration: "generation-1" } as HermesPortableConfiguredReceipt,
+        "a".repeat(64),
+        vi.fn(),
+      ),
+    ).rejects.toThrow(/without a verified create checkpoint from this process/u);
+
+    expect(cleanupBuildContext).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
 });
 
 function executable(file: string, contents: string): void {
@@ -108,12 +135,17 @@ function makeRestoreFixture(): {
     ].join("\n"),
   );
 
-  const pythonResult = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
-    encoding: "utf8",
-  });
-  expect(pythonResult.status, `Python 3 is required: ${pythonResult.stderr}`).toBe(0);
-  expect(pythonResult.stdout.trim(), "Python 3 executable path is required").not.toBe("");
-  const hostPython = pythonResult.stdout.trim();
+  const pythonResult = ["python3.13", "python3.12", "python3.11", "python3"]
+    .map((candidate) =>
+      spawnSync(
+        candidate,
+        ["-c", "import sys; assert sys.version_info >= (3, 11); print(sys.executable)"],
+        { encoding: "utf8" },
+      ),
+    )
+    .find((result) => result.status === 0 && result.stdout.trim().length > 0);
+  expect(pythonResult, "Python 3.11 or newer is required").toBeDefined();
+  const hostPython = pythonResult!.stdout.trim();
   const python = path.join(bin, "python3");
   executable(
     python,
@@ -300,6 +332,34 @@ describe("created DCode sandbox finalization", () => {
   it("passes the fresh create endpoint through the production completion constructor (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1";
     const model = "nvidia/nemotron-3-ultra-550b-a55b";
+    const policyCreationReceipt = {
+      schemaVersion: 1 as const,
+      origin: "sandbox-create" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "dcode",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      policyHash: "sha256:effective",
+      policyVersion: 1,
+    };
+    const verifiedPolicyBoundary = {
+      registration: {
+        policyAuthority: "nemoclaw-managed" as const,
+        policyCreationReceipt,
+        observedPolicyAuthority: "owner-unknown" as const,
+      },
+      sandboxName: "dcode",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "native" as const,
+    };
+    const verifiedCreate = {
+      reservation: {} as never,
+      checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
+    } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
     const runCaptureOpenshell = vi.fn(() =>
       [
         "Sandbox:  dcode",
@@ -356,9 +416,17 @@ describe("created DCode sandbox finalization", () => {
       null,
       { gatewayName: "nemoclaw", gatewayPort: 8080 },
       {
-        initialSandboxPolicy: { appliedPresets: ["personal-open-internet"] },
+        initialSandboxPolicy: {
+          appliedPresets: ["personal-open-internet"],
+          policyPath: "/private/initial-policy.yaml",
+        },
+        compatibilityPolicyPath: null,
         policyTier: null,
+        policyAuthority: "nemoclaw-managed",
         dashboardRemoteBindPrepared: false,
+        getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+        getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
+        revalidatePolicyAuthority: vi.fn(),
       },
       null,
       "build-1",
@@ -394,7 +462,19 @@ describe("created DCode sandbox finalization", () => {
         release: null,
         fallbackDiagnostic: null,
       },
+      null,
       vi.fn(),
+      vi.fn((input) => ({
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: input.gatewayName,
+        gatewayPort: input.gatewayPort,
+        sandboxName: input.sandboxName,
+        lifecycleGeneration: input.lifecycleGeneration,
+        sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+        policyHash: "sha256:effective",
+        policyVersion: 1,
+      })),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
     const created = {
@@ -468,7 +548,8 @@ describe("created DCode sandbox finalization", () => {
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("rebuild is unsafe"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('openshell sandbox delete "dcode"'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
@@ -524,14 +605,12 @@ describe("created DCode sandbox finalization", () => {
         "  Workspace state restoration did not complete. Registry metadata was not updated.",
       );
       expect(error).toHaveBeenCalledWith(
-        "  Remove the unregistered sandbox from its owning gateway before retrying:",
+        "  NemoClaw left unregistered sandbox 'dcode' in place because OpenShell can delete it only by mutable name.",
       );
       expect(error).toHaveBeenCalledWith(
-        '    openshell sandbox delete -g "nemoclaw" "dcode"',
+        "  Verify its durable identity before manual cleanup; do not act by name alone.",
       );
-      expect(error).toHaveBeenCalledWith(
-        "  Rerun the original onboarding command after the deletion succeeds.",
-      );
+      expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
       expect(error).toHaveBeenCalledWith(
         `  Keep the snapshot for manual recovery: ${fixture.backupPath}`,
       );
@@ -762,7 +841,8 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith('    openshell sandbox delete "openclaw"');
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/managed-openclaw-backup");
   });
 
@@ -807,7 +887,8 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith('    openshell sandbox delete "openclaw"');
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
     );
@@ -861,7 +942,8 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining(sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR),
     );
-    expect(error).toHaveBeenCalledWith('    openshell sandbox delete "openclaw"');
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
     );
@@ -870,48 +952,11 @@ describe("created OpenClaw sandbox finalization", () => {
 });
 
 describe("created sandbox completion actions", () => {
-  it("does not arm mutable-name cancellation rollback for an APF-compatible sandbox", () => {
-    const armCancelRollback = vi.fn();
-
-    expect(
-      completeOrdinaryOnboardSandboxCreation(
-        {
-          sandboxName: "openclaw",
-          runtimeFields: {
-            gpuEnabled: false,
-            hostGpuDetected: false,
-            sandboxGpuEnabled: false,
-            sandboxGpuMode: "0",
-            sandboxGpuDevice: null,
-            sandboxGpuProof: null,
-            openshellDriver: "docker",
-            openshellVersion: "0.0.106",
-          },
-          messagingProviders: [],
-          liveExists: false,
-          retainSandboxOnAutomaticFailure: true,
-        },
-        {
-          runFile: vi.fn(),
-          scriptsDir: "/repo/scripts",
-          gatewayName: "nemoclaw",
-          providerExistsInGateway: () => true,
-          armCancelRollback,
-          dockerInfoFormat: () => "",
-          runCapture: () => "",
-          revalidatePolicyAuthority: vi.fn(),
-          applyVmDnsMonkeypatch: vi.fn(),
-        },
-      ),
-    ).toBe("openclaw");
-    expect(armCancelRollback).not.toHaveBeenCalled();
-  });
-
   it.each([
-    ["retained ordinary", true, false],
+    ["ordinary", true, false],
     ["schema-5", false, true],
   ] as const)(
-    "keeps %s dashboard completion ordered and bounded (#9833)",
+    "keeps %s dashboard completion ordered and bounded (#9203)",
     async (_route, manageDashboard, schema5) => {
       const order: string[] = [];
       const gpuProof = {
@@ -931,13 +976,36 @@ describe("created sandbox completion actions", () => {
         order.push("registry");
         return input as unknown as SandboxEntry;
       });
-      const ensureForward = vi.fn(() => {
-        order.push("dashboard-forward");
-        return 8644;
-      });
+      const policyCreationReceipt = {
+        schemaVersion: 1 as const,
+        origin: "sandbox-create" as const,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sandboxName: "hermes",
+        lifecycleGeneration: "generation-1",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        policyHash: "sha256:effective",
+        policyVersion: 1,
+      };
+      const verifiedPolicyBoundary = {
+        registration: {
+          policyAuthority: "nemoclaw-managed" as const,
+          policyCreationReceipt,
+          observedPolicyAuthority: "owner-unknown" as const,
+        },
+        sandboxName: "hermes",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "native" as const,
+      };
+      const verifiedCreate = {
+        reservation: {} as never,
+        checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
+      } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
         {
-          retainSandboxOnAutomaticFailure: true,
           finalization: {
             sandboxName: "hermes",
             restoreBackupPath: null,
@@ -978,7 +1046,12 @@ describe("created sandbox completion actions", () => {
             hermesToolGateways: [],
             gatewayName: "nemoclaw",
             gatewayPort: 8080,
-            reservationSessionId: "session-owner",
+          },
+          policy: {
+            initialPolicyPath: "/private/initial-policy.yaml",
+            compatibilityPolicyPath: "/private/compatibility-policy.yaml",
+            getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+            getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
           gpu: {
             config: gpuConfig,
@@ -996,7 +1069,10 @@ describe("created sandbox completion actions", () => {
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward,
+            ensureForward: () => {
+              order.push("dashboard-forward");
+              return 8644;
+            },
             getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
             ensureHermesForward: () => order.push("dashboard-hermes"),
@@ -1079,34 +1155,28 @@ describe("created sandbox completion actions", () => {
       );
 
       expect(order).toEqual([
+        "lifecycle-capture",
+        "lifecycle-revalidate",
         "gpu",
         ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
         ...(schema5 ? [] : ["workload"]),
-        "lifecycle-capture",
         "lifecycle-revalidate",
         "registry",
       ]);
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
-      expect(ensureForward.mock.calls).toEqual(
-        manageDashboard
-          ? [
-              [
-                "hermes",
-                "http://127.0.0.1:8643",
-                expect.objectContaining({ rollbackSandboxOnFailure: false }),
-              ],
-            ]
-          : [],
-      );
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          reservationSessionId: "session-owner",
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          policyAuthority: "nemoclaw-managed",
+          policyCreationReceipt: expect.objectContaining({
+            policyHash: "sha256:effective",
+          }),
+          verifiedCreate,
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
       );

@@ -82,7 +82,16 @@ export type SandboxCreatePlan = {
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   compatibilityPolicyPath: string | null;
   sandboxGpuLogMessage: string | null;
+  /** One-shot provider activation owned by the post-create verification boundary. */
+  activateDeferredProviderEffects: (() => readonly string[]) | null;
 };
+
+function sameProviderNames(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((providerName, index) => providerName === right[index])
+  );
+}
 
 export function selectHermesPortableExtraProviderPlan(
   hermesPortable: boolean,
@@ -257,6 +266,7 @@ export function materializeSandboxCreatePlan({
   intent,
   fromRef,
   policyAuthority,
+  deferSandboxEffectsUntilPolicyVerification = false,
   managedStateMount,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
@@ -299,10 +309,15 @@ export function materializeSandboxCreatePlan({
     ...intent.resourceCreateArgs,
   ];
 
-  const hermesToolGatewayProvider =
-    intent.hermesToolGateways.length > 0
-      ? getHermesToolGatewayProviderName(intent.sandboxName)
-      : null;
+  let hermesToolGatewayProvider: string | null | undefined;
+  const resolveHermesToolGatewayProvider = (): string | null => {
+    if (hermesToolGatewayProvider !== undefined) return hermesToolGatewayProvider;
+    hermesToolGatewayProvider =
+      intent.hermesToolGateways.length > 0
+        ? getHermesToolGatewayProviderName(intent.sandboxName)
+        : null;
+    return hermesToolGatewayProvider;
+  };
   const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
       ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
@@ -315,7 +330,7 @@ export function materializeSandboxCreatePlan({
   if (policyAuthority === "nemoclaw-managed") {
     assertCredentialBindingProvidersAttached(
       initialSandboxPolicy,
-      buildCreateProviderSet(intent, plannedMessagingProviders, hermesToolGatewayProvider),
+      buildCreateProviderSet(intent, plannedMessagingProviders, resolveHermesToolGatewayProvider()),
     );
     try {
       discloseInitialSandboxPolicy?.(initialSandboxPolicy);
@@ -325,29 +340,39 @@ export function materializeSandboxCreatePlan({
     }
   }
 
-  runProviderPreDeleteCleanup();
-  const messagingProviders = filterMessagingProvidersForSandboxCreate(
-    [
-      ...upsertMessagingProviders(enabledMessagingTokenDefs, {
-        replaceExisting: true,
-        allowedSandboxes: [intent.sandboxName],
-      }),
-      ...intent.reusableMessagingProviders,
-    ],
-    intent.messagingProviderRequests,
-    intent.policy.activeMessagingChannels,
-    intent.disabledChannelNames,
-  );
-  const createProviders = buildCreateProviderSet(
-    intent,
-    messagingProviders,
-    hermesToolGatewayProvider,
-  );
-  if (policyAuthority === "nemoclaw-managed") {
-    assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
-  }
-  for (const provider of createProviders) {
-    createArgs.push("--provider", provider);
+  const activateProviderEffects = (): readonly string[] => {
+    runProviderPreDeleteCleanup();
+    const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
+      [
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+          replaceExisting: true,
+          allowedSandboxes: [intent.sandboxName],
+        }),
+        ...intent.reusableMessagingProviders,
+      ],
+      intent.messagingProviderRequests,
+      intent.policy.activeMessagingChannels,
+      intent.disabledChannelNames,
+    );
+    const createProviders = buildCreateProviderSet(
+      intent,
+      activatedMessagingProviders,
+      resolveHermesToolGatewayProvider(),
+    );
+    if (policyAuthority === "nemoclaw-managed") {
+      assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
+    }
+    if (!sameProviderNames(activatedMessagingProviders, plannedMessagingProviders)) {
+      throw new Error(
+        `Provider activation for sandbox '${intent.sandboxName}' did not match its verified create plan.`,
+      );
+    }
+    return [...createProviders];
+  };
+  if (!deferSandboxEffectsUntilPolicyVerification) {
+    for (const provider of activateProviderEffects()) {
+      createArgs.push("--provider", provider);
+    }
   }
 
   return {
@@ -356,10 +381,13 @@ export function materializeSandboxCreatePlan({
     policyTier: intent.policy.options.policyTier,
     policyAuthority,
     createArgs,
-    messagingProviders,
+    messagingProviders: plannedMessagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
+    activateDeferredProviderEffects: deferSandboxEffectsUntilPolicyVerification
+      ? activateProviderEffects
+      : null,
   };
 }
 
@@ -371,9 +399,7 @@ export function materializeHermesPortableCreatePlan(input: {
 }): SandboxCreatePlan {
   const { intent, fromRef, policyAuthority } = input;
   if (policyAuthority !== "nemoclaw-managed") {
-    throw new Error(
-      "Hermes portable sandbox creation requires NemoClaw-managed policy authority.",
-    );
+    throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
   }
   if (
     intent.policy.options.agentName !== "hermes" ||
@@ -427,5 +453,6 @@ export function materializeHermesPortableCreatePlan(input: {
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath: null,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
+    activateDeferredProviderEffects: null,
   };
 }

@@ -21,11 +21,24 @@ describe("APF sandbox create selection", () => {
     expect(apfCreateFingerprintFields(true)).toEqual(["apf-interceptor"]);
   });
 
-  it("rejects fresh creation before credential staging until the exact gate exists (#9833)", async () => {
+  it("defers fresh-create credentials behind the verified APF effect callback (#9833)", async () => {
     const session = createSession({ apfInterceptorRequested: true });
     const { deps, calls } = createDeps(
       {
-        getSandboxRegistryEntry: () => null,
+        getSandboxRegistryEntry: (name) => ({
+          name,
+          gatewayName: "nemoclaw",
+          pendingRouteReservation: true,
+          reservationSessionId: session.sessionId,
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          webSearchEnabled: false,
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+        }),
         getSandboxRecreateObservation: () => ({
           state: "missing" as const,
           liveIdentityFingerprint: null,
@@ -34,16 +47,29 @@ describe("APF sandbox create selection", () => {
       session,
     );
 
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        fresh: true,
-        apfInterceptorRequested: true,
-      }),
-    ).rejects.toThrow(/exact post-create policy verification.*no sandbox was created/u);
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      apfInterceptorRequested: true,
+    });
 
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    const createCall = calls.createSandbox.mock.calls[0] ?? [];
+    expect(createCall.at(-2)).toMatchObject({
+      apfInterceptorRequested: true,
+      deferSandboxEffectsUntilPolicyVerification: true,
+    });
+    const activateVerifiedEffects = createCall.at(-1);
+    expect(activateVerifiedEffects).toEqual(expect.any(Function));
+
+    const sessionUpdatesBeforeVerifiedEffects = calls.updateSession.mock.calls.length;
+    await (activateVerifiedEffects as (context: unknown) => Promise<void>)({
+      revalidatePolicyRequirements: () => undefined,
+    });
+    expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
+      sessionUpdatesBeforeVerifiedEffects,
+    );
   });
 
   it("rejects registered sandbox adoption before credential staging (#9833)", async () => {
