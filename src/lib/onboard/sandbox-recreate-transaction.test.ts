@@ -911,6 +911,8 @@ describe("source registry fingerprint", () => {
     vi.resetModules();
     try {
       const registry = await import("../state/registry");
+      const lifecycleGeneration = "00000000-0000-4000-8000-000000000001";
+      const lifecycleLiveIdentityFingerprint = "a".repeat(64);
       registry.registerSandbox({
         name: "alpha",
         agent: "openclaw",
@@ -924,10 +926,23 @@ describe("source registry fingerprint", () => {
         preferredInferenceApi: "openai-responses",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
+        lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint,
+        policyAuthority: "nemoclaw-managed",
+        policyCreationReceipt: {
+          schemaVersion: 1,
+          origin: "sandbox-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration,
+          sandboxIdentityFingerprint: lifecycleLiveIdentityFingerprint,
+          policyHash: "policy-alpha",
+          policyVersion: 1,
+        },
       });
-      const journaled = fingerprintSandboxRegistryEntry(
-        registry.getSandbox("alpha") as SandboxEntry,
-      );
+      const sourceEntry = registry.getSandbox("alpha") as SandboxEntry;
+      const journaled = fingerprintSandboxRegistryEntry(sourceEntry);
       const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("podman");
 
       expect(
@@ -945,7 +960,16 @@ describe("source registry fingerprint", () => {
       ).toBe(true);
       const reserved = registry.getSandbox("alpha") as SandboxEntry;
       expect(reserved.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+      expect(reserved.policyAuthority).toBe("nemoclaw-managed");
+      expect(reserved.policyCreationReceipt).toEqual(
+        expect.objectContaining({ lifecycleGeneration, policyHash: "policy-alpha" }),
+      );
       expect(fingerprintSandboxRegistryEntry(reserved)).toBe(journaled);
+
+      registry.restoreSandboxEntry(sourceEntry);
+      expect(registry.getSandbox("alpha")?.policyCreationReceipt).toEqual(
+        sourceEntry.policyCreationReceipt,
+      );
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
@@ -975,7 +999,11 @@ describe("source registry fingerprint", () => {
         hostLocalInferenceReceipt,
         hostLocalInferenceProvenance,
       };
-      registry.reserveSandboxInferenceRoute("alpha", route);
+      const {
+        hostLocalInferenceReceipt: _reservedReceipt,
+        hostLocalInferenceProvenance: _reservedProvenance,
+        ...registeredRoute
+      } = route;
       registry.registerSandbox({
         name: "alpha",
         agent: "openclaw",
@@ -983,7 +1011,7 @@ describe("source registry fingerprint", () => {
         createdAt: ISO,
         imageTag: "nemoclaw/openclaw:2026.3.11",
         lifecycleGeneration: "alpha-generation-1",
-        ...route,
+        ...registeredRoute,
       });
       const journaled = fingerprintSandboxRegistryEntry(
         registry.getSandbox("alpha") as SandboxEntry,
