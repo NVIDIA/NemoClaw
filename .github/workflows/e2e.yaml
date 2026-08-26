@@ -4165,7 +4165,7 @@ jobs:
           }
 
       - id: bases
-        name: Resolve exact platform base images
+        name: Resolve digest-pinned platform base images
         env:
           DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           PLATFORM: ${{ matrix.platform }}
@@ -4812,7 +4812,7 @@ jobs:
           platform: linux/amd64
 
       - id: runtime-bases
-        name: Resolve exact amd64 runtime base images
+        name: Resolve digest-pinned amd64 runtime base images
         env:
           DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
         shell: bash

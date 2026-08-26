@@ -462,12 +462,12 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Validate exact Deep Agents PR base build args
+      - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
-      - name: Resolve exact linux/amd64 PR base
+      - name: Resolve digest-pinned linux/amd64 PR base
         id: base
         shell: bash
         env:

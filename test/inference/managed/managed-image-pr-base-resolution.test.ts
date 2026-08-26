@@ -30,7 +30,7 @@ function workflowStep(job: string, name: string): WorkflowStep {
 }
 
 function resolverScript(): string {
-  const resolver = workflowStep("pr-build-and-entrypoint", "Resolve exact linux/amd64 PR base").run;
+  const resolver = workflowStep("pr-build-and-entrypoint", "Resolve digest-pinned linux/amd64 PR base").run;
   return (
     resolver ??
     (() => {
