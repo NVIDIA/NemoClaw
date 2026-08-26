@@ -1329,7 +1329,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],
   ] as const)(
-    "fails closed before a later %s detach when an already-absent revision cannot be proved",
+    "fails closed before a later %s detach when an already-detached provider has no provable credential revision",
     async (_label, prepareFunction) => {
       registry.registerSandbox({
         name: "alpha",
