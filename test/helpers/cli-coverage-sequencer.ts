@@ -41,9 +41,9 @@ const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
 // ordinary roster changes preserve ownership between profile refreshes.
 // Integration coverage is serialized, so it needs an independent salt instead
 // of relying on combined weight from the parallel CLI and E2E-support lanes.
-const stableShardSalt = "5951";
+const stableShardSalt = "7257";
 const integrationShardSalt = "18608";
-const e2eSupportShardSalt = "3084";
+const e2eSupportShardSalt = "25980";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
