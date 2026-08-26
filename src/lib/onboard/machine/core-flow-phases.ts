@@ -69,6 +69,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   gatewayName: string;
   /** Internal schema-5 lifecycle selection from the locked portable runtime. */
   hermesPortableLifecycle?: boolean;
+  apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
 
@@ -228,6 +229,7 @@ export function createSandboxOnboardFlowPhase<
       fresh: context.fresh,
       gatewayName: options.gatewayName,
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
+      apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
       deferSandboxEffectsUntilPolicyVerification: true,
