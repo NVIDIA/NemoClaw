@@ -442,8 +442,14 @@ describe("pull request and main workflow contracts", () => {
       "${{ github.event.pull_request.head.repo.full_name }}",
     );
     expect(locate.run).toContain(
-      ".trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
+      "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );
+    expect(locate.run).toContain('if [ ! -f "$trusted_inspector" ]');
+    expect(locate.run).toContain('if [ -f "$trusted_workflow" ]');
+    expect(locate.run).toContain(
+      'all(type == "string" and startswith("https://registry.npmjs.org/"))',
+    );
+    expect(locate.run).toContain("requires two valid public-registry npm lockfiles");
     expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
     expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
     expect(locate.run).toContain("required=false");
@@ -451,6 +457,120 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.run).toContain("available only to same-repository pull requests");
     expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+  });
+
+  // The one-time bootstrap may proceed only while both lockfiles use the public registry.
+  it("allows the package workflow bootstrap without a private registry lock", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      const lock = JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/example": {
+            resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+          },
+        },
+      });
+      writeFileSync(join(tempRoot, "package-lock.json"), lock);
+      writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), lock);
+      const outputPath = join(tempRoot, "github-output");
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(readFileSync(outputPath, "utf8")).toBe("required=false\n");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  // A private registry lock cannot bypass a base that lacks the trusted package workflow.
+  it("rejects a private registry lock during the package workflow bootstrap", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      writeFileSync(
+        join(tempRoot, "package-lock.json"),
+        JSON.stringify({ lockfileVersion: 3, packages: {} }),
+      );
+      writeFileSync(
+        join(tempRoot, "nemoclaw/package-lock.json"),
+        JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/private": {
+              resolved: "https://npm.pkg.github.com/download/private/package/1.0.0/archive",
+            },
+          },
+        }),
+      );
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: join(tempRoot, "github-output"),
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("requires two valid public-registry npm lockfiles");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a malformed lockfile during the package workflow bootstrap", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      writeFileSync(
+        join(tempRoot, "package-lock.json"),
+        JSON.stringify({ lockfileVersion: 3, packages: {} }),
+      );
+      writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), "not JSON");
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: join(tempRoot, "github-output"),
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("requires two valid public-registry npm lockfiles");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   // source-shape-contract: security -- Every PR dependency consumer must receive the verified archive without package access

@@ -193,15 +193,35 @@ jobs:
         run: |
           set -euo pipefail
 
+          trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts
+          trusted_workflow=.trusted-sdk-package-decision/.github/workflows/openshell-sdk-package-pr.yaml
+          if [ ! -f "$trusted_inspector" ]; then
+            if [ -f "$trusted_workflow" ]; then
+              echo "::error title=Incomplete SDK package support::The pull request base has a package workflow without its trusted inspector."
+              exit 1
+            fi
+            if ! jq -se '
+              length == 2 and
+              all(.[];
+                type == "object" and
+                (.lockfileVersion | type == "number") and
+                (.packages | type == "object")) and
+              ([.[] | .. | objects | select(has("resolved")) | .resolved] |
+                all(type == "string" and startswith("https://registry.npmjs.org/")))
+            ' package-lock.json nemoclaw/package-lock.json >/dev/null; then
+              echo "::error title=SDK package unavailable::The pull request base requires two valid public-registry npm lockfiles."
+              exit 1
+            fi
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           decision="$(
             NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect \
               NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
-              node --experimental-strip-types \
-                .trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts
+              node --experimental-strip-types "$trusted_inspector"
           )"
           required="$(jq -er '.required | select(type == "boolean")' <<<"$decision")"
-          artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
-          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           if [ "$required" != "true" ]; then
             echo "required=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -210,11 +230,13 @@ jobs:
             echo "::error title=SDK package unavailable::The reviewed OpenShell SDK is available only to same-repository pull requests."
             exit 1
           fi
-          if [ ! -f .trusted-sdk-package-decision/.github/workflows/openshell-sdk-package-pr.yaml ]; then
+          if [ ! -f "$trusted_workflow" ]; then
             echo "::error title=Missing trusted SDK package workflow::The pull request base cannot package the approved OpenShell SDK."
             exit 1
           fi
 
+          artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
           for attempt in $(seq 1 24); do
             runs="$(gh api \
