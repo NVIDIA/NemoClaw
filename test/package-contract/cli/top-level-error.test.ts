@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -108,7 +108,7 @@ require(cliPath);`,
 // An interrupted install or upgrade leaves the compiled entrypoint unresolvable.
 // Reproduce that shape rather than deleting `dist/`, which the rest of this
 // lane needs.
-function runWithMissingCompiledCli(): ReturnType<typeof spawnSync<string>> {
+function runWithMissingCompiledCli(): SpawnSyncReturns<string> {
   return spawnSync(
     process.execPath,
     [
