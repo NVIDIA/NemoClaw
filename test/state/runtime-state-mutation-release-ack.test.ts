@@ -12,6 +12,7 @@ const CONTROLLER = path.join(
 );
 
 const HARNESS = String.raw`
+import hashlib
 import importlib.util
 import json
 import os
@@ -59,6 +60,21 @@ def write_at(directory_fd, name, payload):
     finally:
         os.close(fd)
 
+def record_rejection(directory_fd, name, payload):
+    write_at(
+        directory_fd,
+        control.STARTUP_RELEASE_ACK_NAME,
+        control._canonical_protocol_payload(payload),
+    )
+    results[name] = code(
+        lambda: control._read_startup_release_ack(
+            marker,
+            fence,
+            release_payload,
+        )
+    )
+    os.unlink(control.STARTUP_RELEASE_ACK_NAME, dir_fd=directory_fd)
+
 results = {}
 with tempfile.TemporaryDirectory() as root:
     root = os.path.realpath(root)
@@ -68,7 +84,23 @@ with tempfile.TemporaryDirectory() as root:
     assert opened is not None
     root_fd, directory_fd = opened
     try:
-        expected = control._startup_release_ack_payload(
+        expected = {
+            "schemaVersion": 1,
+            "protocol": "nemoclaw-runtime-state-mutation-release-ack-v1",
+            "transactionId": "c" * 64,
+            "nonce": "b" * 64,
+            "releaseSha256": hashlib.sha256(release_payload).hexdigest(),
+            "start": {
+                "pid": 10,
+                "startIdentity": "101",
+                "parentPid": 1,
+                "uids": [os.geteuid()] * 4,
+                "commandSha256": "a" * 64,
+                "procDevice": "12",
+                "procInode": "13",
+            },
+        }
+        assert expected == control._startup_release_ack_payload(
             marker,
             fence,
             release_payload,
@@ -97,18 +129,25 @@ with tempfile.TemporaryDirectory() as root:
             )
         )
         os.unlink(control.STARTUP_RELEASE_ACK_NAME, dir_fd=directory_fd)
-        wrong = {**expected, "releaseSha256": "0" * 64}
-        write_at(
+        record_rejection(
             directory_fd,
-            control.STARTUP_RELEASE_ACK_NAME,
-            control._canonical_protocol_payload(wrong),
+            "wrongRelease",
+            {**expected, "releaseSha256": "0" * 64},
         )
-        results["wrongRelease"] = code(
-            lambda: control._read_startup_release_ack(
-                marker,
-                fence,
-                release_payload,
-            )
+        record_rejection(
+            directory_fd,
+            "wrongNonce",
+            {**expected, "nonce": "d" * 64},
+        )
+        record_rejection(
+            directory_fd,
+            "wrongTransaction",
+            {**expected, "transactionId": "d" * 64},
+        )
+        record_rejection(
+            directory_fd,
+            "wrongStart",
+            {**expected, "start": {**expected["start"], "pid": 11}},
         )
         write_at(
             directory_fd,
@@ -137,7 +176,10 @@ describe("runtime state mutation release acknowledgement", () => {
       cleaned: true,
       committed: "ok",
       pendingIgnored: true,
+      wrongNonce: "activation-release-ack-invalid",
       wrongRelease: "activation-release-ack-invalid",
+      wrongStart: "activation-release-ack-invalid",
+      wrongTransaction: "activation-release-ack-invalid",
     });
   });
 });

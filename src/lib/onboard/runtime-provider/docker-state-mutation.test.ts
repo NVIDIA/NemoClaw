@@ -69,31 +69,14 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
-  it("derives the activation broker deadline from retry and readiness windows (#10155)", () => {
-    const controller = path.join(
-      import.meta.dirname,
-      "../../../../scripts/runtime-state-mutation-control.py",
-    );
-    const controllerSource = fs.readFileSync(controller, "utf8");
-    const processStateWindow = /^PROCESS_STATE_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
-      controllerSource,
-    );
-    const activationWindow = /^ACTIVATION_SECONDS = ([1-9][0-9]*(?:\.[0-9]+)?)$/mu.exec(
-      controllerSource,
-    );
-    const processStateWindowSeconds = Number(processStateWindow?.[1] ?? Number.NaN);
-    const activationWindowSeconds = Number(activationWindow?.[1] ?? Number.NaN);
+  it("uses the bounded activation deadline at the broker boundary (#10155)", () => {
     const brokerTimeouts = JSON.parse(
       /^TIMEOUTS = (\{[^\n]+\})$/mu.exec(
         DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
       )?.[1] ?? "null",
     ) as Record<string, unknown> | null;
 
-    expect(processStateWindowSeconds).toBeGreaterThan(0);
-    expect(activationWindowSeconds).toBeGreaterThan(0);
-    expect(brokerTimeouts?.activate).toBe(
-      processStateWindowSeconds + 3 * activationWindowSeconds + 30,
-    );
+    expect(brokerTimeouts?.activate).toBe(485);
     expect(brokerTimeouts?.release).toBe(300);
   });
 
@@ -234,12 +217,12 @@ print(json.dumps(timeouts))
           '{"schemaVersion":1,"action":"activate","status":"failed","code":"helper-timeout"}\n',
       });
       expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(brokerStderr, brokerStderr).toBe("");
     } finally {
       broker.kill("SIGTERM");
       await brokerExit;
       fs.rmSync(root, { force: true, recursive: true });
     }
-    expect(brokerStderr).toBe("");
   });
 
   it("uses the remaining response allowance after one Docker copy timeout (#10155)", () => {

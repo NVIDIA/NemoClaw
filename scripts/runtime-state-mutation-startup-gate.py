@@ -681,7 +681,7 @@ def _prepare_release_ack(binding: dict[str, object]) -> str:
         os.fsync(directory_fd)
         return str(binding["nonce"])
     except OSError:
-        raise GateError("release-ack-write-failed") from None
+        _fail("release-ack-write-failed")
     finally:
         os.close(directory_fd)
 
