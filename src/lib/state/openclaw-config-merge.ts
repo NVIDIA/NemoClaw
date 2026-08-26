@@ -38,17 +38,12 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
    * `agents` is durable except its primary model routing reference, which the
    * fresh rebuild re-owns (see `agentPrimaryModelPath`) so a managed-model
    * switch followed by rebuild does not leave the agent pinned to the old
-   * model, and except the managed startup fields listed in
-   * `currentGeneratedAgentDefaultFields`.
+   * model, and except `agents.defaults.heartbeat`, which the managed startup
+   * profile generates (see `reconcileAgentHeartbeat`).
    */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
-  /**
-   * The managed startup profile generates these `agents.defaults` fields, so
-   * the fresh rebuild owns them including their absence.
-   */
-  currentGeneratedAgentDefaultFields: ["heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -506,37 +501,39 @@ function reconcileAgentPrimaryModel(
 }
 
 /**
- * Re-own the managed startup agent defaults from the fresh rebuild.
+ * Re-own the managed startup heartbeat from the fresh rebuild.
  *
  * `agents` is backup-durable, so the overlay inherits the snapshot's
- * `agents.defaults` — including a `heartbeat` captured before the operator
- * changed `NEMOCLAW_AGENT_HEARTBEAT_EVERY`. NemoClaw writes the heartbeat from
- * the startup profile at build time, so a rebuilt sandbox otherwise keeps
- * running the snapshot's cadence instead of the configured one (issue #10244).
- * Unlike `agents.defaults.model.primary`, absence is meaningful here: an
- * unconfigured heartbeat leaves OpenClaw on its own default, so a fresh config
- * that omits the field must not let a stale backup re-enable it. Sibling
+ * `agents.defaults.heartbeat` — including an interval captured before the
+ * operator changed `NEMOCLAW_AGENT_HEARTBEAT_EVERY`. NemoClaw writes the
+ * heartbeat from the startup profile at build time, so a rebuilt sandbox
+ * otherwise keeps the snapshot's cadence instead of the configured one
+ * (issue #10244). Unlike `agents.defaults.model.primary`, absence is
+ * meaningful here: an unconfigured heartbeat leaves OpenClaw on its own
+ * default, so a fresh config that omits the field must not let a stale backup
+ * re-enable it. The field is replaced whole, so a stale sibling key such as a
+ * disabled flag cannot survive beside the rebuilt interval. Other
  * `agents.defaults` keys and `agents.list` stay backup-durable.
  */
-function reconcileAgentGeneratedDefaults(
+function reconcileAgentHeartbeat(
   merged: Record<string, unknown>,
   currentConfig: Record<string, unknown>,
 ): void {
-  const fields = OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedAgentDefaultFields;
   const currentAgents = currentConfig.agents;
   const currentDefaults =
     isPlainObject(currentAgents) && isPlainObject(currentAgents.defaults)
       ? currentAgents.defaults
-      : {};
-  const mergedAgents = merged.agents;
-  // Creating the tree when the fresh rebuild generated none of these fields
-  // would add an agents section that the rebuild did not write.
-  const defaults = fields.some((field) => field in currentDefaults)
-    ? ensureMergedObject(ensureMergedObject(merged, "agents"), "defaults")
-    : isPlainObject(mergedAgents) && isPlainObject(mergedAgents.defaults)
-      ? mergedAgents.defaults
       : undefined;
-  if (defaults) restoreRuntimeOwnedFields(defaults, currentDefaults, fields);
+  if (currentDefaults && "heartbeat" in currentDefaults) {
+    const defaults = ensureMergedObject(ensureMergedObject(merged, "agents"), "defaults");
+    defaults.heartbeat = cloneJson(currentDefaults.heartbeat);
+    return;
+  }
+  // Building an agents tree here would add a section the rebuild did not write.
+  const mergedAgents = merged.agents;
+  if (isPlainObject(mergedAgents) && isPlainObject(mergedAgents.defaults)) {
+    delete mergedAgents.defaults.heartbeat;
+  }
 }
 
 export function mergeOpenClawRestoredConfig(
@@ -577,7 +574,7 @@ export function mergeOpenClawRestoredConfig(
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
-  reconcileAgentGeneratedDefaults(merged, currentConfig);
+  reconcileAgentHeartbeat(merged, currentConfig);
 
   return merged;
 }
