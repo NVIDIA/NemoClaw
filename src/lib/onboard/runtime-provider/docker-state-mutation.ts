@@ -54,9 +54,13 @@ const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
-export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS = 6 * 60_000;
-const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
+// Activation reprovisions the OpenShell sandbox before it can publish fresh
+// service evidence. Keep its broker and host transport on the provider guard's
+// full bound so neither layer abandons an otherwise valid Provisioning phase.
+export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS =
+  DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS;
+const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
