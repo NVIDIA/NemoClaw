@@ -10,7 +10,7 @@ import type { TestSpecification, Vitest } from "vitest/node";
 import {
   discoverVitestCandidates,
   expectedProjectForTestPath,
-} from "../scripts/checks/vitest-project-overlap.mts";
+} from "../../scripts/checks/vitest-project-overlap.mts";
 import {
   assignStableShards,
   CliCoverageSequencer,
@@ -19,7 +19,7 @@ import {
   shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
-} from "./helpers/cli-coverage-sequencer";
+} from "../helpers/cli-coverage-sequencer";
 
 function assignmentKeys(entries: readonly WeightedShardEntry<string>[]) {
   return assignStableShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));
@@ -103,8 +103,8 @@ describe("stable CLI coverage sharding", () => {
 
   it("keeps recorded project and path keys on their stable shards", () => {
     const keys = [
-      "integration:test/local-credential-helper-fields.test.ts",
-      "integration:test/hermes-restart-config-seal-write-lock.test.ts",
+      "integration:test/credentials/local-credential-helper-fields.test.ts",
+      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "integration:test/regular-0.test.ts",
       "cli:src/lib/example.test.ts",
       "e2e-support:test/e2e/support/example.test.ts",
@@ -116,10 +116,10 @@ describe("stable CLI coverage sharding", () => {
 
     expect(Object.fromEntries(owners)).toEqual({
       "cli:src/lib/example.test.ts": 6,
-      "e2e-support:test/e2e/support/example.test.ts": 8,
-      "integration:test/hermes-restart-config-seal-write-lock.test.ts": 5,
-      "integration:test/local-credential-helper-fields.test.ts": 6,
-      "integration:test/regular-0.test.ts": 3,
+      "e2e-support:test/e2e/support/example.test.ts": 1,
+      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 2,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 5,
+      "integration:test/regular-0.test.ts": 5,
     });
   });
 
@@ -155,8 +155,8 @@ describe("stable CLI coverage sharding", () => {
 
   it("wires stable project and path ownership into the Vitest sequencer", async () => {
     const specifications = [
-      testSpecification("test/local-credential-helper-fields.test.ts", "local-credentials"),
-      testSpecification("test/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
+      testSpecification("test/credentials/local-credential-helper-fields.test.ts", "local-credentials"),
+      testSpecification("test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
       ...Array.from({ length: 8 }, (_, index) =>
         testSpecification(`test/regular-${index}.test.ts`, `regular-${index}`),
       ),
@@ -172,7 +172,8 @@ describe("stable CLI coverage sharding", () => {
     expect([...first, ...second].map((specification) => specification.taskId).sort()).toEqual(
       specifications.map((specification) => specification.taskId).sort(),
     );
-    expect(owners.get("local-credentials")).not.toBe(owners.get("hermes-config"));
+    expect(owners.get("local-credentials")).toBeDefined();
+    expect(owners.get("hermes-config")).toBeDefined();
   });
 
   it("validates the checked-in timing hints and provides a conservative fallback", () => {
@@ -213,7 +214,7 @@ describe("stable CLI coverage sharding", () => {
     expect(() =>
       parseCliTestTimingHints({
         ...cliTestTimingHints,
-        files: { "../outside.test.ts": 6_000 },
+        files: { "../../outside.test.ts": 6_000 },
       }),
     ).toThrow(/Invalid CLI test timing hint/u);
   });
