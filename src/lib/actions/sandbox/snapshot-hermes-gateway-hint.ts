@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CLI_NAME } from "../../cli/branding";
+
 interface SnapshotStateFile {
   path: string;
   strategy: "copy" | "sqlite_backup";
@@ -18,7 +20,6 @@ export function printHermesGatewayRestoreHint(
   agentName: string | null | undefined,
   restoredFiles: readonly string[],
   snapshotStateFiles: readonly SnapshotStateFile[],
-  cliName: string,
   writeLine: (message: string) => void = console.log,
 ): void {
   if (agentName !== "hermes") return;
@@ -28,6 +29,6 @@ export function printHermesGatewayRestoreHint(
   );
   if (!restoredSqliteDatabase) return;
   writeLine(
-    `  Restart the gateway to open the restored state databases: run \`${cliName} ${sandboxName} gateway restart\``,
+    `  Restart the gateway to open the restored state databases: run \`${CLI_NAME} ${sandboxName} gateway restart\``,
   );
 }

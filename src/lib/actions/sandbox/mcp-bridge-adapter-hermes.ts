@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
-import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
 import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -149,7 +148,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
     if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
     if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
       throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`${getAgentBranding().cli} ${sandboxName} recover\` and retry.`,
+        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
       );
     }
     throw new McpBridgeError(
