@@ -228,15 +228,19 @@ if (scenario.mode === "dashboard-port-composition") {
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;
-  onboardDashboard.createOnboardDashboardHelpers = (deps) => ({
-    ...createOnboardDashboardHelpers(deps),
-    ensureAgentDashboardForward: () => {
+  onboardDashboard.createOnboardDashboardHelpers = (deps) => {
+    const nextDashboardForward = () => {
       const port = dashboardForwardCalls === 0 ? 18791 : 18792;
       dashboardForwardCalls += 1;
       called.push("forward-port:" + String(port));
       return port;
-    },
-  });
+    };
+    return {
+      ...createOnboardDashboardHelpers(deps),
+      ensureAgentDashboardForward: nextDashboardForward,
+      ensureFinalizationAgentDashboardForward: nextDashboardForward,
+    };
+  };
   require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
     name: "hermes",
