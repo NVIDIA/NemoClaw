@@ -54,6 +54,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -240,11 +241,16 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
-    if (catalogRevision && liveCatalog) {
+    if (liveCatalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
     }
+    const catalogRevision =
+      liveCatalogRevision ??
+      (liveCatalog || input.tempManagedRuntimeCatalog || input.managedWorkloadRebuild
+        ? null
+        : installedManagedImageCatalogRevision(input.startupProfile.environment, input.rootDir));
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
