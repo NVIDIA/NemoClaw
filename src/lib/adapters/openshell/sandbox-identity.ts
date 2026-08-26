@@ -5,6 +5,22 @@ import { createHash } from "node:crypto";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
+const SANDBOX_ID_MAX_LENGTH = 512;
+
+export function isOpenShellSandboxId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= SANDBOX_ID_MAX_LENGTH &&
+    SANDBOX_ID_RE.test(value)
+  );
+}
+
+export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {
+  return isOpenShellSandboxId(sandboxId)
+    ? createHash("sha256").update(sandboxId).digest("hex")
+    : null;
+}
 
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
@@ -24,8 +40,7 @@ function isStrictSandboxListJsonRow(value: unknown): value is OpenShellSandboxLi
   const row = value as Record<string, unknown>;
   const labels = row.labels;
   return (
-    typeof row.id === "string" &&
-    SANDBOX_ID_RE.test(row.id) &&
+    isOpenShellSandboxId(row.id) &&
     typeof row.name === "string" &&
     row.name.length > 0 &&
     row.name.trim() === row.name &&
@@ -61,17 +76,12 @@ export function parseOpenShellSandboxId(output: string): string | null {
       .replace(ANSI_RE, "")
       .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
   ].map((match) => match[1] ?? "");
-  return matches.length === 1 && SANDBOX_ID_RE.test(matches[0] as string)
-    ? (matches[0] as string)
-    : null;
+  return matches.length === 1 && isOpenShellSandboxId(matches[0]) ? (matches[0] as string) : null;
 }
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
 export function fingerprintOpenShellSandboxLiveIdentity(output: string): string | null {
-  const sandboxId = parseOpenShellSandboxId(output);
-  return sandboxId === null || sandboxId.length > 512
-    ? null
-    : createHash("sha256").update(sandboxId).digest("hex");
+  return fingerprintOpenShellSandboxId(parseOpenShellSandboxId(output) ?? "");
 }
 
 export function resolveOpenShellSandboxId(

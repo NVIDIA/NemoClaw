@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createOpenshellSandboxIdReader,
+  fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
+  isOpenShellSandboxId,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
@@ -49,8 +51,20 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nId: sandbox-alpha\n")).toBe(
       createHash("sha256").update("sandbox-alpha").digest("hex"),
     );
+    expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nID: sandbox-alpha\n")).toBe(
+      createHash("sha256").update("sandbox-alpha").digest("hex"),
+    );
     expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nPhase: Ready\n")).toBeNull();
     expect(fingerprintOpenShellSandboxLiveIdentity("Id: first\nId: second\n")).toBeNull();
+    expect(fingerprintOpenShellSandboxLiveIdentity("ID: first\nID: second\n")).toBeNull();
+    expect(fingerprintOpenShellSandboxId("sandbox-alpha")).toBe(
+      createHash("sha256").update("sandbox-alpha").digest("hex"),
+    );
+    expect(fingerprintOpenShellSandboxId("sandbox/alpha")).toBeNull();
+    expect(fingerprintOpenShellSandboxId("a".repeat(513))).toBeNull();
+    expect(isOpenShellSandboxId("sandbox.alpha_2")).toBe(true);
+    expect(isOpenShellSandboxId("sandbox/alpha")).toBe(false);
+    expect(isOpenShellSandboxId("a".repeat(513))).toBe(false);
   });
 });
 
@@ -111,6 +125,7 @@ describe("OpenShell sandbox identity reading", () => {
     ["different name", sandboxListJson({ name: "bravo" })],
     ["ambiguous rows", `${sandboxListJson().slice(0, -1)},${sandboxListJson().slice(1)}`],
     ["malformed row", sandboxListJson({ id: "invalid/id" })],
+    ["oversized row", sandboxListJson({ id: "a".repeat(513) })],
   ])("refuses %s without disclosing captured metadata (#9833)", (_case, output) => {
     const outputCanary = "captured-metadata-canary";
     const capturedRows = (JSON.parse(output) as Array<Record<string, unknown>>).map((row) => ({

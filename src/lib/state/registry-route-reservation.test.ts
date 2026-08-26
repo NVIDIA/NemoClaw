@@ -110,6 +110,19 @@ function externalCheckpoint(
   };
 }
 
+const EXACT_QUALIFIED_ROUTE_RESERVATION = {
+  name: EXACT_ROUTE_AUTHORITY.sandboxName,
+  gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+  reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+  pendingRouteReservation: true as const,
+  provider: EXACT_ROUTE_SELECTION.provider,
+  model: EXACT_ROUTE_SELECTION.model,
+  endpointUrl: EXACT_ROUTE_SELECTION.endpointUrl,
+  endpointSource: EXACT_ROUTE_SELECTION.endpointSource,
+  credentialEnv: EXACT_ROUTE_SELECTION.credentialEnv,
+  preferredInferenceApi: EXACT_ROUTE_SELECTION.preferredInferenceApi,
+};
+
 function reserveQualifiedRoute(registry: typeof import("./registry")) {
   registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
     ...EXACT_ROUTE_SELECTION,
@@ -133,9 +146,7 @@ function reserveQualifiedCreate(registry: typeof import("./registry")) {
   return { route, create };
 }
 
-function completedEntry(
-  checkpoint: PendingSandboxPolicyVerification,
-): SandboxEntry {
+function completedEntry(checkpoint: PendingSandboxPolicyVerification): SandboxEntry {
   return {
     name: EXACT_ROUTE_AUTHORITY.sandboxName,
     ...EXACT_ROUTE_SELECTION,
@@ -799,11 +810,9 @@ describe("sandbox inference route reservation", () => {
       const checkpoint = managedCheckpoint();
       registry.recordPendingSandboxPolicyVerification(create, checkpoint);
 
-      const registered = registry.registerSandbox(
-        completedEntry(checkpoint),
-        route,
-        { verifiedCreate: { reservation: create, checkpoint } },
-      );
+      const registered = registry.registerSandbox(completedEntry(checkpoint), route, {
+        verifiedCreate: { reservation: create, checkpoint },
+      });
 
       expect(registered).toMatchObject({
         name: "alpha",
@@ -845,9 +854,7 @@ describe("sandbox inference route reservation", () => {
       );
       expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(false);
       expect(registry.finalizePendingSandboxRegistration("alpha")).toBe(false);
-      expect(
-        registry.recordPendingSandboxPolicyVerification(create, checkpoint),
-      ).toEqual(pending);
+      expect(registry.recordPendingSandboxPolicyVerification(create, checkpoint)).toEqual(pending);
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
           ...EXACT_ROUTE_SELECTION,
@@ -1074,6 +1081,7 @@ describe("sandbox inference route reservation", () => {
 
 describe("sandbox inference route reservation qualification (#9203)", () => {
   it.each([
+    ["owned", EXACT_QUALIFIED_ROUTE_RESERVATION, "owned"],
     ["missing", null, "missing"],
     ["ownerless", { ...EXACT_ROUTE_RESERVATION, reservationSessionId: undefined }, "conflict"],
     [
@@ -1102,6 +1110,69 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
       expectedKind,
     );
   });
+
+  it("admits bounded portable recreate carry metadata without sandbox authority (#10056)", async () => {
+    const { classifySandboxInferenceRouteReservation } =
+      await import("./registry/route-reservation");
+    const disposition = classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, {
+      ...EXACT_QUALIFIED_ROUTE_RESERVATION,
+      dashboardPort: 8080,
+      policies: ["github"],
+      policyPresetsFinalized: true,
+      policyTier: "personal",
+      webSearchEnabled: false,
+      webSearchProvider: null,
+    });
+
+    expect(disposition.kind).toBe("owned");
+  });
+
+  it.each([
+    ["invalid dashboard port", { dashboardPort: 0 }],
+    ["duplicate policies", { policies: ["github", "github"] }],
+    ["control character in a policy", { policies: ["github\u0000"] }],
+    ["control character in the policy tier", { policyTier: "personal\u0000" }],
+    ["non-boolean policy finalization", { policyPresetsFinalized: "yes" }],
+    ["non-boolean web search state", { webSearchEnabled: "yes" }],
+    ["unknown web search provider", { webSearchProvider: "unknown" }],
+  ])("rejects %s in carried route metadata (#10056)", async (_case, updates) => {
+    const { classifySandboxInferenceRouteReservation } =
+      await import("./registry/route-reservation");
+    const entry = {
+      ...EXACT_QUALIFIED_ROUTE_RESERVATION,
+      ...updates,
+    } as Parameters<typeof classifySandboxInferenceRouteReservation>[1];
+
+    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry)).toMatchObject({
+      kind: "conflict",
+      detail: "the inference route reservation carry metadata is malformed",
+    });
+  });
+
+  it.each([
+    ["agent", { agent: "hermes" }],
+    [
+      "workload",
+      { workload: { schemaVersion: 1, kind: "legacy-dockerfile", reference: null, shared: false } },
+    ],
+    ["lifecycle", { lifecycleGeneration: "11111111-1111-4111-8111-111111111111" }],
+  ])(
+    "still rejects %s sandbox authority on a carried reservation (#10056)",
+    async (_case, updates) => {
+      const { classifySandboxInferenceRouteReservation } =
+        await import("./registry/route-reservation");
+      const entry = {
+        ...EXACT_QUALIFIED_ROUTE_RESERVATION,
+        policies: ["github"],
+        ...updates,
+      } as Parameters<typeof classifySandboxInferenceRouteReservation>[1];
+
+      expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry)).toMatchObject({
+        kind: "conflict",
+        detail: "the inference route reservation has sandbox authority",
+      });
+    },
+  );
 });
 
 describe("pending reservation ownership (#6562)", () => {
