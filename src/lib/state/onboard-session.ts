@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { GATEWAY_PORT } from "../core/ports";
@@ -69,6 +70,8 @@ export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
+
+export class InvalidPersistedPolicyAuthorityError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -237,6 +240,8 @@ export interface Session {
   observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
+  /** Policy authority selected from OpenShell metadata before policy-dependent effects. */
+  policyAuthority: SandboxPolicyAuthority | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
@@ -314,6 +319,7 @@ export interface SessionUpdates {
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
+  policyAuthority?: SandboxPolicyAuthority | null;
   messagingPlan?: SandboxMessagingPlan | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
@@ -350,6 +356,7 @@ export interface DebugSessionSummary {
   observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
+  policyAuthority: SandboxPolicyAuthority | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
@@ -412,6 +419,10 @@ function parseVllmGpuDevice(value: unknown): string | null {
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
   return value === "oauth" || value === "api_key" ? value : null;
+}
+
+function readPolicyAuthority(value: unknown): SandboxPolicyAuthority | null {
+  return value === "nemoclaw-managed" || value === "externally-managed" ? value : null;
 }
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
@@ -748,6 +759,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
   };
+  const policyAuthority = readPolicyAuthority(overrides.policyAuthority);
   const session: Session = {
     version: SESSION_VERSION,
     sessionId,
@@ -793,7 +805,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
-    policyPresets: readStringArray(overrides.policyPresets),
+    policyPresets:
+      policyAuthority === "externally-managed" ? null : readStringArray(overrides.policyPresets),
+    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
@@ -822,6 +836,12 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const policyAuthority = readPolicyAuthority(data.policyAuthority);
+  if (hasOwn(data, "policyAuthority") && data.policyAuthority !== null && !policyAuthority) {
+    throw new InvalidPersistedPolicyAuthorityError(
+      "Refusing to load the onboarding session: the saved policy authority is invalid.",
+    );
+  }
   const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
   if (
     hasOwn(data, "servingProfileProvenance") &&
@@ -899,6 +919,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
+    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
@@ -985,7 +1006,8 @@ export function loadSession(): Session | null {
     }
     const parsed = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
     return normalizeSession(parsed);
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidPersistedPolicyAuthorityError) throw error;
     return null;
   }
 }
@@ -1479,6 +1501,15 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
+  if (updates.policyAuthority === null) {
+    safe.policyAuthority = null;
+  } else {
+    const policyAuthority = readPolicyAuthority(updates.policyAuthority);
+    if (policyAuthority) {
+      safe.policyAuthority = policyAuthority;
+      if (policyAuthority === "externally-managed") safe.policyPresets = null;
+    }
+  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
@@ -1678,7 +1709,9 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   return updateSession((session) => {
     const providerStep = session.steps.provider_selection;
     if (providerStep?.status !== "in_progress") {
-      throw new Error("Managed vLLM install intent can only be checkpointed during provider selection.");
+      throw new Error(
+        "Managed vLLM install intent can only be checkpointed during provider selection.",
+      );
     }
     session.vllmInstallModel = model;
   });
@@ -1882,6 +1915,7 @@ export function summarizeForDebug(
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
+    policyAuthority: session.policyAuthority,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,

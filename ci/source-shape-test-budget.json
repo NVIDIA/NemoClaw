@@ -157,26 +157,6 @@
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires valid sandbox names",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires distinct specialist and synthesis sandboxes",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires a synthesis matrix",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires native specialist sessions",
-      "category": "security"
-    },
-    {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"

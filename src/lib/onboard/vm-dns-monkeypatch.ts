@@ -9,6 +9,7 @@ import {
 type OnboardVmDnsMonkeypatchDeps = {
   apply?: typeof applyOpenShellVmDnsMonkeypatch;
   log?: (message: string) => void;
+  revalidatePolicyAuthority?: (operation: string) => void;
   warn?: (message: string) => void;
 };
 
@@ -20,9 +21,20 @@ export function applyOnboardVmDnsMonkeypatch(
   const apply = deps.apply ?? applyOpenShellVmDnsMonkeypatch;
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.error;
-  const vmDnsPatch: VmDnsMonkeypatchResult = apply(sandboxName, {
-    openshellDriver: runtime.openshellDriver,
-  });
+  const vmDnsPatch: VmDnsMonkeypatchResult = apply(
+    sandboxName,
+    {
+      openshellDriver: runtime.openshellDriver,
+    },
+    {
+      revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
+    },
+  );
+  if (vmDnsPatch.ok) {
+    deps.revalidatePolicyAuthority?.(
+      `report VM DNS monkeypatch result for sandbox '${sandboxName}'`,
+    );
+  }
   if (vmDnsPatch.ok && vmDnsPatch.changed) {
     log("  ✓ Applied OpenShell VM DNS monkeypatch");
   } else if (vmDnsPatch.ok && vmDnsPatch.attempted) {
