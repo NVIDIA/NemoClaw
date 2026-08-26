@@ -193,9 +193,9 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
 }
 
 export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
-  return process.env.NEMOCLAW_GROWTH_PR === "1"
-    ? loadPullRequestDiff()
-    : Promise.resolve(loadLocalDiff());
+  return Promise.resolve(
+    process.env.NEMOCLAW_GROWTH_PR === "1" ? loadPullRequestDiff() : loadLocalDiff(),
+  );
 }
 
 export const testOnly = {
