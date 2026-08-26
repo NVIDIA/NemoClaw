@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Security / Authenticate Native Runtime Qualification Evidence
+name: Security / Native Runtime Evidence
 
 on:
   workflow_dispatch:
@@ -50,7 +50,7 @@ concurrency:
 
 jobs:
   collect-protected-evidence:
-    name: Authenticate native runtime qualification evidence
+    name: Authentication
     if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10

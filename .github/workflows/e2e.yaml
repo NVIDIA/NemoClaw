@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Main and Manual Suite
+name: E2E / Main and Manual
 run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
@@ -96,6 +96,7 @@ env:
 
 jobs:
   base-image-publication:
+    name: Base Image Publication / Verify
     needs: generate-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -210,6 +211,7 @@ jobs:
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
+    name: Plan run and publish CLI artifact
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -857,6 +859,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
   native-runtime-qualification-producer-plan:
+    name: Native Runtime Qualification / Authenticate and plan producers
     needs: generate-matrix
     if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
     runs-on: ubuntu-latest
@@ -989,7 +992,7 @@ jobs:
         run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
 
   native-runtime-qualification-podman-toolchain:
-    name: Build pinned native Podman toolchain / ${{ matrix.architecture }}
+    name: Native Runtime Qualification / Build Podman toolchain / ${{ matrix.architecture }}
     needs: [generate-matrix, native-runtime-qualification-producer-plan]
     if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
     strategy:
@@ -1187,7 +1190,7 @@ jobs:
           path: ${{ runner.temp }}/native-runtime-podman-toolchain/
 
   native-runtime-qualification-producer:
-    name: ${{ matrix.jobName }}
+    name: Native Runtime Qualification / ${{ matrix.jobName }}
     needs:
       - generate-matrix
       - native-runtime-qualification-podman-toolchain
@@ -2413,7 +2416,7 @@ jobs:
           path: ${{ runner.temp }}/native-runtime-evidence/
 
   native-runtime-qualification-producer-aggregate:
-    name: Aggregate native runtime qualification evidence
+    name: Native Runtime Qualification / Combine evidence
     needs:
       [
         generate-matrix,
@@ -2516,6 +2519,7 @@ jobs:
           compression-level: 9
 
   retired-selector-compatibility:
+    name: Selectors / Verify retired replacements
     needs: generate-matrix
     if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
     runs-on: ubuntu-latest
@@ -2554,7 +2558,7 @@ jobs:
           path: e2e-artifacts/live/retired-selector-compatibility/
 
   staging-brev-launchable:
-    name: Exact staging Brev Launchable
+    name: Brev Launchable / Test staging image
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
@@ -2619,7 +2623,7 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   staging-brev-launchable-identity:
-    name: Exact staging Brev Launchable identity
+    name: Brev Launchable / Verify staging image identity
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == 'staging-brev-launchable-identity' && inputs.targets == '' }}
     runs-on: ubuntu-latest
@@ -2705,7 +2709,7 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   live:
-    name: ${{ matrix.label }}
+    name: Live / ${{ matrix.label }}
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
@@ -2942,7 +2946,7 @@ jobs:
   # only a validated test ID, file, and Vitest project; this E2E workflow owns
   # the shared job's runner, setup, timeout, permissions, and artifact policy.
   shared-e2e:
-    name: Shared E2E (${{ matrix.id }})
+    name: Credential-Free / ${{ matrix.id }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.test_matrix != '[]' }}
     runs-on: ubuntu-latest
@@ -2992,7 +2996,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   catalogue-standard:
-    name: ${{ matrix.display_name }}
+    name: Catalogue / Standard / ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
@@ -3032,7 +3036,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-nvidia-api:
-    name: ${{ matrix.display_name }}
+    name: Catalogue / NVIDIA API / ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
@@ -3073,7 +3077,7 @@ jobs:
       NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
 
   catalogue-nvidia-inference:
-    name: ${{ matrix.display_name }}
+    name: Catalogue / NVIDIA Inference / ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
@@ -3114,7 +3118,7 @@ jobs:
       NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   catalogue-github-read:
-    name: ${{ matrix.display_name }}
+    name: Catalogue / GitHub Read / ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
@@ -3154,7 +3158,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-brave-nvidia-inference:
-    name: ${{ matrix.display_name }}
+    name: Catalogue / Brave and NVIDIA Inference / ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
@@ -3197,6 +3201,7 @@ jobs:
       NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   openshell-gateway-auth-contract:
+    name: OpenShell / Gateway Authentication
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') }}
     runs-on: ubuntu-latest
@@ -3275,6 +3280,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   mcp-bridge:
+    name: MCP Bridge / Stable OpenShell / ${{ matrix.agent }}
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
@@ -3620,6 +3626,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-credential-generation-window:
+    name: OpenShell / Credential Lifetime
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
@@ -3741,6 +3748,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-dev-artifact:
+    name: OpenShell / Resolve development artifact
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
@@ -3781,6 +3789,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-dev-artifact/
 
   mcp-bridge-dev:
+    name: MCP Bridge / Development OpenShell / ${{ matrix.agent }}
     needs: [generate-matrix, openshell-dev-artifact]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
@@ -3984,7 +3993,7 @@ jobs:
 
   # Manual PR qualification also requires the exact candidate activation contract.
   managed-image-multiarch-startup:
-    name: Protected managed-image startup (${{ matrix.platform }})
+    name: Managed Images / Startup / ${{ matrix.platform }}
     needs: [base-image-publication, generate-matrix]
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-multiarch-startup') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime')) }}
     runs-on: ${{ matrix.runner }}
@@ -4388,7 +4397,7 @@ jobs:
   # job can be assigned. Candidate workflow code is never evaluated; trusted
   # main compiles the exact candidate's declarative YAML into bounded outputs.
   llama-cpp-dgx-spark-plan:
-    name: Compile protected llama.cpp DGX Spark plan
+    name: llama.cpp / Build DGX Spark plan
     needs: generate-matrix
     if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'llama-cpp-dgx-spark-qualification') }}
     runs-on: ubuntu-24.04
@@ -4475,7 +4484,7 @@ jobs:
   # The opt-in flag prevents assignment to an unavailable DGX Spark runner.
   # Qualification runs only when the trusted plan reports execution=enabled.
   llama-cpp-dgx-spark-qualification:
-    name: Protected llama.cpp on NVIDIA DGX Spark
+    name: llama.cpp / DGX Spark
     needs: [generate-matrix, llama-cpp-dgx-spark-plan]
     if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'llama-cpp-dgx-spark-qualification') && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
@@ -4668,7 +4677,7 @@ jobs:
   # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
   # assertions without the hosted cache.
   managed-image-protected-runtime:
-    name: Protected managed-image GPU and local inference
+    name: Managed Images / GPU Runtime, Inference Rollback, and Cleanup
     needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
     if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
@@ -4966,6 +4975,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-e2e:
+    name: Hermes / Lifecycle
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
@@ -5056,6 +5066,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-gpu-startup:
+    name: Hermes / GPU Startup
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
@@ -5338,6 +5349,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   jetson-nvmap-gpu:
+    name: Jetson / NVMap GPU Access
     needs: [base-image-publication, generate-matrix]
     if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
@@ -5377,6 +5389,7 @@ jobs:
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
   cloud-onboard:
+    name: Cloud / Onboarding
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
@@ -5526,6 +5539,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-providers:
+    name: Messaging / Providers
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
     runs-on: ubuntu-latest
@@ -5593,6 +5607,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-plugin-runtime-exdev-release:
+    name: OpenClaw Plugin / Test release-baseline runtime across devices
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev-release') }}
     runs-on: ubuntu-latest
@@ -5667,6 +5682,7 @@ jobs:
   # proves restart/rebuild persistence and target-side runtime-dependency
   # replacement across devices without waiting for the release baseline.
   openclaw-plugin-runtime-exdev:
+    name: OpenClaw Plugin / Test candidate lifecycle and dependencies across devices
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
     runs-on: ubuntu-latest
@@ -5740,6 +5756,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   report-to-pr:
+    name: Results / Post PR comment
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
@@ -5835,7 +5852,7 @@ jobs:
             });
 
   relevant-e2e:
-    name: Relevant E2E
+    name: Results / Require selected jobs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: *e2e-result-jobs
@@ -5871,7 +5888,7 @@ jobs:
           fi
 
   release-qualification:
-    name: Release qualification
+    name: Results / Require release jobs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: *e2e-result-jobs
@@ -5894,6 +5911,7 @@ jobs:
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:
+    name: Results / Build and publish scorecard
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: *e2e-result-jobs
