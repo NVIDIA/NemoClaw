@@ -318,6 +318,10 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
     if (selection && !upgradesToDocker) continue;
     selection = { dockerHost, source: "socket", socketPath };
     selectedIdentity = observation.identity;
+    // Nothing later can beat Docker, and every extra probe is another
+    // synchronous Docker CLI run that a stale socket can hold for the full
+    // probe timeout — at CLI startup, since the runner detects at import.
+    if (selectedIdentity === "docker") break;
   }
 
   return selection;
