@@ -3,8 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { assertSandboxActivationAllowed } from "../actions/sandbox/quarantine/guard";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
+import type { SandboxEntry } from "../state/registry/types";
 // Import source directly so tests cannot pass against a stale build.
 import {
   computeTunnelAllowedOrigins,
@@ -31,6 +33,7 @@ const OPENCLAW_TARGET: AgentConfigTarget = {
  * ever touches openshell/docker.
  */
 function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TARGET) {
+  const assertActivationAllowed = vi.fn((_sandboxName: string, _action: string): void => {});
   const resolveAgentConfig = vi.fn((_sb: string): AgentConfigTarget => target);
   const readConfig = vi.fn((_sb: string, _t: AgentConfigTarget): ConfigObject => config);
   const writeConfig = vi.fn((_sb: string, _t: AgentConfigTarget, _c: ConfigObject): void => {});
@@ -39,6 +42,7 @@ function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TAR
   const info = vi.fn((_msg: string): void => {});
   const warn = vi.fn((_msg: string): void => {});
   const deps: RegisterTunnelOriginDeps = {
+    assertActivationAllowed,
     resolveAgentConfig,
     readConfig,
     writeConfig,
@@ -49,6 +53,7 @@ function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TAR
   };
   return {
     deps,
+    assertActivationAllowed,
     resolveAgentConfig,
     readConfig,
     writeConfig,
@@ -161,10 +166,12 @@ describe("registerTunnelOrigin", () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [LOOPBACK] } },
     };
-    const { deps, writeConfig, recomputeHash, reloadGateway } = makeDeps(config);
+    const { deps, assertActivationAllowed, writeConfig, recomputeHash, reloadGateway } =
+      makeDeps(config);
 
     registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", deps);
 
+    expect(assertActivationAllowed).toHaveBeenCalledWith("sb", "tunnel:start");
     expect(writeConfig).toHaveBeenCalledTimes(1);
     expect(writeConfig).toHaveBeenCalledWith("sb", OPENCLAW_TARGET, expect.anything());
     const written = writeConfig.mock.calls[0][2];
@@ -223,6 +230,40 @@ describe("registerTunnelOrigin", () => {
   });
 
   // Scenario 12
+  it("does not mutate or reload a gateway fenced before registration (#10140)", () => {
+    const config: ConfigObject = {
+      gateway: { controlUi: { allowedOrigins: [LOOPBACK] } },
+    };
+    const fencedSandbox = {
+      name: "sb",
+      quarantine: {
+        fenceId: "00000000-0000-4000-8000-000000000001",
+        phase: "quarantined",
+      },
+    } as SandboxEntry;
+    const {
+      deps,
+      assertActivationAllowed,
+      writeConfig,
+      recomputeHash,
+      reloadGateway,
+      warn,
+    } = makeDeps(config);
+    assertActivationAllowed.mockImplementation((sandboxName, action) =>
+      assertSandboxActivationAllowed(sandboxName, action, () => fencedSandbox),
+    );
+
+    registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
+
+    expect(assertActivationAllowed).toHaveBeenCalledWith("sb", "tunnel:start");
+    expect(readOrigins(config)).toEqual([LOOPBACK]);
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(recomputeHash).not.toHaveBeenCalled();
+    expect(reloadGateway).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("quarantined"));
+  });
+
+  // Scenario 13
   it("returns immediately for a null origin without invoking any dep", () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [] } },
@@ -237,7 +278,7 @@ describe("registerTunnelOrigin", () => {
     expect(reloadGateway).not.toHaveBeenCalled();
   });
 
-  // Scenario 13
+  // Scenario 14
   it("preserves sibling gateway keys through the read-modify-write", () => {
     const config: ConfigObject = {
       gateway: { auth: { token: "t" }, controlUi: { allowedOrigins: [] } },

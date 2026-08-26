@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { assertSandboxActivationAllowed } from "../actions/sandbox/quarantine/guard";
+import type { SandboxEntry } from "../state/registry/types";
 import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./service-command";
 
 describe("services command", () => {
@@ -62,12 +64,37 @@ describe("services command", () => {
   });
 
   it("starts services for the default sandbox when present", async () => {
+    const assertActivationAllowed = vi.fn();
     const startAll = vi.fn(async () => {});
     await runStartCommand({
+      assertActivationAllowed,
       listSandboxes: () => ({ defaultSandbox: "alpha" }),
       startAll,
     });
+    expect(assertActivationAllowed).toHaveBeenCalledWith("alpha", "tunnel:start");
     expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha" });
+  });
+
+  it("does not start tunnel services for a quarantined default sandbox (#10140)", async () => {
+    const fencedSandbox = {
+      name: "alpha",
+      quarantine: {
+        fenceId: "00000000-0000-4000-8000-000000000001",
+        phase: "quarantined",
+      },
+    } as SandboxEntry;
+    const startAll = vi.fn(async () => {});
+
+    await expect(
+      runStartCommand({
+        assertActivationAllowed: (sandboxName, action) =>
+          assertSandboxActivationAllowed(sandboxName, action, () => fencedSandbox),
+        listSandboxes: () => ({ defaultSandbox: "alpha" }),
+        startAll,
+      }),
+    ).rejects.toThrow(/quarantined/u);
+
+    expect(startAll).not.toHaveBeenCalled();
   });
 
   it("stops services without a sandbox override when the default sandbox is unsafe", () => {
