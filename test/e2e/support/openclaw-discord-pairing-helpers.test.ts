@@ -17,6 +17,7 @@ import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
+  SLACK_PAIRING_SCRIPT,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
@@ -284,6 +285,15 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain('"\\r\\n"');
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it("uses distinct policy hosts for Slack REST and websocket traffic", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function receiveSlackSocketEvent() {\n  const host = "host.docker.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
+    );
   });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {

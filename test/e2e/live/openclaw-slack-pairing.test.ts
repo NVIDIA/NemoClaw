@@ -177,6 +177,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     host,
     sandboxName: SANDBOX_NAME,
     api: fakeSlack,
+    policyHost: "host.docker.internal",
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-app`,

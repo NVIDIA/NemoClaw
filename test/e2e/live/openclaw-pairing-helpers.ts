@@ -188,6 +188,7 @@ export async function applyFakePolicy(options: {
   host: HostCliClient;
   sandboxName: string;
   api: FakeDockerApi;
+  policyHost?: "host.openshell.internal" | "host.docker.internal";
   protocol: "rest" | "websocket";
   rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
   providerName: string;
@@ -195,16 +196,17 @@ export async function applyFakePolicy(options: {
   redactions: string[];
   artifactName: string;
 }): Promise<void> {
+  const policyHost = options.policyHost ?? "host.openshell.internal";
   const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
   const args = [
     "policy",
     "update",
     options.sandboxName,
     "--add-endpoint",
-    `host.openshell.internal:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
   ];
   for (const method of methods)
-    args.push("--add-allow", `host.openshell.internal:${options.api.port}:${method}:/**`);
+    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
   args.push("--binary", "/usr/local/bin/node", "--binary", "/usr/bin/node", "--wait");
   const result = await options.host.command("openshell", args, {
     artifactName: options.artifactName,
@@ -228,7 +230,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       options.host.openshellCommandPath,
       options.sandboxName,
       options.providerName,
-      "host.openshell.internal",
+      policyHost,
       String(options.api.port),
       options.protocol,
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
@@ -438,7 +440,7 @@ function decodeServerFrame(buffer) {
   return { opcode, payload: buffer.slice(offset, offset + payloadLength), totalLength: offset + payloadLength };
 }
 function receiveSlackSocketEvent() {
-  const host = "host.openshell.internal";
+  const host = "host.docker.internal";
   const port = parseFakeSlackPort();
   const proxy = parseProxyTarget();
   return new Promise((resolve, reject) => {
