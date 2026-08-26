@@ -58,18 +58,6 @@ const PLATFORM_DIGESTS = {
 } as const;
 const DCODE_BASE_REF =
   `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`;
-const EXPECTED_BASE_OUTPUTS = {
-  "managed-image-multiarch-startup": {
-    dcode: DCODE_BASE_REF,
-    hermes: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
-    openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
-  },
-  "managed-image-protected-runtime": {
-    dcode: DCODE_BASE_REF,
-    hermes: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
-    openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
-  },
-} as const;
 const E2E_WORKFLOW = YAML.parse(
   readFileSync(path.join(ROOT, ".github", "workflows", "e2e.yaml"), "utf8"),
 ) as {
@@ -137,18 +125,14 @@ printf '%s  %s\n' "$digest" "$1"
       encoding: "utf8",
       env: {
         ...process.env,
-        CHECKOUT_SHA: HEAD_SHA,
         DCODE_BASE_CONTRACT: JSON.stringify({
           platformReferences: { "linux/amd64": DCODE_BASE_REF },
         }),
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
-        GITHUB_WORKSPACE: fixture,
-        HERMES_BASE_DIGEST: PLATFORM_DIGESTS.hermes,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",
         RUNNER_TEMP: runnerTemp,
-        WORKLOAD_SOURCE: "managed-image",
       },
     });
     return {
@@ -201,7 +185,10 @@ describe("protected managed-image build contract", () => {
     const { result, output } = runBaseResolution(jobId, stepName);
     expect(result.status, result.stderr).toBe(0);
     expect(Object.fromEntries(output.trim().split("\n").map((line) => line.split("=")))).toEqual(
-      EXPECTED_BASE_OUTPUTS[jobId as keyof typeof EXPECTED_BASE_OUTPUTS],
+      {
+        dcode: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`,
+        openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
+      },
     );
   });
 

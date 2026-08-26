@@ -254,32 +254,6 @@ describe("onboarding phase fixture", () => {
     });
   });
 
-  it("lets local-Dockerfile Deep Agents Code onboarding resolve its candidate base", async () => {
-    const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "onboarded\n"));
-    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
-
-    await withProcessEnvironment(
-      {
-        E2E_WORKLOAD_SOURCE: "local-dockerfile",
-        [DCODE_BASE_IMAGE_ENV]: undefined,
-      },
-      () =>
-        onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
-          sandboxName: "e2e-dcode-local",
-        }),
-    );
-
-    expect(runner.calls[0]?.options?.env).toEqual(
-      expect.objectContaining({
-        E2E_WORKLOAD_SOURCE: "local-dockerfile",
-        NEMOCLAW_AGENT: "langchain-deepagents-code",
-      }),
-    );
-    expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
-  });
-
   it("uses the contract-selected Deep Agents Code base image reference instead of the ambient publication index", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));

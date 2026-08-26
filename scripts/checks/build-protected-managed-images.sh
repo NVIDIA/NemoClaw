@@ -88,10 +88,9 @@ esac
 target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
-base_prefix='(ghcr[.]io/nvidia/nemoclaw|localhost:5000/nemoclaw-managed-protected-base)'
-[[ "$openclaw_base" =~ ^${base_prefix}/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$hermes_base" =~ ^${base_prefix}/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$dcode_base" =~ ^${base_prefix}/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
 seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"

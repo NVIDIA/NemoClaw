@@ -162,8 +162,6 @@ export function validateHermesGpuStartupWorkflow(
   const requiredEnv = {
     E2E_ARTIFACT_DIR:
       "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
-    E2E_MANAGED_IMAGE_REVISION: "${{ needs.generate-matrix.outputs.managed_image_revision }}",
-    E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_NAME,

@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { readYaml } from "../../helpers/e2e-workflow-contract.ts";
 
 import {
-  baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
   type FirstParentHistory,
@@ -17,6 +17,7 @@ import {
   type PublicationRun,
   isBaseImagePublicationEvent,
   parseBaseImagePushPaths,
+  REQUIRED_PUBLISHER_JOBS,
   resolveFirstParentHistory,
   selectPublicationRun,
   validateBoundRun,
@@ -34,11 +35,6 @@ const RUN_ID = 29891942278;
 const WORKFLOW_ID = 251475843;
 const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
 const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
-const BASE_IMAGE_WORKFLOW_SOURCE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-  "utf8",
-);
-const BASE_IMAGE_PUSH_PATHS = parseBaseImagePushPaths(BASE_IMAGE_WORKFLOW_SOURCE);
 const WORKFLOW_SOURCE = `on:
   push:
     branches: [main]
@@ -153,15 +149,15 @@ function publisherJob(
 function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string, unknown>[] {
   const runAttempt = overrides.runAttempt ?? 1;
   return [
-    publisherJob("Build and push OpenClaw base image", {
+    publisherJob("Manifests / OpenClaw", {
       id: 1,
       run_attempt: runAttempt,
     }),
-    publisherJob("Build and push Hermes base image", {
+    publisherJob("Manifests / Hermes", {
       id: 2,
       run_attempt: runAttempt,
     }),
-    publisherJob("Build and push Deep Agents Code base image", {
+    publisherJob("Manifests / Deep Agents Code", {
       id: 3,
       run_attempt: runAttempt,
     }),
@@ -169,6 +165,24 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
+  it("keeps required publisher names aligned with the workflow", () => {
+    const workflow = readYaml<{ jobs?: Record<string, { name?: unknown }> }>(
+      ".github/workflows/base-image.yaml",
+    );
+    const names = Object.values(workflow.jobs ?? {}).map((job) => job.name);
+
+    expect(REQUIRED_PUBLISHER_JOBS.every((name) => names.includes(name))).toBe(true);
+  });
+
+  it("rejects an obsolete publisher name", () => {
+    const jobs = successfulJobs();
+    jobs[0] = publisherJob("Build and push OpenClaw base image", { id: 1 });
+
+    expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toThrow(
+      /missing required Manifests \/ OpenClaw job/u,
+    );
+  });
+
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
@@ -181,7 +195,12 @@ describe("base-image publication evidence", () => {
   );
 
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
-    expect(BASE_IMAGE_PUSH_PATHS).toEqual(
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+      "utf8",
+    );
+
+    expect(parseBaseImagePushPaths(source)).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         ".github/workflows/base-image.yaml",
@@ -194,8 +213,6 @@ describe("base-image publication evidence", () => {
         "nemoclaw-blueprint/**",
         "scripts/**",
         "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
-        "src/lib/hermes-managed-route.ts",
-        "src/lib/inference/managed-dcode/identity.ts",
         "src/lib/messaging/**",
         "src/lib/tool-disclosure.ts",
         "tools/mcp-tool-discovery-runtime/**",
@@ -203,29 +220,6 @@ describe("base-image publication evidence", () => {
       ]),
     );
   });
-
-  it.each(BASE_IMAGE_PUSH_PATHS)(
-    "matches reviewed literal or wildcard path %s with one predicate (#7372)",
-    (reviewedPath) => {
-      const changedPath = reviewedPath.endsWith("/**")
-        ? `${reviewedPath.slice(0, -3)}/fixture.ts`
-        : reviewedPath.replaceAll("*", "fixture");
-      expect(baseImageInputsChanged([changedPath], BASE_IMAGE_PUSH_PATHS)).toBe(true);
-    },
-  );
-
-  it("does not match a path outside the reviewed image inputs (#7372)", () => {
-    expect(baseImageInputsChanged(["docs/guide.mdx"], BASE_IMAGE_PUSH_PATHS)).toBe(false);
-  });
-
-  it.each(["../Dockerfile", "/Dockerfile", "Dockerfile\nother", "agents//Dockerfile"])(
-    "rejects invalid changed-file path %j before matching (#7372)",
-    (changedPath) => {
-      expect(() => baseImageInputsChanged([changedPath], ["Dockerfile"])).toThrow(
-        "PR changed-file path is invalid",
-      );
-    },
-  );
 
   it.each([
     [
@@ -604,7 +598,7 @@ describe("base-image publication evidence", () => {
 
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
     const jobs = successfulJobs().map((job) =>
-      job.name === "Build and push Hermes base image"
+      job.name === "Manifests / Hermes"
         ? { ...job, status: "in_progress", conclusion: null }
         : job,
     );
@@ -624,7 +618,7 @@ describe("base-image publication evidence", () => {
     "rejects a required publisher that concludes %s before the workflow completes (#9549)",
     (conclusion) => {
       const jobs = successfulJobs().map((job) =>
-        job.name === "Build and push Hermes base image" ? { ...job, conclusion } : job,
+        job.name === "Manifests / Hermes" ? { ...job, conclusion } : job,
       );
 
       expect(() =>
@@ -669,13 +663,13 @@ describe("base-image publication evidence", () => {
     ["missing", successfulJobs().slice(0, 2), /missing required/u],
     [
       "duplicated",
-      [...successfulJobs(), publisherJob("Build and push Hermes base image", { id: 9 })],
+      [...successfulJobs(), publisherJob("Manifests / Hermes", { id: 9 })],
       /duplicated in attempt/u,
     ],
     [
       "failed selected attempt",
       successfulJobs().map((job) =>
-        job.name === "Build and push Hermes base image" ? { ...job, conclusion: "failure" } : job,
+        job.name === "Manifests / Hermes" ? { ...job, conclusion: "failure" } : job,
       ),
       /did not complete successfully/u,
     ],

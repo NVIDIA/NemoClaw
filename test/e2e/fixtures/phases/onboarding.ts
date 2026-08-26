@@ -256,16 +256,11 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const useCandidateBase =
-      options.dcodeBaseImageReference === undefined &&
-      process.env.E2E_WORKLOAD_SOURCE === "local-dockerfile";
-    const baseImageReference = useCandidateBase
-      ? undefined
-      : requireDcodeBaseImageReference(
-          options.dcodeBaseImageReference === undefined
-            ? process.env
-            : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
-        );
+    const baseImageReference = requireDcodeBaseImageReference(
+      options.dcodeBaseImageReference === undefined
+        ? process.env
+        : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+    );
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
@@ -287,7 +282,7 @@ export class OnboardingPhaseFixture {
         NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
         NVIDIA_INFERENCE_API_KEY: apiKey,
         [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
-        ...(baseImageReference ? { [DCODE_BASE_IMAGE_ENV]: baseImageReference } : {}),
+        [DCODE_BASE_IMAGE_ENV]: baseImageReference,
       }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,

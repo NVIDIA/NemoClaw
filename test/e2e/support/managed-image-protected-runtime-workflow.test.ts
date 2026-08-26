@@ -54,7 +54,7 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
-  it("accepts the hosted cache and local-base identity handoff", () => {
+  it("accepts the hosted build-cache handoff to the protected runtime job", () => {
     const value = workflow();
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
@@ -371,29 +371,6 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it("rejects a protected local-base rebuild without exact producer digest equality", () => {
-    const value = workflow();
-    const bases = namedStep(value, "Resolve exact amd64 runtime base images");
-    bases.run = String(bases.run).replace('[[ "$actual_digest" == "$expected_digest" ]]', "");
-
-    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      'managed-image-protected-runtime step \'Resolve exact amd64 runtime base images\' must include [[ "$actual_digest" == "$expected_digest" ]]',
-    );
-  });
-
-  it("requires the hosted producer to publish the local-base identity contract", () => {
-    const value = workflow();
-    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
-    bases.run = String(bases.run).replace(
-      'kind: "nemoclaw-protected-local-bases-v1"',
-      'kind: "unbound-local-bases"',
-    );
-
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup step 'Resolve exact platform base images' must include kind: \"nemoclaw-protected-local-bases-v1\"",
-    );
-  });
-
   it("rejects a hosted producer that is not selected with protected runtime", () => {
     const value = workflow();
     multiarchJob(value).if =
@@ -401,40 +378,6 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup must use the trusted execution plan",
-    );
-  });
-
-  it("rejects excluding local Dockerfile sources from native candidate qualification", () => {
-    const value = workflow();
-    multiarchJob(value).if = String(multiarchJob(value).if).replace(
-      "github.repository == 'NVIDIA/NemoClaw'",
-      "needs.generate-matrix.outputs.workload_source == 'managed-image' && github.repository == 'NVIDIA/NemoClaw'",
-    );
-
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must use the trusted execution plan",
-    );
-  });
-
-  it("rejects excluding local Dockerfile sources from protected runtime qualification", () => {
-    const value = workflow();
-    runtimeJob(value).if = String(runtimeJob(value).if).replace(
-      "github.repository == 'NVIDIA/NemoClaw'",
-      "needs.generate-matrix.outputs.workload_source == 'managed-image' && github.repository == 'NVIDIA/NemoClaw'",
-    );
-
-    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must use the trusted execution plan",
-    );
-  });
-
-  it("rejects removing local multiarch base builds", () => {
-    const value = workflow();
-    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
-    bases.run = String(bases.run).replace("local-dockerfile)", "candidate-images)");
-
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup step 'Resolve exact platform base images' must include local-dockerfile)",
     );
   });
 
