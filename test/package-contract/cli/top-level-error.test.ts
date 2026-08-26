@@ -105,6 +105,41 @@ require(cliPath);`,
   expect(result.stderr).not.toContain(secret);
 }
 
+// An interrupted install or upgrade leaves the compiled entrypoint unresolvable.
+// Reproduce that shape rather than deleting `dist/`, which the rest of this
+// lane needs.
+function runWithMissingCompiledCli(): ReturnType<typeof spawnSync<string>> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${cliPath};
+const mainPath = ${mainPath};
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  const resolved = Module._resolveFilename(request, parent, isMain);
+  if (resolved === mainPath) {
+    const error = new Error("Cannot find module '" + mainPath + "'");
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
+  return originalLoad.apply(this, arguments);
+};
+require(cliPath);`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+      },
+    },
+  );
+}
+
 describe("compiled CLI top-level errors", () => {
   it("prints an Error rejection as one line without a Node.js stack (#8202)", () => {
     expectTopLevelError('new Error("Command failed.")', "Error: Command failed.\n");
@@ -147,5 +182,24 @@ describe("compiled CLI top-level errors", () => {
 
   it("prints a generic safe error when the logger and shared redactor cannot load (#8202)", () => {
     expectLoggerFallbackRedaction(`openai-${"a".repeat(40)}`, true);
+  });
+
+  it("reports an unfinished install when the compiled CLI cannot be found (#10372)", () => {
+    const result = runWithMissingCompiledCli();
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([
+      "Error: NemoClaw's compiled CLI is missing or incomplete, so no command can run.",
+      "  An install or upgrade did not finish.",
+      "  Rerun the installer command you used to install NemoClaw; it resumes and recovers existing sandboxes.",
+    ]);
+  });
+
+  it("keeps the unresolved module path out of the unfinished-install report (#10372)", () => {
+    const result = runWithMissingCompiledCli();
+
+    expect(result.stderr).not.toContain("dist");
+    expect(result.stderr).not.toContain("Cannot find module");
   });
 });
