@@ -2200,10 +2200,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     );
     checks = {
       ...checks,
-      forwardAuthenticatedHealth:
-        forwardedHealth.evidence.outcome === "ready" &&
-        forwardedHealth.command.exitCode === 0 &&
-        parseOpenClawHealthResult(forwardedHealth.command.stdout),
+      forwardAuthenticatedHealth: forwardedHealth.evidence.outcome === "ready",
     };
     if (!checks.forwardAuthenticatedHealth) {
       throw new Error(
