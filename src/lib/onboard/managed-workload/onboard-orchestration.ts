@@ -55,6 +55,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -240,13 +241,18 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const catalogRevision = input.stockManagedRuntime
+    const liveCatalogRevision = input.stockManagedRuntime
       ? liveE2eManagedImageRevision(input.startupProfile.environment)
       : null;
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
-    if (catalogRevision && liveCatalog) {
+    if (liveCatalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
     }
+    const catalogRevision =
+      liveCatalogRevision ??
+      (liveCatalog || input.tempManagedRuntimeCatalog || input.managedWorkloadRebuild
+        ? null
+        : installedManagedImageCatalogRevision(input.startupProfile.environment, input.rootDir));
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -346,6 +352,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
+    readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: () => void;
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -375,6 +382,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
 export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly policyTier: string | null;
+  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
@@ -418,6 +426,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
+    policyAuthority: input.plan.policyAuthority,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -503,6 +512,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
     policyTier: createPlan.policyTier,
+    policyAuthority: createPlan.policyAuthority,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
@@ -519,12 +529,14 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 export function prepareHermesPortableOnboardSandboxLaunch(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
+  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
   readonly gpuConfig: SandboxGpuConfig;
 }): PreparedOnboardSandboxWorkloadLaunch {
   const createPlan = materializeHermesPortableCreatePlan({
     intent: input.intent,
     fromRef: input.fromRef,
+    policyAuthority: input.policyAuthority,
   });
   const launch = prepareSandboxCreateLaunch({
     ...input.launchInput,

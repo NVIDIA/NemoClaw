@@ -140,6 +140,46 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
+  it("stops before the request producer and approval when authority changes during pairing observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+        return PAIRING_ONLY;
+      }),
+      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
+      "policy authority changed",
+    );
+
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not publish settled pairing when authority changes during observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+        return SETTLED;
+      }),
+      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
+      "policy authority changed",
+    );
+
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
     const events: string[] = [];
     const scope = ordinaryPairingDeps({
@@ -406,9 +446,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       throw new Error("not published");
     };
     const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() =>
-        attempts++ < 10 ? unavailable() : SCOPE_UPGRADE_PENDING,
-      ),
+      observePairing: vi.fn(() => (attempts++ < 10 ? unavailable() : SCOPE_UPGRADE_PENDING)),
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({

@@ -616,15 +616,18 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       { ok: true },
       {
         agent: "langchain-deepagents-code",
+        gatewayName: "nemoclaw-19080",
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
       },
     );
     const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       ...options,
       deps: {
         ...options.deps,
+        probeSandboxInferenceGatewayHealthImpl,
         probeSandboxInferenceInvocationImpl,
       },
     });
@@ -632,6 +635,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw-19080",
         agentName: "langchain-deepagents-code",
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
@@ -640,6 +644,9 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       {},
       30_000,
     );
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+    });
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 

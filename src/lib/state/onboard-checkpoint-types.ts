@@ -112,9 +112,9 @@ export interface CheckpointSandboxRecreateSourceWorkload {
 }
 
 /**
- * Secret-free journal for one same-name sandbox replacement. The containing
- * checkpoint supplies the session identity; the generation stamped into the
- * replacement registry row proves which same-name sandbox this run created.
+ * Secret-free journal for one sandbox creation or same-name replacement. The
+ * containing checkpoint supplies the session identity; the generation stamped
+ * into the registry row proves which same-name sandbox this run created.
  */
 export interface CheckpointSandboxRecreateTransaction {
   readonly version: 1;

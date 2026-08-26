@@ -73,6 +73,33 @@ export function parseSandboxPolicyAuthorityMetadata(
   };
 }
 
+/** Parse machine-readable global policy metadata after history proves a revision exists. */
+export function parseGlobalPolicyAuthorityMetadata(
+  raw: string,
+): SandboxPolicyAuthorityInspection {
+  if (raw.trim().length === 0) {
+    throw new Error("OpenShell returned empty global policy authority metadata");
+  }
+  const metadata = parseJsonMapping(
+    raw,
+    "OpenShell returned malformed global policy authority metadata",
+  );
+  if (
+    metadata.scope !== "global" ||
+    Object.hasOwn(metadata, "sandbox") ||
+    metadata.policy_source !== "global"
+  ) {
+    throw new Error("OpenShell returned invalid global policy authority metadata");
+  }
+  if (metadata.status === "superseded") {
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+  }
+  if (metadata.status !== "loaded" || !isMapping(metadata.policy)) {
+    throw new Error("OpenShell returned invalid global policy authority metadata");
+  }
+  return { authority: "externally-managed", effectivePolicy: metadata.policy };
+}
+
 /** Require durable and observed policy authority to describe the same owner. */
 export function assertMatchingPolicyAuthority(recorded: unknown, observed: unknown): void {
   if (!isPolicyAuthority(recorded)) {

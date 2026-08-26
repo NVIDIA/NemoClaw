@@ -521,6 +521,17 @@ filesystem behavior, an authenticated host-loopback forward, and one
 provider-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
 the forward active while deleting the sandbox and requires the listener,
 forward process, sandbox registry entry, and recorded OpenClaw process to stop.
+The target starts forwarding only after in-sandbox OpenClaw health, the exact
+OpenClaw process identity, filesystem enforcement, and the sandbox registry
+entry pass. After the owned host listener appears, the target makes at most 12
+authenticated health observations at one-second intervals. It observes again
+only while the owned forward process remains active and OpenClaw reports a
+nonzero structured transport error with kind `closed`, code `1006`, and reason
+`no close reason`. Authentication, authorization, policy, timeout,
+malformed-output, forward-process exit, and all other failures stop the qualification. The
+target writes a secret-free `windows-mxc-forward-health-readiness-<run-id>.json`
+artifact with the bound, delay, sanitized attempt outcomes, and final result.
+It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
@@ -1469,10 +1480,10 @@ PR regression.
 The same overage remains blocking when accompanied by a root-start or phase-budget failure.
 
 The checked-in `nemoclaw.onboard.phase.sandbox` budget remains 208,000 ms.
-A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses the published-base build mode without the authoritative local base-build allowance.
+A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses a managed image.
 For a qualifying overage of at most 5,000 ms, `full-e2e` records a `sandbox-phase-tail` anomaly instead of a blocking performance violation.
 An overage greater than 5,000 ms remains blocking.
-A run that applies the authoritative local base-build allowance or has another performance violation also remains blocking.
+A local BuildKit prebuild fails the workload-evidence contract and cannot qualify for anomaly classification.
 Every other performance contract remains blocking, as do the existing first-turn command exit, BuildKit, gateway-builder no-fallback, output-silence, sentinel, E2E job outcome, and cleanup contracts.
 
 For `sandbox-phase-tail`, the trusted push scorecard uses the latest five eligible samples from the same agent, setup mode, platform, base-build mode, and workload kind.
@@ -1501,13 +1512,6 @@ The canonical E2E uploader retains each push summary for 14 days.
 
 The sandbox-phase recurrence rule does not recalibrate the checked-in budget.
 Recalibration remains deferred until five successful samples from the same commit are available.
-
-When changed base-image inputs require the authoritative local OpenClaw base
-build, the target applies the separately calibrated 90-second allowance only to
-the root-start and sandbox-phase limits. The installer must emit the exact local
-base-build reason before the allowance applies. Published-image runs retain the
-normal limits, and output silence, first-turn, and all other phase requirements
-remain unchanged.
 
 The two Hermes rebuild jobs and both reusable-workflow Hermes image exporters
 add a bounded 32 GiB swap file on their ephemeral hosted runners before the

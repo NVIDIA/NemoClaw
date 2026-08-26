@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 
@@ -16,9 +17,7 @@ describe("onboard managed MCP recreation redirect", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "redirect.js");
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -52,6 +51,7 @@ registry.getSandbox = () => ({
   preferredInferenceApi: "openai-completions",
   toolDisclosure: "progressive",
   observabilityEnabled: true,
+  policyAuthority: "nemoclaw-managed",
   mcp: {
     version: 1,
     bridges: {
