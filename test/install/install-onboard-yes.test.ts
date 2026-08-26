@@ -666,8 +666,9 @@ describe("Hermes deferred onboarding", () => {
     expect(result.output).toContain("--defer-onboarding");
     expect(result.output).toContain("NEMOCLAW_DEFER_ONBOARDING=1");
     expect(result.output.match(/NEMOCLAW_AGENT=hermes/g)).toHaveLength(2);
-    expect(result.output.match(/NEMOCLAW_PROVIDER=build, cloud, or routed/g)).toHaveLength(2);
+    expect(result.output.match(/no registered sandboxes/g)).toHaveLength(2);
     expect(result.output.match(/no local model profile/g)).toHaveLength(2);
+    expect(result.output.match(/build, cloud, or routed NVIDIA hosted provider/g)).toHaveLength(2);
   });
 
   it.each([
