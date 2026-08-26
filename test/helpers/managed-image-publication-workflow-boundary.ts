@@ -4,6 +4,7 @@
 import {
   managedPromoter,
   managedPublisher,
+  readAction,
   required,
   step,
 } from "./managed-image-publication-workflow";
@@ -12,6 +13,7 @@ import type { Workflow } from "./managed-image-publication-workflow-types";
 const managedInputPaths = [
   ".dockerignore",
   ".github/actions/ci-reviewed-npm-audit/**",
+  ".github/actions/publish-managed-image-digest/**",
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
   "agents/**",
@@ -47,15 +49,25 @@ export function publicationBoundaryErrors(
   const publisher = managedPublisher(managedWorkflow);
   const promoter = managedPromoter(managedWorkflow);
   const steps = publisher.steps ?? [];
-  const build = step(publisher, "Build and push managed image by digest");
+  const build = step(publisher, "Publish and validate managed image by digest");
   const base = step(publisher, "Validate exact base image contract");
   const validate = step(publisher, "Validate exact managed image before promotion");
+  const publicationAction = readAction("publish-managed-image-digest");
+  const actionValidation = step(
+    { steps: publicationAction.runs?.steps },
+    "Validate published exact digest",
+    "managed-image publication action",
+  );
   const workflowSource = JSON.stringify(managedWorkflow);
   const publisherSource = JSON.stringify(publisher);
-  const validationMarkers = [
+  const actionValidationMarkers = [
     'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
     'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
-    "bootstrap the GHCR package",
+    "Set the GHCR package",
+    'imagetools inspect "$reference" --raw',
+    'sha256sum "$raw"',
+  ];
+  const validationMarkers = [
     "/opt/nemoclaw-blueprint/blueprint.yaml",
     "/usr/local/share/nemoclaw/corporate-ca.pem",
     '--entrypoint "$REQUIRED_BINARY"',
@@ -115,12 +127,13 @@ export function publicationBoundaryErrors(
     ...(caller.if?.includes("inputs.openclaw_version == ''")
       ? []
       : ["custom OpenClaw base builds must not publish managed images"]),
-    ...(build.with?.outputs ===
-      "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true" &&
-    build.with.push === undefined &&
-    build.with.tags === undefined
+    ...(build.uses === "./.github/actions/publish-managed-image-digest" &&
+    build.with?.image === "${{ env.REGISTRY }}/${{ matrix.image }}"
       ? []
-      : ["managed images must be pushed by digest without consumer tags"]),
+      : ["managed images must use the shared digest publication action"]),
+    ...actionValidationMarkers
+      .filter((marker) => !actionValidation.run?.includes(marker))
+      .map((marker) => `shared digest validation is missing ${marker}`),
     ...(!workflowSource.includes("GITHUB_SHA:0:8") && !workflowSource.includes("format=short")
       ? []
       : ["managed image handoff and aliases must not use short source SHAs"]),

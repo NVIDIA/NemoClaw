@@ -48,7 +48,10 @@ it("keeps immutable DCode base metadata on exact PR and production images", () =
   const prPublish = workflowStep(prJob, "Publish exact same-repository PR managed image by digest");
   const prValidate = workflowStep(prJob, "Validate exact PR managed image contract");
   const productionBase = workflowStep(productionJob, "Validate exact base image contract");
-  const productionBuild = workflowStep(productionJob, "Build and push managed image by digest");
+  const productionBuild = workflowStep(
+    productionJob,
+    "Publish and validate managed image by digest",
+  );
   const productionValidate = workflowStep(
     productionJob,
     "Validate exact managed image before promotion",
