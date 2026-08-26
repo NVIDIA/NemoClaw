@@ -36,7 +36,13 @@ export interface CreatedSandboxPolicyReceiptInput {
 
 export interface CreatedSandboxPolicyReceiptDeps {
   readonly readFile?: typeof fs.readFileSync;
+  readonly sleep?: (seconds: number) => void;
 }
+
+// The create gate verifies the immutable sandbox identity on both sides of this
+// interval. Two separated policy samples prevent a transient early policy
+// identity from reaching the durable receipt or post-create effects.
+const POLICY_IDENTITY_STABILITY_INTERVAL_SECONDS = 2;
 
 export interface CreatedSandboxPolicyRegistrationInput extends CreatedSandboxPolicyReceiptInput {
   readonly plannedAuthority: Exclude<SandboxPolicyAuthority, "owner-unknown">;
@@ -115,6 +121,9 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   } catch {
     refusal("the live base policy could not be compared");
   }
+  const sleep = deps.sleep;
+  if (!sleep) refusal("the policy identity stability interval could not be observed");
+  sleep(POLICY_IDENTITY_STABILITY_INTERVAL_SECONDS);
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,

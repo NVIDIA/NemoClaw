@@ -219,8 +219,7 @@ function assertPendingPolicyVerificationMatchesRegistration(
     checkpoint.gatewayName === requestedEntry.gatewayName &&
     checkpoint.gatewayPort === requestedEntry.gatewayPort &&
     checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration &&
-    checkpoint.sandboxIdentityFingerprint ===
-      requestedEntry.lifecycleLiveIdentityFingerprint &&
+    checkpoint.sandboxIdentityFingerprint === requestedEntry.lifecycleLiveIdentityFingerprint &&
     checkpoint.policyAuthority === requestedEntry.policyAuthority &&
     reservation.authority.sandboxName === requestedEntry.name &&
     reservation.authority.gatewayName === requestedEntry.gatewayName &&
@@ -660,9 +659,8 @@ export function reserveSandboxInferenceRoute(
     const data = load();
     const existing = data.sandboxes[name];
     const normalized = normalizeInferenceSelection(route);
-    if (existing?.pendingPolicyVerification) {
+    if (existing?.pendingRouteReservation === true) {
       const sameReservation =
-        existing.pendingRouteReservation === true &&
         Boolean(route.reservationSessionId) &&
         existing.reservationSessionId === route.reservationSessionId &&
         existing.gatewayName === route.gatewayName &&
@@ -681,8 +679,17 @@ export function reserveSandboxInferenceRoute(
           normalizeInferenceSelection(route),
         );
       if (!sameReservation) {
+        if (existing.pendingPolicyVerification) {
+          throw new PolicyAuthorityRefusalError(
+            `Cannot replace sandbox '${name}' while its verified create checkpoint is incomplete`,
+          );
+        }
+        const detail =
+          existing.reservationSessionId !== route.reservationSessionId
+            ? "belongs to another onboarding session"
+            : "cannot change before the owning create transaction completes";
         throw new PolicyAuthorityRefusalError(
-          `Cannot replace sandbox '${name}' while its verified create checkpoint is incomplete`,
+          `Cannot replace sandbox '${name}': its inference route reservation ${detail}`,
         );
       }
       return true;
@@ -907,6 +914,25 @@ export function compareAndSetSandboxGatewayPort(
     }
     data.sandboxes[name] = { ...current, gatewayPort };
     save(data);
+    return true;
+  });
+}
+
+/** Remove only an exact pending route that the caller classified as abandoned. */
+export function removeSandboxRouteReservationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = structuredClone(expected);
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingPolicyVerification !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    if (!isDeepStrictEqual(data.sandboxes[expectedSnapshot.name], expectedSnapshot)) return false;
+    const result = reversibleRemoval.removeSandboxFromRegistry(data, expectedSnapshot.name);
+    if (!result.receipt) return false;
+    save(result.registry);
     return true;
   });
 }

@@ -1733,10 +1733,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           };
           const registration = apfInterceptorRequested
             ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput)
-            : verifyCreatedSandboxPolicyRegistration({
-                ...registrationInput,
-                plannedAuthority: resolvedPolicyAuthority,
-              });
+            : verifyCreatedSandboxPolicyRegistration(
+                {
+                  ...registrationInput,
+                  plannedAuthority: resolvedPolicyAuthority,
+                },
+                { sleep: sleepSeconds },
+              );
           return {
             registration,
             sandboxName,

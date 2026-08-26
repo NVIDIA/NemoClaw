@@ -10,14 +10,19 @@ export function removeSandboxUnlessSessionReservation(
   entry: SandboxEntry | null,
   sandboxName: string,
 ): void {
-  const recreate = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+  const session = onboardSession.loadSession();
+  const recreate = session?.checkpoint?.sandboxRecreate;
   if (recreate?.sandboxName === sandboxName && recreate.phase !== "completed") {
     return;
   }
 
-  if (!registry.isPendingReservationForSession(entry, onboardSession.loadSession()?.sessionId)) {
-    registry.removeSandbox(sandboxName);
+  if (registry.isPendingReservationForSession(entry, session?.sessionId)) return;
+  if (entry?.pendingRouteReservation === true) {
+    if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return;
+    registry.removeSandboxRouteReservationIfCurrent(entry);
+    return;
   }
+  registry.removeSandbox(sandboxName);
 }
 
 export interface SandboxLifecycleDeps {

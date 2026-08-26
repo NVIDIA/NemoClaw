@@ -336,9 +336,7 @@ describe("sandbox inference route reservation", () => {
           "preferredInferenceApi",
         ] as const;
         expect(
-          routeKeys.filter(
-            (key) => reconstructedSelection[key] !== reservedSelection[key],
-          ),
+          routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
 
         const registered = registerCreatedSandbox({
@@ -486,7 +484,7 @@ describe("sandbox inference route reservation", () => {
         ...route,
         hostLocalInferenceReceipt: receipt,
       });
-      registry.reserveSandboxInferenceRoute("alpha", { ...route, model: "model-b" });
+      registry.reserveSandboxInferenceRoute("alpha", route);
 
       expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
       expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
@@ -494,7 +492,7 @@ describe("sandbox inference route reservation", () => {
         sandboxName: "alpha",
         inferenceSelection: {
           provider: route.provider,
-          model: "model-b",
+          model: route.model,
           endpointUrl: route.endpointUrl,
           endpointSource: null,
           credentialEnv: route.credentialEnv,
@@ -599,13 +597,13 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
-  it("transfers reservation ownership when a new session retargets the route (#6562)", async () => {
+  it("keeps a live reservation immutable until its row is explicitly abandoned (#9833)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
     vi.resetModules();
     try {
       const registry = await import("./registry");
-      registry.reserveSandboxInferenceRoute("alpha", {
+      const original = {
         provider: "compatible-endpoint",
         model: "model-a",
         endpointUrl: "https://api.example.test/v1",
@@ -613,9 +611,14 @@ describe("sandbox inference route reservation", () => {
         preferredInferenceApi: "openai-responses",
         gatewayName: "nemoclaw",
         reservationSessionId: "session-old",
-      });
+      } as const;
+      registry.reserveSandboxInferenceRoute("alpha", original);
+      expect(registry.reserveSandboxInferenceRoute("alpha", original)).toBe(true);
+      expect(() =>
+        registry.reserveSandboxInferenceRoute("alpha", { ...original, model: "model-b" }),
+      ).toThrow(/cannot change before the owning create transaction completes/u);
 
-      registry.reserveSandboxInferenceRoute("alpha", {
+      const replacement = {
         provider: "compatible-endpoint",
         model: "model-b",
         endpointUrl: "https://api.example.test/v1",
@@ -623,7 +626,22 @@ describe("sandbox inference route reservation", () => {
         preferredInferenceApi: "openai-responses",
         gatewayName: "nemoclaw",
         reservationSessionId: "session-new",
+      } as const;
+
+      expect(() => registry.reserveSandboxInferenceRoute("alpha", replacement)).toThrow(
+        /belongs to another onboarding session/u,
+      );
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        model: "model-a",
+        pendingRouteReservation: true,
+        reservationSessionId: "session-old",
       });
+
+      expect(registry.removeSandboxRouteReservationIfCurrent(registry.getSandbox("alpha")!)).toBe(
+        true,
+      );
+      expect(registry.reserveSandboxInferenceRoute("alpha", replacement)).toBe(true);
 
       const reserved = registry.getSandbox("alpha");
       expect(reserved).toMatchObject({
@@ -633,6 +651,55 @@ describe("sandbox inference route reservation", () => {
       });
       expect(registry.isPendingReservationForSession(reserved, "session-new")).toBe(true);
       expect(registry.isPendingReservationForSession(reserved, "session-old")).toBe(false);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat an ownerless repeated reservation as idempotent (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const ownerless = {
+        ...EXACT_ROUTE_SELECTION,
+        gatewayName: "nemoclaw",
+      } as const;
+      registry.reserveSandboxInferenceRoute("alpha", ownerless);
+
+      expect(() => registry.reserveSandboxInferenceRoute("alpha", ownerless)).toThrow(
+        /cannot change before the owning create transaction completes/u,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a replacement when cleanup holds an earlier reservation snapshot (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...EXACT_ROUTE_SELECTION,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-old",
+      });
+      const stale = registry.getSandbox("alpha")!;
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-old")).toBe(true);
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...EXACT_ROUTE_SELECTION,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-new",
+      });
+
+      expect(registry.removeSandboxRouteReservationIfCurrent(stale)).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-new",
+      });
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
@@ -913,6 +980,7 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw",
         reservationSessionId: "session-old",
       });
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-old")).toBe(true);
       registry.reserveSandboxInferenceRoute("alpha", {
         provider: "compatible-endpoint",
         model: "model-a",
@@ -1234,20 +1302,20 @@ describe("sandbox inference route reservation", () => {
     try {
       const registry = await import("./registry");
       const { create } = reserveQualifiedCreate(registry);
-      registry.reserveSandboxInferenceRoute("alpha", {
-        ...EXACT_ROUTE_SELECTION,
-        model: "another-model",
-        gatewayName: "nemoclaw",
-        reservationSessionId: "another-session",
-      });
-
       expect(() =>
-        registry.recordPendingSandboxPolicyVerification(create, managedCheckpoint()),
-      ).toThrow("route reservation changed");
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...EXACT_ROUTE_SELECTION,
+          model: "another-model",
+          gatewayName: "nemoclaw",
+          reservationSessionId: "another-session",
+        }),
+      ).toThrow(/belongs to another onboarding session/u);
+      registry.recordPendingSandboxPolicyVerification(create, managedCheckpoint());
       expect(registry.getSandbox("alpha")).toMatchObject({
         pendingRouteReservation: true,
-        reservationSessionId: "another-session",
-        model: "another-model",
+        reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+        model: EXACT_ROUTE_SELECTION.model,
+        pendingPolicyVerification: managedCheckpoint(),
       });
     } finally {
       await fs.rm(home, { recursive: true, force: true });

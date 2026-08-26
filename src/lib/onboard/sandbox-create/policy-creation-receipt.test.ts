@@ -95,6 +95,7 @@ describe("created sandbox policy receipt", () => {
       .mockReturnValueOnce(metadata());
     const receipt = verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
       readFile: vi.fn(() => POLICY) as never,
+      sleep: vi.fn(),
     });
 
     expect(receipt).toEqual({
@@ -126,6 +127,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
         readFile: vi.fn(() => POLICY) as never,
+        sleep: vi.fn(),
       }),
     ).toThrow(/live base policy does not match/u);
     expect(captureOpenshell).toHaveBeenCalledTimes(4);
@@ -148,6 +150,7 @@ describe("created sandbox policy receipt", () => {
         { ...INPUT, route: "native" },
         {
           readFile: vi.fn(() => NATIVE_GPU_POLICY) as never,
+          sleep: vi.fn(),
         },
       ),
     ).toMatchObject({
@@ -177,6 +180,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(input, {
         readFile: vi.fn(() => NATIVE_GPU_POLICY) as never,
+        sleep: vi.fn(),
       }),
     ).toThrow(/live base policy does not match/u);
   });
@@ -190,6 +194,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
         readFile: vi.fn(() => POLICY) as never,
+        sleep: vi.fn(),
       }),
     ).toThrow(/does not report.*sandbox-scoped/u);
   });
@@ -202,6 +207,7 @@ describe("created sandbox policy receipt", () => {
     try {
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
         readFile: vi.fn(() => POLICY) as never,
+        sleep: vi.fn(),
       });
     } catch (caught) {
       error = caught;
@@ -211,18 +217,29 @@ describe("created sandbox policy receipt", () => {
     expect((error as Error).message).not.toContain("github");
   });
 
-  it("refuses an effective policy identity that changes during verification (#9833)", () => {
+  it("refuses an early matching policy identity that drifts after the stability interval (#9833)", () => {
+    const events: string[] = [];
+    const sleep = vi.fn(() => events.push("poll"));
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
+      .mockImplementationOnce(() => {
+        events.push("policy-initial");
+        return metadata();
+      })
       .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
-      .mockReturnValueOnce(metadata({ hash: "sha256:replacement", active_version: 5 }));
+      .mockImplementationOnce(() => {
+        events.push("policy-later");
+        return metadata({ hash: "sha256:replacement", active_version: 5 });
+      });
 
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
         readFile: vi.fn(() => POLICY) as never,
+        sleep,
       }),
     ).toThrow(/policy identity changed/u);
+    expect(events).toEqual(["policy-initial", "poll", "policy-later"]);
+    expect(sleep).toHaveBeenCalledWith(2);
   });
 
   it("records a contained APF-selected sandbox policy as external without provenance (#9833)", () => {
