@@ -103,7 +103,6 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
   ".agents/skills/nemoclaw-maintainer-product-slides/scripts/pptx-authoring-module.mts",
-  ".agents/skills/nemoclaw-maintainer-product-slides/references/google-template.json",
   ".agents/skills/nemoclaw-maintainer-product-slides/references/markitecture-claims.json",
   ".agents/skills/nemoclaw-maintainer-product-slides/references/slide-model.schema.json",
   "test/fixtures/nemoclaw-maintainer-product-slides/snapshot-base.json",
@@ -380,10 +379,6 @@ describe("Vitest opaque-input watch triggers", () => {
       ["test/skills/product-slides/pptx-template-structure.test.ts"],
     ],
     [
-      ".agents/skills/nemoclaw-maintainer-product-slides/references/google-template.json",
-      ["test/skills/product-slides/google-template.test.ts"],
-    ],
-    [
       ".agents/skills/nemoclaw-maintainer-product-slides/references/markitecture-claims.json",
       [
         "test/skills/product-slides/evidence.test.ts",
@@ -414,7 +409,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ).toEqual([
       "test/skills/product-slides/cleanup.test.ts",
       "test/skills/product-slides/evidence.test.ts",
-      "test/skills/product-slides/google-template.test.ts",
+      "test/skills/product-slides/evidence-output-boundary.test.ts",
       "test/skills/product-slides/model-evidence.test.ts",
       "test/skills/product-slides/model-presentation.test.ts",
       "test/skills/product-slides/roadmap-contracts.test.ts",

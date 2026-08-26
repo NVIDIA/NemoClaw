@@ -248,26 +248,31 @@ export function prepareProtectedOutputBoundary(
   requestedOutputPath: string,
   artifactName: string,
 ): ProtectedOutputBoundary {
-  const outputPath = canonicalOutputPath(requestedOutputPath);
-  const outputParent = trustedOutputParent(outputPath);
+  const boundary = prepareProtectedOutputParentBoundary(requestedOutputPath);
   try {
-    lstatSync(outputPath);
+    lstatSync(boundary.outputPath);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") {
-      return {
-        outputPath,
-        outputParentPath: outputParent.directoryPath,
-        outputParentIdentity: outputParent.directoryIdentity,
-        ownerUid: outputParent.ownerUid,
-      };
-    }
+    if (errorCode(error) === "ENOENT") return boundary;
     throw new Error(
-      `Could not inspect ${artifactName} output ${quotePath(outputPath)}: ${errorMessage(error)}`,
+      `Could not inspect ${artifactName} output ${quotePath(boundary.outputPath)}: ${errorMessage(error)}`,
     );
   }
   throw new Error(
-    `${artifactName} output already exists and will not be overwritten: ${quotePath(outputPath)}`,
+    `${artifactName} output already exists and will not be overwritten: ${quotePath(boundary.outputPath)}`,
   );
+}
+
+export function prepareProtectedOutputParentBoundary(
+  requestedOutputPath: string,
+): ProtectedOutputBoundary {
+  const outputPath = canonicalOutputPath(requestedOutputPath);
+  const outputParent = trustedOutputParent(outputPath);
+  return {
+    outputPath,
+    outputParentPath: outputParent.directoryPath,
+    outputParentIdentity: outputParent.directoryIdentity,
+    ownerUid: outputParent.ownerUid,
+  };
 }
 
 export function protectedOutputBoundaryFailure(boundary: ProtectedOutputBoundary): string | null {

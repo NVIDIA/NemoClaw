@@ -33,6 +33,17 @@ Keep the runtime directory outside Git.
 
 ## Runtime Paths
 
+This workflow is POSIX-only because its output ownership, mode, process-group termination, and
+shell-command contracts require POSIX behavior.
+Before GitHub collection or any other runtime action, require a non-Windows Node.js process with
+`process.geteuid`:
+
+```bash
+node -e 'if (process.platform === "win32" || typeof process.geteuid !== "function") process.exit(1)'
+```
+
+If this check fails, stop before collection and move the run to a POSIX host.
+
 Define these paths for one run:
 
 ```bash
@@ -562,6 +573,11 @@ node --import tsx "$SLIDE_SKILL/scripts/validate-slide-model.mts" \
 ```
 
 Before publication, run the same command with `--mode publish` and a different output path.
+Before each run, require the output parent to exist as an owner-only mode-`0700` directory under
+trusted ancestors, and require the output file to be absent.
+The validator publishes mode-`0600` JSON without creating the parent or replacing an existing
+file, symbolic link, or competing destination.
+Use another absent output path for a rerun.
 A nonzero exit status blocks publication.
 
 The model orders slides as alternating roadmap page pairs, followed by `markitecture` and
@@ -922,7 +938,12 @@ For multiple pages, roadmap stems include the instance suffix, such as
 `01-roadmap-executive-1` and `03-roadmap-executive-2`.
 Markitecture and weekly-release prefixes follow their actual model positions.
 
-Existing empty preview and layout directories are allowed.
+Every file destination must have an existing real parent directory owned by the invoking account
+with mode `0700` under trusted ancestors.
+Existing empty preview and layout directories are allowed only when they satisfy that same
+owner-only directory contract.
+When either directory is absent, its parent must satisfy the contract; the builder creates the
+directory non-recursively with mode `0700`.
 The builder never overwrites one of these files in preview or publication mode.
 
 ```bash
@@ -987,10 +1008,15 @@ Do not publish a one-format result.
 
 Press Ctrl-C once to send `SIGINT`.
 An external supervisor can send `SIGTERM`.
-The builder records the first signal and sends that signal to the active bundled child process.
-If the child remains active for 2 seconds, the builder sends `SIGKILL`.
-The command waits for the child process to close before it removes private authoring and staging paths and reports the interruption.
-If child termination remains unconfirmed after `SIGKILL`, the builder skips cleanup that could race the child and reports each affected private path as an unresolved path.
+The builder records the first signal.
+It sends that signal to the active bundled child's complete POSIX process group and
+sends `SIGKILL` to the group if it remains active for 2 seconds.
+If the runtime leader exits normally while a group descendant remains active, the builder starts
+the same group termination sequence.
+The command does not remove private authoring or staging paths until it confirms that the complete
+process group has stopped.
+If termination remains unconfirmed, the builder skips cleanup that could race the process group and
+reports each affected private path as an unresolved path.
 It does not start another child process or artifact-finalization link after cancellation.
 
 During finalization, the builder checks for cancellation before and after each no-clobber link.
@@ -1027,6 +1053,11 @@ node --import tsx "$SLIDE_SKILL/scripts/compare-output-parity.mts" \
   --output "$SLIDE_RUN/parity-comparison.json"
 ```
 
+Before the command, require the output parent to exist as an owner-only mode-`0700` directory
+under trusted ancestors, and require the output file to be absent.
+The comparison publishes mode-`0600` JSON without creating the parent or replacing an existing
+file, symbolic link, or competing destination.
+Use another absent output path for a rerun.
 The command exits with a nonzero status for any mismatch.
 `parity-comparison.json` is not yet a publication receipt.
 Add the exact artifact and readback bindings from the [parity receipt](#parity-receipt) contract.

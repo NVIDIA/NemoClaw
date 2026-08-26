@@ -41,7 +41,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 const PRODUCT_SLIDE_TESTS = [
   "test/skills/product-slides/cleanup.test.ts",
   "test/skills/product-slides/evidence.test.ts",
-  "test/skills/product-slides/google-template.test.ts",
+  "test/skills/product-slides/evidence-output-boundary.test.ts",
   "test/skills/product-slides/model-evidence.test.ts",
   "test/skills/product-slides/model-presentation.test.ts",
   "test/skills/product-slides/roadmap-contracts.test.ts",
@@ -374,11 +374,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern:
       /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/scripts\/pptx-authoring-module\.mts$/,
     testsToRun: runTests("test/skills/product-slides/pptx-template-structure.test.ts"),
-  },
-  {
-    pattern:
-      /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/google-template\.json$/,
-    testsToRun: runTests("test/skills/product-slides/google-template.test.ts"),
   },
   {
     pattern:

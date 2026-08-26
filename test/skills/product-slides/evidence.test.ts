@@ -42,22 +42,10 @@ import {
   slideModelSchemaPath,
   syntheticFixtureInputs,
 } from "../../helpers/nemoclaw-product-slides-fixture";
+import { publicationCodes, rehashSnapshot } from "./model-test-support";
 
-function rehash(value: Record<string, unknown>, key: string): void {
-  value[key] = canonicalSha256(withoutTopLevelKey(value, key));
-}
-
-function rehashSnapshotReceipts(snapshot: Record<string, unknown>): void {
-  const collection = snapshot.collection as Record<string, unknown>;
-  collection.receiptsSha256 = canonicalSha256(collection.receipts);
-  rehash(snapshot, "snapshotSha256");
-}
-
-function publicationCodes(model: Record<string, unknown>): string[] {
-  const publication = model.publication as Record<string, unknown>;
-  return (publication.blockers as Array<Record<string, unknown>>).map((finding) =>
-    String(finding.code),
-  );
+function rehashDocumentationEvidence(evidence: Record<string, unknown>): void {
+  evidence.evidenceSha256 = canonicalSha256(withoutTopLevelKey(evidence, "evidenceSha256"));
 }
 
 function runEvidenceCli(script: string, args: string[]) {
@@ -204,7 +192,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const collection = snapshot.collection as Record<string, unknown>;
     const receipt = (collection.receipts as Array<Record<string, unknown>>)[0];
     receipt.terminalHasNextPage = true;
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
 
     expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
       "COLLECTION_RECEIPT_INCOMPLETE",
@@ -217,7 +205,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     reducedCollection.receipts = (
       reducedCollection.receipts as Array<Record<string, unknown>>
     ).slice(0, 1);
-    rehashSnapshotReceipts(reduced);
+    rehashSnapshot(reduced);
     expect(publicationCodes(buildSyntheticModel({ snapshot: reduced }))).toContain(
       "COLLECTION_RECEIPT_SET_INVALID",
     );
@@ -225,7 +213,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const forgedQuery = readJson<Record<string, unknown>>(fixturePath("snapshot-base.json"));
     const forgedCollection = forgedQuery.collection as Record<string, unknown>;
     (forgedCollection.receipts as Array<Record<string, unknown>>)[0].querySha256 = "0".repeat(64);
-    rehashSnapshotReceipts(forgedQuery);
+    rehashSnapshot(forgedQuery);
     expect(publicationCodes(buildSyntheticModel({ snapshot: forgedQuery }))).toContain(
       "COLLECTION_RECEIPT_INCOMPLETE",
     );
@@ -237,7 +225,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     (collection.receipts as Array<Record<string, unknown>>)[0].sourceRecords = [
       { unexpected: true },
     ];
-    rehashSnapshotReceipts(snapshot);
+    rehashSnapshot(snapshot);
 
     expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
       "COLLECTION_RECEIPT_INCOMPLETE",
@@ -262,7 +250,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
       const release = (snapshot.releases as Array<Record<string, unknown>>)[0];
       release.announcementMatchCount = matchCount;
       mutateAnnouncement(release);
-      rehash(snapshot, "snapshotSha256");
+      rehashSnapshot(snapshot);
 
       expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
         "ANNOUNCEMENT_MATCH_INVALID",
@@ -275,7 +263,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const release = (snapshot.releases as Array<Record<string, unknown>>)[0];
     const announcement = release.announcement as Record<string, unknown>;
     announcement.url = "https://github.com/NVIDIA/NemoClaw/issues/123";
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
 
     expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
       "ANNOUNCEMENT_EVIDENCE_LINK_INVALID",
@@ -285,7 +273,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
   it("blocks a selected Epic without exact native issue-type evidence", () => {
     const snapshot = readJson<Record<string, unknown>>(fixturePath("snapshot-base.json"));
     delete (snapshot.epics as Array<Record<string, unknown>>)[0].nativeIssueType;
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
 
     expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
       "NATIVE_ISSUE_TYPE_INVALID",
@@ -311,7 +299,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     mapping.shortenedOutcome = "Stale presentation wording.";
     mapping.boundBodySha256 = epic.bodySha256;
     epic.bodySha256 = "a".repeat(64);
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
     const model = buildSyntheticModel({ snapshot, presentation });
     const executive = (model.slides as Array<Record<string, unknown>>)[0];
     const firstMilestone = (executive.milestones as Array<Record<string, unknown>>)[0];
@@ -329,14 +317,14 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const duplicate = readJson<Record<string, unknown>>(fixturePath("snapshot-base.json"));
     const milestones = duplicate.milestones as Array<Record<string, unknown>>;
     milestones[1].nodeId = milestones[0].nodeId;
-    rehash(duplicate, "snapshotSha256");
+    rehashSnapshot(duplicate);
     expect(publicationCodes(buildSyntheticModel({ snapshot: duplicate }))).toContain(
       "MILESTONE_DUPLICATE",
     );
 
     const unresolved = readJson<Record<string, unknown>>(fixturePath("snapshot-base.json"));
     (unresolved.epics as Array<Record<string, unknown>>)[0].milestoneNodeId = "MISSING";
-    rehash(unresolved, "snapshotSha256");
+    rehashSnapshot(unresolved);
     expect(publicationCodes(buildSyntheticModel({ snapshot: unresolved }))).toContain(
       "EPIC_MILESTONE_UNRESOLVED",
     );
@@ -356,7 +344,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     (snapshot.releases as Array<Record<string, unknown>>).forEach((release) => {
       release.inWindow = false;
     });
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
     const weekly = (buildSyntheticModel({ snapshot }).slides as Array<Record<string, unknown>>)[3];
 
     expect(weekly.releaseContext).toBe("No stable release this window. Latest: v1.2.3.");
@@ -379,7 +367,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
         role: "markitecture",
       },
     ];
-    rehash(docs, "evidenceSha256");
+    rehashDocumentationEvidence(docs);
     expect(() => buildSyntheticModel({ docs })).toThrow(
       /must be verified from immutable official Git objects/u,
     );
@@ -390,7 +378,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     metrics.stars.retainedAdditions = 17;
     metrics.validationIssues.opened = 4;
     metrics.validationIssues.closed = 4;
-    rehash(snapshot, "snapshotSha256");
+    rehashSnapshot(snapshot);
     const weekly = (buildSyntheticModel({ snapshot }).slides as Array<Record<string, unknown>>)[3];
     expect(publicationCodes(buildSyntheticModel({ snapshot }))).toContain(
       "METRIC_RECEIPT_MISMATCH",
@@ -423,7 +411,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const requiredForks = forks as Record<string, unknown>;
     requiredStars.declaredTotalCount = Number(requiredStars.declaredTotalCount) - 1;
     requiredForks.declaredTotalCount = Number(requiredForks.declaredTotalCount) - 10;
-    rehashSnapshotReceipts(snapshot);
+    rehashSnapshot(snapshot);
 
     const model = buildSyntheticModel({ snapshot });
     const weekly = (model.slides as Array<Record<string, unknown>>)[3];
@@ -442,7 +430,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     const claim = (docs.claims as Array<Record<string, unknown>>)[0];
     claim.commitSha = "c".repeat(40);
     claim.sectionSha256 = "d".repeat(64);
-    rehash(docs, "evidenceSha256");
+    rehashDocumentationEvidence(docs);
 
     expect(() => buildSyntheticModel({ docs })).toThrow(
       /must be verified from immutable official Git objects/u,
@@ -876,7 +864,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     expect(milestoneReceipt, "Synthetic milestone receipt is missing").toBeDefined();
     const requiredMilestoneReceipt = milestoneReceipt as Record<string, unknown>;
     requiredMilestoneReceipt.termination = "partial";
-    rehashSnapshotReceipts(unknownTermination);
+    rehashSnapshot(unknownTermination);
     expect(() => verifyBaselineReceiptProvenance(unknownTermination)).toThrow(
       /lacks complete request and source provenance/u,
     );
@@ -892,7 +880,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
     requiredStarReceipt.sourceRecords = [starRecords.at(-1), starRecords[0]];
     requiredStarReceipt.itemCount = 2;
     requiredStarReceipt.sourceSha256 = canonicalSha256(requiredStarReceipt.sourceRecords);
-    rehashSnapshotReceipts(reorderedCutoff);
+    rehashSnapshot(reorderedCutoff);
     expect(() => verifyBaselineReceiptProvenance(reorderedCutoff)).toThrow(
       /lacks complete request and source provenance/u,
     );
@@ -931,7 +919,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
         receipt.sourceSha256 = canonicalSha256(receipt.sourceRecords);
       });
       baselineCollection.receiptsSha256 = canonicalSha256(baselineReceipts);
-      rehash(baseline, "snapshotSha256");
+      rehashSnapshot(baseline);
 
       const baselinePath = path.join(tempRoot, "baseline.json");
       const approvalPath = path.join(tempRoot, "approval.json");
@@ -990,7 +978,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
         String((current.window as Record<string, unknown>).start),
       );
       currentCollection.receiptsSha256 = canonicalSha256(currentReceipts);
-      rehash(current, "snapshotSha256");
+      rehashSnapshot(current);
 
       const model = buildSyntheticModel({
         snapshot: current,

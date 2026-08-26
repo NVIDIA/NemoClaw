@@ -23,6 +23,7 @@ import {
   validatePptxPublicationSourceModel,
 } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
 import { compareParity } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/compare-output-parity.mts";
+import { prepareProtectedOutputBoundary } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/protected-output.mts";
 import {
   calculateModelSha256,
   canonicalSha256,
@@ -1200,6 +1201,173 @@ describe("NemoClaw product slide refresh and publication contracts", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "rejects a PowerPoint destination parent that is not owner-only",
+    async () => {
+      const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-parent-mode-"));
+      try {
+        const outputParent = path.join(temp, "shared-output");
+        fs.mkdirSync(outputParent, { mode: 0o755 });
+        fs.chmodSync(outputParent, 0o755);
+        const temporaryOutputPath = path.join(temp, "temporary.pptx");
+        const temporaryReadbackPath = path.join(temp, "temporary-readback.json");
+        const outputPath = path.join(outputParent, "output.pptx");
+        const readbackPath = path.join(outputParent, "readback.json");
+        fs.writeFileSync(temporaryOutputPath, "private preview bytes");
+        fs.writeFileSync(temporaryReadbackPath, "{}\n");
+
+        await expect(
+          finalizePptxArtifacts({
+            temporaryOutputPath,
+            outputPath,
+            temporaryReadbackPath,
+            readbackPath,
+            mode: "preview",
+          }),
+        ).rejects.toThrow(/must be owned by effective UID .* with mode 0700/u);
+        expect(fs.existsSync(outputPath)).toBe(false);
+        expect(fs.existsSync(readbackPath)).toBe(false);
+        expect(fs.existsSync(temporaryOutputPath)).toBe(true);
+        expect(fs.existsSync(temporaryReadbackPath)).toBe(true);
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a symbolic-link PowerPoint destination parent without publishing to its referent",
+    async () => {
+      const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-parent-symlink-"));
+      try {
+        const referentParent = path.join(temp, "referent");
+        const aliasParent = path.join(temp, "alias");
+        fs.mkdirSync(referentParent, { mode: 0o700 });
+        fs.symlinkSync(referentParent, aliasParent, "dir");
+        const temporaryOutputPath = path.join(temp, "temporary.pptx");
+        const temporaryReadbackPath = path.join(temp, "temporary-readback.json");
+        fs.writeFileSync(temporaryOutputPath, "private preview bytes");
+        fs.writeFileSync(temporaryReadbackPath, "{}\n");
+
+        await expect(
+          finalizePptxArtifacts({
+            temporaryOutputPath,
+            outputPath: path.join(aliasParent, "output.pptx"),
+            temporaryReadbackPath,
+            readbackPath: path.join(aliasParent, "readback.json"),
+            mode: "preview",
+          }),
+        ).rejects.toThrow(/untrusted symbolic-link path/u);
+        expect(fs.readdirSync(referentParent)).toEqual([]);
+        expect(fs.existsSync(temporaryOutputPath)).toBe(true);
+        expect(fs.existsSync(temporaryReadbackPath)).toBe(true);
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves staged artifacts when a bound PowerPoint destination parent changes identity",
+    async () => {
+      const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-parent-identity-"));
+      try {
+        const outputParent = path.join(temp, "output");
+        const displacedParent = path.join(temp, "displaced-output");
+        fs.mkdirSync(outputParent, { mode: 0o700 });
+        const outputPath = path.join(outputParent, "output.pptx");
+        const readbackPath = path.join(outputParent, "readback.json");
+        const outputBoundary = prepareProtectedOutputBoundary(
+          outputPath,
+          "PowerPoint primary output",
+        );
+        const readbackBoundary = prepareProtectedOutputBoundary(
+          readbackPath,
+          "PowerPoint readback output",
+        );
+        const temporaryOutputPath = path.join(temp, "temporary.pptx");
+        const temporaryReadbackPath = path.join(temp, "temporary-readback.json");
+        fs.writeFileSync(temporaryOutputPath, "private preview bytes");
+        fs.writeFileSync(temporaryReadbackPath, "{}\n");
+        fs.renameSync(outputParent, displacedParent);
+        fs.mkdirSync(outputParent, { mode: 0o700 });
+
+        await expect(
+          finalizePptxArtifacts({
+            temporaryOutputPath,
+            outputPath,
+            outputBoundary,
+            temporaryReadbackPath,
+            readbackPath,
+            readbackBoundary,
+            mode: "preview",
+          }),
+        ).rejects.toThrow(/output parent identity changed/u);
+        expect(fs.readdirSync(outputParent)).toEqual([]);
+        expect(fs.readdirSync(displacedParent)).toEqual([]);
+        expect(fs.existsSync(temporaryOutputPath)).toBe(true);
+        expect(fs.existsSync(temporaryReadbackPath)).toBe(true);
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports every staged path when a bound PowerPoint parent becomes a symbolic link",
+    async () => {
+      const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-bound-parent-link-"));
+      try {
+        const outputParent = path.join(temp, "output");
+        const displacedParent = path.join(temp, "displaced-output");
+        const referentParent = path.join(temp, "unbound-referent");
+        fs.mkdirSync(outputParent, { mode: 0o700 });
+        fs.mkdirSync(referentParent, { mode: 0o700 });
+        const outputPath = path.join(outputParent, "output.pptx");
+        const readbackPath = path.join(outputParent, "readback.json");
+        const outputBoundary = prepareProtectedOutputBoundary(
+          outputPath,
+          "PowerPoint primary output",
+        );
+        const readbackBoundary = prepareProtectedOutputBoundary(
+          readbackPath,
+          "PowerPoint readback output",
+        );
+        const temporaryOutputPath = path.join(temp, "temporary.pptx");
+        const temporaryReadbackPath = path.join(temp, "temporary-readback.json");
+        fs.writeFileSync(temporaryOutputPath, "private preview bytes");
+        fs.writeFileSync(temporaryReadbackPath, "{}\n");
+        fs.renameSync(outputParent, displacedParent);
+        fs.symlinkSync(referentParent, outputParent, "dir");
+
+        const failure = (await finalizePptxArtifacts({
+          temporaryOutputPath,
+          outputPath,
+          outputBoundary,
+          temporaryReadbackPath,
+          readbackPath,
+          readbackBoundary,
+          mode: "preview",
+        }).catch((error: unknown) => error)) as Error & { unresolvedPaths: string[] };
+
+        expect(failure.name).toBe("PptxOutputBoundaryError");
+        expect(failure.message).toMatch(/parent is no longer trusted.*symbolic-link path/u);
+        expect(failure.unresolvedPaths).toEqual([
+          temporaryOutputPath,
+          outputPath,
+          temporaryReadbackPath,
+          readbackPath,
+        ]);
+        expect(fs.readdirSync(displacedParent)).toEqual([]);
+        expect(fs.readdirSync(referentParent)).toEqual([]);
+        expect(fs.existsSync(temporaryOutputPath)).toBe(true);
+        expect(fs.existsSync(temporaryReadbackPath)).toBe(true);
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("rejects a preview destination parent swapped to the template parent before commit", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slide-preview-parent-swap-"));
     try {
@@ -1237,7 +1405,7 @@ describe("NemoClaw product slide refresh and publication contracts", () => {
           mode: "preview",
           isolation,
         }),
-      ).rejects.toThrow(/must be different files/u);
+      ).rejects.toThrow(/untrusted symbolic-link path/u);
       expect(fs.readFileSync(templatePath, "utf8")).toBe("approved template sentinel");
       expect(fs.existsSync(path.join(sourceParent, "readback.json"))).toBe(false);
     } finally {
@@ -1288,7 +1456,7 @@ describe("NemoClaw product slide refresh and publication contracts", () => {
           mode: "preview",
           isolation,
         }),
-      ).rejects.toThrow(/output must be outside --template-workspace/u);
+      ).rejects.toThrow(/untrusted symbolic-link path/u);
       expect(fs.readFileSync(frameMapPath, "utf8")).toBe("template frame map sentinel");
       expect(fs.existsSync(path.join(templateWorkspace, "generated-preview.pptx"))).toBe(false);
       expect(fs.existsSync(path.join(templateWorkspace, "generated-readback.json"))).toBe(false);

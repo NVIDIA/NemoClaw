@@ -37,6 +37,7 @@ Generated roadmap content does not establish a support commitment.
 12. Default to `preview`. For a Google target write, require explicit approval and a fresh target revision read. For PowerPoint publication, require the exact reviewed preview and bound publication evidence.
 13. Keep every runtime input and artifact in one owner-only directory until the user completes review and directs cleanup.
 14. Before GitHub collection, verify the applicable prerequisites:
+    - a POSIX runtime that exposes `process.geteuid`; stop on Windows or another non-POSIX host;
     - an active GitHub CLI login;
     - if Google Slides is requested, the Google Slides authoring skill and Drive connection;
     - if PowerPoint is requested, a successfully loaded bundled presentation runtime.

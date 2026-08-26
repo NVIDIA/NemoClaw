@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
+
+import { writeProtectedOutput } from "./protected-output.mts";
 
 export const MANAGED_ROLES = [
   "roadmap-executive",
@@ -1509,9 +1511,9 @@ function main(): void {
   const result = validateSlideModel(model, schema, options.mode);
   const output = canonicalJson(result);
   if (options.output) {
-    const outputPath = path.resolve(options.output);
-    mkdirSync(path.dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, output, "utf8");
+    writeProtectedOutput(options.output, output, {
+      artifactName: "Slide model validation evidence",
+    });
   } else {
     process.stdout.write(output);
   }

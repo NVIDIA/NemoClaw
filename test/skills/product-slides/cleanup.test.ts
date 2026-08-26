@@ -1,18 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ChildProcess } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   finalizePptxArtifacts,
   pptxCleanupTestOnly,
 } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
+import { prepareProtectedOutputBoundary } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/protected-output.mts";
 
 type FileIdentity = {
   dev: bigint;
@@ -33,10 +36,21 @@ function statAction(
   )();
 }
 
+const finalizationRoot = fsSync.mkdtempSync(
+  path.join(os.tmpdir(), "nemoclaw-pptx-cleanup-contract-"),
+);
+fsSync.chmodSync(finalizationRoot, 0o700);
+
+afterAll(() => {
+  fsSync.rmSync(finalizationRoot, { recursive: true, force: true });
+});
+
 function finalizationArtifact(label: string) {
+  const targetPath = path.join(finalizationRoot, `nemoclaw-cleanup-${label}.target`);
   return {
-    temporaryPath: path.join(os.tmpdir(), `nemoclaw-cleanup-${label}.temporary`),
-    targetPath: path.join(os.tmpdir(), `nemoclaw-cleanup-${label}.target`),
+    boundary: prepareProtectedOutputBoundary(targetPath, "Synthetic PowerPoint output"),
+    temporaryPath: path.join(finalizationRoot, `nemoclaw-cleanup-${label}.temporary`),
+    targetPath,
   };
 }
 
@@ -129,6 +143,267 @@ describe("PowerPoint private artifact cleanup", () => {
       await fs.rm(temp, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "confirms a terminating runtime process group has no signal-ignoring descendant before cleanup",
+    async () => {
+      const temp = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-cancel-tree-"));
+      const parentScriptPath = path.join(temp, "runtime-parent.mjs");
+      const descendantPidPath = path.join(temp, "descendant.pid");
+      const descendantReadyPath = path.join(temp, "descendant.ready");
+      const privatePath = path.join(temp, "private-authoring-surface");
+      let descendantPid: number | undefined;
+      await fs.mkdir(privatePath);
+      await fs.writeFile(
+        parentScriptPath,
+        [
+          'import { spawn } from "node:child_process";',
+          'import fs from "node:fs";',
+          "const descendantSource = [",
+          "  'import fs from \"node:fs\";',",
+          "  'process.on(\"SIGTERM\", () => {});',",
+          "  'fs.writeFileSync(process.env.DESCENDANT_READY, \"ready\");',",
+          "  'setInterval(() => {}, 1_000);',",
+          '].join("\\n");',
+          "const descendant = spawn(process.execPath, ['-e', descendantSource], {",
+          "  env: process.env,",
+          "  stdio: 'ignore',",
+          "});",
+          "fs.writeFileSync(process.env.DESCENDANT_PID, String(descendant.pid));",
+          "setInterval(() => {}, 1_000);",
+        ].join("\n"),
+      );
+      const cancellation = pptxCleanupTestOnly.createPptxCancellationController({
+        forceKillAfterMs: 25,
+      });
+      try {
+        const execution = pptxCleanupTestOnly.runRuntimeProcess(
+          process.execPath,
+          [parentScriptPath],
+          {
+            ...process.env,
+            DESCENDANT_PID: descendantPidPath,
+            DESCENDANT_READY: descendantReadyPath,
+          },
+          cancellation,
+        );
+        await vi.waitFor(() => fs.lstat(descendantReadyPath), { timeout: 1_000, interval: 10 });
+        descendantPid = Number(await fs.readFile(descendantPidPath, "utf8"));
+        expect(Number.isInteger(descendantPid)).toBe(true);
+
+        cancellation.request("SIGTERM");
+        const cancellationFailure = (await execution.catch((error: unknown) => error)) as Error & {
+          childMayBeActive: boolean;
+        };
+        expect(cancellationFailure.name).toBe("PptxCancellationError");
+        expect(cancellationFailure.childMayBeActive).toBe(false);
+        await expect(
+          pptxCleanupTestOnly.requirePrivateCleanup({
+            context: "Synthetic process-tree cleanup",
+            cause: cancellationFailure,
+            operations: [
+              {
+                path: privatePath,
+                remove: () => fs.rm(privatePath, { recursive: true, force: true }),
+              },
+            ],
+          }),
+        ).resolves.toBeUndefined();
+        await expect(fs.lstat(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(() => process.kill(descendantPid as number, 0)).toThrow(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+      } finally {
+        try {
+          descendantPid === undefined || process.kill(descendantPid, "SIGKILL");
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ESRCH" });
+        }
+        await fs.rm(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "terminates a live descendant before cleanup when its runtime leader exits normally",
+    async () => {
+      const temp = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-normal-exit-tree-"));
+      const parentScriptPath = path.join(temp, "runtime-parent.mjs");
+      const descendantPidPath = path.join(temp, "descendant.pid");
+      const descendantReadyPath = path.join(temp, "descendant.ready");
+      const privatePath = path.join(temp, "private-authoring-surface");
+      let descendantPid: number | undefined;
+      await fs.mkdir(privatePath);
+      await fs.writeFile(
+        parentScriptPath,
+        [
+          'import { spawn } from "node:child_process";',
+          'import fs from "node:fs";',
+          "const descendantSource = [",
+          "  'import fs from \"node:fs\";',",
+          "  'process.on(\"SIGTERM\", () => {});',",
+          "  'fs.writeFileSync(process.env.DESCENDANT_READY, \"ready\");',",
+          "  'setInterval(() => {}, 1_000);',",
+          '].join("\\n");',
+          "const descendant = spawn(process.execPath, ['-e', descendantSource], {",
+          "  env: process.env,",
+          "  stdio: 'ignore',",
+          "});",
+          "descendant.unref();",
+          "fs.writeFileSync(process.env.DESCENDANT_PID, String(descendant.pid));",
+          "const readiness = setInterval(() => {",
+          "  fs.existsSync(process.env.DESCENDANT_READY) &&",
+          "    (clearInterval(readiness), process.exit(0));",
+          "}, 5);",
+        ].join("\n"),
+      );
+      const cancellation = pptxCleanupTestOnly.createPptxCancellationController({
+        forceKillAfterMs: 25,
+      });
+      try {
+        const execution = pptxCleanupTestOnly
+          .runRuntimeProcess(
+            process.execPath,
+            [parentScriptPath],
+            {
+              ...process.env,
+              DESCENDANT_PID: descendantPidPath,
+              DESCENDANT_READY: descendantReadyPath,
+            },
+            cancellation,
+          )
+          .catch((error: unknown) => error);
+        const failure = (await execution) as Error & {
+          childMayBeActive: boolean;
+        };
+        descendantPid = Number(await fs.readFile(descendantPidPath, "utf8"));
+
+        expect(failure.name).toBe("PptxCancellationError");
+        expect(failure.childMayBeActive).toBe(false);
+        expect(failure.cause).toEqual(
+          expect.objectContaining({
+            message: "Presentation runtime leader exited while descendants remained active",
+          }),
+        );
+        await expect(
+          pptxCleanupTestOnly.requirePrivateCleanup({
+            context: "Synthetic normal-exit process-tree cleanup",
+            cause: failure,
+            operations: [
+              {
+                path: privatePath,
+                remove: () => fs.rm(privatePath, { recursive: true, force: true }),
+              },
+            ],
+          }),
+        ).resolves.toBeUndefined();
+        await expect(fs.lstat(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(() => process.kill(descendantPid as number, 0)).toThrow(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+      } finally {
+        try {
+          descendantPid === undefined || process.kill(descendantPid, "SIGKILL");
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ESRCH" });
+        }
+        await fs.rm(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps a standalone wrapper alive until a normally orphaned runtime descendant is terminated",
+    () => {
+      const temp = fsSync.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wrapper-tree-"));
+      const parentScriptPath = path.join(temp, "runtime-parent.mjs");
+      const descendantPidPath = path.join(temp, "descendant.pid");
+      const descendantReadyPath = path.join(temp, "descendant.ready");
+      const descendantSignalPath = path.join(temp, "descendant.signal");
+      const wrapperCompletePath = path.join(temp, "wrapper.complete");
+      let descendantPid: number | undefined;
+      try {
+        fsSync.writeFileSync(
+          parentScriptPath,
+          [
+            'import { spawn } from "node:child_process";',
+            'import fs from "node:fs";',
+            "const descendantSource = [",
+            "  'import fs from \"node:fs\";',",
+            '  \'process.on("SIGTERM", () => fs.writeFileSync(process.env.DESCENDANT_SIGNAL, "SIGTERM"));\',',
+            "  'fs.writeFileSync(process.env.DESCENDANT_READY, \"ready\");',",
+            "  'setInterval(() => {}, 1_000);',",
+            '].join("\\n");',
+            "const descendant = spawn(process.execPath, ['-e', descendantSource], {",
+            "  env: process.env,",
+            "  stdio: 'ignore',",
+            "});",
+            "descendant.unref();",
+            "fs.writeFileSync(process.env.DESCENDANT_PID, String(descendant.pid));",
+            "const readiness = setInterval(() => {",
+            "  fs.existsSync(process.env.DESCENDANT_READY) &&",
+            "    (clearInterval(readiness), process.exit(0));",
+            "}, 5);",
+          ].join("\n"),
+        );
+        const buildModuleUrl = pathToFileURL(
+          path.resolve(".agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts"),
+        ).href;
+        const wrapperSource = [
+          'import assert from "node:assert/strict";',
+          'import fs from "node:fs";',
+          `import { pptxCleanupTestOnly } from ${JSON.stringify(buildModuleUrl)};`,
+          "const cancellation = pptxCleanupTestOnly.createPptxCancellationController({ forceKillAfterMs: 75 });",
+          "const failure = await pptxCleanupTestOnly.runRuntimeProcess(",
+          "  process.execPath,",
+          "  [process.env.RUNTIME_PARENT],",
+          "  process.env,",
+          "  cancellation,",
+          ").then(() => new Error('runtime unexpectedly succeeded'), (error) => error);",
+          "assert.equal(failure.name, 'PptxCancellationError');",
+          "assert.equal(failure.childMayBeActive, false);",
+          "const descendantPid = Number(fs.readFileSync(process.env.DESCENDANT_PID, 'utf8'));",
+          "assert.throws(() => process.kill(descendantPid, 0), { code: 'ESRCH' });",
+          "assert.equal(fs.readFileSync(process.env.DESCENDANT_SIGNAL, 'utf8'), 'SIGTERM');",
+          "fs.writeFileSync(process.env.WRAPPER_COMPLETE, 'complete');",
+        ].join("\n");
+        const result = spawnSync(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "--eval", wrapperSource],
+          {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              DESCENDANT_PID: descendantPidPath,
+              DESCENDANT_READY: descendantReadyPath,
+              DESCENDANT_SIGNAL: descendantSignalPath,
+              RUNTIME_PARENT: parentScriptPath,
+              WRAPPER_COMPLETE: wrapperCompletePath,
+            },
+            timeout: 5_000,
+          },
+        );
+        descendantPid = Number(fsSync.readFileSync(descendantPidPath, "utf8"));
+
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        expect(result.signal).toBeNull();
+        expect(fsSync.readFileSync(descendantSignalPath, "utf8")).toBe("SIGTERM");
+        expect(fsSync.readFileSync(wrapperCompletePath, "utf8")).toBe("complete");
+        expect(() => process.kill(descendantPid as number, 0)).toThrow(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+      } finally {
+        try {
+          descendantPid === undefined || process.kill(descendantPid, "SIGKILL");
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ESRCH" });
+        }
+        fsSync.rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rolls back a partial target only when its hard-link witness matches after cancellation", async () => {
     const output = finalizationArtifact("cancel-matching-output");

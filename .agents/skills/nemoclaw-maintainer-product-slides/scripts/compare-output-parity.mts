@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { writeProtectedOutput } from "./protected-output.mts";
 import { canonicalJson, sha256Text } from "./validate-slide-model.mts";
 
 export const NATIVE_KINDS = {
@@ -1850,9 +1851,9 @@ async function main() {
   );
   const output = canonicalJson(result);
   if (options.output) {
-    const outputPath = path.resolve(options.output);
-    await mkdir(path.dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, output, "utf8");
+    writeProtectedOutput(options.output, output, {
+      artifactName: "Cross-format parity evidence",
+    });
   } else process.stdout.write(output);
   if (!result.equal) process.exitCode = 1;
 }

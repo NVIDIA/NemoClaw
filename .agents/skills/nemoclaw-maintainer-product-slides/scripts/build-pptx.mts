@@ -26,6 +26,13 @@ import {
   roadmapEpicDisplayText,
   roadmapFocusText,
 } from "./compare-output-parity.mts";
+import {
+  prepareProtectedOutputBoundary,
+  prepareProtectedOutputParentBoundary,
+  protectedOutputDiagnostic,
+  protectedOutputBoundaryFailure,
+  type ProtectedOutputBoundary,
+} from "./protected-output.mts";
 import { canonicalJson, sha256Text, validateSlideModel } from "./validate-slide-model.mts";
 
 type DynamicValue = ReturnType<typeof JSON.parse>;
@@ -77,6 +84,38 @@ class PptxCancellationError extends Error {
   }
 }
 
+class PptxOutputBoundaryError extends Error {
+  readonly detail: string;
+  readonly unresolvedPaths: string[];
+
+  constructor(message: string, unresolvedPaths: string[], cause?: unknown) {
+    const retainedPaths = [...new Set(unresolvedPaths)];
+    super(
+      `${message}. Preserved unresolved PowerPoint paths: ${
+        retainedPaths.map((entry) => JSON.stringify(entry)).join(", ") || "none"
+      }`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "PptxOutputBoundaryError";
+    this.detail = message;
+    this.unresolvedPaths = retainedPaths;
+  }
+}
+
+function mergePptxOutputBoundaryError(
+  error: PptxOutputBoundaryError,
+  unresolvedPaths: string[],
+  cause?: unknown,
+): PptxOutputBoundaryError {
+  return new PptxOutputBoundaryError(
+    error.detail,
+    [...error.unresolvedPaths, ...unresolvedPaths],
+    cause === undefined
+      ? error
+      : new AggregateError([error, cause], "PowerPoint output-boundary cleanup failed"),
+  );
+}
+
 function mergePptxCancellationError(
   error: PptxCancellationError,
   {
@@ -109,11 +148,18 @@ type PptxChildTracking = {
   markSpawnFailed: (error: unknown) => void;
 };
 
+type PptxChildProcessTree = {
+  isActive: () => boolean;
+  signal: (signal: NodeJS.Signals) => boolean;
+  tracksDescendants: boolean;
+  unref: () => void;
+};
+
 type PptxCancellationController = {
   readonly signal: PptxCancellationSignal | undefined;
   readonly childMayBeActive: boolean;
   request: (signal: PptxCancellationSignal) => void;
-  attachChild: (child: ChildProcess) => PptxChildTracking;
+  attachChild: (child: ChildProcess, processTree?: PptxChildProcessTree) => PptxChildTracking;
   throwIfRequested: (
     context: string,
     details?: {
@@ -131,6 +177,7 @@ function createPptxCancellationController({
 } = {}): PptxCancellationController {
   let requestedSignal: PptxCancellationSignal | undefined;
   let activeChild: ChildProcess | undefined;
+  let activeProcessTree: PptxChildProcessTree | undefined;
   let activeChildMayRemain = false;
   let childStopFailure: unknown;
   let forceKillTimer: NodeJS.Timeout | undefined;
@@ -144,31 +191,62 @@ function createPptxCancellationController({
     terminalFailureTimer = undefined;
   };
   const recordFailedKill = (signal: NodeJS.Signals, result: boolean): void => {
-    if (!result) childStopFailure = new Error(`Active PowerPoint child rejected ${signal}`);
+    if (!result) childStopFailure = new Error(`Active PowerPoint process group rejected ${signal}`);
+  };
+  const processTreeIsActive = (): boolean => {
+    if (!activeProcessTree) return activeChild !== undefined;
+    try {
+      return activeProcessTree.isActive();
+    } catch (error) {
+      childStopFailure = error;
+      return true;
+    }
+  };
+  const confirmStoppedProcessTree = (): void => {
+    activeChild = undefined;
+    activeProcessTree = undefined;
+    activeChildMayRemain = false;
+    clearChildTimers();
+    resolveTerminalFailure?.();
+    resolveTerminalFailure = undefined;
   };
   const stopActiveChild = (): void => {
-    if (!requestedSignal || !activeChild || forceKillTimer || terminalFailureTimer) return;
+    if (
+      !requestedSignal ||
+      !activeChild ||
+      !activeProcessTree ||
+      forceKillTimer ||
+      terminalFailureTimer
+    )
+      return;
     try {
-      recordFailedKill(requestedSignal, activeChild.kill(requestedSignal));
+      recordFailedKill(requestedSignal, activeProcessTree.signal(requestedSignal));
     } catch (error) {
       childStopFailure = error;
     }
     forceKillTimer = setTimeout(() => {
-      if (!activeChild) return;
+      if (!activeChild || !activeProcessTree) return;
+      if (!processTreeIsActive()) {
+        confirmStoppedProcessTree();
+        return;
+      }
       try {
-        recordFailedKill("SIGKILL", activeChild.kill("SIGKILL"));
+        recordFailedKill("SIGKILL", activeProcessTree.signal("SIGKILL"));
       } catch (error) {
         childStopFailure = error;
       }
       terminalFailureTimer = setTimeout(() => {
-        if (!activeChild) return;
+        if (!activeChild || !activeProcessTree) return;
+        if (!processTreeIsActive()) {
+          confirmStoppedProcessTree();
+          return;
+        }
         activeChildMayRemain = true;
-        activeChild.unref();
+        activeProcessTree.unref();
         resolveTerminalFailure?.();
+        resolveTerminalFailure = undefined;
       }, forceKillAfterMs);
-      terminalFailureTimer.unref();
     }, forceKillAfterMs);
-    forceKillTimer.unref();
   };
 
   return {
@@ -182,11 +260,12 @@ function createPptxCancellationController({
       requestedSignal ??= signal;
       stopActiveChild();
     },
-    attachChild(child) {
+    attachChild(child, processTree = directChildProcessTree(child)) {
       if (activeChild) {
         throw new Error("PowerPoint cancellation controller already tracks a child process");
       }
       activeChild = child;
+      activeProcessTree = processTree;
       activeChildMayRemain = false;
       childStopFailure = undefined;
       const terminalFailure = new Promise<void>((resolve) => {
@@ -196,11 +275,19 @@ function createPptxCancellationController({
         if (requestedSignal) childStopFailure = error;
       };
       const onChildClose = (): void => {
-        if (activeChild === child) activeChild = undefined;
-        activeChildMayRemain = false;
-        clearChildTimers();
-        resolveTerminalFailure = undefined;
         child.removeListener("error", onChildError);
+        if (activeChild !== child) return;
+        if (processTree.tracksDescendants && processTreeIsActive()) {
+          if (!requestedSignal) {
+            childStopFailure = new Error(
+              "Presentation runtime leader exited while descendants remained active",
+            );
+            requestedSignal = "SIGTERM";
+            stopActiveChild();
+          }
+          return;
+        }
+        confirmStoppedProcessTree();
       };
       child.on("error", onChildError);
       child.once("close", onChildClose);
@@ -210,6 +297,7 @@ function createPptxCancellationController({
         markSpawnFailed(error) {
           childStopFailure = error;
           if (activeChild === child) activeChild = undefined;
+          if (activeProcessTree === processTree) activeProcessTree = undefined;
           activeChildMayRemain = false;
           clearChildTimers();
           resolveTerminalFailure = undefined;
@@ -232,6 +320,59 @@ function createPptxCancellationController({
       });
     },
   };
+}
+
+function childProcessIsActive(child: ChildProcess): boolean {
+  return (
+    (child.exitCode === null || child.exitCode === undefined) &&
+    (child.signalCode === null || child.signalCode === undefined)
+  );
+}
+
+function directChildProcessTree(child: ChildProcess): PptxChildProcessTree {
+  return {
+    isActive: () => childProcessIsActive(child),
+    signal: (signal) => child.kill(signal),
+    tracksDescendants: false,
+    unref: () => child.unref(),
+  };
+}
+
+function missingProcessError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ESRCH";
+}
+
+function runtimeChildProcessTree(child: ChildProcess): PptxChildProcessTree {
+  const pid = child.pid;
+  if (!pid) return directChildProcessTree(child);
+  return {
+    isActive: () => {
+      try {
+        process.kill(-pid, 0);
+        return true;
+      } catch (error) {
+        if (missingProcessError(error)) return false;
+        throw error;
+      }
+    },
+    signal: (signal) => {
+      try {
+        process.kill(-pid, signal);
+        return true;
+      } catch (error) {
+        if (missingProcessError(error)) return false;
+        throw error;
+      }
+    },
+    tracksDescendants: true,
+    unref: () => child.unref(),
+  };
+}
+
+function requirePosixProductSlideRuntime(): void {
+  if (process.platform === "win32" || typeof process.geteuid !== "function") {
+    throw new Error("NemoClaw product-slide generation requires a POSIX runtime");
+  }
 }
 
 function installPptxCancellationSignalHandlers(
@@ -357,6 +498,7 @@ export async function validatePresentationRuntimeEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
   executablePath = process.execPath,
 ): Promise<PresentationRuntimePaths> {
+  requirePosixProductSlideRuntime();
   const [runtimeNode, runtimeNodeModules, runtimeBinDir, skillDir, tmpDir] = await Promise.all([
     requireAbsoluteRuntimePath(environment.RUNTIME_NODE, "RUNTIME_NODE", "file"),
     requireAbsoluteRuntimePath(
@@ -487,32 +629,41 @@ async function runRuntimeProcess(
     spawn: (
       executable: string,
       arguments_: string[],
-      options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+      options: { detached: boolean; env: NodeJS.ProcessEnv; stdio: "inherit" },
     ) => ChildProcess;
   } = {
     spawn: (runtimeExecutable, runtimeArguments, options) =>
       spawn(runtimeExecutable, runtimeArguments, options),
   },
 ): Promise<void> {
-  cancellation?.throwIfRequested("PowerPoint build before presentation runtime execution");
+  requirePosixProductSlideRuntime();
+  const runtimeCancellation = cancellation ?? createPptxCancellationController();
+  runtimeCancellation.throwIfRequested("PowerPoint build before presentation runtime execution");
   const result = await new Promise<{
     code: number | null;
     signal: NodeJS.Signals | null;
   }>((resolve, reject) => {
     const child = dependencies.spawn(executable, arguments_, {
+      detached: true,
       env: environment,
       stdio: "inherit",
     });
-    const tracking = cancellation?.attachChild(child);
+    const tracking = runtimeCancellation.attachChild(child, runtimeChildProcessTree(child));
     child.once("error", (error) => {
-      if (cancellation?.signal) return;
-      tracking?.markSpawnFailed(error);
+      if (runtimeCancellation.signal) return;
+      tracking.markSpawnFailed(error);
       reject(error);
     });
-    child.once("close", (code, signal) => resolve({ code, signal }));
-    void tracking?.terminalFailure.then(() => resolve({ code: null, signal: null }));
+    child.once("close", (code, signal) => {
+      if (runtimeCancellation.signal) {
+        void tracking.terminalFailure.then(() => resolve({ code: null, signal: null }));
+        return;
+      }
+      resolve({ code, signal });
+    });
+    void tracking.terminalFailure.then(() => resolve({ code: null, signal: null }));
   });
-  cancellation?.throwIfRequested("PowerPoint build during presentation runtime execution");
+  runtimeCancellation.throwIfRequested("PowerPoint build during presentation runtime execution");
   if (result.code !== 0) {
     const suffix = result.signal ? ` (signal ${result.signal})` : "";
     throw new Error(`Presentation runtime command failed with exit ${result.code}${suffix}`);
@@ -4697,6 +4848,7 @@ export async function validatePptxFilesystemIsolation({
 }
 
 export type PrivateArtifactStage = {
+  boundary?: ProtectedOutputBoundary;
   directory: string;
   path: string;
 };
@@ -4705,16 +4857,28 @@ export async function stagePrivateRegularArtifact({
   parentDirectory,
   filename,
   data,
+  boundary,
 }: {
   parentDirectory: string;
   filename: string;
   data: string | Buffer | Uint8Array;
+  boundary?: ProtectedOutputBoundary;
 }): Promise<PrivateArtifactStage> {
   if (path.basename(filename) !== filename || filename === "." || filename === "..") {
     throw new Error("Private artifact filename must be one path segment");
   }
-  await fs.mkdir(parentDirectory, { recursive: true });
-  const directory = await fs.mkdtemp(path.join(parentDirectory, ".nemoclaw-pptx-"));
+  const stagingParent = boundary?.outputParentPath ?? path.resolve(parentDirectory);
+  if (boundary) {
+    const boundaryFailure = protectedOutputBoundaryFailure(boundary);
+    if (boundaryFailure) {
+      throw new PptxOutputBoundaryError(boundaryFailure, [boundary.outputPath]);
+    }
+  }
+  const parentStat = await fs.lstat(stagingParent, { bigint: true });
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
+    throw new Error(`Private artifact staging parent is not a real directory: ${stagingParent}`);
+  }
+  const directory = await fs.mkdtemp(path.join(stagingParent, ".nemoclaw-pptx-"));
   await fs.chmod(directory, 0o700);
   const temporaryPath = path.join(directory, filename);
   try {
@@ -4724,11 +4888,29 @@ export async function stagePrivateRegularArtifact({
     } finally {
       await handle.close();
     }
-    const temporaryStat = await fs.lstat(temporaryPath);
-    if (!temporaryStat.isFile() || temporaryStat.isSymbolicLink()) {
-      throw new Error("Private artifact staging did not create a regular file");
+    const [directoryStat, temporaryStat] = await Promise.all([
+      fs.lstat(directory, { bigint: true }),
+      fs.lstat(temporaryPath, { bigint: true }),
+    ]);
+    if (
+      !directoryStat.isDirectory() ||
+      directoryStat.isSymbolicLink() ||
+      (directoryStat.mode & 0o7777n) !== 0o700n ||
+      (boundary && directoryStat.uid !== boundary.ownerUid)
+    ) {
+      throw new Error("Private artifact staging did not create an owner-only directory");
     }
-    return { directory, path: temporaryPath };
+    if (
+      !temporaryStat.isFile() ||
+      temporaryStat.isSymbolicLink() ||
+      (temporaryStat.mode & 0o7777n) !== 0o600n ||
+      (boundary && temporaryStat.uid !== boundary.ownerUid)
+    ) {
+      throw new Error(
+        "The private artifact staging file does not satisfy its regular-file, owner, and mode-0600 requirements",
+      );
+    }
+    return { directory, path: temporaryPath, ...(boundary ? { boundary } : {}) };
   } catch (error) {
     await fs.rm(directory, { recursive: true, force: true });
     throw error;
@@ -4738,6 +4920,7 @@ export async function stagePrivateRegularArtifact({
 export async function stagePowerPointBlob(
   blob: DynamicValue,
   outputPath: string,
+  boundary = prepareProtectedOutputBoundary(outputPath, "PowerPoint"),
 ): Promise<PrivateArtifactStage> {
   if (!(blob?.data instanceof Uint8Array)) {
     throw new Error("PowerPoint export did not return binary artifact bytes");
@@ -4745,9 +4928,10 @@ export async function stagePowerPointBlob(
   // FileBlob.save writes inspect sidecars next to the requested path. Stage only
   // the PowerPoint bytes so an implicit inspect file can never escape the run.
   return stagePrivateRegularArtifact({
-    parentDirectory: path.dirname(outputPath),
+    parentDirectory: boundary.outputParentPath,
     filename: "artifact.pptx",
     data: blob.data,
+    boundary,
   });
 }
 
@@ -4813,6 +4997,7 @@ type StagedSupportingArtifact = PrivateArtifactStage & {
 };
 
 type FinalizationArtifact = {
+  boundary: ProtectedOutputBoundary;
   temporaryPath: string;
   targetPath: string;
 };
@@ -4861,6 +5046,12 @@ async function requirePrivateCleanup({
   operations: PrivateCleanupOperation[];
   cause?: unknown;
 }): Promise<void> {
+  if (cause instanceof PptxOutputBoundaryError) {
+    throw mergePptxOutputBoundaryError(
+      cause,
+      operations.map((operation) => operation.path),
+    );
+  }
   if (cause instanceof PptxCancellationError && cause.childMayBeActive) {
     throw mergePptxCancellationError(cause, {
       unresolvedPaths: operations.map((operation) => operation.path),
@@ -4928,6 +5119,13 @@ function rollbackFinalizationOperation(
   return {
     path: artifact.targetPath,
     remove: async () => {
+      const boundaryFailure = protectedOutputBoundaryFailure(artifact.boundary);
+      if (boundaryFailure) {
+        throw new PptxOutputBoundaryError(boundaryFailure, [
+          artifact.targetPath,
+          artifact.temporaryPath,
+        ]);
+      }
       let targetStat: { dev: bigint; ino: bigint };
       try {
         targetStat = await dependencies.lstat(artifact.targetPath);
@@ -4978,7 +5176,16 @@ async function failedFinalizationCleanupFailures({
   const temporaryFailures = await collectPrivateCleanupFailures(
     allArtifacts.map((artifact) => ({
       path: artifact.temporaryPath,
-      remove: () => dependencies.removeTemporary(artifact.temporaryPath),
+      remove: async () => {
+        const boundaryFailure = protectedOutputBoundaryFailure(artifact.boundary);
+        if (boundaryFailure) {
+          throw new PptxOutputBoundaryError(boundaryFailure, [
+            artifact.targetPath,
+            artifact.temporaryPath,
+          ]);
+        }
+        await dependencies.removeTemporary(artifact.temporaryPath);
+      },
     })),
   );
   return [...rollbackFailures, ...temporaryFailures];
@@ -5009,13 +5216,114 @@ async function requirePowerPointOutputAbsent(outputPath: string): Promise<void> 
   throw new Error(`PowerPoint output already exists and will not be overwritten: ${outputPath}`);
 }
 
+async function ensureProtectedPptxOutputDirectory(
+  requestedDirectoryPath: string,
+  artifactName: string,
+): Promise<string> {
+  const directoryPath = path.resolve(requestedDirectoryPath);
+  try {
+    const metadata = await fs.lstat(directoryPath);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error(`${artifactName} is not a real directory: ${directoryPath}`);
+    }
+  } catch (error) {
+    if (!missingPathError(error)) throw error;
+    const creationBoundary = prepareProtectedOutputBoundary(directoryPath, artifactName);
+    await fs.mkdir(creationBoundary.outputPath, { mode: 0o700 });
+  }
+  const boundaryProbe = prepareProtectedOutputBoundary(
+    path.join(directoryPath, ".nemoclaw-pptx-output-boundary"),
+    artifactName,
+  );
+  return boundaryProbe.outputParentPath;
+}
+
+function preparePptxArtifactBoundaries(
+  outputs: LabeledFilesystemPath[],
+): Map<string, ProtectedOutputBoundary> {
+  return new Map(
+    outputs.map((output) => {
+      const targetPath = path.resolve(output.value);
+      return [targetPath, prepareProtectedOutputBoundary(targetPath, `PowerPoint ${output.label}`)];
+    }),
+  );
+}
+
+function requirePptxArtifactBoundary(
+  boundaries: ReadonlyMap<string, ProtectedOutputBoundary>,
+  targetPath: string,
+): ProtectedOutputBoundary {
+  const resolvedTargetPath = path.resolve(targetPath);
+  const boundary = boundaries.get(resolvedTargetPath);
+  if (!boundary) {
+    throw new Error(`PowerPoint output boundary was not prepared: ${resolvedTargetPath}`);
+  }
+  return boundary;
+}
+
+function boundFinalizationArtifact({
+  temporaryPath,
+  targetPath,
+  boundary,
+  unresolvedPaths,
+}: {
+  temporaryPath: string;
+  targetPath: string;
+  boundary?: ProtectedOutputBoundary;
+  unresolvedPaths: string[];
+}): FinalizationArtifact {
+  let currentBoundary: ProtectedOutputBoundary;
+  try {
+    currentBoundary = prepareProtectedOutputParentBoundary(targetPath);
+  } catch (error) {
+    const storedBoundaryFailure = boundary && protectedOutputBoundaryFailure(boundary);
+    const currentBoundaryFailure = protectedOutputDiagnostic(error);
+    throw new PptxOutputBoundaryError(
+      [
+        storedBoundaryFailure,
+        `PowerPoint output parent could not be revalidated for target ${JSON.stringify(targetPath)}: ${currentBoundaryFailure}`,
+      ]
+        .filter((detail): detail is string => typeof detail === "string")
+        .join(". "),
+      unresolvedPaths,
+      error,
+    );
+  }
+  if (boundary && boundary.outputPath !== currentBoundary.outputPath) {
+    throw new PptxOutputBoundaryError(
+      `Prepared PowerPoint output boundary does not match target ${JSON.stringify(targetPath)}`,
+      unresolvedPaths,
+    );
+  }
+  return {
+    temporaryPath,
+    targetPath,
+    boundary: boundary ?? currentBoundary,
+  };
+}
+
+function assertPptxFinalizationBoundary(
+  artifact: FinalizationArtifact,
+  allArtifacts: FinalizationArtifact[],
+): void {
+  const boundaryFailure = protectedOutputBoundaryFailure(artifact.boundary);
+  if (!boundaryFailure) return;
+  throw new PptxOutputBoundaryError(boundaryFailure, [
+    ...allArtifacts.map((entry) => entry.temporaryPath),
+    ...allArtifacts.map((entry) => entry.targetPath),
+  ]);
+}
+
 export async function finalizePptxArtifacts({
   temporaryOutputPath,
   outputPath,
+  outputBoundary,
   temporaryReadbackPath,
   readbackPath,
+  readbackBoundary,
   temporaryInspectPath,
   inspectOutputPath,
+  inspectBoundary,
   supportingArtifacts = [],
   mode,
   isolation,
@@ -5024,11 +5332,15 @@ export async function finalizePptxArtifacts({
 }: {
   temporaryOutputPath: string;
   outputPath: string;
+  outputBoundary?: ProtectedOutputBoundary;
   temporaryReadbackPath: string;
   readbackPath: string;
+  readbackBoundary?: ProtectedOutputBoundary;
   temporaryInspectPath?: string;
   inspectOutputPath?: string;
+  inspectBoundary?: ProtectedOutputBoundary;
   supportingArtifacts?: Array<{
+    boundary?: ProtectedOutputBoundary;
     temporaryPath: string;
     targetPath: string;
   }>;
@@ -5041,25 +5353,41 @@ export async function finalizePptxArtifacts({
   cancellation?: PptxCancellationController;
   dependencies?: FinalizationDependencies;
 }): Promise<void> {
-  const outputArtifact = {
+  const outputDescriptor = {
     temporaryPath: temporaryOutputPath,
     targetPath: outputPath,
+    boundary: outputBoundary,
   };
-  const preOutputArtifacts: FinalizationArtifact[] = [
+  const preOutputDescriptors = [
     {
       temporaryPath: temporaryReadbackPath,
       targetPath: readbackPath,
+      boundary: readbackBoundary,
     },
     ...(temporaryInspectPath && inspectOutputPath
       ? [
           {
             temporaryPath: temporaryInspectPath,
             targetPath: inspectOutputPath,
+            boundary: inspectBoundary,
           },
         ]
       : []),
     ...supportingArtifacts,
   ];
+  const unresolvedArtifactPaths = [outputDescriptor, ...preOutputDescriptors].flatMap(
+    (artifact) => [artifact.temporaryPath, artifact.targetPath],
+  );
+  const outputArtifact = boundFinalizationArtifact({
+    ...outputDescriptor,
+    unresolvedPaths: unresolvedArtifactPaths,
+  });
+  const preOutputArtifacts: FinalizationArtifact[] = preOutputDescriptors.map((artifact) =>
+    boundFinalizationArtifact({
+      ...artifact,
+      unresolvedPaths: unresolvedArtifactPaths,
+    }),
+  );
   const allArtifacts = [outputArtifact, ...preOutputArtifacts];
   const temporaryCleanupOperations = (): PrivateCleanupOperation[] =>
     allArtifacts.map((artifact) => ({
@@ -5071,6 +5399,9 @@ export async function finalizePptxArtifacts({
   try {
     cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`);
     if (isolation) await validatePptxFilesystemIsolation(isolation);
+    for (const artifact of allArtifacts) {
+      assertPptxFinalizationBoundary(artifact, allArtifacts);
+    }
     cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`);
     // The PPTX is the commit marker in both modes. Every supporting artifact
     // reaches a fresh no-clobber destination before the primary output appears.
@@ -5078,18 +5409,31 @@ export async function finalizePptxArtifacts({
       cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`, {
         partialTargetPaths: createdArtifacts.map((created) => created.targetPath),
       });
+      assertPptxFinalizationBoundary(artifact, allArtifacts);
       await dependencies.link(artifact.temporaryPath, artifact.targetPath);
       createdArtifacts.push(artifact);
+      assertPptxFinalizationBoundary(artifact, allArtifacts);
       cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`, {
         partialTargetPaths: createdArtifacts.map((created) => created.targetPath),
       });
     }
   } catch (error) {
+    if (error instanceof PptxOutputBoundaryError) throw error;
     const cleanupFailures = await failedFinalizationCleanupFailures({
       createdArtifacts,
       allArtifacts,
       dependencies,
     });
+    const boundaryCleanupFailure = cleanupFailures.find(
+      (failure) => failure.reason instanceof PptxOutputBoundaryError,
+    );
+    if (boundaryCleanupFailure?.reason instanceof PptxOutputBoundaryError) {
+      throw mergePptxOutputBoundaryError(
+        boundaryCleanupFailure.reason,
+        cleanupFailures.map((failure) => failure.path),
+        error,
+      );
+    }
     const cancellationSignal =
       error instanceof PptxCancellationError ? error.signal : cancellation?.signal;
     if (cancellationSignal) {
@@ -5947,6 +6291,7 @@ export async function buildPptx(
     protectedDirectories: protectedOutputDirectories,
   });
   for (const output of outputPaths) await requirePowerPointOutputAbsent(path.resolve(output.value));
+  let outputBoundaries: Map<string, ProtectedOutputBoundary>;
   const templateSha256 = sha256Text(templateBytes);
   const roleMapSha256 = sha256Text(roleMapBytes);
   if (
@@ -6039,6 +6384,10 @@ export async function buildPptx(
     });
   }
 
+  await ensureProtectedPptxOutputDirectory(options.previewDir, "PowerPoint preview directory");
+  await ensureProtectedPptxOutputDirectory(options.layoutDir, "PowerPoint layout directory");
+  outputBoundaries = preparePptxArtifactBoundaries(outputPaths);
+
   const [frameMapBytes, inspectBytes, inspectManifestBytes] = await Promise.all([
     fs.readFile(templateWorkflow.frameMap),
     fs.readFile(templateWorkflow.inspect),
@@ -6112,22 +6461,29 @@ export async function buildPptx(
     inputs: finalizationInputPaths,
     protectedDirectories: protectedOutputDirectories,
   });
-  await Promise.all([
-    fs.mkdir(path.resolve(options.previewDir), { recursive: true }),
-    fs.mkdir(path.resolve(options.layoutDir), { recursive: true }),
-    fs.mkdir(path.dirname(outputPath), { recursive: true }),
-    fs.mkdir(path.dirname(readbackPath), { recursive: true }),
-  ]).catch(async (error) => {
+  try {
+    for (const boundary of outputBoundaries.values()) {
+      const boundaryFailure = protectedOutputBoundaryFailure(boundary);
+      if (boundaryFailure) {
+        throw new PptxOutputBoundaryError(boundaryFailure, [
+          ...outputBoundaries.keys(),
+          authored.surface.directory,
+        ]);
+      }
+    }
+  } catch (error) {
     await requirePrivateDirectoryCleanup(
       "PowerPoint destination preparation failed and private authoring-surface cleanup also failed",
       authored.surface.directory,
       error,
     );
     throw error;
-  });
+  }
+  const outputBoundary = requirePptxArtifactBoundary(outputBoundaries, outputPath);
   const stagedOutput = await stagePowerPointBlob(
     { data: new Uint8Array(await fs.readFile(authored.authoredOutput)) },
     outputPath,
+    outputBoundary,
   ).catch(async (error) => {
     await requirePrivateDirectoryCleanup(
       "PowerPoint artifact staging failed and private authoring-surface cleanup also failed",
@@ -6251,11 +6607,13 @@ export async function buildPptx(
       if (!layoutTargetPath || !previewTargetPath) {
         throw new Error(`${role} lacks a generated-artifact target path`);
       }
+      const layoutBoundary = requirePptxArtifactBoundary(outputBoundaries, layoutTargetPath);
       stagedSupportingArtifacts.push({
         ...(await stagePrivateRegularArtifact({
-          parentDirectory: path.dirname(layoutTargetPath),
+          parentDirectory: layoutBoundary.outputParentPath,
           filename: "layout.json",
           data: layoutText,
+          boundary: layoutBoundary,
         })),
         targetPath: layoutTargetPath,
       });
@@ -6266,11 +6624,13 @@ export async function buildPptx(
       });
       const previewBytes = Buffer.from(await previewBlob.arrayBuffer());
       managedPreviewImages.push(previewBytes);
+      const previewBoundary = requirePptxArtifactBoundary(outputBoundaries, previewTargetPath);
       stagedSupportingArtifacts.push({
         ...(await stagePrivateRegularArtifact({
-          parentDirectory: path.dirname(previewTargetPath),
+          parentDirectory: previewBoundary.outputParentPath,
           filename: "preview.png",
           data: previewBytes,
+          boundary: previewBoundary,
         })),
         targetPath: previewTargetPath,
       });
@@ -6296,11 +6656,13 @@ export async function buildPptx(
     )) {
       await assertTableLinks(JSZip, stagedOutput.path, capability);
     }
+    const montageBoundary = requirePptxArtifactBoundary(outputBoundaries, montageOutputPath);
     stagedSupportingArtifacts.push({
       ...(await stagePrivateRegularArtifact({
-        parentDirectory: path.dirname(montageOutputPath),
+        parentDirectory: montageBoundary.outputParentPath,
         filename: "montage.webp",
         data: await managedMontageBytes(sharp, managedPreviewImages),
+        boundary: montageBoundary,
       })),
       targetPath: montageOutputPath,
     });
@@ -6309,10 +6671,12 @@ export async function buildPptx(
         kind: "slide,textbox,shape,table,notes,layout",
         maxChars: 1_000_000,
       });
+      const inspectBoundary = requirePptxArtifactBoundary(outputBoundaries, inspectOutputPath);
       stagedInspect = await stagePrivateRegularArtifact({
-        parentDirectory: path.dirname(inspectOutputPath),
+        parentDirectory: inspectBoundary.outputParentPath,
         filename: "inspection.ndjson",
         data: inspect.ndjson,
+        boundary: inspectBoundary,
       });
     }
     const artifactSha256 = sha256Text(await fs.readFile(stagedOutput.path));
@@ -6373,19 +6737,25 @@ export async function buildPptx(
         `PowerPoint artifact readback differs from the shared model: ${selfReadback.errors.map((error: DynamicValue) => error.code).join(", ")}`,
       );
     }
+    const readbackBoundary = requirePptxArtifactBoundary(outputBoundaries, readbackPath);
     stagedReadback = await stagePrivateRegularArtifact({
-      parentDirectory: path.dirname(readbackPath),
+      parentDirectory: readbackBoundary.outputParentPath,
       filename: "readback.json",
       data: canonicalJson(readback),
+      boundary: readbackBoundary,
     });
     await finalizePptxArtifacts({
       temporaryOutputPath: stagedOutput.path,
       outputPath,
+      outputBoundary,
       temporaryReadbackPath: stagedReadback.path,
       readbackPath,
+      readbackBoundary,
       temporaryInspectPath: stagedInspect?.path,
       inspectOutputPath,
+      inspectBoundary: stagedInspect?.boundary,
       supportingArtifacts: stagedSupportingArtifacts.map((artifact) => ({
+        boundary: artifact.boundary,
         temporaryPath: artifact.path,
         targetPath: artifact.targetPath,
       })),
