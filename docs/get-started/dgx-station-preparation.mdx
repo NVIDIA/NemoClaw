@@ -28,7 +28,7 @@ An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
 On that OTA-form path, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
 The no-OTA DGX OS `7.6.x` profile must omit every `DGX_OTA_*` field.
 NemoClaw rejects partial OTA metadata.
-It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not match the date against a build.
+It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not require the date to match a build.
 Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending.
 All accepted DGX OS forms remain subject to the runtime checks below.
 NemoClaw also recognizes these no-OTA factory profiles for bounded qualification.
@@ -77,7 +77,7 @@ The installer records the override in the printed relogin command when Docker-gr
 ## Prepare Generic Ubuntu
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
-Preparation probes package and runtime state first, reuses matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+Preparation probes package and runtime state first, reuses components whose versions match the accepted recipe, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
 
 NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
 NemoClaw still stops before mutation when it finds any of these conditions:

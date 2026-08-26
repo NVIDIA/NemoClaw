@@ -148,7 +148,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 
 ## Handle Tokens Securely and Visually
 
-Before collecting secrets, determine the environment-variable names and command argv, explain them, and ask permission.
+Before collecting secrets, determine every environment-variable name and the complete command argv, explain them, and ask permission.
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 

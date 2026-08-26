@@ -146,7 +146,7 @@ A successful call has this shape:
 ```
 
 `content` preserves the successful MCP `ToolMessage` content.
-`structured_content` appears only when the server returns one mapping under that artifact field.
+`structured_content` appears only when the server returns an artifact that contains only a `structured_content` mapping.
 A tool-reported failure, unsupported result type, malformed artifact, non-finite value, cyclic value, non-string object key, or another container at depth 64 fails closed.
 A primitive value at depth 64 is accepted.
 There is no separate string-length or item-count limit.

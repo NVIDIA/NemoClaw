@@ -106,7 +106,7 @@ account, Docker isolation, evidence, and cleanup requirements.
 
 Return:
 
-- `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
+- Exact `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
 - workflow attempt;
 - age at inspection time calculated from `createdAt`;
 - tested commit SHA;

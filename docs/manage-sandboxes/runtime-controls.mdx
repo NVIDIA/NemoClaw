@@ -167,7 +167,7 @@ Verify each recorded generation is unchanged, remove only the stale generations 
 
 ### Preserve Managed MCP Policy
 
-Before a manual Shields transition replaces a policy, NemoClaw requires Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
+Before a manual Shields transition replaces a policy, NemoClaw requires the managed Model Context Protocol (MCP) entries to match among the sandbox registry, generated-policy record, and live gateway policy.
 `shields down` carries the proven managed MCP policy entries into the relaxed policy.
 Restoration removes snapshot-time managed MCP entries before it overlays current entries.
 If agreement is absent, a manual Shields transition refuses the replacement policy.

@@ -272,7 +272,7 @@ Then offer exactly these three choices:
 2. Create or update a docs PR for the uncovered range.
 3. Stop tagging.
 
-If the maintainer selects option 1, add this line to the signed release brief:
+If the maintainer selects option 1, add this exact line to the signed release brief:
 
 ```text
 - Maintainer decision: Proceed with the candidate as shown.

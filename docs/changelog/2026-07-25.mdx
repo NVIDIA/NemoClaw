@@ -46,7 +46,7 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   Sandboxes built from an older image must be rebuilt before discovery can run.
   For more information, refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - The installer now requires an existing OpenShell executable to report a version after sandbox backups and before gateway or onboarding changes.
-  A version-tag install reports the requested tag, and a near-miss license response such as `y` receives an in-place hint without weakening `yes` acceptance.
+  A version-tag install reports the requested tag, and a near-miss license response such as `y` receives an in-place hint without weakening literal `yes` acceptance.
   WSL Express selects Windows-host Ollama only with Docker Desktop integration and otherwise configures WSL-local Ollama.
   DGX Station preparation now distinguishes an active vLLM server from unrelated diagnostic processes.
   For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), [Prepare a Windows Machine to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
@@ -71,8 +71,8 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   All managed sandbox base images now install checksum-bound fixed Vim, jq, Oniguruma, and Expat packages and verify the reviewed Perl components.
   Their bundled npm replaces its private `brace-expansion@5.0.7` copy with SRI-pinned `5.0.8`, and each image records a root-owned, read-only package inventory.
   OpenClaw onboarding now rejects a selected base that lacks that immutable inventory before the final image build.
-  When a cached release is incompatible, onboarding refreshes it once.
-  If it remains incompatible, onboarding uses a current local build rather than `:latest`.
+  When a cached release-matched image is incompatible, onboarding refreshes it once.
+  If it remains incompatible, onboarding uses a build from the current source checkout rather than `:latest`.
   Hermes image assembly removes build-only caches and dependencies, reducing the measured final image by 624,394,525 bytes.
   For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
 - Release validation now runs approved E2E targets for fork PRs, retries one confirmed hosted-runner loss, and retries classified transient base-image pulls.

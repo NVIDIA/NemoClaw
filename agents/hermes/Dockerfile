@@ -677,8 +677,8 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
-# the public/secret placeholder bound to the matching standard Langfuse
-# key; raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
+# the OpenShell public and secret placeholders when each placeholder is bound
+# to its matching standard Langfuse key. raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
 # fails closed when the pinned upstream source shape changes.
 ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=c6aad6a7cb56083a3fbb54617ada3edae4bbae1348ba45565944144b07fc283b
 # hadolint ignore=DL4006

@@ -42,7 +42,7 @@ sequence. Re-read the exported constants before authoring the declaration.
 Activation requires all 14 surfaces to report `supported: true`. It also requires:
 
 - host-local inference, direct lifecycle, and workload cleanup capabilities;
-- digest managed images for Linux AMD64 and ARM64;
+- exact-digest managed images for Linux AMD64 and ARM64;
 - `require-managed` selection and no legacy Dockerfile builds;
 - accepted current managed-image startup and capability contract versions;
 - Ollama, NVIDIA NIM, and vLLM services in canonical order;

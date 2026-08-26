@@ -51,7 +51,7 @@ When one or more checks ran without failure but another required check did not r
 ## Resolve the Candidate and Image Evidence
 
 Record the expected NemoClaw commit SHA before deployment.
-Use the latest successful `staging Brev Launchable` job for that SHA.
+Use the latest successful `Staging Brev Launchable` job for that SHA.
 Record the selected workflow and job URLs and the producer run ID selected in that job's log.
 Download its private artifact and require `launchable-e2e.json` to report:
 

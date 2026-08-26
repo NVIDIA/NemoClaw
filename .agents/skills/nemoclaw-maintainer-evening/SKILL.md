@@ -77,7 +77,7 @@ Load `nemoclaw-maintainer-cut-release-tag` and pass the version. That skill owns
 - the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
-- the confirmation phrase; and
+- the exact confirmation phrase; and
 - signed tag creation and remote readback.
 
 Do not run a full E2E suite automatically. Do not ask for confirmation until the release brief is
@@ -97,7 +97,7 @@ Announcement, and report `lkg` state. A post-tag failure does not change tag suc
 
 ## Hard Rules
 
-- Never cut a tag without the maintainer's confirmation phrase.
+- Never cut a tag without the maintainer's exact confirmation phrase.
 - Never bypass the release entry, documentation coverage decision, or applicable GHCR evidence.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
 - Never delay the tag-cut report for post-tag work. Continue the same task after that report.

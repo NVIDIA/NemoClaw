@@ -36,7 +36,7 @@ It also strengthens Hermes Shields state changes and removes sensitive values fr
   For more information, refer to [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp) and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
   Related changes: [PR #8229](https://github.com/NVIDIA/NemoClaw/pull/8229) and [PR #8535](https://github.com/NVIDIA/NemoClaw/pull/8535).
 - Current NemoClaw-managed Hermes images on the Docker driver now use the durable runtime provider state mutation contract for Shields transitions.
-  NemoClaw validates the request and receipt, holds Hermes gateway startup behind the current fence, and preserves rollback and recovery across controller restarts.
+  NemoClaw validates that the request and receipt match, holds Hermes gateway startup behind the current fence, and preserves rollback and recovery across controller restarts.
   An older managed image uses the sealed-plan compatibility path only after NemoClaw proves that the runtime-provider capability is absent.
   For more information, refer to [Understand Runtime Changes](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Troubleshooting](/user-guide/hermes/reference/troubleshooting), and [Trusted Computing Base](/user-guide/hermes/security/trusted-computing-base).
   Related change: [PR #8658](https://github.com/NVIDIA/NemoClaw/pull/8658).

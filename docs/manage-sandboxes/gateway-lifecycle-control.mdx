@@ -48,7 +48,7 @@ Custom agents that recover through an SSH script do not use this controller prob
 
 <AgentOnly variant="hermes">
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
-Four consecutive gateway health failures trigger child recovery.
+Four consecutive gateway health failures trigger recovery of the observed gateway child.
 
 Five unexpected gateway exits or failed replacement candidates within 60 seconds quarantine relaunch until the sandbox is recreated.
 An authenticated host action authorizes one exit bound to the gateway process ID and kernel start identity while the root controller process remains live, so deliberate `gateway restart` and controller-driven replacement do not consume that crash budget.

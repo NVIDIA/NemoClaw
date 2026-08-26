@@ -335,7 +335,7 @@ fi
 
 **Apply the accepted write set in canonical order.** Resolve and validate Project 199, Status-field, option, item, and assignee IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the accepted comment last.
 
-GitHub does not make these calls transactional. If a Project update succeeds and a later assignment or comment fails, report the partial state and stop; do not silently retry with changed text or roll back an accepted field change without new approval. Record each Project, assignment, and comment outcome in the activity log or structured task output.
+GitHub does not make these calls transactional. If a Project update succeeds and a later assignment or comment fails, report the exact partial state and stop; do not silently retry with changed text or roll back an accepted field change without new approval. Record each Project, assignment, and comment outcome in the activity log or structured task output.
 
 ---
 

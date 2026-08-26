@@ -119,7 +119,7 @@ describe("native runtime qualification producer workflow", () => {
     const upload = step(toolchain, "Upload the pinned native Podman toolchain");
 
     expect(toolchain.name).toBe(
-      "Build pinned native Podman toolchain / ${{ matrix.architecture }}",
+      "Native Runtime Qualification / Build Podman toolchain / ${{ matrix.architecture }}",
     );
     expect(toolchain.needs).toEqual([
       "generate-matrix",
@@ -244,7 +244,7 @@ describe("native runtime qualification producer workflow", () => {
     const executeRun = execute.run ?? "";
     const gpuResourcesRun = gpuResources.run ?? "";
 
-    expect(producer.name).toBe("${{ matrix.jobName }}");
+    expect(producer.name).toBe("Native Runtime Qualification / ${{ matrix.jobName }}");
     expect(producer.needs).toEqual([
       "generate-matrix",
       "native-runtime-qualification-podman-toolchain",
@@ -552,7 +552,7 @@ describe("native runtime qualification producer workflow", () => {
     const upload = step(aggregate, "Upload aggregate evidence");
     const aggregateCheckout = step(aggregate, "Check out the qualification aggregator");
 
-    expect(aggregate.name).toBe("Aggregate native runtime qualification evidence");
+    expect(aggregate.name).toBe("Native Runtime Qualification / Combine evidence");
     expect(aggregate.needs).toEqual([
       "generate-matrix",
       "native-runtime-qualification-producer-plan",

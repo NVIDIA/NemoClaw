@@ -28,7 +28,7 @@ Treat these as separate states:
 - Use the requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
 - Tag only the candidate captured in the plan.
 - By default, plan `origin/main` without an exception. For urgent QA qualification, a maintainer may
-  select an historical ancestor with `--candidate <full-sha> --exception <reason>`.
+  select a historical ancestor with `--candidate <full-sha> --exception <reason>`.
 - Require the release entry for a current-main plan. A historical plan records its explicit
   release-entry exception in the signed release brief.
 - Treat documentation coverage as maintainer context, not a tag gate. Show the coverage point,
@@ -196,13 +196,13 @@ asking for confirmation.
 
 ### 5. Confirm, Cut, and Report the Tag
 
-Ask the maintainer to paste the plan's phrase:
+Ask the maintainer to paste the plan's exact phrase:
 
 ```text
 CONFIRM RELEASE vX.Y.Z <full-candidate-sha>
 ```
 
-After receiving that phrase, run the cutter immediately. The cutter reads the immutable plan,
+After receiving that exact phrase, run the cutter immediately. The cutter reads the immutable plan,
 validates the signed release brief's documentation decision, and checks remote tag state before the
 push.
 

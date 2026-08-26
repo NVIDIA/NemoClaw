@@ -26,7 +26,7 @@ Activation first records a complete, fingerprinted authority receipt through
 the injected durable store; only then may the provider quiesce or replace the
 original runtime. Provider results are copied into deeply frozen coordinator
 authority. Rollback finalization receipts must prove either restoration of the
-captured snapshot or workload absence. Commit receipts instead
+exact captured snapshot or exact workload absence. Commit receipts instead
 prove the committed outcome without reporting rollback state and may leave
 `heldWorkloadRemoved` false while provider-owned cleanup remains.
 
@@ -56,7 +56,7 @@ through absolute `env` with only a fixed resume marker and the sealed descriptor
 The native resume mode verifies the seals and declared bounds, reconstructs the
 byte-exact environment, marks the transport close-on-exec, and applies the
 captured environment only to the final supervisor `execve`. This preserves
-environment order, duplicate assignments, process-control values, and supervisor argument boundaries. The values do not enter bootstrap argv or
+environment order, duplicate assignments, process-control values, and exact supervisor argument boundaries. The values do not enter bootstrap argv or
 bootstrap-helper environments. They are restored only for the long-lived
 supervisor.
 

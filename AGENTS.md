@@ -239,7 +239,7 @@ unproven retries, ambiguous mutation retries, or broad failed-job reruns. A
 mutation retry is allowed only after the test reconciles the external state and
 proves repeating the same desired operation is safe. Keep bounded operation
 retries separate from complete workflow reruns: `E2E / Main Retry Evidence` records
-attempts and does not request a broad rerun, while `Automation / Recover Platform CI Runner` owns
+attempts and does not request a broad rerun, while `Automation / Platform CI Runner` owns
 at most one full rerun only for authenticated GitHub-hosted runner-loss
 evidence.
 
@@ -274,7 +274,7 @@ Reviewer selection can come from these sources:
 
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
-- The current user names the reviewer.
+- The current user names a reviewer, and you resolve that name to one GitHub user or team login.
 - You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires that reviewer-request write.
 
 Otherwise, do not use any of these reviewer-request writes:

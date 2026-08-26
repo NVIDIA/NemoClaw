@@ -612,7 +612,7 @@ if [ -n "${PROVIDER_CREDENTIAL_ENV:-}" ]; then
   CREDENTIAL_EXPORT="export $PROVIDER_CREDENTIAL_ENV=\$(cat ~/.verify-stale-evidence/provider-key);"
 fi
 
-# Hosted providers require the model from the issue or approved plan.
+# Hosted providers require the exact model from the issue or approved plan.
 # The default below is valid only for the local Ollama path.
 VERIFY_MODEL=${NEMOCLAW_MODEL:-}
 if [ "${BUG_PROVIDER:-ollama}" = "ollama" ]; then

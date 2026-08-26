@@ -927,12 +927,12 @@ RUN --network=default set -eu; \
     rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
     rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with reviewed provenance"; \
+        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with matching reviewed provenance"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
         && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
-        echo "INFO: Base image OpenClaw $CUR_VER lacks reviewed provenance; installing $OPENCLAW_VERSION"; \
+        echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
@@ -981,12 +981,12 @@ RUN --network=default set -eu; \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with lock provenance"; \
+        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with matching lock provenance"; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
-        # Reinstall from the committed lock when protected base provenance
+        # Reinstall from the committed lock when matching protected base provenance
         # is unavailable; matching top-level versions can hide transitive drift.
         echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \

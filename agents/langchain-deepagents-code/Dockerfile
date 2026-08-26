@@ -210,7 +210,7 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The first-party profile plugin uses Deep Agents' supported entry-point hook to
 # register managed aliases without modifying third-party package source. The
 # managed-runtime patch independently hardens DCode entrypoints and installs the
-# reviewed Relay observability boundary. Build validation constrains both and
+# reviewed Relay observability boundary. Build validation verifies both artifacts and
 # fails closed in one layer.
 # invalidState: a no-deps plugin install can precede missing base dependencies.
 # sourceBoundary: Dockerfile.base owns dependencies; this layer only proves them.

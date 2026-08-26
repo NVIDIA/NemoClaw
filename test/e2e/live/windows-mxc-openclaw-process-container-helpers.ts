@@ -67,8 +67,6 @@ const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_TOKEN",
   "PATH",
   "SYSTEMROOT",
-  "TEMP",
-  "TMP",
   "WINDIR",
 ] as const;
 
@@ -322,24 +320,36 @@ export async function runWindowsMxcForwardCleanup(input: {
   readonly processStopped: boolean;
 }> {
   const failures: unknown[] = [];
-  let emergencyTerminationNeeded = input.childWasRunning && input.sandboxDeleteAccepted;
+  let emergencyTerminationNeeded = false;
   let listenerStopped = false;
   let processStopped = false;
 
-  try {
-    await input.stopChild();
-  } catch (error) {
-    failures.push(error);
+  if (input.childWasRunning && input.sandboxDeleteAccepted) {
+    try {
+      processStopped = await input.waitForProcessExit();
+    } catch (error) {
+      failures.push(error);
+    }
+    emergencyTerminationNeeded = !processStopped;
+  }
+  if (!processStopped) {
+    try {
+      await input.stopChild();
+    } catch (error) {
+      failures.push(error);
+    }
   }
   try {
     if (await input.terminateTrustedProcessIfAlive()) emergencyTerminationNeeded = true;
   } catch (error) {
     failures.push(error);
   }
-  try {
-    processStopped = await input.waitForProcessExit();
-  } catch (error) {
-    failures.push(error);
+  if (!processStopped) {
+    try {
+      processStopped = await input.waitForProcessExit();
+    } catch (error) {
+      failures.push(error);
+    }
   }
   try {
     listenerStopped = await input.waitForListenerClosed();
@@ -501,6 +511,30 @@ function requireDescendant(file: string, root: string, name: string): void {
   }
 }
 
+function requireDirectChild(directory: string, root: string, name: string): void {
+  const relative = path.relative(root, directory);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    relative.includes(path.sep)
+  ) {
+    throw new Error(`${name} must be a direct child of the qualification work root`);
+  }
+}
+
+function requireWindowsDriveRoot(directory: string, platform = process.platform): void {
+  if (platform !== "win32") return;
+  const absolute = path.win32.resolve(directory);
+  if (
+    normalizeWindowsIdentityValue(absolute) !==
+    normalizeWindowsIdentityValue(path.win32.parse(absolute).root)
+  ) {
+    throw new Error("Windows MXC qualification work root must be a drive root");
+  }
+}
+
 export function parseWindowsMxcOpenClawQualificationEnvironment(
   environment: NodeJS.ProcessEnv,
 ): WindowsMxcOpenClawQualificationInputs {
@@ -518,6 +552,12 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
   );
   requireDescendant(nodePath, openClawRoot, "OpenClaw Node.js executable");
   requireDescendant(entryPath, openClawRoot, "OpenClaw entrypoint");
+  const workDirectory = realDirectory(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WORK_ROOT"),
+    "Windows MXC qualification work root",
+  );
+  requireWindowsDriveRoot(workDirectory);
+  requireDirectChild(openClawRoot, workDirectory, "OpenClaw artifact root");
 
   return {
     artifactDirectory: realDirectory(
@@ -531,10 +571,7 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
       }
       return "wxc-host-prep-prepare-system-drive" as const;
     })(),
-    workDirectory: realDirectory(
-      requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WORK_ROOT"),
-      "Windows MXC qualification work root",
-    ),
+    workDirectory,
     expected: {
       nemoClawRevision: expectedPattern(environment, "NEMOCLAW_E2E_EXPECTED_SHA", REVISION_PATTERN),
       nodeSha256: expectedPattern(environment, "NEMOCLAW_WINDOWS_MXC_NODE_SHA256", SHA256_PATTERN),
@@ -793,6 +830,12 @@ export function renderWindowsMxcGatewayConfig(input: {
   readonly targetPort: number;
   readonly wxcExecPath: string;
 }): string {
+  const sandboxTempDirectory = path.join(input.shareDirectory, "temp");
+  const agentEnvironment = [
+    ...AGENT_ENVIRONMENT_NAMES,
+    `TEMP=${sandboxTempDirectory}`,
+    `TMP=${sandboxTempDirectory}`,
+  ];
   return [
     "[openshell.drivers.mxc]",
     `wxc_exec_path = ${tomlString(input.wxcExecPath)}`,
@@ -805,7 +848,7 @@ export function renderWindowsMxcGatewayConfig(input: {
     `  ${tomlString(path.join(input.shareDirectory, "probe-agent.mjs"))},`,
     "]",
     "agent_env = [",
-    ...AGENT_ENVIRONMENT_NAMES.map((name) => `  ${JSON.stringify(name)},`),
+    ...agentEnvironment.map((value) => `  ${tomlString(value)},`),
     "]",
     "pc_least_privilege = false",
     'pc_capabilities = ["privateNetworkClientServer"]',
@@ -1707,12 +1750,14 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       const stateDirectory = path.join(runRoot, "state");
       const configDirectory = path.join(runRoot, "config");
       const homeDirectory = path.join(shareDirectory, "home");
+      const tempDirectory = path.join(shareDirectory, "temp");
       const clientHomeDirectory = path.join(runRoot, "client-home");
       for (const directory of [
         shareDirectory,
         stateDirectory,
         configDirectory,
         homeDirectory,
+        tempDirectory,
         clientHomeDirectory,
       ]) {
         fs.mkdirSync(directory, { recursive: true });
@@ -1904,13 +1949,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     release: os.release(),
   });
   if (!host.candidate) throw new Error(host.detail);
-  const workRoot = path.resolve(inputs.workDirectory);
-  if (
-    normalizeWindowsIdentityValue(workRoot) !==
-    normalizeWindowsIdentityValue(path.parse(workRoot).root)
-  ) {
-    throw new Error("Windows MXC qualification work root must be a drive root");
-  }
+  requireWindowsDriveRoot(inputs.workDirectory);
   assertExactIdentities(inputs);
   const powershellPath = trustedWindowsSystemExecutable(
     environment,

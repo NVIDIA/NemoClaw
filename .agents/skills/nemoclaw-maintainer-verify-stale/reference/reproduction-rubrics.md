@@ -26,7 +26,7 @@ Run only the bounded `$EVIDENCE_DIR/reproducer.sh` reconstructed and approved in
 2. Preserve `--dangerously-skip-prompts` only when it was part of the reviewed report and the requested release tag documents its meaning. Never add it automatically or use it to imply third-party-software consent.
 3. Pre-feed only the documented responses for the requested release tag after reviewing every prompt and the state change or consent it represents.
 
-Every adaptation creates a revised script. Show the complete revision, stdin responses, and effects, then obtain explicit approval before execution. If no reviewed non-interactive path exists, route the script to Step 8c or select `verify-inconclusive`.
+Every adaptation creates a revised script. Show the complete revision, exact stdin responses, and effects, then obtain explicit approval before execution. If no reviewed non-interactive path exists, route the script to Step 8c or select `verify-inconclusive`.
 
 ```bash
 # `brev exec` spawns a non-login shell, so ~/.local/bin (where the nemoclaw binary lives

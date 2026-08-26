@@ -33,7 +33,7 @@ It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, ru
 - `nemoclaw status` now reads terminal-runtime out-of-memory counters through a bounded host-side Docker probe, so a recorded kill produces degraded status and rebuild guidance.
   Destroying the final sandbox now stops a packaged OpenShell gateway service and refuses cleanup when the service remains active.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
-- `shields down` now succeeds without changing state when an OpenClaw configuration already has the mutable posture.
+- `shields down` now succeeds without changing state when an OpenClaw configuration matches the requested mutable posture.
   Cloudflare Tunnel cleanup verifies that the recorded process still belongs to `cloudflared` before each signal and removes a stale PID file without signaling an unrelated process.
   For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
 - Managed Hermes image probes now run through a checked-in Python runner, so OpenShell gateways that use Docker's legacy builder enforce the same image assertions as BuildKit.

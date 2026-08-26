@@ -38,7 +38,7 @@ Uninstall preserves an unrelated process that uses the same port.
 <Warning>
 For a non-portable Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
 Back up required Hermes state first.
-NemoClaw removes only a volume with ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+NemoClaw removes only a volume whose ownership labels match NemoClaw's recorded labels; inspection or removal failure exits nonzero and preserves registry state for retry.
 </Warning>
 </AgentOnly>
 
