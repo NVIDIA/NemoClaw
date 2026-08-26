@@ -26,8 +26,8 @@ import {
   validateWeeklyMilestoneRowLayout,
   validateWeeklyMilestoneRowRoleMap,
   weeklyMilestoneLabelText,
-  validateSingleSlideLayoutPair,
-} from "./pptx-template-test-support";
+} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
+import { validateSingleSlideLayoutPair } from "./pptx-template-test-support";
 
 type FakeParagraph = {
   runs?: Array<{ run?: unknown; textStyle?: Record<string, unknown> }>;

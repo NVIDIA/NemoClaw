@@ -7,15 +7,17 @@ import {
   COMPLETED_EPIC_CONTEXT_COLOR,
   connectorInventoryFromSlideXml,
   formatSignedMetricDetail,
-  validateNativeConnectorInventory,
   validateCapabilityEpicCompletionFromSlideXml,
+  validateNativeConnectorInventory,
   validateRoadmapEpicCompletionFromSlideXml,
   validateRoadmapOutcomeParagraphsFromSlideXml,
   validateTemplateThemePackageContract,
   validateWeeklyMilestoneParagraphsFromSlideXml,
-  validateSingleSlideLayoutPair,
-  nativeConnectorSlide,
+} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
+import {
   expectedNativeConnectors,
+  nativeConnectorSlide,
+  validateSingleSlideLayoutPair,
 } from "./pptx-template-test-support";
 
 describe("NemoClaw PowerPoint template authoring contracts", () => {

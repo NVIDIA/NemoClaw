@@ -1,42 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  assertForbiddenText,
-  audienceStrings,
-  capabilityDividerInventoryFromSlideXml,
-  COMPLETED_EPIC_CONTEXT_COLOR,
-  connectorInventoryFromSlideXml,
-  createTemplateFidelityStarterComparisonLayouts,
-  createTemporaryPptxAuthoringSurface,
-  expectedMetricText,
-  formatSignedMetricDetail,
-  freezePptxAuthoringInputs,
-  hyperlinkInventoryFromSlideXml,
-  managedOperationTextByIdentity,
-  runTemplateFidelityWorkflow,
-  templateSlideCountFromPptxBytes,
-  validateNativeConnectorInventory,
-  validateCapabilityEpicCompletionFromSlideXml,
-  validateRoadmapEpicCompletionFromSlideXml,
-  validateRoadmapOutcomeParagraphsFromSlideXml,
-  validateCapabilityClassificationWarningAuthorization,
-  validateRoadmapCapabilityDeleteAuthorization,
-  validateRoadmapExecutiveDeleteAuthorization,
-  validateTemplateLayoutFidelity,
-  validateTemplateSourceInventoryBinding,
-  validateTemplateThemePackageContract,
-  validateWeeklyMilestoneParagraphsFromSlideXml,
-  validateWeeklyMilestoneRowLayout,
-  validateWeeklyMilestoneRowRoleMap,
-  weeklyMilestoneLabelText,
-} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
+import { validateTemplateLayoutFidelity } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
 
 export async function validateSingleSlideLayoutPair({
   starter,
@@ -88,11 +57,11 @@ export async function validateSingleSlideLayoutPair({
   }
 }
 
-export function nativeNode(name: string, id: number): string {
+function nativeNode(name: string, id: number): string {
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="nemoclaw:${name}"/></p:nvSpPr><p:spPr><a:prstGeom prst="roundRect"/></p:spPr></p:sp>`;
 }
 
-export function nativeConnector(options: {
+function nativeConnector(options: {
   contentId: string;
   id: number;
   fromId: number;
@@ -153,34 +122,3 @@ export const expectedNativeConnectors = [
     lineStyle: "dashed" as const,
   },
 ];
-
-export {
-  assertForbiddenText,
-  audienceStrings,
-  capabilityDividerInventoryFromSlideXml,
-  COMPLETED_EPIC_CONTEXT_COLOR,
-  connectorInventoryFromSlideXml,
-  createTemplateFidelityStarterComparisonLayouts,
-  createTemporaryPptxAuthoringSurface,
-  expectedMetricText,
-  formatSignedMetricDetail,
-  freezePptxAuthoringInputs,
-  hyperlinkInventoryFromSlideXml,
-  managedOperationTextByIdentity,
-  runTemplateFidelityWorkflow,
-  templateSlideCountFromPptxBytes,
-  validateNativeConnectorInventory,
-  validateCapabilityEpicCompletionFromSlideXml,
-  validateRoadmapEpicCompletionFromSlideXml,
-  validateRoadmapOutcomeParagraphsFromSlideXml,
-  validateCapabilityClassificationWarningAuthorization,
-  validateRoadmapCapabilityDeleteAuthorization,
-  validateRoadmapExecutiveDeleteAuthorization,
-  validateTemplateLayoutFidelity,
-  validateTemplateSourceInventoryBinding,
-  validateTemplateThemePackageContract,
-  validateWeeklyMilestoneParagraphsFromSlideXml,
-  validateWeeklyMilestoneRowLayout,
-  validateWeeklyMilestoneRowRoleMap,
-  weeklyMilestoneLabelText,
-};

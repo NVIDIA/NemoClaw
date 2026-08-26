@@ -14,6 +14,12 @@ import {
   type ValidationFinding,
   withoutTopLevelKey,
 } from "./validate-slide-model.mts";
+import {
+  assertProtectedOutputAbsent,
+  protectedOutputDiagnostic,
+  quoteProtectedOutputPath,
+  writeProtectedOutput,
+} from "./protected-output.mts";
 
 const ALLOWED_DOC_PATHS = new Set([
   "docs/about/overview.mdx",
@@ -467,23 +473,29 @@ function main(): void {
   if (!options.repoRoot || !options.commitSha || !options.claims || !options.output) {
     throw new Error("--repo-root, --commit, --claims, and --output are required");
   }
+  const outputPath = assertProtectedOutputAbsent(options.output, "Documentation evidence");
   const evidence = collectDocumentationEvidence({
     repoRoot: options.repoRoot,
     commitSha: options.commitSha,
     claims: readJsonFile<ClaimLedger>(path.resolve(options.claims)),
     collectedAt: options.collectedAt,
   });
-  const outputPath = path.resolve(options.output);
-  mkdirSync(path.dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, canonicalJson(evidence), "utf8");
   const recomputed = canonicalSha256(withoutTopLevelKey(evidence, "evidenceSha256"));
   if (recomputed !== evidence.evidenceSha256) {
     throw new Error("Documentation evidence hash verification failed");
   }
-  console.log(`Documentation evidence written: ${outputPath}`);
+  writeProtectedOutput(outputPath, canonicalJson(evidence), {
+    artifactName: "Documentation evidence",
+  });
+  console.log(`Documentation evidence written: ${quoteProtectedOutputPath(outputPath)}`);
   if (!evidence.complete) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`collect-doc-evidence: error: ${protectedOutputDiagnostic(error)}`);
+    process.exitCode = 1;
+  }
 }

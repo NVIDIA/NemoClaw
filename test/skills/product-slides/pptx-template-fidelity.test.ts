@@ -14,8 +14,8 @@ import {
   freezePptxAuthoringInputs,
   templateSlideCountFromPptxBytes,
   validateTemplateSourceInventoryBinding,
-  validateSingleSlideLayoutPair,
-} from "./pptx-template-test-support";
+} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts";
+import { validateSingleSlideLayoutPair } from "./pptx-template-test-support";
 
 describe("NemoClaw PowerPoint template authoring contracts", () => {
   it("freezes exact validated authoring inputs before any source path can change", async () => {

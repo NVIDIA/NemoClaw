@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -41,6 +41,12 @@ import {
   type ValidationFinding,
   withoutTopLevelKey,
 } from "./validate-slide-model.mts";
+import {
+  assertProtectedOutputAbsent,
+  protectedOutputDiagnostic,
+  quoteProtectedOutputPath,
+  writeProtectedOutput,
+} from "./protected-output.mts";
 
 type SnapshotMilestone = {
   nodeId: string;
@@ -2834,6 +2840,7 @@ function main(): void {
   ) {
     throw new Error("All build-slide-model arguments are required");
   }
+  const outputPath = assertProtectedOutputAbsent(options.output, "Slide model");
   const docs = readJson<DocumentationEvidence>(options.docs);
   const claims = readJson<ClaimLedger>(options.claims);
   verifyDocumentationEvidence({
@@ -2849,12 +2856,15 @@ function main(): void {
     narrative: readJson<NarrativeInput>(options.narrativeInput),
     templateFingerprint: options.templateFingerprint,
   });
-  const outputPath = path.resolve(options.output);
-  mkdirSync(path.dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, canonicalJson(model), "utf8");
-  console.log(`Slide model written: ${outputPath}`);
+  writeProtectedOutput(outputPath, canonicalJson(model), { artifactName: "Slide model" });
+  console.log(`Slide model written: ${quoteProtectedOutputPath(outputPath)}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`build-slide-model: error: ${protectedOutputDiagnostic(error)}`);
+    process.exitCode = 1;
+  }
 }

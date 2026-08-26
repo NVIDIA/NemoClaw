@@ -54,6 +54,20 @@ The account that creates `SLIDE_RUN` owns the directory and its contents.
 Keep its mode at `0700`, and create runtime files with owner-only access.
 Use absolute normalized paths in every publication receipt.
 
+The documentation-evidence collector and slide-model builder verify this boundary before reading
+their inputs and again before publication or cleanup.
+`Protected output parent must be owned by effective UID ... with mode 0700` means the selected
+output parent is not the owner-only run directory required above.
+Do not loosen or repair a shared directory in place.
+Create a fresh `SLIDE_RUN` with the commands above and use a new absent output path inside it.
+This boundary does not protect against processes running under the same effective user ID or as
+host root.
+Do not share `SLIDE_RUN` with an untrusted same-account process or job while collection, model
+building, publication, or cleanup is active.
+On macOS, the publishers canonicalize the standard `/var` to `/private/var` and `/tmp` to
+`/private/tmp` path aliases before checking this boundary.
+They reject other symbolic-link output-parent chains and ancestors that another user could replace.
+
 ## GitHub Credential Boundary
 
 Use an existing active GitHub CLI login for `github.com`:
@@ -350,6 +364,17 @@ node --import tsx "$SLIDE_SKILL/scripts/collect-doc-evidence.mts" \
   --output "$SLIDE_RUN/docs-evidence.json"
 ```
 
+`$SLIDE_RUN/docs-evidence.json` must be absent before this command.
+The collector publishes canonical JSON as a mode-`0600` file through an owner-only sibling staging
+directory and a no-clobber hard link.
+It never replaces an existing file, symbolic link, or competing destination.
+Before a rerun, confirm that the output is absent and every diagnostic-named staging path was
+removed.
+If publication or cleanup is unresolved, preserve every exact JSON-quoted target, witness, and
+staging path.
+Do not rerun with that output path or remove an ambiguous path.
+Inspect the named paths and ask the user to direct recovery.
+
 The trusted repository must contain the recorded commit as an immutable Git object reachable from its fetched `origin/main` reference.
 The collector reads each source as `commitSha:path`; it does not read the working-tree copy.
 Do not omit `--commit` or substitute documentation from another commit.
@@ -514,6 +539,17 @@ node --import tsx "$SLIDE_SKILL/scripts/build-slide-model.mts" \
   --template-fingerprint "$TEMPLATE_FINGERPRINT" \
   --output "$SLIDE_RUN/slide-model.json"
 ```
+
+`$SLIDE_RUN/slide-model.json` must be absent before this command.
+The builder publishes canonical JSON as a mode-`0600` file through an owner-only sibling staging
+directory and a no-clobber hard link.
+It never replaces an existing file, symbolic link, or competing destination.
+Before a rerun, confirm that the output is absent and every diagnostic-named staging path was
+removed.
+If publication or cleanup is unresolved, preserve every exact JSON-quoted target, witness, and
+staging path.
+Do not rerun with that output path or remove an ambiguous path.
+Inspect the named paths and ask the user to direct recovery.
 
 Validate preview behavior first:
 
