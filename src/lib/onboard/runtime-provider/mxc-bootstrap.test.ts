@@ -9,7 +9,6 @@ import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import type {
   RuntimeProviderNativeArtifactBootstrapInput,
-  RuntimeProviderNativeArtifactIdentityEvidence,
   RuntimeProviderNativeArtifactBootstrapOperations,
   RuntimeProviderNativeArtifactBootstrapPlan,
   RuntimeProviderNativeArtifactReadinessEvidence,
@@ -76,33 +75,26 @@ function readyEvidence(
   };
 }
 
-function artifactIdentityEvidence(
-  plan: RuntimeProviderNativeArtifactBootstrapPlan,
-): RuntimeProviderNativeArtifactIdentityEvidence {
+function verifiedCreateOutcome(plan: RuntimeProviderNativeArtifactBootstrapPlan) {
   return {
+    status: "created" as const,
     authoritySha256: plan.authoritySha256,
-    artifactRoot: plan.artifactRoot,
     artifactDigest: plan.workload.artifact.digest,
-    executablePath: plan.executablePath,
     executableDigest: plan.workload.launch.executable.digest,
   };
 }
 
 describe("inactive MXC native-artifact bootstrap", () => {
-  it("preserves drive-root launch authority across create and readiness checks (#8178)", async () => {
+  it("preserves drive-root launch authority across atomic create and readiness checks (#8178)", async () => {
     let observedPlan: RuntimeProviderNativeArtifactBootstrapPlan | null = null;
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {
-      verifyArtifactIdentity: vi.fn(async (plan) => artifactIdentityEvidence(plan)),
-      create: vi.fn(async (plan, identity) => {
+      verifyAndCreate: vi.fn(async (plan) => {
         observedPlan = plan;
-        const authoritySha256 = plan.authoritySha256;
-        expect(identity).toEqual(artifactIdentityEvidence(plan));
+        const created = verifiedCreateOutcome(plan);
         Reflect.set(plan, "artifactRoot", SHARE_DIRECTORY);
         Reflect.set(plan.workload.artifact, "digest", "sha256:" + "0".repeat(64));
         Reflect.set(plan.workload.launch.environmentNames, "0", "MUTATED");
-        Reflect.set(identity, "artifactDigest", "sha256:" + "0".repeat(64));
-        expect(identity.artifactDigest).toBe(NATIVE_RECEIPT.artifact.digest);
-        return { status: "created" as const, authoritySha256 };
+        return created;
       }),
       verifyReadiness: vi.fn(async (plan) => {
         expect(plan.artifactRoot).toBe("C:\\openclaw-2026-7-1");
@@ -224,68 +216,57 @@ describe("inactive MXC native-artifact bootstrap", () => {
       /bind OpenClaw home, state, config, TEMP, and TMP/u,
     ],
   ] as const)("rejects %s before the create boundary (#8178)", async (_label, mutate, message) => {
-    const create = vi.fn();
+    const verifyAndCreate = vi.fn();
     await expect(
       nativeBootstrap().run(mutate(bootstrapInput()), {
-        verifyArtifactIdentity: vi.fn(),
-        create,
+        verifyAndCreate,
         verifyReadiness: vi.fn(),
       }),
     ).rejects.toThrow(message);
-    expect(create).not.toHaveBeenCalled();
+    expect(verifyAndCreate).not.toHaveBeenCalled();
   });
 
-  it("requires provider-owned artifact verification before the create boundary (#8178)", async () => {
+  it("rejects the obsolete separated verification and create operations (#8178)", async () => {
+    const verifyArtifactIdentity = vi.fn();
     const create = vi.fn();
 
     await expect(
       nativeBootstrap().run(bootstrapInput(), {
+        verifyArtifactIdentity,
         create,
         verifyReadiness: vi.fn(),
       } as unknown as RuntimeProviderNativeArtifactBootstrapOperations),
-    ).rejects.toThrow(/artifact verification, create, and readiness operations/u);
+    ).rejects.toThrow(/atomic artifact verification and create plus readiness operations/u);
+    expect(verifyArtifactIdentity).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      label: "missing artifact evidence",
-      verifyArtifactIdentity: async () =>
-        undefined as unknown as RuntimeProviderNativeArtifactIdentityEvidence,
-    },
-    {
-      label: "malformed artifact evidence",
-      verifyArtifactIdentity: async () =>
-        ({
-          authoritySha256: "malformed",
-        }) as unknown as RuntimeProviderNativeArtifactIdentityEvidence,
-    },
-    {
-      label: "artifact digest drift",
-      verifyArtifactIdentity: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        ...artifactIdentityEvidence(plan),
-        artifactDigest: `sha256:${"0".repeat(64)}`,
-      }),
-    },
-    {
-      label: "executable digest drift",
-      verifyArtifactIdentity: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        ...artifactIdentityEvidence(plan),
-        executableDigest: `sha256:${"0".repeat(64)}`,
-      }),
-    },
-    {
-      label: "artifact verification failure",
-      verifyArtifactIdentity: async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
-        throw new Error("untrusted artifact verification detail");
-      },
-    },
-  ])("rejects $label before the create boundary (#8178)", async ({ verifyArtifactIdentity }) => {
-    const create = vi.fn();
+  it("refuses launch when a reparse target changes inside atomic verification and create (#8178)", async () => {
+    let resolvedExecutableTarget = "C:\\verified-artifact\\node.exe";
+    const launch = vi.fn();
     const verifyReadiness = vi.fn();
+    const verifyAndCreate = vi.fn(async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
+      const verifiedTarget = resolvedExecutableTarget;
+      const createForVerifiedTarget = new Map([
+        [
+          verifiedTarget,
+          () => {
+            launch(plan.executablePath);
+            return verifiedCreateOutcome(plan);
+          },
+        ],
+      ]);
+      resolvedExecutableTarget = "C:\\substituted-artifact\\node.exe";
+      return (
+        createForVerifiedTarget.get(resolvedExecutableTarget)?.() ?? {
+          status: "not-created" as const,
+          reason: "artifact-verification-failed" as const,
+        }
+      );
+    });
+
     const receipt = await nativeBootstrap().run(bootstrapInput(), {
-      verifyArtifactIdentity,
-      create,
+      verifyAndCreate,
       verifyReadiness,
     });
 
@@ -295,18 +276,69 @@ describe("inactive MXC native-artifact bootstrap", () => {
       resourceState: "absent",
       cleanup: { attempted: false, resourceRemovalAuthorized: false },
     });
-    expect(JSON.stringify(receipt)).not.toContain("untrusted artifact verification detail");
-    expect(create).not.toHaveBeenCalled();
+    expect(verifyAndCreate).toHaveBeenCalledOnce();
+    expect(launch).not.toHaveBeenCalled();
     expect(verifyReadiness).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      label: "malformed atomic outcome",
+      verifyAndCreate: async () =>
+        undefined as unknown as Awaited<
+          ReturnType<RuntimeProviderNativeArtifactBootstrapOperations["verifyAndCreate"]>
+        >,
+      reason: "create-outcome-unknown",
+    },
+    {
+      label: "artifact digest drift",
+      verifyAndCreate: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...verifiedCreateOutcome(plan),
+        artifactDigest: `sha256:${"0".repeat(64)}`,
+      }),
+      reason: "create-authority-mismatch",
+    },
+    {
+      label: "executable digest drift",
+      verifyAndCreate: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...verifiedCreateOutcome(plan),
+        executableDigest: `sha256:${"0".repeat(64)}`,
+      }),
+      reason: "create-authority-mismatch",
+    },
+    {
+      label: "atomic operation failure",
+      verifyAndCreate: async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
+        throw new Error("untrusted artifact verification detail");
+      },
+      reason: "create-outcome-unknown",
+    },
+  ] as const)(
+    "retains an ambiguous resource after $label (#8178)",
+    async ({ verifyAndCreate, reason }) => {
+      const verifyReadiness = vi.fn();
+      const receipt = await nativeBootstrap().run(bootstrapInput(), {
+        verifyAndCreate,
+        verifyReadiness,
+      });
+
+      expect(receipt).toMatchObject({
+        outcome: "retained",
+        reason,
+        resourceState: "possibly-retained",
+        cleanup: { attempted: false, resourceRemovalAuthorized: false },
+      });
+      expect(JSON.stringify(receipt)).not.toContain("untrusted artifact verification detail");
+      expect(verifyReadiness).not.toHaveBeenCalled();
+    },
+  );
 
   it("isolates writable shares by sandbox lifecycle generation (#8178)", async () => {
     const plans: RuntimeProviderNativeArtifactBootstrapPlan[] = [];
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {
-      verifyArtifactIdentity: vi.fn(async (plan) => artifactIdentityEvidence(plan)),
-      create: vi.fn(async (plan) => {
+      verifyAndCreate: vi.fn(async (plan) => {
         plans.push(plan);
-        return { status: "not-created" as const };
+        return { status: "not-created" as const, reason: "create-rejected" as const };
       }),
       verifyReadiness: vi.fn(),
     };
@@ -326,7 +358,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
   it.each([
     {
       label: "explicit create rejection",
-      create: async () => ({ status: "not-created" as const }),
+      verifyAndCreate: async () => ({
+        status: "not-created" as const,
+        reason: "create-rejected" as const,
+      }),
       expected: {
         outcome: "not-created",
         reason: "create-rejected",
@@ -335,7 +370,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     },
     {
       label: "ambiguous create result",
-      create: async () => ({ status: "unknown" as const }),
+      verifyAndCreate: async () => ({ status: "unknown" as const }),
       expected: {
         outcome: "retained",
         reason: "create-outcome-unknown",
@@ -344,7 +379,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     },
     {
       label: "create transport failure",
-      create: async () => {
+      verifyAndCreate: async () => {
         throw new Error("nvapi-secret-must-not-escape");
       },
       expected: {
@@ -353,11 +388,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
         resourceState: "possibly-retained",
       },
     },
-  ])("retains safe state after $label (#8178)", async ({ create, expected }) => {
+  ])("reports fail-closed state after $label (#8178)", async ({ verifyAndCreate, expected }) => {
     const verifyReadiness = vi.fn();
     const receipt = await nativeBootstrap().run(bootstrapInput(), {
-      verifyArtifactIdentity: async (plan) => artifactIdentityEvidence(plan),
-      create,
+      verifyAndCreate,
       verifyReadiness,
     });
 
@@ -372,8 +406,8 @@ describe("inactive MXC native-artifact bootstrap", () => {
   it.each([
     [
       "create authority drift",
-      async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        status: "created" as const,
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...verifiedCreateOutcome(plan),
         authoritySha256: "0".repeat(64),
       }),
       async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => readyEvidence(plan),
@@ -382,10 +416,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
     [
       "readiness identity drift",
-      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        status: "created" as const,
-        authoritySha256: plan.authoritySha256,
-      }),
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => verifiedCreateOutcome(plan),
       async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
         ...readyEvidence(plan),
         lifecycleGeneration: `${plan.lifecycleGeneration}-drift`,
@@ -395,10 +426,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
     [
       "readiness transport failure",
-      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        status: "created" as const,
-        authoritySha256: plan.authoritySha256,
-      }),
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => verifiedCreateOutcome(plan),
       async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
         throw new Error("untrusted readiness detail");
       },
@@ -407,11 +435,10 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
   ] as const)(
     "retains a created or ambiguous resource after %s (#8178)",
-    async (_label, create, verifyReadiness, reason, verificationExpected) => {
+    async (_label, verifyAndCreate, verifyReadiness, reason, verificationExpected) => {
       const verify = vi.fn(verifyReadiness);
       const receipt = await nativeBootstrap().run(bootstrapInput(), {
-        verifyArtifactIdentity: async (plan) => artifactIdentityEvidence(plan),
-        create,
+        verifyAndCreate,
         verifyReadiness: verify,
       });
 

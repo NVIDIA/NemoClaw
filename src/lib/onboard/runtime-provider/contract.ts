@@ -21,7 +21,7 @@ export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
-export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 2 as const;
+export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 3 as const;
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
@@ -124,13 +124,16 @@ export interface RuntimeProviderNativeArtifactBootstrapPlan {
   readonly workload: NativeArtifactWorkloadReceiptV1;
 }
 
-export type RuntimeProviderNativeArtifactCreateOutcome =
+export type RuntimeProviderNativeArtifactVerifyAndCreateOutcome =
   | {
       readonly status: "created";
       readonly authoritySha256: string;
+      readonly artifactDigest: string;
+      readonly executableDigest: string;
     }
   | {
       readonly status: "not-created";
+      readonly reason: "artifact-verification-failed" | "create-rejected";
     }
   | {
       readonly status: "unknown";
@@ -144,22 +147,14 @@ export interface RuntimeProviderNativeArtifactReadinessEvidence {
   readonly ready: boolean;
 }
 
-export interface RuntimeProviderNativeArtifactIdentityEvidence {
-  readonly authoritySha256: string;
-  readonly artifactRoot: string;
-  readonly artifactDigest: string;
-  readonly executablePath: string;
-  readonly executableDigest: string;
-}
-
 export interface RuntimeProviderNativeArtifactBootstrapOperations {
-  verifyArtifactIdentity(
+  /**
+   * Verify artifact and executable digests, then create while holding the same stable filesystem
+   * object authority. The provider must not re-resolve plan paths after verification.
+   */
+  verifyAndCreate(
     plan: RuntimeProviderNativeArtifactBootstrapPlan,
-  ): Promise<RuntimeProviderNativeArtifactIdentityEvidence>;
-  create(
-    plan: RuntimeProviderNativeArtifactBootstrapPlan,
-    identity: RuntimeProviderNativeArtifactIdentityEvidence,
-  ): Promise<RuntimeProviderNativeArtifactCreateOutcome>;
+  ): Promise<RuntimeProviderNativeArtifactVerifyAndCreateOutcome>;
   verifyReadiness(
     plan: RuntimeProviderNativeArtifactBootstrapPlan,
   ): Promise<RuntimeProviderNativeArtifactReadinessEvidence>;

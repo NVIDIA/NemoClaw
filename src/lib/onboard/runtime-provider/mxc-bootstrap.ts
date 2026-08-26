@@ -10,7 +10,6 @@ import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION,
   type RuntimeProviderNativeArtifactBootstrapInput,
-  type RuntimeProviderNativeArtifactIdentityEvidence,
   type RuntimeProviderNativeArtifactBootstrapOperations,
   type RuntimeProviderNativeArtifactBootstrapPlan,
   type RuntimeProviderNativeArtifactBootstrapResult,
@@ -202,65 +201,38 @@ function result(
   });
 }
 
-async function verifyArtifactIdentity(
-  plan: RuntimeProviderNativeArtifactBootstrapPlan,
-  operation: RuntimeProviderNativeArtifactBootstrapOperations["verifyArtifactIdentity"],
-): Promise<RuntimeProviderNativeArtifactIdentityEvidence | null> {
-  try {
-    const evidence = await operation(plan);
-    if (typeof evidence !== "object" || evidence === null) return null;
-    const identity = {
-      authoritySha256: evidence.authoritySha256,
-      artifactRoot: evidence.artifactRoot,
-      artifactDigest: evidence.artifactDigest,
-      executablePath: evidence.executablePath,
-      executableDigest: evidence.executableDigest,
-    };
-    if (
-      identity.authoritySha256 !== plan.authoritySha256 ||
-      identity.artifactRoot !== plan.artifactRoot ||
-      identity.artifactDigest !== plan.workload.artifact.digest ||
-      identity.executablePath !== plan.executablePath ||
-      identity.executableDigest !== plan.workload.launch.executable.digest
-    ) {
-      return null;
-    }
-    return frozen(identity);
-  } catch {
-    return null;
-  }
-}
-
 async function runMxcNativeArtifactBootstrap(
   input: RuntimeProviderNativeArtifactBootstrapInput,
   operations: RuntimeProviderNativeArtifactBootstrapOperations,
 ): Promise<RuntimeProviderNativeArtifactBootstrapResult> {
   if (
-    typeof operations?.verifyArtifactIdentity !== "function" ||
-    typeof operations?.create !== "function" ||
+    typeof operations?.verifyAndCreate !== "function" ||
     typeof operations.verifyReadiness !== "function"
   ) {
     throw new MxcNativeArtifactBootstrapError(
-      "artifact verification, create, and readiness operations are required before bootstrap",
+      "atomic artifact verification and create plus readiness operations are required before bootstrap",
     );
   }
   const plan = preparePlan(input);
-  const identity = await verifyArtifactIdentity(plan, operations.verifyArtifactIdentity);
-  if (identity === null) {
-    return result(plan, "not-created", "artifact-verification-failed", "absent");
-  }
   try {
-    const created = await operations.create(plan, identity);
-    if (created?.status === "not-created") {
-      return result(plan, "not-created", "create-rejected", "absent");
+    const created = await operations.verifyAndCreate(plan);
+    if (
+      created?.status === "not-created" &&
+      (created.reason === "artifact-verification-failed" || created.reason === "create-rejected")
+    ) {
+      return result(plan, "not-created", created.reason, "absent");
     }
     if (created?.status === "unknown") {
       return result(plan, "retained", "create-outcome-unknown", "possibly-retained");
     }
+    if (created?.status !== "created") {
+      return result(plan, "retained", "create-outcome-unknown", "possibly-retained");
+    }
     if (
-      created?.status !== "created" ||
       !SHA256_PATTERN.test(created.authoritySha256) ||
-      created.authoritySha256 !== plan.authoritySha256
+      created.authoritySha256 !== plan.authoritySha256 ||
+      created.artifactDigest !== plan.workload.artifact.digest ||
+      created.executableDigest !== plan.workload.launch.executable.digest
     ) {
       return result(plan, "retained", "create-authority-mismatch", "possibly-retained");
     }
