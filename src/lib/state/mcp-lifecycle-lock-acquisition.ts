@@ -92,9 +92,9 @@ export interface McpLifecycleLockOptions {
   /** Monotonic clock override used only by deterministic deadline tests. */
   monotonicNow?: () => number;
   /**
-   * Run the callback through the timer-bound deadline fence when an expired
-   * 32-hex marker is proven abandoned. Ordinary acquisition never enters on
-   * that generation (NVIDIA/NemoClaw#10066).
+   * Asynchronous-only. `sandbox:destroy` uses the timer-bound deadline fence
+   * when an expired 32-hex marker is proven abandoned. Ordinary and
+   * synchronous acquisition never enter on that generation (NVIDIA/NemoClaw#10066).
    */
   recoverAbandonedExpiredTimer?: boolean;
 }
@@ -344,11 +344,9 @@ function confirmAbandonedTimerRecoveryToken(
   return aged.token;
 }
 
-function abandonedTimerRecoveryTimeoutError(sandboxName: string, sync: boolean): Error {
+function abandonedTimerRecoveryTimeoutError(sandboxName: string): Error {
   return new Error(
-    sync
-      ? `Timed out waiting for sandbox mutation lock for '${sandboxName}'`
-      : `Timed out waiting for the sandbox mutation lock for '${sandboxName}'. Another lifecycle, policy, channel, shields, or snapshot operation is still running.`,
+    `Timed out waiting for the sandbox mutation lock for '${sandboxName}'. Another lifecycle, policy, channel, shields, or snapshot operation is still running.`,
   );
 }
 
@@ -371,7 +369,7 @@ async function waitForAbandonedTimerRecoveryToken(
     monotonicNow,
   );
   for (;;) {
-    if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName, false);
+    if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName);
     const now = Date.now();
     if (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, now)) return undefined;
     const aged = trackAbandonedTimerDeadline.agedSnapshot(now);
@@ -391,40 +389,6 @@ function deadlineFenceOptionsFromLock(
 ): McpLifecycleDeadlineFenceOptions {
   const { recoverAbandonedExpiredTimer: _recover, monotonicNow: _testClock, ...rest } = options;
   return rest;
-}
-
-function waitForAbandonedTimerRecoveryTokenSync(
-  sandboxName: string,
-  options: McpLifecycleLockOptions & { stateDir: string },
-): string | undefined {
-  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
-  const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
-  const corruptLockGraceMs = positiveInteger(
-    options.corruptLockGraceMs,
-    DEFAULT_CORRUPT_LOCK_GRACE_MS,
-  );
-  const monotonicNow = options.monotonicNow ?? (() => performance.now());
-  const deadline = monotonicNow() + timeoutMs;
-  const trackAbandonedTimerDeadline = createAbandonedTimerDeadlineTracker(
-    sandboxName,
-    options.stateDir,
-    corruptLockGraceMs,
-    monotonicNow,
-  );
-  for (;;) {
-    if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName, true);
-    const now = Date.now();
-    if (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, now)) return undefined;
-    const aged = trackAbandonedTimerDeadline.agedSnapshot(now);
-    if (aged) {
-      const token = confirmAbandonedTimerRecoveryToken(sandboxName, options.stateDir, aged);
-      if (token) return token;
-      trackAbandonedTimerDeadline.reset();
-    } else if (!isShieldsTimerDeadlineAbandoned(sandboxName, options.stateDir, now)) {
-      return undefined;
-    }
-    sleepSync(pollIntervalMs);
-  }
 }
 
 async function tryReapStaleMainLock(
@@ -925,7 +889,11 @@ function acquireMcpLifecycleLockSync(
           containmentPresent: mcpLifecycleLockPathExistsSync(containmentPath),
           deadlinePresent: mcpLifecycleLockPathExistsSync(deadlinePath),
           reaperPresent: mcpLifecycleLockPathExistsSync(reaperPath),
-          timerDeadlineExpired: isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, confirmNow),
+          timerDeadlineExpired: isShieldsTimerDeadlineExpired(
+            sandboxName,
+            options.stateDir,
+            confirmNow,
+          ),
           expectedOwnerToken: token,
           observedOwnerToken: publishedObservation?.owner?.token,
           expectedTakeoverToken: shieldsTakeoverToken,
@@ -1904,21 +1872,6 @@ export function withMcpLifecycleLockSync<T>(
   const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
   const inherited = heldLocks.getStore();
   if (inherited?.get(lockPath)?.active) return operation();
-
-  if (options.recoverAbandonedExpiredTimer) {
-    const takeoverToken = waitForAbandonedTimerRecoveryTokenSync(sandboxName, {
-      ...options,
-      stateDir,
-    });
-    if (takeoverToken) {
-      return withMcpLifecycleDeadlineFenceSync(
-        sandboxName,
-        takeoverToken,
-        operation,
-        deadlineFenceOptionsFromLock({ ...options, stateDir }),
-      );
-    }
-  }
 
   const acquired = acquireMcpLifecycleLockSync(sandboxName, { ...options, stateDir });
   const lease: HeldLockLease = {

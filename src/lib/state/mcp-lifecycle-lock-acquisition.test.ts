@@ -290,14 +290,12 @@ describe("MCP lifecycle lock acquisition", () => {
   it("recovers through the deadline fence after an abandoned timer deadline", async () => {
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker("4".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
-    const recovery = { recoverAbandonedExpiredTimer: true as const };
 
-    expect(
-      withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", { ...options(), ...recovery }),
-    ).toBe("entered");
-    writeTimerMarker("4".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
     await expect(
-      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", { ...options(), ...recovery }),
+      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+      }),
     ).resolves.toBe("entered");
     expect(fs.existsSync(lockPath)).toBe(false);
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
@@ -322,16 +320,12 @@ describe("MCP lifecycle lock acquisition", () => {
       timerProcessStartIdentity: "ps:recorded",
     });
     vi.spyOn(localTimerProcessStartIdentity, "read").mockReturnValue("ps:observed");
-    const recovery = { recoverAbandonedExpiredTimer: true as const };
 
-    expect(
-      withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", { ...options(), ...recovery }),
-    ).toBe("entered");
-    writeTimerMarker("9".repeat(32), new Date(Date.now() - 1_000).toISOString(), process.pid, {
-      timerProcessStartIdentity: "ps:recorded",
-    });
     await expect(
-      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", { ...options(), ...recovery }),
+      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+      }),
     ).resolves.toBe("entered");
     expect(fs.existsSync(lockPath)).toBe(false);
   });
@@ -354,35 +348,33 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(operation).toHaveBeenCalledTimes(1);
   });
 
-  it.each(lockExecutors)(
-    "restarts $label recovery grace after confirmation observes a replacement generation (#10066)",
-    async ({ run }) => {
-      const tokenA = "a".repeat(32);
-      const tokenB = "b".repeat(32);
-      writeTimerMarker(tokenA, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
-      const snapA = { token: tokenA, key: `${tokenA}:2147483647:` };
-      const snapB = { token: tokenB, key: `${tokenB}:2147483647:` };
-      const observations = [snapA, snapA, snapB, snapA, snapA, snapA];
-      let reads = 0;
-      vi.spyOn(localAbandonedTimerGeneration, "read").mockImplementation(() => {
-        const observation = observations[Math.min(reads, observations.length - 1)]!;
-        reads += 1;
-        return observation;
-      });
-      const operation = vi.fn(() => "entered");
-      let monotonicNow = 0;
+  it("restarts asynchronous recovery grace after confirmation observes a replacement generation (#10066)", async () => {
+    const tokenA = "a".repeat(32);
+    const tokenB = "b".repeat(32);
+    writeTimerMarker(tokenA, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const snapA = { token: tokenA, key: `${tokenA}:2147483647:` };
+    const snapB = { token: tokenB, key: `${tokenB}:2147483647:` };
+    const observations = [snapA, snapA, snapB, snapA, snapA, snapA];
+    let reads = 0;
+    vi.spyOn(localAbandonedTimerGeneration, "read").mockImplementation(() => {
+      const observation = observations[Math.min(reads, observations.length - 1)]!;
+      reads += 1;
+      return observation;
+    });
+    const operation = vi.fn(() => "entered");
+    let monotonicNow = 0;
 
-      await expect(
-        run(operation, {
-          recoverAbandonedExpiredTimer: true,
-          corruptLockGraceMs: 2,
-          monotonicNow: () => monotonicNow++,
-        }),
-      ).resolves.toBe("entered");
-      expect(operation).toHaveBeenCalledTimes(1);
-      expect(reads).toBe(6);
-    },
-  );
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+        corruptLockGraceMs: 2,
+        monotonicNow: () => monotonicNow++,
+      }),
+    ).resolves.toBe("entered");
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(reads).toBe(6);
+  });
 
   it("keeps waiting when an expired timer's process is still alive", async () => {
     const operation = vi.fn(() => "must not enter");
