@@ -6180,11 +6180,13 @@ main() {
     fi
     if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
       info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
-    elif run_installer_host_preflight; then
+    else
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1
       fi
+
+      local _run_onboard_after_recovery=false
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
@@ -6192,21 +6194,30 @@ main() {
         elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
-          info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || fail_onboarding "$?"
-          ONBOARD_RAN=true
+          _run_onboard_after_recovery=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || fail_onboarding "$?"
-        ONBOARD_RAN=true
-        restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+        _run_onboard_after_recovery=true
       fi
-    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
-      error "Skipping onboarding until the host prerequisites above are fixed."
-    else
-      warn "Skipping onboarding until the host prerequisites above are fixed."
+
+      if [[ "$_run_onboard_after_recovery" == true ]]; then
+        if run_installer_host_preflight; then
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+            info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
+          fi
+          run_onboard || fail_onboarding "$?"
+          ONBOARD_RAN=true
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" != true ]]; then
+            restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+          fi
+        elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+          error "Skipping onboarding until the host prerequisites above are fixed."
+        else
+          warn "Skipping onboarding until the host prerequisites above are fixed."
+        fi
+      fi
     fi
   else
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."

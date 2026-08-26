@@ -27,6 +27,7 @@ function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number | [first: number, second: number],
   options: {
+    hostPreflightExitCode?: number;
     registryJson?: string;
     singleSession?: boolean;
     stationExpressSelected?: boolean;
@@ -113,7 +114,10 @@ exit 0
     }
     install_nemoclaw() { :; }
     verify_nemoclaw() { _CLI_PATH="${cli}"; }
-    run_installer_host_preflight() { return 0; }
+    run_installer_host_preflight() {
+      printf 'host-preflight\n' >> "${callLog}"
+      return ${options.hostPreflightExitCode ?? 0}
+    }
     ensure_station_express_host() { :; }
     ensure_station_express_pair() { :; }
     run_onboard() { "${cli}" onboard; }
@@ -153,6 +157,18 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
   });
 
+  it("does not gate pre-existing recovery on generic host admission", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, { hostPreflightExitCode: 1 });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual([
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    ]);
+    expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
   it.each([
     ["a selected Station Express attempt", { stationExpressSelected: true }],
     ["a loaded Station receipt", { stationResumeLoaded: true }],
@@ -168,11 +184,28 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
       "sleep=10",
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "host-preflight",
       "restore=1 confirmed= argv=onboard",
     ]);
     expect(result.output).toContain(
       "Existing sandboxes recovered; reconciling DGX Station Express onboarding state",
     );
+  });
+
+  it("keeps host admission before Station reconciliation", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      hostPreflightExitCode: 1,
+      stationExpressSelected: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "host-preflight",
+    ]);
+    expect(result.output).toContain("Skipping onboarding until the host prerequisites above are fixed");
   });
 
   it("stops before onboarding when any automatic recovery fails", () => {
@@ -207,7 +240,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     const result = runRecoveryBeforeOnboard(0, 7);
 
     expect(result.status, result.output).toBe(0);
-    expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
+    expect(result.calls).toEqual(["host-preflight", "restore=1 confirmed= argv=onboard"]);
   });
 
   it("does not treat a route-only reservation as an existing session (#6500)", () => {
@@ -217,7 +250,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     });
 
     expect(result.status, result.output).toBe(0);
-    expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
+    expect(result.calls).toEqual(["host-preflight", "restore=1 confirmed= argv=onboard"]);
     expect(result.output).not.toContain("Existing sandbox sessions detected");
   });
 
