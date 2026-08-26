@@ -249,6 +249,37 @@ describe("sandbox inference route reservation", () => {
     },
   );
 
+  it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...EXACT_ROUTE_SELECTION,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      const reserved = registry.getSandbox("alpha");
+      expect(reserved).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+
+      expect(() =>
+        registerCreatedSandbox({
+          ...createdSandboxRegistrationInput("alpha", "nemoclaw", EXACT_ROUTE_SELECTION),
+          reservationSessionId: "session-foreign",
+        }),
+      ).toThrow("Cannot stage a sandbox after its inference route reservation changed");
+      expect(registry.getSandbox("alpha")).toEqual(reserved);
+      expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("retargets an existing row to the gateway protected by the reservation", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
