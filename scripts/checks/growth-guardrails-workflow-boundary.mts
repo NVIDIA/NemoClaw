@@ -49,7 +49,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
     on: {
       pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
     },
-    permissions: { contents: "read", "pull-requests": "read" },
+    permissions: { contents: "read" },
     jobs: {
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
@@ -71,7 +71,6 @@ export function validateGrowthGuardrailsWorkflowBoundary(
           {
             name: "Test codebase growth guardrails",
             env: {
-              NEMOCLAW_GROWTH_PR: "1",
               PR_NUMBER: "${{ github.event.pull_request.number }}",
               BASE_SHA: "${{ github.event.pull_request.base.sha }}",
               HEAD_SHA: "${{ github.event.pull_request.head.sha }}",

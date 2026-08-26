@@ -193,14 +193,10 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
 }
 
 export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
-  return Promise.resolve(
-    process.env.NEMOCLAW_GROWTH_PR === "1" ? loadPullRequestDiff() : loadLocalDiff(),
-  );
+  return Promise.resolve(process.env.PR_NUMBER ? loadPullRequestDiff() : loadLocalDiff());
 }
 
 export const testOnly = {
-  assertCommitSha,
-  assertPullNumber,
   parseAncestorProbe,
   parseChangedFiles,
   selectLocalComparisonBase,
