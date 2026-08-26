@@ -723,6 +723,21 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("maps the trusted main Personal stock selector to the candidate public-fetch target", () => {
+    const legacyId = "common-egress-agent-openclaw-personal-stock-price";
+    const canonicalId = "common-egress-agent-openclaw-personal-public-fetch";
+    const target = catalogueTarget(legacyId);
+    const plan = buildE2eWorkflowPlan({ targets: legacyId });
+
+    expect(target).toMatchObject({
+      id: canonicalId,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-public-fetch",
+      testFile: "test/e2e/live/common-egress-agent.test.ts",
+    });
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([canonicalId]);
+  });
+
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });
 

@@ -12,6 +12,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -1720,7 +1721,8 @@ export function validateE2eTargetCatalogue(
 validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE);
 
 export function catalogueTarget(id: string): E2eCatalogueTarget {
-  const entry = E2E_TARGET_CATALOGUE.find((candidate) => candidate.id === id);
+  const canonicalId = normalizeE2eSelectorId(id);
+  const entry = E2E_TARGET_CATALOGUE.find((candidate) => candidate.id === canonicalId);
   if (!entry) throw new Error(`Unknown catalogue E2E target: ${id}`);
   return entry;
 }
