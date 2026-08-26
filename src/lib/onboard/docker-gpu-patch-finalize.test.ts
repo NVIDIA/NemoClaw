@@ -260,7 +260,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("accepts a retiring Error row only when the exact replacement has the OpenShell label (#9962)", () => {
+  it("uses the legacy managed-container proof before restart and keeps the named proof after restart", () => {
     const result = exactDeferredCreateResult();
     const dockerRunResults = {
       inspect: { status: 0, stdout: "true\n" },
@@ -299,6 +299,17 @@ describe("finalizeDockerGpuPatchBackup", () => {
       finalHandoffAcknowledged: true,
     });
     expect(dockerRun.mock.calls[0]?.[0]).toEqual([
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `id=${result.newContainerId}`,
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--format",
+      "{{.ID}}",
+    ]);
+    expect(dockerRun.mock.calls[1]?.[0]).toEqual([
       "ps",
       "-a",
       "--no-trunc",
