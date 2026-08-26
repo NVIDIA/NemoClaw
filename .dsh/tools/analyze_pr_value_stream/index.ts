@@ -406,8 +406,10 @@ export default async function analyze_pr_value_stream(input: {
     }
   };
   let testArtifactsRead = 0;
-  const waterfall = await Promise.all(
-    waterfallRuns.map(async (run: any) => {
+  const waterfall = [];
+  for (let index = 0; index < waterfallRuns.length; index += 4) {
+    const batch = await Promise.all(
+      waterfallRuns.slice(index, index + 4).map(async (run: any) => {
       const runResult = await tools.run_github_cli({
         workdir: input.workdir,
         args: [
@@ -562,10 +564,12 @@ export default async function analyze_pr_value_stream(input: {
         offsetSeconds: offsetSeconds(headObserved, runCreated),
         queueSeconds: seconds(runCreated, runStarted),
         durationSeconds: runCompleted === null ? null : seconds(runStarted, runCompleted),
-        jobs,
-      };
-    }),
-  );
+          jobs,
+        };
+      }),
+    );
+    waterfall.push(...batch);
+  }
   const checks: any[] = [];
   for (let page = 1; page <= maxCheckPages; page += 1) {
     const result = await tools.run_github_cli({
@@ -666,24 +670,25 @@ export default async function analyze_pr_value_stream(input: {
         : "over-target";
   const checkRows = successful.map((check: any) => {
     const started = parseTime(check.started_at, "check startedAt");
-    const created = started;
     const completed = parseTime(check.completed_at, "check completedAt");
     return {
       name: String(check.name).slice(0, 200),
       workflow: String(check.app?.slug ?? "").slice(0, 100),
-      created,
       started,
       completed,
       duration: seconds(started, completed),
-      queue: seconds(created, started),
     };
   });
   const firstCheckCreated =
-    checkRows.length > 0 ? Math.min(...checkRows.map((row: any) => row.created)) : null;
+    checkRows.length > 0 ? Math.min(...checkRows.map((row: any) => row.started)) : null;
   const longestQueue =
-    checkRows
-      .slice()
-      .sort((a: any, b: any) => b.queue - a.queue || a.name.localeCompare(b.name))[0] ?? null;
+    waterfall
+      .flatMap((run: any) => run.jobs)
+      .filter((job: any) => job.queueSeconds !== null)
+      .sort(
+        (a: any, b: any) =>
+          b.queueSeconds - a.queueSeconds || a.name.localeCompare(b.name),
+      )[0] ?? null;
   const longestChecks = checkRows
     .slice()
     .sort((a: any, b: any) => b.duration - a.duration || a.name.localeCompare(b.name))
@@ -791,7 +796,10 @@ export default async function analyze_pr_value_stream(input: {
       firstCheckCreatedAt: firstCheckCreated === null ? null : iso(firstCheckCreated),
       triggerDelaySeconds:
         firstCheckCreated === null ? null : seconds(headObserved, firstCheckCreated),
-      longestRunnerQueue: null,
+      longestRunnerQueue:
+        longestQueue === null
+          ? null
+          : { name: longestQueue.name, seconds: longestQueue.queueSeconds },
       longestChecks,
       lastCheck:
         last === null

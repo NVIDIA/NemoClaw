@@ -70,7 +70,7 @@ const report = await tools.e2e_investigation_report({
 });
 ```
 
-Add `relevantPaths` to each failure before correlation when repository knowledge identifies the owning source paths. Without those paths, a no-overlap result has low confidence. The report marks the investigation as incomplete when the commit or changed-file list is truncated. Do not claim causal completeness or absence of path overlap from a truncated range.
+Add `relevantPaths` to each failure before correlation when repository knowledge identifies the owning source paths. Without those paths, a single-failure no-overlap result has low confidence. The report marks the investigation as incomplete when the commit or changed-file list is truncated. Do not claim causal completeness or absence of path overlap from a truncated range.
 
 ## Pull request value stream
 
