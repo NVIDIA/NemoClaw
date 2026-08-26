@@ -212,6 +212,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test": "publishes the verified native manifest digest",
       "category": "security"

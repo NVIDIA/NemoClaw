@@ -65,6 +65,8 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+const EXACT_NPM_PACKAGE_SPEC =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const SOURCE_GRAPH = {
   id: "nemoclaw-cli",
   label: "NemoClaw CLI locked production graph",
@@ -156,9 +158,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.sourceNestedShrinkwrapPackages.some(
       (packageSpec) =>
         typeof packageSpec !== "string" ||
-        !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(
-          packageSpec,
-        ),
+        !EXACT_NPM_PACKAGE_SPEC.test(packageSpec),
     ) ||
     new Set(parsed.sourceNestedShrinkwrapPackages).size !==
       parsed.sourceNestedShrinkwrapPackages.length ||
@@ -168,7 +168,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
         typeof reviewed.label !== "string" ||
         !reviewed.label ||
         typeof reviewed.packageSpec !== "string" ||
-        !reviewed.packageSpec ||
+        !EXACT_NPM_PACKAGE_SPEC.test(reviewed.packageSpec) ||
         typeof reviewed.tarballUrl !== "string" ||
         !reviewed.tarballUrl,
     ) ||
@@ -182,7 +182,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
     typeof parsed.sourceRegistryPackage.label !== "string" ||
     !parsed.sourceRegistryPackage.label ||
     typeof parsed.sourceRegistryPackage.packageSpec !== "string" ||
-    !parsed.sourceRegistryPackage.packageSpec ||
+    !EXACT_NPM_PACKAGE_SPEC.test(parsed.sourceRegistryPackage.packageSpec) ||
     typeof parsed.sourceRegistryPackage.integrity !== "string" ||
     !parsed.sourceRegistryPackage.integrity ||
     typeof parsed.sourceRegistryPackage.tarballUrl !== "string" ||
