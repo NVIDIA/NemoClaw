@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Security / llama.cpp Image Attestation
+name: Security / Attest llama.cpp Server Image
 
 on:
   workflow_call:
@@ -31,7 +31,7 @@ permissions: {}
 
 jobs:
   validate-inputs:
-    name: Inputs and Caller
+    name: Validate attestation inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -92,7 +92,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   attest:
-    name: Evidence
+    name: Generate and publish image evidence
     needs: validate-inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 30
