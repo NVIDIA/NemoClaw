@@ -247,7 +247,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? childCredentialRevision() : "absent",
+      stdout: credentialRepublishBeforeObservationCountThisProcess + credentialRepublishAfterAbsenceCountThisProcess > 0 ? childCredentialRevision() : "absent",
       stderr: "",
     };
   }
@@ -635,11 +635,11 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
       const credentialRepublishCount = fs
-        .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
+        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);
