@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, constants, openSync, renameSync, rmSync } from "node:fs";
+import { closeSync, constants, fchmodSync, openSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
 export interface CreateTarballOptions {
@@ -26,19 +26,20 @@ export function createTarball(
 ): boolean {
   const { info, warn, error, timeoutMs = 60_000 } = options;
   const partial = `${output}.partial.${process.pid}`;
-  // Claim the predictable staging path ourselves before tar ever touches it.
-  // O_EXCL refuses a path another local user has already planted (file or
-  // symlink); O_NOFOLLOW refuses to write through a symlink even if one wins
-  // the race after this check. Owner-only mode carries through tar's own
-  // open() below, since an existing file's permission bits are unaffected by
-  // O_CREAT (see #10195).
+  // Claim the predictable staging path and hold the descriptor for the whole
+  // write: O_EXCL refuses a path another local user pre-planted (file or
+  // symlink). tar streams to stdout redirected into this descriptor, and the
+  // mode is set with fchmod on the same descriptor, so no step after the
+  // claim reopens the path by name. An attacker who can unlink entries in
+  // the output directory can still make the final rename fail or misplace
+  // the bundle (denial of service), but can never make us write through a
+  // planted symlink (#10195).
+  let fd: number;
   try {
-    closeSync(
-      openSync(
-        partial,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o600,
-      ),
+    fd = openSync(
+      partial,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
     );
   } catch (err) {
     error(
@@ -47,41 +48,50 @@ export function createTarball(
     process.exitCode = 1;
     return false;
   }
-  const result = spawnSync(
-    "tar",
-    ["czf", partial, "-C", dirname(collectDir), basename(collectDir)],
-    {
-      stdio: "inherit",
-      timeout: timeoutMs,
-    },
-  );
-  if (result.status !== 0 || result.signal) {
-    const reason = result.signal
-      ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? "unknown"}`;
-    error(`Failed to create tarball at ${output} (tar ${reason})`);
-    try {
-      rmSync(partial, { force: true });
-    } catch {
-      /* best-effort cleanup of partial tarball */
-    }
-    process.exitCode = 1;
-    return false;
-  }
+  let staged = false;
   try {
-    chmodSync(partial, 0o600);
+    const result = spawnSync(
+      "tar",
+      ["czf", "-", "-C", dirname(collectDir), basename(collectDir)],
+      {
+        stdio: ["ignore", fd, "inherit"],
+        timeout: timeoutMs,
+      },
+    );
+    if (result.status !== 0 || result.signal) {
+      const reason = result.signal
+        ? `killed by signal ${result.signal}`
+        : `exited with code ${result.status ?? "unknown"}`;
+      error(`Failed to create tarball at ${output} (tar ${reason})`);
+      return false;
+    }
+    fchmodSync(fd, 0o600);
+    // rename() never follows the source: if the staging path was swapped for
+    // a symlink after we opened it, this moves the symlink itself, leaving
+    // our written data orphaned under `partial` rather than publishing
+    // through the link. Worst case is a failed/misplaced bundle, not a write
+    // through an attacker's symlink.
     renameSync(partial, output);
+    staged = true;
   } catch (err) {
     error(
       `Failed to move tarball into place at ${output}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    try {
-      rmSync(partial, { force: true });
-    } catch {
-      /* best-effort */
-    }
-    process.exitCode = 1;
     return false;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* best-effort close of staging descriptor */
+    }
+    if (!staged) {
+      process.exitCode = 1;
+      try {
+        rmSync(partial, { force: true });
+      } catch {
+        /* best-effort cleanup of partial tarball */
+      }
+    }
   }
   info(`Tarball written to ${output}`);
   warn(
