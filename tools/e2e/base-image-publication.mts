@@ -71,9 +71,9 @@ const COMPLETED_CONCLUSIONS = new Set([
 ]);
 
 export const REQUIRED_PUBLISHER_JOBS = [
-  "Build and push OpenClaw base image",
-  "Build and push Hermes base image",
-  "Build and push Deep Agents Code base image",
+  "Manifests / OpenClaw",
+  "Manifests / Hermes",
+  "Manifests / Deep Agents Code",
 ] as const;
 
 type JsonRecord = Record<string, unknown>;
