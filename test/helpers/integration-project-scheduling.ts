@@ -84,5 +84,5 @@ export function resolveIntegrationProjectScheduling({
         maxWorkers: resolveWorkerCap(argv, availableParallelism),
         sequence: { groupOrder: 1 },
       }
-    : { fileParallelism: false };
+    : { fileParallelism: false, sequence: { groupOrder: 1 } };
 }

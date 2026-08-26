@@ -4,11 +4,11 @@
 // Node's --require preload cannot execute TypeScript directly. Reuse this
 // existing CommonJS test boundary as the minimal bootstrap for the typed
 // source loader; the codebase growth guard prevents adding another JS file.
+const Module = require("node:module");
 const path = require("node:path");
 
 function registerSourceRequire() {
   const fs = require("node:fs");
-  const Module = require("node:module");
   const ts = require("typescript");
   const sourceLoader = path.join(__dirname, "register-source-require.ts");
   const bootstrapTypeScriptFiles = new Set([
@@ -43,8 +43,50 @@ function registerSourceRequire() {
   require(sourceLoader);
 }
 
-// Vitest setup files and NODE_OPTIONS preloads both depend on this hook.
-registerSourceRequire();
+// Most Vitest workers use native source imports and never need the CommonJS
+// source loader. Defer its TypeScript bootstrap until a worker requires a
+// TypeScript file through CommonJS.
+const previousTypeScriptLoader = Module._extensions[".ts"];
+const previousResolveFilename = Module._resolveFilename;
+const repoSourceRoot = path.resolve(__dirname, "../../src") + path.sep;
+const restoreSourceRequireHooks = () => {
+  Module._resolveFilename = previousResolveFilename;
+  Module._extensions[".ts"] = previousTypeScriptLoader;
+};
+const lazySourceRequire = (targetModule, filename) => {
+  restoreSourceRequireHooks();
+  registerSourceRequire();
+  const sourceRequire = Module._extensions[".ts"];
+  if (!sourceRequire || sourceRequire === lazySourceRequire) {
+    throw new Error("Source require loader did not register a TypeScript handler");
+  }
+  sourceRequire(targetModule, filename);
+};
+Module._resolveFilename = function resolveLazySourceFilename(request, parent, isMain, options) {
+  try {
+    return previousResolveFilename.call(this, request, parent, isMain, options);
+  } catch (error) {
+    const parentFilename = parent?.filename ? path.resolve(parent.filename) : "";
+    const sourceCandidate =
+      request.startsWith(".") && request.endsWith(".js") && parentFilename
+        ? path.resolve(path.dirname(parentFilename), `${request.slice(0, -3)}.ts`)
+        : "";
+    if (
+      !sourceCandidate.startsWith(repoSourceRoot) ||
+      !require("node:fs").existsSync(sourceCandidate)
+    ) {
+      throw error;
+    }
+    return previousResolveFilename.call(
+      this,
+      `${request.slice(0, -3)}.ts`,
+      parent,
+      isMain,
+      options,
+    );
+  }
+};
+Module._extensions[".ts"] = lazySourceRequire;
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");

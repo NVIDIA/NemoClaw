@@ -99,6 +99,9 @@ describe("integration project scheduling", () => {
     ],
     ["direct Vitest", { isCi: false, npmLifecycleEvent: undefined, argv: [] }],
   ])("keeps $0 serialized (#6245)", (_name, context) => {
-    expect(resolveIntegrationProjectScheduling(context)).toEqual({ fileParallelism: false });
+    expect(resolveIntegrationProjectScheduling(context)).toEqual({
+      fileParallelism: false,
+      sequence: { groupOrder: 1 },
+    });
   });
 });

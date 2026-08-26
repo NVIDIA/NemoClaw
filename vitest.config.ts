@@ -174,9 +174,9 @@ export default defineConfig({
             "test/helpers/onboard-script-mocks.cjs",
           ],
           // Integration fixtures often spawn short Node programs. Coverage
-          // stays serial because concurrent source-loader forks exhaust the
-          // 7 GiB CI runner. The canonical local full suite instead runs this
-          // project as a bounded four-worker phase after the other projects.
+          // stays serial and runs after source projects because concurrent
+          // source-loader forks exhaust the 7 GiB CI runner. The canonical
+          // local full suite uses a bounded four-worker integration phase.
           ...integrationProjectScheduling,
           env: {
             ...controlledNonLiveEnv,
