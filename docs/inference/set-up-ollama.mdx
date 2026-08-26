@@ -29,6 +29,10 @@ It creates a receipt-owned Ollama runner through the current user's rootless Pod
 Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
 
 Before the provider-selection step completes, NemoClaw verifies the Portable network, registry, GPU, and Podman authority.
+NemoClaw launches the runner with `OLLAMA_CONTEXT_LENGTH=64000`.
+That value is part of the runner's launch and runtime identity.
+Before NemoClaw accepts or reuses the runner, the recorded launch arguments and inspected container environment must agree on the exact value.
+A missing or changed value causes a configuration drift error instead of runner reuse.
 It then creates the runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
