@@ -69,6 +69,12 @@ export type LegacyKeepaliveFixtureOptions = {
   timeoutSecs?: number;
 };
 
+export type LegacyKeepaliveHandoffReceipt = {
+  readonly oldContainerId: string;
+  readonly newContainerId: string;
+  readonly startupCommand: "sleep infinity";
+};
+
 export type LegacyKeepaliveFixtureDeps = {
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
@@ -90,6 +96,40 @@ const defaultDeps: LegacyKeepaliveFixtureDeps = {
 
 function requireFixtureInput(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+/** Read the final machine receipt without treating recreation progress as JSON. */
+export function parseLegacyKeepaliveHandoffReceipt(
+  output: string,
+): LegacyKeepaliveHandoffReceipt {
+  const receiptLine = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(receiptLine ?? "");
+  } catch {
+    throw new Error("legacy keepalive fixture did not emit a final JSON handoff receipt");
+  }
+  requireFixtureInput(
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed),
+    "legacy keepalive fixture handoff receipt must be an object",
+  );
+  const receipt = parsed as Record<string, unknown>;
+  requireFixtureInput(
+    DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.oldContainerId ?? "")) &&
+      DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.newContainerId ?? "")) &&
+      receipt.oldContainerId !== receipt.newContainerId &&
+      receipt.startupCommand === LEGACY_KEEPALIVE_COMMAND.join(" "),
+    "legacy keepalive fixture handoff receipt is invalid",
+  );
+  return {
+    oldContainerId: String(receipt.oldContainerId),
+    newContainerId: String(receipt.newContainerId),
+    startupCommand: "sleep infinity",
+  };
 }
 
 function hasExactTokens(value: unknown, expected: readonly string[]): boolean {
