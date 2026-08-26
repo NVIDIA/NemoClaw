@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
   command: string;
@@ -46,10 +47,7 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeExecutable(
-    path.join(fakeBin, "openshell"),
-    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
-  );
+  writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -142,6 +140,7 @@ registry.getSandbox = () =>
         agent: "langchain-deepagents-code",
         dashboardPort: 18789,
         observabilityEnabled: false,
+        policyAuthority: "nemoclaw-managed",
         toolDisclosure: "progressive",
       }
     : null;

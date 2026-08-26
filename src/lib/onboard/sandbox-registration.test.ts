@@ -94,6 +94,14 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("copies policy authority into completed sandbox registration (#9833)", () => {
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({ policyAuthority: "externally-managed" }),
+    );
+
+    expect(entry.policyAuthority).toBe("externally-managed");
+  });
+
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(

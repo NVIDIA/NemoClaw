@@ -467,7 +467,9 @@ export async function verifyGpuSandboxAccessAfterReady(
 export function verifyGpuSandboxLocalInferenceAfterReady(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
-  options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode">,
+  options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode"> & {
+    beforeSuccess?: () => void;
+  },
 ): void {
   if (options.selectedRoute !== "compatibility") return;
   const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
@@ -481,6 +483,7 @@ export function verifyGpuSandboxLocalInferenceAfterReady(
   });
   const log = options.log ?? console.log;
   if (verification.status === "ok") {
+    options.beforeSuccess?.();
     log(
       `  ✓ GPU sandbox runtime reached local inference: ${verification.endpoint} (HTTP ${verification.httpCode})`,
     );
@@ -512,9 +515,13 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     ManagedBootstrapRuntimePatch,
     "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
   >,
+  revalidateBeforeCommit?: () => void,
 ): Promise<void> {
   try {
-    verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
+    verifyGpuSandboxLocalInferenceAfterReady(config, provider, {
+      ...options,
+      beforeSuccess: revalidateBeforeCommit,
+    });
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     try {

@@ -1208,7 +1208,7 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it(
-    "reuses sandbox when messaging providers already exist in gateway",
+    "reuses sandbox without refreshing unselected ambient messaging providers (#10277)",
     {
       timeout: 60_000,
     },
@@ -1223,9 +1223,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1250,7 +1248,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -1291,19 +1289,14 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Reuse refreshes credentials only after the mock returns the endpointless identity.
+      // Existing gateway providers do not select messaging for this onboarding request.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) =>
-          e.command.includes("my-assistant-discord-bridge"),
-        ),
-        "should upsert discord provider on reuse to refresh credentials",
-      );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-slack-bridge")),
-        "should upsert slack provider on reuse to refresh credentials",
+      assert.equal(
+        providerUpserts.length,
+        0,
+        "should not refresh ambient messaging providers without a selected channel plan",
       );
     },
   );
@@ -1444,7 +1437,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "does not create messaging providers from ambient credentials without a selected plan",
+    "does not create messaging providers from ambient credentials without a selected plan (#10277)",
     {
       timeout: 60_000,
     },

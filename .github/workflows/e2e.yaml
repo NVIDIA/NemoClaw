@@ -96,12 +96,13 @@ env:
 
 jobs:
   base-image-publication:
+    needs: generate-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
       dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
-      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e') || inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
     permissions:
       actions: read
       contents: read
@@ -147,6 +148,16 @@ jobs:
         with:
           node-version: 22
 
+      - id: pr_dcode_base
+        name: Resolve Deep Agents Code base publication for the exact PR managed image
+        if: ${{ steps.publication_mode.outputs.reuse == '1' && needs.generate-matrix.outputs.managed_image_catalog != '' }}
+        env:
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/pr-dcode-base-publication.mts
+
       - id: publication
         name: Verify applicable base-image publication
         if: ${{ steps.publication_mode.outputs.required == '1' }}
@@ -174,9 +185,9 @@ jobs:
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: 0ceccaf6d33b11ed88aa7f0079429fd96e5f286e
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32927294702"
+          PUBLICATION_HEAD_SHA: ${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}
+          PUBLICATION_RUN_ID: ${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
 
       - id: validate_dcode_base
@@ -192,9 +203,10 @@ jobs:
         name: Validate reused Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
-          PUBLICATION_HEAD_SHA: 0ceccaf6d33b11ed88aa7f0079429fd96e5f286e
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32927294702"
+          EXPECTED_BASE_REF: ${{ steps.pr_dcode_base.outputs.base_ref }}
+          PUBLICATION_HEAD_SHA: ${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}
+          PUBLICATION_RUN_ID: ${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
@@ -283,7 +295,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::PR head must match the controller workflow SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -574,67 +586,8 @@ jobs:
             fi
           fi
 
-      - name: Assemble exact 7eccb19 managed-image catalog
-        if: ${{ inputs.checkout_sha == 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          contracts="${RUNNER_TEMP}/7eccb19-managed-contracts"
-          install -d -m 0700 "$contracts"
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import path from "node:path";
-          import { githubRequest } from "./tools/e2e/base-image-publication.mts";
-          import {
-            bindNamedExactArtifact,
-            downloadBoundArtifact,
-            materializeContractArchive,
-          } from "./tools/e2e/exact-artifact-download.mts";
-
-          const expected = {
-            headSha: "7eccb19f378d0bf27e8a237849be6d7e14f4088c",
-            runAttempt: 1,
-            runId: 32919684299,
-          };
-          const artifacts = [
-            ["openclaw", 9589871389, "sha256:427a1c950ecec6bd66d2381212f88ed127f83df121fdc7674b082e98d63bb4c0"],
-            ["hermes", 9589511926, "sha256:da5316e8e3593b1bad5190cdd55acfa7701c0fc6e3a14f108aaaea9dd1e642a4"],
-            ["langchain-deepagents-code", 9589526408, "sha256:ed377e47993d4ab2aa12a84ac061a7561e746cb86ed9bbb17ba1c9ef4da97b58"],
-          ];
-          for (const [agent, id, digest] of artifacts) {
-            const name = `managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}`;
-            const page = await githubRequest(
-              `/repos/NVIDIA/NemoClaw/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
-              process.env.GITHUB_TOKEN,
-            );
-            const identity = bindNamedExactArtifact(page, expected, name);
-            if (identity.id !== id || identity.digest !== digest) {
-              throw new Error(`reused ${agent} artifact identity changed`);
-            }
-            const archive = await downloadBoundArtifact(identity, process.env.GITHUB_TOKEN);
-            materializeContractArchive(
-              archive,
-              path.join(process.env.RUNNER_TEMP, "7eccb19-managed-contracts", agent),
-            );
-          }
-          NODE
-          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
-            7eccb19f378d0bf27e8a237849be6d7e14f4088c \
-            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
-            "$contracts/openclaw/contract.json" \
-            "$contracts/hermes/contract.json" \
-            "$contracts/langchain-deepagents-code/contract.json"
-          catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
-          jq \
-            --arg release 'v0.0.114-132-gad7af27ec' \
-            --arg revision 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' '
-              with_entries(.value.source.revision = $revision | .value.source.release = $release)
-            ' "$catalog" >"$catalog.next"
-          mv "$catalog.next" "$catalog"
-
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -661,7 +614,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -675,7 +627,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::controller workflow SHA changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
