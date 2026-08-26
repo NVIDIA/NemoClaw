@@ -75,8 +75,8 @@ import type {
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
@@ -302,6 +302,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
           bootstrap: {
             providerId: "mxc",
             supported: true,
+            bootstrapKind: "managed-image",
             createAuthorityStore: vi.fn(() => ({
               recordPreparedAuthority: vi.fn(),
             })),
@@ -322,7 +323,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       ],
     ]);
     const runtimeProvider = registered.mxc as RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     input.managedBootstrap = {
       bootstrapIdentity: launch.managedBootstrapIdentity!,
@@ -966,10 +967,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1375,19 +1374,21 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     );
   });
 
-  it("reports manual cleanup when ordinary readiness deletion fails (#6110)", async () => {
+  it("preserves the sandbox when ordinary readiness cleanup is name-only (#6110)", async () => {
     mockReadinessFailure();
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockReturnValue({ status: 7, stderr: "gateway unavailable" });
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("could not be removed automatically");
-    expect(output).toContain('Manual cleanup: openshell sandbox delete "alpha"');
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(output).toContain("left sandbox 'alpha' in place");
+    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
-  it("treats an already-absent sandbox as successful ordinary readiness cleanup", async () => {
+  it("does not infer absence through a mutable-name readiness cleanup", async () => {
     mockReadinessFailure();
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockReturnValue({
@@ -1397,8 +1398,10 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("Retry: nemoclaw onboard");
-    expect(output).not.toContain("could not be removed automatically");
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(output).toContain("left sandbox 'alpha' in place");
+    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
   it("fully redacts command diagnostics when cleanup cannot be proven safe", async () => {
