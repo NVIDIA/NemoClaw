@@ -245,6 +245,40 @@ describe("growth-guardrails pr-blob-client", () => {
     ]);
   });
 
+  it("shares one rate-limit wait budget across pull-file pages", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ filename: `f${index}.ts` }));
+    const sleeps: number[] = [];
+    const firstWaitSeconds = RETRY_WAIT_BUDGET_MS / 1000 - 60;
+    const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({ message: "API rate limit exceeded" }, 403, {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": String(1000 + firstWaitSeconds),
+        }),
+      async () => jsonResponse(fullPage),
+      async () =>
+        jsonResponse({ message: "API rate limit exceeded" }, 403, {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": String(1000 + 120),
+        }),
+    ]);
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      now: () => 1_000_000,
+      random: () => 0,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).rejects.toThrow(/HTTP 403/);
+    expect(urls).toHaveLength(3);
+    expect(sleeps).toEqual([
+      firstWaitSeconds * 1000 + RATE_LIMIT_RESET_BUFFER_MS,
+    ]);
+  });
+
   it("does not retry a permission-denied 403", async () => {
     const sleeps: number[] = [];
     const { fetchImpl, urls } = scriptedFetch([

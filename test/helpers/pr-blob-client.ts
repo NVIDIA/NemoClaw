@@ -54,6 +54,7 @@ export type PrBlobClient = {
 
 type RetriableError = Error & { retryAfterMs?: number; transient?: boolean };
 type RetryResult<T> = { value: T } | { error: Error; transient: boolean };
+type RetryWaitBudget = { totalWaitMs: number };
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,9 +133,12 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
-  async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  async function withRetry<T>(
+    label: string,
+    fn: () => Promise<T>,
+    waitBudget: RetryWaitBudget = { totalWaitMs: 0 },
+  ): Promise<T> {
     let scheduledDelayMs = 0;
-    let totalWaitMs = 0;
     const result = await retryUntilAsync<RetryResult<T>>(
       async () => {
         try {
@@ -152,7 +156,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
         onRetry: (attempt, delayMs, attemptNumber) => {
           if ("error" in attempt) {
             scheduledDelayMs = (attempt.error as RetriableError).retryAfterMs ?? delayMs;
-            if (totalWaitMs + scheduledDelayMs > RETRY_WAIT_BUDGET_MS) {
+            if (waitBudget.totalWaitMs + scheduledDelayMs > RETRY_WAIT_BUDGET_MS) {
               throw attempt.error;
             }
             console.error(
@@ -161,7 +165,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
           }
         },
         sleep: async () => {
-          totalWaitMs += scheduledDelayMs;
+          waitBudget.totalWaitMs += scheduledDelayMs;
           await sleep(scheduledDelayMs);
         },
       },
@@ -185,8 +189,8 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
     return response.json();
   }
 
-  function getJson(url: string): Promise<unknown> {
-    return withRetry(url, () => requestJson(url, { headers }));
+  function getJson(url: string, waitBudget?: RetryWaitBudget): Promise<unknown> {
+    return withRetry(url, () => requestJson(url, { headers }), waitBudget);
   }
 
   async function graphql(
@@ -250,9 +254,11 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
 
   async function getPullFiles(repo: string, prNumber: string): Promise<PullRequestFile[]> {
     const files: PullRequestFile[] = [];
+    const waitBudget: RetryWaitBudget = { totalWaitMs: 0 };
     for (let page = 1; ; page += 1) {
       const batch = (await getJson(
         `${REST_API_ROOT}/repos/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`,
+        waitBudget,
       )) as PullRequestFile[];
       files.push(...batch);
       if (batch.length < 100) return files;
