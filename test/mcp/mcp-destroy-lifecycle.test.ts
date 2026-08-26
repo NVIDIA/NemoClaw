@@ -1326,7 +1326,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],
   ] as const)(
-    "reattaches an already-absent first provider when a later %s detach fails",
+    "fails closed before a later %s detach when an already-detached provider has no provable credential revision",
     async (_label, prepareFunction) => {
       registry.registerSandbox({
         name: "alpha",
@@ -1343,19 +1343,21 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
       const message = await captureMessage(() => bridge[prepareFunction]("alpha"));
 
-      expect(message).toContain("provider detach failed");
-      expect([...testState.attachedProviders].sort()).toEqual([
-        "alpha-mcp-github",
-        "alpha-mcp-slack",
-      ]);
+      expect(message).toContain(
+        "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
+      );
+      expect([...testState.attachedProviders]).toEqual(["alpha-mcp-slack"]);
       expect(
         testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
-      ).toBe(true);
+      ).toBe(false);
+      expect(
+        testState.calls.some((call) => call === "sandbox provider detach alpha alpha-mcp-slack"),
+      ).toBe(false);
       expect(testState.adapterRegistered).toBe(true);
     },
   );
 
-  it("reattaches every desired provider when rebuild deletion aborts after a retry", async () => {
+  it("reattaches every desired provider when rebuild deletion aborts", async () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
@@ -1364,9 +1366,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     });
     registry.addCustomPolicy("alpha", ownedPolicy("github"));
     registry.addCustomPolicy("alpha", ownedPolicy("slack"));
-    // The first rebuild process died after detaching github. A retry completes
-    // preparation, then sandbox deletion is modeled as failed by invoking abort.
-    testState.attachedProviders.delete("alpha-mcp-github");
+    // Preparation proves both credential revisions before detaching either
+    // provider, then sandbox deletion is modeled as failed by invoking abort.
 
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     const detachedBeforeAbort = [...testState.attachedProviders].sort();
