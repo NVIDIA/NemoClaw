@@ -154,6 +154,7 @@ console.log(JSON.stringify({
       messagingInputCopyIndex > optionalPluginInstallIndex &&
       messagingInputCopyIndex < messagingPluginInstallIndex,
     candidateRuntimeExcludesMessaging:
+      candidateRuntimeBlock.length > 0 &&
       !candidateRuntimeBlock.includes("COPY src/lib/messaging/ /src/lib/messaging/"),
     singleFinalMessagingInputCopy: messagingInputCopyCount === 1,
     optionalBeforeMessaging:
