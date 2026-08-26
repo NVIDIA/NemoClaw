@@ -201,7 +201,15 @@ function removeMessagingPolicy(
   }
 }
 
-function messagingRouteRecoveryAction(sandboxName: string, channelId: string): string {
+function messagingRouteRecoveryAction(sandboxName: string, channelId: string | null): string {
+  if (channelId === null) {
+    return (
+      `for each intended channel, run \`nemoclaw ${sandboxName} channels add <channel>\`; ` +
+      "approve each rebuild prompt in an interactive terminal, or run " +
+      `\`nemoclaw ${sandboxName} rebuild\` after adding every intended channel in ` +
+      "non-interactive mode"
+    );
+  }
   return (
     `run \`nemoclaw ${sandboxName} channels add ${channelId}\`; approve the rebuild prompt ` +
     `in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
@@ -254,7 +262,7 @@ export function composeCredentialBoundMessagingPolicies(
       throw new Error(
         `Cannot compose messaging routes for sandbox '${sandboxName}' because the channel plan ` +
           `is unavailable and the live policy could not be read. Recovery: ` +
-          `${messagingRouteRecoveryAction(sandboxName, "<channel>")}.`,
+          `${messagingRouteRecoveryAction(sandboxName, null)}.`,
       );
     }
     const liveMessagingPolicy = messagingPolicies.find((policy) =>

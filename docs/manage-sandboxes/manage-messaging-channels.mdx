@@ -123,6 +123,32 @@ A missing or incompatible required provider stops the rebuild before the replace
 </AgentOnly>
 If the command queues the change without rebuilding, the running sandbox keeps its existing bridge and network policy until you rebuild it.
 
+## Recover Messaging Routes
+
+Before `shields down` applies its relaxed policy, NemoClaw verifies credential-bound messaging routes against the saved channel plan and live policy.
+If the channel plan is unavailable and NemoClaw cannot verify the live policy, `shields down` stops without changing the live policy.
+
+Run this command once for every channel that the sandbox must keep:
+
+```bash
+$$nemoclaw <sandbox> channels add <channel>
+```
+
+In an interactive terminal, approve each rebuild prompt.
+For non-interactive recovery, provide the required channel credentials and run every `channels add` command before one rebuild:
+
+```bash
+$$nemoclaw <sandbox> rebuild
+```
+
+Retry `shields down` after the rebuild.
+
+<AgentOnly variant="hermes">
+The Hermes Telegram policy route must bind the exact `<sandbox>-telegram-bridge` provider.
+If the live route has no binding or names another provider, NemoClaw omits Telegram from the relaxed policy and prints the add and rebuild steps.
+Re-add Telegram, rebuild the sandbox, and retry `shields down` before you rely on Telegram during the maintenance window.
+</AgentOnly>
+
 ## Avoid Cross-Sandbox Conflicts
 
 <Warning title="Conflict Detection Scope">

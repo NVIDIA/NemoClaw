@@ -275,8 +275,9 @@ describe("applyPermissivePolicy", () => {
           "'nemoclaw'; credential-bound messaging routes cannot be verified.",
       );
       expect(observed.result.stderr).toContain(
-        `run \`nemoclaw ${sandboxName} channels add <channel>\`; approve the rebuild prompt in ` +
-          `an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
+        `for each intended channel, run \`nemoclaw ${sandboxName} channels add <channel>\`; ` +
+          "approve each rebuild prompt in an interactive terminal, or run " +
+          `\`nemoclaw ${sandboxName} rebuild\` after adding every intended channel in ` +
           "non-interactive mode.",
       );
     } finally {

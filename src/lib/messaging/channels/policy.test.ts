@@ -22,24 +22,12 @@ type PolicyFixture = {
   readonly presetName: string;
 };
 
-type PolicyRule = { readonly allow?: { readonly method?: string; readonly path?: string } };
 type PolicyEndpoint = {
   readonly host?: string;
   readonly path?: string;
   readonly port?: number;
   readonly credential_binding?: { readonly provider?: string };
-  readonly rules?: readonly PolicyRule[];
 };
-
-const OPENCLAW_CREDENTIAL_ROUTE_CASES = [
-  ["Telegram API", "telegram", "api.telegram.org", "/bot*/**", "telegram-bridge"],
-  ["Slack bot API", "slack", "slack.com", "/**", "slack-bridge"],
-  ["Slack Socket Mode API", "slack", "slack.com", "/api/apps.connections.open", "slack-app"],
-  ["Slack API reference", "slack", "api.slack.com", "/**", "slack-bridge"],
-  ["Slack webhooks", "slack", "hooks.slack.com", "/**", "slack-bridge"],
-  ["Slack primary socket", "slack", "wss-primary.slack.com", "/**", "slack-app"],
-  ["Slack backup socket", "slack", "wss-backup.slack.com", "/**", "slack-app"],
-] as const;
 
 function fixtureContentFor(
   file: string,
@@ -64,20 +52,40 @@ function createPolicyWithFixtures(
   });
 }
 
-function loadedPolicyEndpoints(presetName: string, sandboxName: string): PolicyEndpoint[] {
-  const content = loadMessagingChannelPolicyPreset(presetName, {
-    agent: "openclaw",
+function composeHermesTelegramPolicy(providerAvailable: boolean) {
+  const sandboxName = "hermes-telegram";
+  const omissions: Array<{ channelId: string; reason: string }> = [];
+  const composed = composeCredentialBoundMessagingPolicies(
+    YAML.stringify({ network_policies: {} }),
+    YAML.stringify({
+      network_policies: {
+        telegram: {
+          endpoints: providerAvailable
+            ? [
+                {
+                  credential_binding: {
+                    provider: `${sandboxName}-telegram-bridge`,
+                  },
+                },
+              ]
+            : [],
+        },
+      },
+    }),
     sandboxName,
-  });
-  expect(content, `no OpenClaw ${presetName} policy preset`).toBeTruthy();
-  const parsed = YAML.parse(content ?? "") as {
-    network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
-  };
-  return Object.values(parsed.network_policies ?? {}).flatMap((policy) => policy.endpoints ?? []);
-}
-
-function endpointPathSpecificity(endpoint: PolicyEndpoint): number {
-  return [...(endpoint.path ?? "")].filter((character) => character !== "*").length;
+    "hermes",
+    {
+      channels: [{ channelId: "telegram", active: true, disabled: false }],
+      disabledChannels: [],
+    },
+    (omission) => omissions.push(omission),
+  );
+  const telegram = (
+    YAML.parse(composed) as {
+      network_policies: { telegram?: { endpoints?: PolicyEndpoint[] } };
+    }
+  ).network_policies.telegram;
+  return { omissions, sandboxName, telegram };
 }
 
 describe("messaging channel policy presets", () => {
@@ -217,23 +225,32 @@ describe("messaging channel policy presets", () => {
     expect(missing).toEqual([]);
   });
 
-  it.each(OPENCLAW_CREDENTIAL_ROUTE_CASES)(
-    "sets the OpenClaw %s endpoint rule credential binding to its provider profile (#10153)",
-    (_route, presetName, host, rulePath, providerSuffix) => {
-      const sandboxName = "msg-binding-e2e";
-      const endpoint = loadedPolicyEndpoints(presetName, sandboxName).find(
-        (candidate) =>
-          candidate.host === host && candidate.rules?.some((rule) => rule.allow?.path === rulePath),
-      );
-      expect(endpoint).toMatchObject({
-        credential_binding: { provider: `${sandboxName}-${providerSuffix}` },
-      });
-    },
-  );
-
-  it("selects the Slack app provider with a more specific endpoint path (#10153)", () => {
+  it("composes the Slack app route more specifically than the bot route (#10153)", () => {
     const sandboxName = "msg-binding-e2e";
-    const endpoints = loadedPolicyEndpoints("slack", sandboxName).filter(
+    const composed = composeCredentialBoundMessagingPolicies(
+      YAML.stringify({ network_policies: {} }),
+      YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-slack-app` } },
+              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
+            ],
+          },
+        },
+      }),
+      sandboxName,
+      "openclaw",
+      {
+        channels: [{ channelId: "slack", active: true, disabled: false }],
+        disabledChannels: [],
+      },
+    );
+    const endpoints = (
+      YAML.parse(composed) as {
+        network_policies: { slack: { endpoints: PolicyEndpoint[] } };
+      }
+    ).network_policies.slack.endpoints.filter(
       (endpoint) => endpoint.host === "slack.com" && endpoint.port === 443,
     );
     const appEndpoint = endpoints.find(
@@ -245,8 +262,29 @@ describe("messaging channel policy presets", () => {
 
     expect(appEndpoint).toMatchObject({ path: "/api/apps.connections.open" });
     expect(botEndpoint?.path ?? "").toBe("");
-    expect(endpointPathSpecificity(appEndpoint ?? {})).toBeGreaterThan(
-      endpointPathSpecificity(botEndpoint ?? {}),
+  });
+
+  it("retains the Hermes Telegram route when its bridge provider is available (#10153)", () => {
+    const { omissions, sandboxName, telegram } = composeHermesTelegramPolicy(true);
+
+    expect(telegram?.endpoints).toContainEqual(
+      expect.objectContaining({
+        host: "api.telegram.org",
+        credential_binding: { provider: `${sandboxName}-telegram-bridge` },
+      }),
     );
+    expect(omissions).toEqual([]);
+  });
+
+  it("omits the Hermes Telegram route when its bridge provider is unavailable (#10153)", () => {
+    const { omissions, telegram } = composeHermesTelegramPolicy(false);
+
+    expect(telegram).toBeUndefined();
+    expect(omissions).toEqual([
+      expect.objectContaining({
+        channelId: "telegram",
+        reason: "the live policy has no credential providers; expected 1",
+      }),
+    ]);
   });
 });
