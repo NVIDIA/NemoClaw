@@ -130,7 +130,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const command = dockerRunCommandBetween(
         dockerfile,
         "# Copy startup script and shared sandbox initialisation library",
-        "# Build args for config that varies per deployment.",
+        "# Lock down npm for the next RUN",
       )
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
