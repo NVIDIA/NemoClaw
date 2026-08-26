@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, type StdioOptions } from "node:child_process";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { spawnExitCode } from "../../core/process-exit";
@@ -15,9 +15,18 @@ import {
   type LogProbeResult,
   mergeTailLogLines,
   normalizeSandboxLogsOptions,
+  tagGatewayLogLine,
+  tagGatewayLogLines,
 } from "../../domain/sandbox/logs";
 import { ROOT } from "../../runner";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+
+/**
+ * How long a piped log source may keep draining after its child exits before
+ * the relay stops waiting. Bounded so a lingering descendant holding the
+ * child's stdout write end cannot stall follow mode (#10340).
+ */
+const DRAIN_GRACE_MS = 200;
 
 type RunOpenshellOptions = Parameters<typeof runOpenshell>[1];
 type RunOpenshellFn = (args: string[], options?: RunOpenshellOptions) => LogProbeResult;
@@ -75,11 +84,14 @@ function streamSandboxFollowLogs(
       : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
   const openshellArgs = buildSandboxLogsArgs(sandboxName, options);
   const exit = deps.exit ?? process.exit;
-  const spawnOptions = {
+  const writeStdout = deps.writeStdout ?? process.stdout.write.bind(process.stdout);
+  // A tagged source is piped so each line can be attributed before it is
+  // relayed. Every other source keeps the original raw passthrough.
+  const spawnOptionsFor = (tagged: boolean): { cwd: string; env: NodeJS.ProcessEnv; stdio: StdioOptions } => ({
     cwd: ROOT,
     env: deps.env ?? process.env,
-    stdio: "inherit" as const,
-  };
+    stdio: tagged ? ["inherit", "pipe", "inherit"] : "inherit",
+  });
   const sources: Array<{
     label: string;
     args: string[];
@@ -144,30 +156,95 @@ function streamSandboxFollowLogs(
     requestExitAfterSignal("SIGTERM", 143);
   });
 
-  const addSource = (label: string, args: string[]) => {
+  const addSource = (label: string, args: string[], tagged = false) => {
     const spawnProcess = deps.spawn ?? spawn;
     const openshellBinary = (deps.getOpenshellBinary ?? getOpenshellBinary)();
     const source = {
       label,
       args,
-      child: spawnProcess(openshellBinary, args, spawnOptions),
+      child: spawnProcess(openshellBinary, args, spawnOptionsFor(tagged)),
       done: false,
     };
     sources.push(source);
     source.child.on("error", (error: Error) => {
       markSourceDone(source, 1, error.message);
     });
+
+    const stdout = tagged ? source.child.stdout : null;
+    if (!stdout) {
+      source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+        markSourceDone(
+          source,
+          spawnExitCode({ status: code, signal }),
+          signal ? `signal ${signal}` : null,
+        );
+      });
+      return;
+    }
+
+    let pending = "";
+    let exited = false;
+    let ended = false;
+    let exitStatus = 0;
+    let exitDetail: string | null = null;
+    let drainTimer: NodeJS.Timeout | null = null;
+
+    const emitLine = (raw: string) => {
+      const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+      try {
+        writeStdout(`${tagGatewayLogLine(line)}\n`);
+      } catch {
+        // Downstream closed the pipe (`nemoclaw logs -f | head`). With raw
+        // passthrough the child took SIGPIPE and the CLI exited 141; preserve
+        // that observable code now that the relay owns the write.
+        requestExitAfterSignal("SIGTERM", 141);
+      }
+    };
+    const finish = () => {
+      if (drainTimer) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
+      if (pending) {
+        emitLine(pending);
+        pending = "";
+      }
+      stdout.destroy();
+      markSourceDone(source, exitStatus, exitDetail);
+    };
+
+    stdout.setEncoding("utf8");
+    stdout.on("data", (chunk: string) => {
+      pending += chunk;
+      const parts = pending.split("\n");
+      pending = parts.pop() ?? "";
+      for (const part of parts) emitLine(part);
+    });
+    // Completion is `end` OR the drain timer, never `end` alone: a descendant
+    // that inherited the child's stdout write end keeps `end` from firing, and
+    // the signal-path forced-exit timer never runs on a natural child death, so
+    // requiring `end` would hang follow mode forever (#10340).
+    const settleAfterExit = () => {
+      ended = true;
+      if (exited) finish();
+    };
+    stdout.on("end", settleAfterExit);
+    stdout.on("error", settleAfterExit);
     source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-      markSourceDone(
-        source,
-        spawnExitCode({ status: code, signal }),
-        signal ? `signal ${signal}` : null,
-      );
+      exited = true;
+      exitStatus = spawnExitCode({ status: code, signal });
+      exitDetail = signal ? `signal ${signal}` : null;
+      if (ended) {
+        finish();
+        return;
+      }
+      drainTimer = setTimeout(finish, DRAIN_GRACE_MS);
+      drainTimer.unref?.();
     });
   };
 
   if (openclawArgs) {
-    addSource("OpenClaw log source", openclawArgs);
+    addSource("OpenClaw log source", openclawArgs, true);
   }
   enableSandboxAuditLogs(sandboxName, deps);
   addSource("OpenShell log source", openshellArgs);
@@ -250,7 +327,9 @@ export function showSandboxLogsWithDeps(
   const targetLines = Number(logsOptions.lines);
   const maxLines = Number.isFinite(targetLines) && targetLines > 0 ? targetLines : 0;
   const sources: string[] = [];
-  if (gatewayResult?.stdout) sources.push(String(gatewayResult.stdout));
+  // Only the gateway source is rewritten. OpenShell already tags its own lines
+  // ([sandbox], [proxy], ...), so tagging it too would double-tag (#10340).
+  if (gatewayResult?.stdout) sources.push(tagGatewayLogLines(String(gatewayResult.stdout)));
   if (openshellResult.stdout) sources.push(String(openshellResult.stdout));
   const merged = mergeTailLogLines(sources, maxLines);
   if (merged) {

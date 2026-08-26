@@ -127,6 +127,59 @@ export function parseLineTimestamp(line: string): number | null {
   return null;
 }
 
+/**
+ * Source tag written in front of OpenClaw gateway-log lines that do not
+ * already name a subsystem. `[gateway]` is the token the gateway log already
+ * uses for its own structured lines, and the NemoClaw plugin writes the same
+ * token in front of its registration banner (#7322).
+ */
+export const GATEWAY_LOG_SOURCE_TAG = "[gateway]";
+
+/** Length of a leading timestamp recognised by `parseLineTimestamp`, else 0. */
+function leadingTimestampLength(line: string): number {
+  const epoch = line.match(EPOCH_TIMESTAMP_RE);
+  if (epoch) return epoch[0].length;
+  const iso = line.match(ISO_TIMESTAMP_RE);
+  if (iso) return iso[0].length;
+  return 0;
+}
+
+/**
+ * Attribute one line read from the OpenClaw gateway log to its source.
+ *
+ * `/tmp/gateway.log` is both stdout and stderr of `openclaw gateway run`, so it
+ * carries raw process output — box-drawing banners, Node warnings, stack traces
+ * — alongside structured gateway lines. Those raw lines name no subsystem, so a
+ * consumer reading the stream line by line cannot attribute them (#10340).
+ *
+ * Every line from this source is tagged by construction rather than by guessing
+ * whether it "looks attributable": a heuristic that accepts any bracketed token
+ * silently passes through the untagged banner lines this exists to catch.
+ *
+ * The tag goes *after* any recognised leading timestamp so `parseLineTimestamp`
+ * still sees the timestamp first and `mergeTailLogLines` keeps ordering the line
+ * correctly. A line that already names the gateway is returned byte-identical,
+ * which also makes this idempotent.
+ */
+export function tagGatewayLogLine(line: string): string {
+  if (line.length === 0) return line;
+  const headLength = leadingTimestampLength(line);
+  const rest = line.slice(headLength);
+  if (rest.trimStart().startsWith(GATEWAY_LOG_SOURCE_TAG)) return line;
+  if (headLength === 0) return `${GATEWAY_LOG_SOURCE_TAG} ${line}`;
+  return `${line.slice(0, headLength)} ${GATEWAY_LOG_SOURCE_TAG}${rest}`;
+}
+
+/** Apply `tagGatewayLogLine` to every line of a gateway-log chunk. */
+export function tagGatewayLogLines(text: string): string {
+  if (!text) return text;
+  const lines = text.split(LINE_SPLIT_RE);
+  const hadTrailingNewline = lines[lines.length - 1] === "";
+  if (hadTrailingNewline) lines.pop();
+  const tagged = lines.map(tagGatewayLogLine).join(NEWLINE);
+  return hadTrailingNewline ? tagged + NEWLINE : tagged;
+}
+
 interface ScoredLine {
   text: string;
   timestamp: number;

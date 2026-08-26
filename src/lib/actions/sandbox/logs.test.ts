@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { LogProbeResult } from "../../domain/sandbox/logs";
 import { showSandboxLogsWithDeps } from "./logs";
@@ -120,7 +121,9 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("[1] gateway\n[2] openshell\n");
+    // The gateway line names no subsystem, so the relay attributes it; the
+    // OpenShell line already carries its own tag and is passed through (#10340).
+    expect(result.stdout).toBe("[1] [gateway] gateway\n[2] openshell\n");
     expect(result.calls.map((call) => call.args)).toEqual([
       ["settings", "set", "alpha", "--key", "ocsf_json_enabled", "--value", "true"],
       ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "/tmp/gateway.log"],
@@ -241,5 +244,115 @@ describe("showSandboxLogsWithDeps", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("bridge did not start within 15s");
     expect(result.stdout).toContain("starting HTTP server");
+  });
+});
+
+type StreamingChild = { child: ReturnType<SpawnFn>; stdout: PassThrough };
+
+function createStreamingChild(): StreamingChild {
+  const stdout = new PassThrough();
+  const child = new EventEmitter() as ReturnType<SpawnFn>;
+  Object.assign(child, {
+    killed: false,
+    exitCode: null,
+    signalCode: null,
+    kill: vi.fn(() => true),
+    stdout,
+  });
+  return { child, stdout };
+}
+
+type FollowRun = {
+  written: string[];
+  spawns: { args: string[]; options: Record<string, unknown> }[];
+  gateway: StreamingChild;
+  exited: Promise<number>;
+};
+
+function startFollowRun(): FollowRun {
+  const written: string[] = [];
+  const spawns: FollowRun["spawns"] = [];
+  const gateway = createStreamingChild();
+  const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
+  const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
+  let settle: (code: number) => void = () => {};
+  const exited = new Promise<number>((resolve) => {
+    settle = resolve;
+  });
+
+  const spawn = ((_command: string, args: readonly string[], callOptions = {}) => {
+    spawns.push({ args: [...args], options: callOptions as Record<string, unknown> });
+    return spawns.length === 1 ? gateway.child : createExitedChild();
+  }) as unknown as SpawnFn;
+
+  showSandboxLogsWithDeps(
+    "alpha",
+    { follow: true, lines: "50", since: null },
+    {
+      exit: ((code: number) => {
+        restoreProcessSignalListeners("SIGINT", sigintListeners);
+        restoreProcessSignalListeners("SIGTERM", sigtermListeners);
+        settle(code);
+        return undefined as never;
+      }) as never,
+      isDockerRuntimeDown: () => false,
+      getOpenshellBinary: () => "openshell",
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      spawn,
+      writeStdout: (chunk) => written.push(chunk),
+    },
+  );
+
+  return { written, spawns, gateway, exited };
+}
+
+describe("follow-mode log source attribution (#10340)", () => {
+  const BANNER = [
+    "│",
+    "◆  Config warnings ────",
+    "│  - plugins.entries.tavily: plugin not installed: tavily - install the",
+    "└────",
+  ].join("\n");
+
+  it("pipes only the OpenClaw source and leaves OpenShell on raw passthrough", async () => {
+    const run = startFollowRun();
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+    await run.exited;
+
+    expect(run.spawns[0].options.stdio).toEqual(["inherit", "pipe", "inherit"]);
+    expect(run.spawns[1].options.stdio).toBe("inherit");
+  });
+
+  it("attributes every streamed banner line to a source", async () => {
+    const run = startFollowRun();
+    run.gateway.stdout.write(`${BANNER}\n`);
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+    await run.exited;
+
+    const lines = run.written.join("").split("\n").filter(Boolean);
+    expect(lines).toEqual(BANNER.split("\n").map((line) => `[gateway] ${line}`));
+  });
+
+  it("emits a trailing line that arrives without a newline", async () => {
+    const run = startFollowRun();
+    run.gateway.stdout.write("no trailing newline");
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+    await run.exited;
+
+    expect(run.written.join("")).toBe("[gateway] no trailing newline\n");
+  });
+
+  it("stops following when the source exits while a descendant holds its stdout open", async () => {
+    // A grandchild that inherited the child's stdout write end keeps `end` from
+    // firing. Completion must not require `end`, or follow mode hangs forever.
+    const run = startFollowRun();
+    run.gateway.stdout.write("gateway banner line\n");
+    run.gateway.child.emit("exit", 0, null);
+
+    await expect(run.exited).resolves.toBe(0);
+    expect(run.written.join("")).toBe("[gateway] gateway banner line\n");
   });
 });

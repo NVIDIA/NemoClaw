@@ -8,8 +8,11 @@ import {
   buildSandboxLogsArgs,
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
+  GATEWAY_LOG_SOURCE_TAG,
   getLogsProbeTimeoutMs,
   normalizeSandboxLogsOptions,
+  tagGatewayLogLine,
+  tagGatewayLogLines,
 } from "./logs";
 
 describe("sandbox logs helpers", () => {
@@ -219,5 +222,65 @@ describe("mergeTailLogLines", () => {
     const merged = mergeTailLogLines([`${gateway}\n`, `${openshell}\n`], 100);
     const lines = merged.split("\n").filter((line) => line.length > 0);
     expect(lines.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("gateway log source tagging (#10340)", () => {
+  // The verbatim banner from #10325: border and continuation lines carry no
+  // subsystem of their own, so a line-based consumer cannot attribute them.
+  const BANNER_LINES = [
+    "│",
+    "◆  Config warnings ────",
+    "│",
+    "│  - plugins.entries.tavily: plugin not installed: tavily - install the",
+    "│    official external plugin with: openclaw plugins install",
+    "│    @openclaw/tavily-plugin",
+    "│",
+    "└────",
+  ];
+
+  it("gives every banner line a source tag", () => {
+    const tagged = BANNER_LINES.map(tagGatewayLogLine);
+    expect(tagged.every((line) => line.startsWith(`${GATEWAY_LOG_SOURCE_TAG} `))).toBe(true);
+  });
+
+  it("leaves a line that already names the gateway byte-identical", () => {
+    const line = "2026-05-22T20:55:38.152+00:00 [gateway] server listening";
+    expect(tagGatewayLogLine(line)).toBe(line);
+  });
+
+  it("keeps a recognised leading timestamp first so merge ordering still parses it", () => {
+    const line = "2026-05-22T20:55:38.152+00:00 starting provider";
+    const tagged = tagGatewayLogLine(line);
+    expect(tagged).toBe("2026-05-22T20:55:38.152+00:00 [gateway] starting provider");
+    expect(parseLineTimestamp(tagged)).toBe(parseLineTimestamp(line));
+  });
+
+  it("keeps a bracketed epoch timestamp first", () => {
+    const line = "[1779488800.000] starting provider";
+    const tagged = tagGatewayLogLine(line);
+    expect(tagged).toBe("[1779488800.000] [gateway] starting provider");
+    expect(parseLineTimestamp(tagged)).toBe(parseLineTimestamp(line));
+  });
+
+  it("is idempotent so re-tagging never stacks prefixes", () => {
+    const once = BANNER_LINES.map(tagGatewayLogLine);
+    expect(once.map(tagGatewayLogLine)).toEqual(once);
+  });
+
+  it("leaves an empty line empty", () => {
+    expect(tagGatewayLogLine("")).toBe("");
+  });
+
+  it("tags each line of a chunk and preserves the trailing newline", () => {
+    expect(tagGatewayLogLines("alpha\nbeta\n")).toBe("[gateway] alpha\n[gateway] beta\n");
+  });
+
+  it("preserves the absence of a trailing newline", () => {
+    expect(tagGatewayLogLines("alpha\nbeta")).toBe("[gateway] alpha\n[gateway] beta");
+  });
+
+  it("returns empty input unchanged", () => {
+    expect(tagGatewayLogLines("")).toBe("");
   });
 });
