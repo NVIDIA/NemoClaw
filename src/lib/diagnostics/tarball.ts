@@ -20,13 +20,17 @@ import { basename, dirname } from "node:path";
 // defeats every in-process identity check below, including ones that run
 // after createTarball() has already returned and the caller has moved on.
 // The sticky bit (mode 1777, as on a standard /tmp) is what makes a shared
-// directory safe for this at all: it restricts removing or renaming an
-// entry to its owner (or root) regardless of the directory's own write
-// permissions. A directory only the current user can write to needs no
-// sticky bit for the same reason. Refusing to stage into anything else is
-// the one check here that closes the race for good instead of narrowing it.
+// directory safe for this, but only when a trusted party owns it: sticky
+// semantics stop everyone *except* the directory's own owner from touching
+// entries they don't own, so an attacker-owned sticky-and-world-writable
+// directory offers no protection at all — its owner can still remove or
+// replace our file regardless of the bit. A directory only the current
+// user can write to needs neither the sticky bit nor an ownership check
+// for the same reason. Refusing to stage into anything else is the one
+// check here that closes the race for good instead of narrowing it.
 const MODE_GROUP_OR_OTHER_WRITABLE = 0o022;
 const MODE_STICKY = 0o1000;
+const ROOT_UID = 0;
 
 function outputDirectoryTrustworthy(outputPath: string): boolean {
   let dirStat: ReturnType<typeof statSync>;
@@ -38,8 +42,12 @@ function outputDirectoryTrustworthy(outputPath: string): boolean {
     return true;
   }
   const writableByOthers = (dirStat.mode & MODE_GROUP_OR_OTHER_WRITABLE) !== 0;
+  if (!writableByOthers) return true;
   const stickyProtected = (dirStat.mode & MODE_STICKY) !== 0;
-  return !writableByOthers || stickyProtected;
+  if (!stickyProtected) return false;
+  if (typeof process.getuid !== "function") return true;
+  const currentUid = process.getuid();
+  return dirStat.uid === currentUid || dirStat.uid === ROOT_UID;
 }
 
 export interface CreateTarballOptions {
@@ -181,8 +189,12 @@ export function createTarball(
       process.exitCode = 1;
       try {
         rmSync(partial, { force: true });
-      } catch {
-        /* best-effort cleanup of partial tarball */
+      } catch (cleanupErr) {
+        error(
+          `Additionally failed to remove the leftover partial archive at ${partial}: ` +
+            `${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}. ` +
+            "It may contain collected diagnostics; remove it by hand before retrying.",
+        );
       }
     }
   }

@@ -22,13 +22,14 @@ vi.mock("node:child_process", () => ({
 
 // Import-time stub, real implementation kept: createTarball's pre-check and
 // its rename() call are two separate fs operations that Node's API cannot
-// make atomic with each other. Wrapping only renameSync (everything else in
-// this module stays real) lets a test inject a path swap in the exact
-// instant between those two calls, which no amount of mocking spawnSync
-// alone could reach.
+// make atomic with each other. Wrapping only renameSync and statSync
+// (everything else in this module stays real) lets a test inject a path
+// swap in the exact instant between those two calls, or fake a directory's
+// ownership without needing an actual second local account to test against
+// — neither is reachable by mocking spawnSync alone.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+  return { ...actual, renameSync: vi.fn(actual.renameSync), statSync: vi.fn(actual.statSync) };
 });
 
 import { spawnSync } from "node:child_process";
@@ -36,6 +37,7 @@ import { renameSync } from "node:fs";
 import { createTarball } from "./tarball";
 
 const mockedSpawnSync = vi.mocked(spawnSync);
+const mockedStatSync = vi.mocked(statSync);
 const mockedRenameSync = vi.mocked(renameSync);
 
 function expectTarInvokedThroughHeldDescriptor(collectDir: string): void {
@@ -168,5 +170,28 @@ describe("createTarball staging-descriptor race (#10195)", () => {
     expect(statSync(victim).mode & 0o777).toBe(victimModeBefore);
     expect(() => statSync(output)).toThrow();
     expectTarInvokedThroughHeldDescriptor(tempDir);
+  });
+
+  it("refuses a sticky output directory owned by a different local account", async () => {
+    const output = join(outputDir, "output.tar.gz");
+    const { statSync: realStatSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const otherUid = (process.getuid?.() ?? 0) + 1;
+    // The sticky bit alone only stops accounts OTHER than the directory's
+    // owner from touching entries they don't own — it grants the owner no
+    // such restriction. A sticky, world-writable directory owned by some
+    // other account is therefore exactly as unsafe as one with no sticky
+    // bit at all: that owner can still remove or replace our published
+    // file at any point, sticky bit or not. Faking a real directory's stat
+    // result rather than an actual second account, which this environment
+    // cannot provision.
+    mockedStatSync.mockImplementationOnce((path, opts) => {
+      const real = realStatSync(path as string, opts as never);
+      return { ...real, mode: (real.mode & ~0o777) | 0o1777, uid: otherUid };
+    });
+    const ok = createTarball(tempDir, output, { info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(mockedSpawnSync).not.toHaveBeenCalled();
+    expect(() => statSync(output)).toThrow();
   });
 });
