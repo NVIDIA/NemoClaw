@@ -20,10 +20,23 @@ vi.mock("node:child_process", () => ({
   spawnSync: vi.fn(),
 }));
 
+// Import-time stub, real implementation kept: createTarball's pre-check and
+// its rename() call are two separate fs operations that Node's API cannot
+// make atomic with each other. Wrapping only renameSync (everything else in
+// this module stays real) lets a test inject a path swap in the exact
+// instant between those two calls, which no amount of mocking spawnSync
+// alone could reach.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
+
 import { spawnSync } from "node:child_process";
+import { renameSync } from "node:fs";
 import { createTarball } from "./tarball";
 
 const mockedSpawnSync = vi.mocked(spawnSync);
+const mockedRenameSync = vi.mocked(renameSync);
 
 function expectTarInvokedThroughHeldDescriptor(collectDir: string): void {
   expect(mockedSpawnSync).toHaveBeenCalledTimes(1);
@@ -105,6 +118,48 @@ describe("createTarball staging-descriptor race (#10195)", () => {
     // proceed on a mismatch, so no rename happens at all. The victim is
     // never touched, `output` is never created, and the call fails closed
     // instead of reporting success for attacker-chosen content.
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledOnce();
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("Tarball written"));
+    expect(readFileSync(victim, "utf-8")).toBe(victimContent);
+    expect(statSync(victim).mode & 0o777).toBe(victimModeBefore);
+    expect(() => statSync(output)).toThrow();
+    expectTarInvokedThroughHeldDescriptor(tempDir);
+  });
+
+  it("does not report success for content swapped in after the pre-rename identity check", async () => {
+    const output = join(outputDir, "output.tar.gz");
+    const partial = `${output}.partial.${String(process.pid)}`;
+    const victim = join(outputDir, "victim.txt");
+    const victimContent = "do not overwrite me";
+    writeFileSync(victim, victimContent, { mode: 0o644 });
+    const victimModeBefore = statSync(victim).mode & 0o777;
+    mockedSpawnSync.mockImplementation((_command, _args, options) => {
+      const stdio = (options as { stdio: unknown[] }).stdio;
+      const heldFd = stdio[1] as number;
+      writeSync(heldFd, "MARKER");
+      return { status: 0, signal: null } as ReturnType<typeof spawnSync>;
+    });
+    // The pre-rename identity check (lstatSync(partial) vs fstatSync(fd))
+    // runs and matches normally — the swap happens only here, in the
+    // instant createTarball actually calls renameSync, simulating an
+    // attacker who wins the race in the one window neither that check nor
+    // O_EXCL can close: after the check passes, before the pathname-based
+    // rename executes. Goes through vi.importActual (not the imported,
+    // mocked `renameSync` binding) to avoid the mock calling itself. The
+    // real rename still runs afterward, so this proves the *post*-rename
+    // identity check is what catches it, not a rename that was refused.
+    const { renameSync: realRenameSync } =
+      await vi.importActual<typeof import("node:fs")>("node:fs");
+    mockedRenameSync.mockImplementationOnce((from, to) => {
+      rmSync(partial, { force: true });
+      symlinkSync(victim, partial);
+      return realRenameSync(from, to);
+    });
+    const info = vi.fn();
+    const error = vi.fn();
+    const ok = createTarball(tempDir, output, { info, warn: vi.fn(), error });
     expect(ok).toBe(false);
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledOnce();

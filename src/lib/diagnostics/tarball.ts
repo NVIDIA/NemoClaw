@@ -40,10 +40,10 @@ export function createTarball(
   // symlink). tar streams to stdout redirected into this descriptor, and the
   // mode is set with fchmod on the same descriptor, so no step after the
   // claim reopens the path by name. The final rename is checked against the
-  // held descriptor's identity before it runs, so an attacker who can unlink
-  // entries in the output directory can still make publication fail
-  // (denial of service), but can never make us publish through a planted
-  // symlink or write through one (#10195).
+  // held descriptor's identity both before and after it runs, so an
+  // attacker who can modify entries in the output directory can still make
+  // publication fail (denial of service), but can never make us report
+  // success for, publish, or write through a planted symlink (#10195).
   let fd: number;
   try {
     fd = openSync(
@@ -78,15 +78,22 @@ export function createTarball(
     fchmodSync(fd, 0o600);
     // rename() is pathname-based and never follows its source, so it cannot
     // be tricked into writing through a symlink — but it also cannot tell a
-    // swapped path from the real one. Without this check, an attacker who
-    // swaps `partial` for a symlink after we opened it would have that link
-    // renamed to `output`: createTarball() would report success and the
-    // caller's own "attach this to your GitHub issue" guidance would point
-    // at attacker-chosen content instead of the archive we actually wrote.
-    // Comparing the still-open descriptor's identity against the pathname
-    // right before the one remaining pathname-based step closes that gap;
-    // a mismatch means the path no longer names the file we wrote to, so
-    // publication fails closed instead of moving whatever is there now.
+    // swapped path from the real one. Without any check here, an attacker
+    // who swaps `partial` for a symlink after we opened it would have that
+    // link renamed to `output`: createTarball() would report success and
+    // the caller's own "attach this to your GitHub issue" guidance would
+    // point at attacker-chosen content instead of the archive we actually
+    // wrote. The still-open descriptor's identity never changes no matter
+    // what path points at it, so it is the one thing here a swapped path
+    // can't fake — compare against it both before rename (cheap fast path
+    // that skips ever touching `output` in the common case) and after
+    // (Node's fs API has no rename-by-descriptor, so the pathname-based
+    // pre-check and the rename itself are two separate calls and cannot be
+    // made atomic with each other; verifying again afterward closes that
+    // narrow remaining window instead of merely narrowing it). A mismatch
+    // at either point means the path no longer named the file we wrote to,
+    // so publication fails closed and any wrongly published content is
+    // removed, rather than ever reporting success for it.
     const heldStat = fstatSync(fd);
     const partialStat = lstatSync(partial);
     if (partialStat.dev !== heldStat.dev || partialStat.ino !== heldStat.ino) {
@@ -96,6 +103,18 @@ export function createTarball(
       return false;
     }
     renameSync(partial, output);
+    const outputStat = lstatSync(output);
+    if (outputStat.dev !== heldStat.dev || outputStat.ino !== heldStat.ino) {
+      error(
+        `Refusing to report success for ${output}: its content no longer matches the archive that was staged.`,
+      );
+      try {
+        rmSync(output, { force: true });
+      } catch {
+        /* best-effort cleanup of a publication we cannot trust */
+      }
+      return false;
+    }
     staged = true;
   } catch (err) {
     error(
