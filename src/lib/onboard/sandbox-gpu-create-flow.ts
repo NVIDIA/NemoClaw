@@ -49,8 +49,8 @@ import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/on
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
@@ -237,7 +237,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly bootstrapIdentity: string;
     readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     readonly authorityStore: ManagedBootstrapAuthorityStore;
     readonly request: ManagedStartupRootApplyRequest;
