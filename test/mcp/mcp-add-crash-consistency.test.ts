@@ -250,7 +250,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? childCredentialRevision() : "absent",
+      stdout: credentialRepublishBeforeObservationCountThisProcess + credentialRepublishAfterAbsenceCountThisProcess > 0 ? childCredentialRevision() : "absent",
       stderr: "",
     };
   }
