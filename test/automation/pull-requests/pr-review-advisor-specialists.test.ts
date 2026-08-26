@@ -11,9 +11,15 @@ import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-to
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
-import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
+import {
+  runSpecialistAdvisor,
+  writeSpecialistSummary,
+} from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
-import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
+import type {
+  RunAdvisorResult,
+  RunReadOnlyAdvisorOptions,
+} from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
   buildSpecialistInvestigateTurn,
@@ -55,7 +61,9 @@ describe("PR review advisor specialist prompts", () => {
     const file = writeSpecialistDiff(directory, "diff evidence");
 
     expect(file).toBe(expected);
-    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(expected);
+    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(
+      fs.realpathSync(expected),
+    );
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);

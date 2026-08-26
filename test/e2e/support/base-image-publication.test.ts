@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { readYaml } from "../../helpers/e2e-workflow-contract.ts";
 
 import {
   collectPaginated,
@@ -16,6 +17,7 @@ import {
   type PublicationRun,
   isBaseImagePublicationEvent,
   parseBaseImagePushPaths,
+  REQUIRED_PUBLISHER_JOBS,
   resolveFirstParentHistory,
   selectPublicationRun,
   validateBoundRun,
@@ -163,6 +165,24 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
+  it("keeps required publisher names aligned with the workflow", () => {
+    const workflow = readYaml<{ jobs?: Record<string, { name?: unknown }> }>(
+      ".github/workflows/base-image.yaml",
+    );
+    const names = Object.values(workflow.jobs ?? {}).map((job) => job.name);
+
+    expect(REQUIRED_PUBLISHER_JOBS.every((name) => names.includes(name))).toBe(true);
+  });
+
+  it("rejects an obsolete publisher name", () => {
+    const jobs = successfulJobs();
+    jobs[0] = publisherJob("Build and push OpenClaw base image", { id: 1 });
+
+    expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toThrow(
+      /missing required Manifests \/ OpenClaw job/u,
+    );
+  });
+
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
