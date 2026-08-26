@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { dockerRunCommandBetween } from "../../helpers/dockerfile-run-shell";
 import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -16,19 +17,11 @@ const BRAVE_TARBALL =
 
 it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
-  const start = dockerfile.indexOf("# Install non-messaging OpenClaw plugins");
-  const command = dockerfile
-    .slice(start)
-    .split("\nRUN ", 3)[1]
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n")
-    .replace(/\\\s*\n/g, " ")
-    .replace(
-      "--network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro ",
-      "",
-    )
-    .trim();
+  const command = dockerRunCommandBetween(
+    dockerfile,
+    "# Install non-messaging OpenClaw plugins",
+    "# Add messaging source after the non-messaging install",
+  );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
   const log = path.join(tmp, "calls.log");
   try {
