@@ -62,8 +62,10 @@ function checkPermissions(
     if (actual[key] !== value) errors.push(name + " job permissions." + key + " must be " + value);
   }
   for (const key of Object.keys(actual)) {
-    if (!Object.hasOwn(expected, key))
-      errors.push(name + " job permissions." + key + " is not allowed");
+    if (!Object.hasOwn(expected, key)) {
+      const expectation = key === "pull-requests" ? " must be read" : " is not allowed";
+      errors.push(name + " job permissions." + key + expectation);
+    }
   }
 }
 

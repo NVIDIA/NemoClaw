@@ -62,7 +62,7 @@ describe("PR review advisor workflow boundary", () => {
     });
     expect(errors).toEqual(
       expect.arrayContaining([
-        "review-specialists job permissions.pull-requests is not allowed",
+        "review-specialists job permissions.pull-requests must be read",
         "publish job must not receive the advisor model credential",
         "publish job must not receive the untrusted analysis worktree",
       ]),

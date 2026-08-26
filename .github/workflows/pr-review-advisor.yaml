@@ -78,7 +78,6 @@ jobs:
       - name: Collect GitHub review context
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_REVIEW_ADVISOR_GITHUB_CONTEXT_OUTPUT: artifacts/pr-review-advisor-context/github-context.json
         run: node --experimental-strip-types --no-warnings tools/pr-review-advisor/github-context.mts
       - name: Upload GitHub review context
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
