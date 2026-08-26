@@ -344,13 +344,28 @@ function mockStructuredOpenShellCaptureFromRunner() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"),
   );
   client.captureOpenshellCommand = (binary, args, options = {}) => {
-    const stdout = String(
+    let stdout = String(
       runner.runCapture([binary, ...args], {
         ...options,
         ignoreError: true,
         includeStderr: false,
       }) || "",
     );
+    if (
+      args[0] === "policy" &&
+      args[1] === "get" &&
+      !args.includes("--global") &&
+      stdout.trim().length === 0
+    ) {
+      const sandboxName = String(args.at(-1) || "unknown");
+      stdout = JSON.stringify({
+        scope: "sandbox",
+        sandbox: sandboxName,
+        status: "effective",
+        policy_source: "sandbox",
+        policy: {},
+      });
+    }
     const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
     if (isSandboxGet && stdout.trim().length === 0) {
       const sandboxName = String(args.at(-1) || "unknown");
