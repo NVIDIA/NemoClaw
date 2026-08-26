@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getOwnedSandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import { stopStaleDashboardListenersForSandbox } from "../stale-gateway-cleanup";
 import {
   type CoreOnboardFlowPhases,
@@ -68,11 +67,7 @@ export function createCoreOnboardFlowPhases<
   return {
     providerInference: createProviderInferenceOnboardFlowPhase<Context, Host>({
       ...input.providerInference,
-      deps: {
-        getOwnedSandboxInferenceRouteReservation,
-        ...input.providerInference.deps,
-        ...resumeProvider,
-      },
+      deps: { ...input.providerInference.deps, ...resumeProvider },
     }),
     sandbox: createSandboxOnboardFlowPhase<Context, MessagingChannelConfig, ResourceProfile>({
       ...input.sandbox,

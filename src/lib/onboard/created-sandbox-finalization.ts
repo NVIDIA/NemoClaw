@@ -461,6 +461,7 @@ export function createOnboardCreatedSandboxCompletion(
   ensureHermesDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureHermesForward"],
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
+  reservationSessionId: string | null,
   note: (message: string) => void,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
@@ -511,6 +512,7 @@ export function createOnboardCreatedSandboxCompletion(
         hermesApiPort,
         ...gateway,
         hostMounts: resolvedCreateIntent.hostMounts,
+        reservationSessionId: reservationSessionId ?? undefined,
       },
       gpu: {
         config: gpuConfig,

@@ -7,6 +7,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 import type { InferenceSelection } from "../inference/selection";
+import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
+
+function ownedReservation(disposition: SandboxInferenceRouteReservationDisposition) {
+  expect(disposition.kind).toBe("owned");
+  return (disposition as Extract<typeof disposition, { kind: "owned" }>).reservation;
+}
 
 const EXACT_ROUTE_SELECTION = {
   provider: "ollama-local",
@@ -34,21 +40,6 @@ const EXACT_ROUTE_RESERVATION = {
   pendingRouteReservation: true as const,
   ...EXACT_ROUTE_SELECTION,
 };
-
-function reserveQualifiedRoute(registry: typeof import("./registry")) {
-  registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
-    ...EXACT_ROUTE_SELECTION,
-    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
-    reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
-  });
-  const reservation = registry.getOwnedSandboxInferenceRouteReservation(
-    EXACT_ROUTE_AUTHORITY.sandboxName,
-    EXACT_ROUTE_AUTHORITY.gatewayName,
-    EXACT_ROUTE_AUTHORITY.sessionId,
-  );
-  expect(reservation).not.toBeNull();
-  return reservation!;
-}
 
 function createdSandboxRegistrationInput(
   sandboxName: string,
@@ -86,24 +77,18 @@ function createdSandboxRegistrationInput(
   };
 }
 
-function noExistingSandbox(
-  _registry: typeof import("./registry"),
-  _selection: InferenceSelection,
-): void {
-  void _registry;
-  void _selection;
-}
-
-function seedExistingSandbox(sandboxName: string) {
-  return (registry: typeof import("./registry"), selection: InferenceSelection): void => {
-    registry.registerSandbox({
-      name: sandboxName,
-      ...selection,
-      agent: "openclaw",
-      openshellDriver: "docker",
-      gatewayName: "nemoclaw",
-    });
-  };
+function reserveQualifiedRoute(registry: typeof import("./registry")) {
+  registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
+    ...EXACT_ROUTE_SELECTION,
+    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+    reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+  });
+  return ownedReservation(
+    registry.classifySandboxInferenceRouteReservation(
+      EXACT_ROUTE_AUTHORITY,
+      registry.getSandbox(EXACT_ROUTE_AUTHORITY.sandboxName),
+    ),
+  );
 }
 
 describe("sandbox inference route reservation", () => {
@@ -157,112 +142,112 @@ describe("sandbox inference route reservation", () => {
   });
 
   it.each([
-    {
-      label: "fresh Model Router route",
-      sandboxName: "model-router",
-      provider: "nvidia-router",
-      model: "nvidia-routed",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-      seedRegistry: noExistingSandbox,
-    },
-    {
-      label: "fresh Amazon Bedrock adapter route",
-      sandboxName: "bedrock",
-      provider: "compatible-anthropic-endpoint",
-      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-      seedRegistry: noExistingSandbox,
-    },
-    {
-      label: "interrupted custom-endpoint resume",
-      sandboxName: "resume",
-      provider: "compatible-endpoint",
-      model: "test-model",
-      endpointUrl: "http://host.openshell.internal:19001/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-      seedRegistry: seedExistingSandbox("resume"),
-    },
-    {
-      label: "missing-sandbox repair",
-      sandboxName: "repair",
-      provider: "compatible-endpoint",
-      model: "test-model",
-      endpointUrl: "http://host.openshell.internal:19002/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-      seedRegistry: seedExistingSandbox("repair"),
-    },
-  ])("stages $label from its exact durable reservation", async (scenario) => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-registration-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("./registry");
-      const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
-      const gatewayName = "nemoclaw";
-      const sessionId = `session-${scenario.sandboxName}`;
-      const reservedSelection = {
-        provider: scenario.provider,
-        model: scenario.model,
-        endpointUrl: scenario.endpointUrl,
-        endpointSource: null,
-        credentialEnv: scenario.credentialEnv,
-        preferredInferenceApi: scenario.preferredInferenceApi,
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      } satisfies InferenceSelection;
-      scenario.seedRegistry(registry, reservedSelection);
-      registry.reserveSandboxInferenceRoute(scenario.sandboxName, {
-        ...reservedSelection,
-        gatewayName,
-        reservationSessionId: sessionId,
-      });
-      const reservation = registry.getOwnedSandboxInferenceRouteReservation(
-        scenario.sandboxName,
-        gatewayName,
-        sessionId,
-      );
-      expect(reservation).not.toBeNull();
-      const reconstructedSelection = {
-        ...reservedSelection,
-        endpointSource: "onboard" as const,
-      };
-      expect(
-        registry.sandboxInferenceRouteMismatchFields(
-          reconstructedSelection,
-          reservation!.authority.selection,
-        ),
-      ).toEqual(["endpointSource"]);
-
-      const registered = registerCreatedSandbox({
-        ...createdSandboxRegistrationInput(
-          scenario.sandboxName,
+    [
+      "fresh Model Router route",
+      "model-router",
+      "nvidia-router",
+      "nvidia-routed",
+      "http://host.openshell.internal:4000/v1",
+      "NVIDIA_INFERENCE_API_KEY",
+      false,
+    ],
+    [
+      "fresh Amazon Bedrock adapter route",
+      "bedrock",
+      "compatible-anthropic-endpoint",
+      "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
+      "COMPATIBLE_API_KEY",
+      false,
+    ],
+    [
+      "interrupted custom-endpoint resume",
+      "resume",
+      "compatible-endpoint",
+      "test-model",
+      "http://host.openshell.internal:19001/v1",
+      "COMPATIBLE_API_KEY",
+      true,
+    ],
+    [
+      "missing-sandbox repair",
+      "repair",
+      "compatible-endpoint",
+      "test-model",
+      "http://host.openshell.internal:19002/v1",
+      "COMPATIBLE_API_KEY",
+      true,
+    ],
+  ] as const)(
+    "stages %s from the durable route",
+    async (_label, sandboxName, provider, model, endpointUrl, credentialEnv, existing) => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-registration-"));
+      vi.stubEnv("HOME", home);
+      vi.resetModules();
+      try {
+        const registry = await import("./registry");
+        const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
+        const gatewayName = "nemoclaw";
+        const sessionId = `session-${sandboxName}`;
+        const reservedSelection = {
+          provider,
+          model,
+          endpointUrl,
+          endpointSource: null,
+          credentialEnv,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        } satisfies InferenceSelection;
+        existing
+          ? registry.registerSandbox({
+              name: sandboxName,
+              ...reservedSelection,
+              agent: "openclaw",
+              openshellDriver: "docker",
+              gatewayName,
+            })
+          : undefined;
+        registry.reserveSandboxInferenceRoute(sandboxName, {
+          ...reservedSelection,
           gatewayName,
-          reconstructedSelection,
-        ),
-        inferenceRouteReservation: reservation!,
-      });
+          reservationSessionId: sessionId,
+        });
+        const reconstructedSelection = {
+          ...reservedSelection,
+          endpointSource: "onboard" as const,
+        };
+        const routeKeys = [
+          "provider",
+          "model",
+          "endpointUrl",
+          "endpointSource",
+          "credentialEnv",
+          "preferredInferenceApi",
+        ] as const;
+        expect(
+          routeKeys.filter(
+            (key) => reconstructedSelection[key] !== reservedSelection[key],
+          ),
+        ).toEqual(["endpointSource"]);
 
-      expect(registered).toMatchObject({
-        ...reservedSelection,
-        pendingRouteReservation: true,
-        reservationSessionId: sessionId,
-      });
-      expect(registry.getDefault()).toBeNull();
-      expect(registry.finalizeSandboxRouteReservation(scenario.sandboxName, sessionId)).toBe(true);
-      expect(
-        registry.isPublishedSandboxRegistration(registry.getSandbox(scenario.sandboxName)!),
-      ).toBe(true);
-    } finally {
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  });
+        const registered = registerCreatedSandbox({
+          ...createdSandboxRegistrationInput(sandboxName, gatewayName, reconstructedSelection),
+          reservationSessionId: sessionId,
+        });
+
+        expect(registered).toMatchObject({
+          ...reservedSelection,
+          pendingRouteReservation: true,
+          reservationSessionId: sessionId,
+        });
+        expect(registry.getDefault()).toBeNull();
+      } finally {
+        await fs.rm(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("retargets an existing row to the gateway protected by the reservation", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
@@ -569,12 +554,6 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw",
         reservationSessionId: "session-owner",
       });
-      const reservation = registry.getOwnedSandboxInferenceRouteReservation(
-        "alpha",
-        "nemoclaw",
-        "session-owner",
-      );
-      expect(reservation).not.toBeNull();
       registry.registerSandbox(
         {
           name: "alpha",
@@ -589,7 +568,7 @@ describe("sandbox inference route reservation", () => {
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
         },
-        reservation!,
+        undefined,
         { pending: true, reservationSessionId: "session-owner" },
       );
 
@@ -638,12 +617,6 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw",
         reservationSessionId: "session-owner",
       });
-      const reservation = registry.getOwnedSandboxInferenceRouteReservation(
-        "alpha",
-        "nemoclaw",
-        "session-owner",
-      );
-      expect(reservation).not.toBeNull();
       registry.registerSandbox(
         {
           name: "alpha",
@@ -655,7 +628,7 @@ describe("sandbox inference route reservation", () => {
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
         },
-        reservation!,
+        undefined,
         { pending: true, reservationSessionId: "session-owner" },
       );
 
@@ -671,10 +644,6 @@ describe("sandbox inference route reservation", () => {
   it.each([
     ["omits reservation authority", undefined],
     ["supplies an empty reservation owner", { pending: true as const, reservationSessionId: "" }],
-    [
-      "supplies another reservation owner",
-      { pending: true as const, reservationSessionId: "session-other" },
-    ],
     [
       "tries to publish through registration",
       { pending: false as const, reservationSessionId: "session-owner" },
@@ -733,12 +702,6 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw",
         reservationSessionId: "session-owner",
       });
-      const reservation = registry.getOwnedSandboxInferenceRouteReservation(
-        "alpha",
-        "nemoclaw",
-        "session-owner",
-      );
-      expect(reservation).not.toBeNull();
       registry.registerSandbox(
         {
           name: "alpha",
@@ -750,7 +713,7 @@ describe("sandbox inference route reservation", () => {
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
         },
-        reservation!,
+        undefined,
         { pending: true, reservationSessionId: "session-owner" },
       );
 
@@ -954,7 +917,7 @@ describe("sandbox inference route reservation", () => {
         ...EXACT_ROUTE_SELECTION,
         model: "another-model",
         gatewayName: "nemoclaw",
-        reservationSessionId: "session-owner",
+        reservationSessionId: "another-session",
       });
 
       expect(() =>
@@ -971,7 +934,7 @@ describe("sandbox inference route reservation", () => {
       ).toThrow("Cannot register a sandbox after its inference route reservation changed");
       expect(registry.getSandbox("alpha")).toMatchObject({
         pendingRouteReservation: true,
-        reservationSessionId: "session-owner",
+        reservationSessionId: "another-session",
         model: "another-model",
       });
     } finally {

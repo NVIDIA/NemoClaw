@@ -10,7 +10,6 @@ import {
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import {
   getSandbox,
-  getOwnedSandboxInferenceRouteReservation,
   isPendingReservationForSession,
   removeSandbox,
   reserveSandboxInferenceRoute,
@@ -332,24 +331,22 @@ describe("core onboard flow phases", () => {
       return durableSession;
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const authority = args.at(-2) as ReturnType<
-        typeof getOwnedSandboxInferenceRouteReservation
-      >;
+      const authority = args.at(-2) as { sessionId?: unknown } | null;
       const createIntent = args.at(-1) as {
         endpointSource?: InferenceEndpointSource | null;
       };
       const reservation = getSandbox(sandboxName);
-      expect(authority?.authority.sessionId).toBe(durableSession.sessionId);
+      expect(authority).toEqual({ sessionId: durableSession.sessionId });
       expect(createIntent.endpointSource).toBeNull();
-      expect(
-        isPendingReservationForSession(reservation, authority?.authority.sessionId),
-      ).toBe(true);
+      expect(isPendingReservationForSession(reservation, authority?.sessionId as string)).toBe(
+        true,
+      );
       expect(
         classifySandboxInferenceRouteReservation(
           {
             sandboxName,
             gatewayName: "nemoclaw",
-            sessionId: authority?.authority.sessionId as string,
+            sessionId: authority?.sessionId as string,
             selection: normalizeInferenceSelection({
               ...reservation,
               endpointSource: "onboard",
@@ -358,12 +355,20 @@ describe("core onboard flow phases", () => {
           reservation,
         ).kind,
       ).toBe("conflict");
-      expect(authority?.authority.selection).toEqual(
-        normalizeInferenceSelection({
-          ...reservation,
-          endpointSource: createIntent.endpointSource,
-        }),
-      );
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: createIntent.endpointSource,
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("owned");
       return "created-sandbox";
     });
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
@@ -381,7 +386,6 @@ describe("core onboard flow phases", () => {
           nimContainer: null,
         })),
         recordStepComplete,
-        getOwnedSandboxInferenceRouteReservation,
         promptValidatedSandboxName: vi.fn(async () => sandboxName),
         setupInference: vi.fn(
           async (name, model, provider, endpointUrl, credentialEnv, _auth, _gateways, options) => {

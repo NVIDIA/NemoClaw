@@ -4,7 +4,6 @@
 import type { InferenceEndpointSource } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
-import type { QualifiedSandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import type { HostLocalInferenceSandboxProofAuthority } from "../runtime-provider/host-local-inference-routing";
 import type { OnboardStateHandlerResult } from "./runner";
 
@@ -38,8 +37,6 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   hostLocalInferenceRouteOnly?: boolean;
   /** Exact provider-owned route and proof contract consumed after final policy sync. */
   hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
-  /** Exact process-local reservation captured after provider setup. */
-  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation | null;
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
@@ -88,7 +85,6 @@ export interface ProviderModelSelectedContextUpdate {
   webSearchConfig: WebSearchConfig | null;
   hostLocalInferenceRouteOnly: boolean;
   hostLocalInferenceSandboxProofAuthority: HostLocalInferenceSandboxProofAuthority | null;
-  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation | null;
 }
 
 export interface SandboxCreatedContextUpdate {

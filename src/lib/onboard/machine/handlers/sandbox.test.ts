@@ -79,7 +79,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      null,
+      { sessionId: expect.any(String) },
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -558,7 +558,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      null,
+      { sessionId: expect.any(String) },
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -846,7 +846,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      null,
+      { sessionId: session.sessionId },
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -1014,7 +1014,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      null,
+      { sessionId: session.sessionId },
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1147,7 +1147,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      null,
+      { sessionId: session.sessionId },
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,

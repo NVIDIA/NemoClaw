@@ -202,7 +202,6 @@ export function createProviderInferenceOnboardFlowPhase<
         hostLocalInferenceRouteOnly: providerInferenceResult.hostLocalInferenceRouteOnly,
         hostLocalInferenceSandboxProofAuthority:
           providerInferenceResult.hostLocalInferenceSandboxProofAuthority,
-        inferenceRouteReservation: providerInferenceResult.inferenceRouteReservation,
       }),
       result: providerInferenceResult.stateResults,
     };
@@ -259,7 +258,6 @@ export function createSandboxOnboardFlowPhase<
       hermesToolGateways: context.hermesToolGateways,
       hermesAuthMethod: context.hermesAuthMethod,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
-      inferenceRouteReservation: context.inferenceRouteReservation ?? null,
       controlUiPort: options.controlUiPort,
       rootDir: options.rootDir,
       env: options.env,

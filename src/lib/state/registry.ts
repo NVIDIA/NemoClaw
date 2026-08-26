@@ -19,20 +19,17 @@ import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
-  sandboxInferenceRouteMismatchFields,
+  normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
   type QualifiedSandboxInferenceRouteReservation,
 } from "./registry/route-reservation";
 export {
   classifySandboxInferenceRouteReservation,
-  getOwnedSandboxInferenceRouteReservation,
   isCurrentSandboxInferenceRouteReservation,
   isPendingReservationForSession,
   isPublishedSandboxRegistration,
   isRouteOnlySandboxReservation,
   normalizeSandboxInferenceRouteSelection,
-  qualifyPendingSandboxInferenceRouteReservation,
-  sandboxInferenceRouteMismatchFields,
   sandboxRegistrationMatchesInferenceRouteReservation,
   type QualifiedSandboxInferenceRouteReservation,
   type SandboxInferenceRouteReservationAuthority,
@@ -157,41 +154,34 @@ export function registerSandbox(
   return withLock(() => {
     const data = load();
     const reserved = data.sandboxes[entry.name];
-    if (routeReservation) {
-      const reservationIsCurrent = isCurrentSandboxInferenceRouteReservation(
-        routeReservation,
-        reserved ?? null,
-      );
-      const registrationMatches = sandboxRegistrationMatchesInferenceRouteReservation(
-        entry,
-        routeReservation,
-      );
-      if (!reservationIsCurrent || !registrationMatches) {
-        const mismatchFields = reservationIsCurrent
-          ? sandboxInferenceRouteMismatchFields(
-              normalizeInferenceSelection(entry),
-              routeReservation.authority.selection,
-            )
-          : [];
-        const diagnostic =
-          mismatchFields.length > 0 ? ` (mismatched fields: ${mismatchFields.join(", ")})` : "";
-        throw new Error(
-          `Cannot register a sandbox after its inference route reservation changed${diagnostic}`,
-        );
-      }
+    if (
+      routeReservation &&
+      (!isCurrentSandboxInferenceRouteReservation(routeReservation, reserved ?? null) ||
+        !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
+    ) {
+      throw new Error("Cannot register a sandbox after its inference route reservation changed");
     }
     if (
       !routeReservation &&
       reserved?.pendingRouteReservation === true &&
       typeof reserved.reservationSessionId === "string" &&
-      reserved.reservationSessionId.length > 0
+      reserved.reservationSessionId.length > 0 &&
+      (options.pending !== true ||
+        typeof options.reservationSessionId !== "string" ||
+        options.reservationSessionId.length === 0 ||
+        options.reservationSessionId !== reserved.reservationSessionId)
     ) {
       throw new Error("Cannot stage a sandbox after its inference route reservation changed");
     }
-    if (routeReservation && options.reservationSessionId) {
+    if (options.reservationSessionId) {
       if (
-        options.pending !== true ||
-        options.reservationSessionId !== routeReservation.authority.sessionId
+        reserved?.pendingRouteReservation !== true ||
+        reserved.reservationSessionId !== options.reservationSessionId ||
+        reserved.gatewayName !== entry.gatewayName ||
+        !isDeepStrictEqual(
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(reserved)),
+          normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
+        )
       ) {
         throw new Error("Cannot stage a sandbox after its inference route reservation changed");
       }
