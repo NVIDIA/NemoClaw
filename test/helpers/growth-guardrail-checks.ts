@@ -3,8 +3,7 @@
 
 import ts from "typescript";
 
-import type { GrowthGuardrailDiff } from "./growth-guardrail-diff";
-import type { PullRequestFile } from "./pr-blob-client";
+import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';

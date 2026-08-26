@@ -67,6 +67,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
   runApproval(name: string, gatewayName: string): Promise<void> | void;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
+  revalidatePolicyRequirements?(operation: string): void;
   now(): number;
   sleep(milliseconds: number): Promise<void>;
 }
@@ -155,9 +156,7 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
     runWarmup: (name, gatewayName) =>
-      finalizationHandlerRuntime
-        .loadAutoPairWarmup()
-        .runSandboxScopeWarmupRun(name, gatewayName),
+      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name, gatewayName),
     runApproval: (name, gatewayName) => {
       finalizationHandlerRuntime.loadAutoPairApproval().runSandboxAutoPairApprovalPass(name, {
         budget: {
@@ -230,7 +229,12 @@ export async function settleOrdinaryOpenClawPairing(
           if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "pairing-unavailable" };
           }
-          if (initial?.state === "settled") return { kind: "settled" };
+          if (initial?.state === "settled") {
+            deps.revalidatePolicyRequirements?.(
+              `publish settled OpenClaw pairing for sandbox '${name}'`,
+            );
+            return { kind: "settled" };
+          }
 
           let baseline: PairingWaitResult;
           if (initial?.state === "scope-upgrade-pending") {
@@ -240,6 +244,9 @@ export async function settleOrdinaryOpenClawPairing(
             // startup watcher publishes its first CLI request. Run the bounded
             // direct producer once, then require canonical evidence that its
             // exact write upgrade is pending before the approval pass (#10014).
+            deps.revalidatePolicyRequirements?.(
+              `run OpenClaw pairing warm-up for sandbox '${name}'`,
+            );
             try {
               await deps.runWarmup(name, target.gatewayName);
             } catch {
@@ -272,13 +279,15 @@ export async function settleOrdinaryOpenClawPairing(
               reason: sawCanonicalPairing ? "scope-upgrade-incomplete" : "pairing-unavailable",
             };
           }
-          if (
-            initial &&
-            baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256
-          ) {
+          if (initial && baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (baseline.value.state === "settled") return { kind: "settled" };
+          if (baseline.value.state === "settled") {
+            deps.revalidatePolicyRequirements?.(
+              `publish settled OpenClaw pairing for sandbox '${name}'`,
+            );
+            return { kind: "settled" };
+          }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
@@ -286,6 +295,7 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
+          deps.revalidatePolicyRequirements?.(`approve OpenClaw pairing for sandbox '${name}'`);
           let approvalFailed = false;
           try {
             await deps.runApproval(name, target.gatewayName);
@@ -315,9 +325,13 @@ export async function settleOrdinaryOpenClawPairing(
           if (final.kind === "target-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          return final.kind === "observed"
-            ? { kind: "settled" }
-            : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          if (final.kind !== "observed") {
+            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          }
+          deps.revalidatePolicyRequirements?.(
+            `publish settled OpenClaw pairing for sandbox '${name}'`,
+          );
+          return { kind: "settled" };
         });
       } catch (error) {
         if (gatewayBodyEntered) throw error;
@@ -348,7 +362,16 @@ export const finalizationHandlerDeps = {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
-  settleOrdinaryOpenClawPairing,
+  settleOrdinaryOpenClawPairing(
+    name: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<OrdinaryOpenClawPairingSettlementResult> {
+    const deps = defaultPairingSettlementDeps();
+    return settleOrdinaryOpenClawPairing(
+      name,
+      revalidatePolicyRequirements ? { ...deps, revalidatePolicyRequirements } : deps,
+    );
+  },
   ordinaryOpenClawPairingIncompleteMessage,
   readRegistryAgent(name: string): string | null {
     try {
@@ -364,6 +387,7 @@ export const finalizationHandlerDeps = {
     name: string,
     options: {
       readonly portableRequired: true;
+      readonly revalidatePolicyRequirements?: (operation: string) => void;
     },
   ): ReturnType<
     (typeof import("../../actions/sandbox/launch-readiness"))["settlePortableOpenClawPairing"]

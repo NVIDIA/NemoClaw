@@ -48,4 +48,34 @@ describe("OpenClaw sandbox setup", () => {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
   });
+
+  it("withholds setup success when policy authority changes during config sync (#9833)", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-setup-"));
+    const scriptFile = path.join(tempDir, "sync.sh");
+    fs.writeFileSync(scriptFile, "set -e\n", { mode: 0o600 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        getProviderSelectionConfig: () => ({ provider: "vllm-local" }),
+        buildSandboxConfigSyncScript: () => "set -e",
+        writeSandboxConfigSyncFile: () => scriptFile,
+        run: vi.fn(),
+        openshellArgv: (args) => ["/usr/bin/openshell", ...args],
+        cleanupTempDir: vi.fn(),
+      });
+
+      await expect(
+        setup("spark-box", "model", "provider", () => {
+          throw new Error("policy authority changed");
+        }),
+      ).rejects.toThrow("policy authority changed");
+
+      expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
+    } finally {
+      log.mockRestore();
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
 });

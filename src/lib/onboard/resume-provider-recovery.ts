@@ -38,7 +38,9 @@ export type ResumeProviderRecoveryDeps = {
     label: string,
     helpUrl: string | null,
     validator: (value: string) => string | null,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<unknown>;
+  revalidatePolicyRequirements?: (operation: string) => void;
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string) => string | null;
 };
 
@@ -140,6 +142,7 @@ export async function ensureResumeProviderReady(
       `${providerLabel} API key`,
       helpUrl,
       (value) => deps.validateNvidiaApiKeyValue(value, resolvedCredentialEnv),
+      deps.revalidatePolicyRequirements,
     );
   } else {
     deps.note(`  [resume] Provider '${provider}' is missing from the gateway; recreating it.`);

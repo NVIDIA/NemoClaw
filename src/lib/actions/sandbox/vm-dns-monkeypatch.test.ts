@@ -183,6 +183,38 @@ describe("OpenShell VM DNS monkeypatch", () => {
     ).toContain('echo "nameserver ${GVPROXY_GATEWAY_IP}" > /etc/resolv.conf');
   });
 
+  it("stops VM DNS mutation when authority changes between file writes (#9833)", () => {
+    const stateDir = makeTempDir();
+    const rootfs = sandboxRootfs(stateDir);
+    const resolverPath = path.join(rootfs, "etc", "resolv.conf");
+    const initPath = path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh");
+    writeRootfsFiles(rootfs, "nameserver 8.8.8.8\n");
+    const originalInit = fs.readFileSync(initPath, "utf-8");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+
+    expect(() =>
+      applyOpenShellVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        {
+          capture: () => ({ status: 0, output: "Id: abc\n" }),
+          platform: "darwin",
+          revalidatePolicyAuthority,
+          stateDir,
+        },
+      ),
+    ).toThrow("policy authority changed");
+
+    expect(fs.readFileSync(resolverPath, "utf-8")).toBe("nameserver 192.168.127.1\n");
+    expect(fs.readFileSync(initPath, "utf-8")).toBe(originalInit);
+    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+  });
+
   it("is idempotent when resolver and init script are already patched", () => {
     const stateDir = makeTempDir();
     const rootfs = sandboxRootfs(stateDir);

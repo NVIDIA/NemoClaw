@@ -6,6 +6,8 @@ import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compa
 import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
+const revalidatePolicyRequirements = () => undefined;
+
 describe("onboard shared gateway route containment", () => {
   afterEach(() => vi.unstubAllEnvs());
 
@@ -112,6 +114,9 @@ describe("onboard shared gateway route containment", () => {
       "compatible-endpoint",
       scenario.endpointUrl,
       "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { revalidatePolicyRequirements },
     ).then(
       () => null,
       (error: Error) => error.message,
@@ -211,7 +216,16 @@ describe("onboard shared gateway route containment", () => {
     } as unknown as SetupInferenceDeps);
 
     await expect(
-      setupInference("new-sandbox", "model-b", "router-b", "http://router-b.test/v1", "ROUTER_KEY"),
+      setupInference(
+        "new-sandbox",
+        "model-b",
+        "router-b",
+        "http://router-b.test/v1",
+        "ROUTER_KEY",
+        null,
+        [],
+        { revalidatePolicyRequirements },
+      ),
     ).resolves.toEqual({ ok: true });
 
     expect(events.slice(0, 5)).toEqual([
@@ -281,7 +295,7 @@ describe("onboard shared gateway route containment", () => {
         "KEY_B",
         null,
         [],
-        { preferredInferenceApi: "openai-completions" },
+        { preferredInferenceApi: "openai-completions", revalidatePolicyRequirements },
       ),
     ).rejects.toThrow("exit 1");
 
@@ -328,6 +342,7 @@ describe("onboard shared gateway route containment", () => {
         [],
         {
           reservationSessionId: "session-current",
+          revalidatePolicyRequirements,
           isRecordedProviderRecoveryAuthorized: () => {
             events.push("recovery-authority");
             return false;
@@ -390,10 +405,8 @@ describe("onboard shared gateway route containment", () => {
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock,
-      withModelRouterPortLifecycleLock: async <T>(
-        _port: number,
-        operation: () => Promise<T> | T,
-      ) => await operation(),
+      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
+        await operation(),
       getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
@@ -435,7 +448,7 @@ describe("onboard shared gateway route containment", () => {
       "ROUTER_KEY",
       null,
       [],
-      { endpointSource: "inference-set" },
+      { endpointSource: "inference-set", revalidatePolicyRequirements },
     );
     await vi.waitFor(() => expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce());
     expect(reservations).toEqual([
@@ -454,6 +467,9 @@ describe("onboard shared gateway route containment", () => {
       "router-b",
       "http://router-b.test/v1",
       "ROUTER_KEY",
+      null,
+      [],
+      { revalidatePolicyRequirements },
     );
     const resultsPending = Promise.allSettled([firstSetup, secondSetup]);
     expect(runOpenshell).toHaveBeenCalledTimes(1);
@@ -501,10 +517,8 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
-      withModelRouterPortLifecycleLock: async <T>(
-        _port: number,
-        operation: () => Promise<T> | T,
-      ) => await operation(),
+      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
+        await operation(),
       getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
@@ -543,7 +557,11 @@ describe("onboard shared gateway route containment", () => {
         "ROUTER_KEY",
         null,
         [],
-        { skipHostInferenceSmoke: true, reservationSessionId: "session-gamma" },
+        {
+          skipHostInferenceSmoke: true,
+          reservationSessionId: "session-gamma",
+          revalidatePolicyRequirements,
+        },
       ),
     ).resolves.toEqual({ ok: true });
 

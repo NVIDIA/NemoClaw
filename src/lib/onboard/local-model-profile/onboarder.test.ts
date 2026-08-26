@@ -47,6 +47,7 @@ describe("dedicated local model profile onboarder", () => {
     const checkpointVllmInstallModel = vi.fn();
     const handleVllmSelection = vi.fn(async () => "selected" as const);
     const installVllm = vi.fn(async (_profile: VllmProfile, options) => {
+      options.checkpointInstallIntent?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
       options.beforeInstall?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
       return { ok: true };
     });
@@ -77,9 +78,10 @@ describe("dedicated local model profile onboarder", () => {
       }),
       expect.objectContaining({
         nonInteractive: true,
-        checkpointInstallIntent: checkpointVllmInstallModel,
+        checkpointInstallIntent: expect.any(Function),
       }),
     );
+    expect(checkpointVllmInstallModel).toHaveBeenCalledWith("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(handleVllmSelection).toHaveBeenCalledWith(selection, {
       managedInstall: true,
       sparkHost: true,
@@ -119,7 +121,7 @@ describe("dedicated local model profile onboarder", () => {
     ).resolves.toBe("selected");
     expect(installVllm).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ checkpointInstallIntent: checkpointVllmInstallModel }),
+      expect.objectContaining({ checkpointInstallIntent: expect.any(Function) }),
     );
     expect(installVllm.mock.calls[0]?.[1]).not.toHaveProperty("modelIntent");
   });
@@ -155,6 +157,70 @@ describe("dedicated local model profile onboarder", () => {
     ).resolves.toBe("retry-selection");
     expect(installVllm).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("resumed vLLM model conflicts"));
+  });
+
+  it("refuses vLLM install intent persistence when policy authority changes (#9833)", async () => {
+    const selection = state();
+    const checkpointVllmInstallModel = vi.fn();
+    const installEffect = vi.fn();
+    const handleVllmSelection = vi.fn(async () => "selected" as const);
+    const observedRoutes: Array<Record<string, unknown>> = [];
+    selection.revalidatePolicyRequirements = (operation) => {
+      observedRoutes.push({
+        operation,
+        provider: selection.provider,
+        model: selection.model,
+        endpointUrl: selection.endpointUrl,
+        credentialEnv: selection.credentialEnv,
+        preferredInferenceApi: selection.preferredInferenceApi,
+      });
+      throw new Error("external policy authority must supply local inference");
+    };
+    const installVllm = vi.fn(async (_profile: VllmProfile, options) => {
+      options.checkpointInstallIntent?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
+      installEffect();
+      options.beforeInstall?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
+      return { ok: true };
+    });
+    const onboard = createLocalModelProfileOnboarder({
+      env: {},
+      installVllm,
+      handleVllmSelection,
+      prompt: vi.fn(async () => ""),
+      error: vi.fn(),
+      checkpointVllmInstallModel,
+    });
+
+    await expect(
+      onboard(
+        plan(),
+        {
+          hasVllmImage: false,
+          sparkHost: true,
+          vllmProfile: {
+            name: "DGX Spark",
+            platform: "spark",
+            architecture: "arm64",
+          } as VllmProfile,
+          vllmRunning: false,
+        },
+        selection,
+      ),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(checkpointVllmInstallModel).not.toHaveBeenCalled();
+    expect(installEffect).not.toHaveBeenCalled();
+    expect(handleVllmSelection).not.toHaveBeenCalled();
+    expect(observedRoutes).toEqual([
+      {
+        operation: "record managed vLLM install intent",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      },
+    ]);
   });
 
   it("accepts a vLLM host port override for the fixed serving recipe", async () => {
