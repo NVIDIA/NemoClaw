@@ -190,17 +190,37 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
   // source-shape-contract: security -- Exact package specifications must fail before malformed reviewed identities can authorize dependency installation
   it("rejects malformed reviewed source package specifications", () => {
     const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
-    const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
-      sourceRegistryPackage: { packageSpec: string };
-      sourceRegistryPackagesWithoutIntegrity: Array<{ packageSpec: string }>;
-    };
+    const readConfig = () =>
+      JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        sourceRegistryPackage: { packageSpec: string };
+        sourceRegistryPackagesWithoutIntegrity: Array<{ packageSpec: string }>;
+      };
 
+    let config = readConfig();
     config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@latest";
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
       "ci/reviewed-npm-audit.json is invalid",
     );
 
-    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@0.0.106";
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@01.2.3";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@1.2.3-01";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@1.2.3-foo..bar";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
     config.sourceRegistryPackagesWithoutIntegrity[0]!.packageSpec = "not-an-exact-spec";
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
       "ci/reviewed-npm-audit.json is invalid",
