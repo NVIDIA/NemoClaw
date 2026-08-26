@@ -209,7 +209,7 @@ and exact-staging Launchable job own its product coverage:
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
 The retired nightly caller no longer runs. The explicit
-`E2E / Issue 9880 Staging Reproduction` workflow is a temporary issue-specific
+`E2E / Issue 9880` workflow is a temporary issue-specific
 exception: its host-side Vitest controller reads the accepted staging image handoff,
 creates a temporary workspace on the configured Launchable, runs five bounded fresh
 OpenClaw CLI sessions against the baked image, deletes the workspace, and uploads
@@ -975,7 +975,7 @@ An ordinary assertion failure, mixed failure set, incomplete listing, custom or 
 For eligible `E2E main` push runs, `E2E / Main Retry Evidence` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
 A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
-External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
+External operations use an explicit bounded retry policy at the operation level; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
 Hosted runner loss remains owned by `Automation / Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.

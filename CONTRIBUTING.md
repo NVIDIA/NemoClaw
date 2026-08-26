@@ -297,9 +297,8 @@ E2E assertions should check outcomes, state, artifacts, and redacted diagnostics
 Do not assert incidental terminal output, progress wording, ANSI escape
 sequences, spinner frames, or timing text unless that text is the product
 contract. A retry must have a checked-in bounded policy, a narrow transient
-signature, idempotence or reconciliation evidence, per-attempt artifacts, and a
-matching [`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md) entry. Do
-not add unproven retries, ambiguous mutation retries, or broad failed-job
+signature, idempotence or reconciliation evidence, and per-attempt artifacts.
+Do not add unproven retries, ambiguous mutation retries, or broad failed-job
 reruns. Keep operation-level retries separate from complete workflow reruns:
 `E2E / Main Retry Evidence` records attempt evidence without requesting a broad rerun,
 and `Automation / Platform CI Runner` owns at most one full rerun only for authenticated
