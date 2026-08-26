@@ -188,6 +188,7 @@ describe("PR managed-image source selection", () => {
     expect(row).toContain("tools/e2e/pr-managed-image-source.mts");
     expect(row).toContain("PR metadata reads");
     expect(row).toContain("workload-source selection");
+    expect(row).toContain("HTTP 429, or HTTP 403 with `x-ratelimit-remaining: 0`");
   });
 });
 
