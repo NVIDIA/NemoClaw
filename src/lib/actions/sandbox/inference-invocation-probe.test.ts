@@ -104,6 +104,35 @@ describe("sandbox inference invocation probe", () => {
     );
   });
 
+  it("pins a Hermes invocation to its recorded OpenShell gateway (#10302)", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+      stderr: "",
+    }));
+    const runOpenshell = vi.fn();
+
+    expect(
+      probeSandboxInferenceInvocation(
+        {
+          ...input,
+          sandboxName: "hermes-workspace",
+          agentName: "hermes",
+          gatewayName: "nemoclaw-19080",
+        },
+        { execute, runOpenshell },
+      ),
+    ).toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledWith(
+      "hermes-workspace",
+      expect.any(String),
+      expect.any(Number),
+      { gatewayName: "nemoclaw-19080", allowLocalDockerFallback: false },
+    );
+    expect(execute).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("runs Deep Agents Code through the managed launcher on the recorded gateway (#10080)", () => {
     const runOpenshell = vi.fn(() =>
       openshellResult(0, '200\n{"choices":[{"message":{"content":"OK"}}]}', ""),
