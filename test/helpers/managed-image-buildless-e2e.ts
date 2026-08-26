@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { expect } from "vitest";
 
+import { getBuildIdentity } from "../../src/lib/core/version";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
@@ -30,7 +31,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const MANAGED_IMAGE_PLATFORM = "linux/amd64" as const;
 const MODEL = "nvidia/test-managed-model";
 const PROVIDER = "nvidia-prod";
-const SOURCE_REVISION = "2f03907c3a7ec151d7f5d4bb2a73abafc2849f83";
+const SOURCE_REVISION = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
 const CATALOG_RELEASE = "v0.0.97";
 const AUTHENTICATED_PROXY_ENVIRONMENT = {
   HTTP_PROXY: "http://upper-http:upper-secret@upper-http.example.test:18080",
