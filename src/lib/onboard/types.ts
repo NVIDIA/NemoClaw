@@ -56,6 +56,8 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
+  /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
+  readonly deferSandboxEffectsUntilPolicyVerification?: true;
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
@@ -87,6 +89,42 @@ export interface SandboxCreateIntent {
   /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
   readonly rebuildPolicyPresets?: readonly string[];
 }
+
+/** Policy authority proved inside one exact post-create sandbox identity gate. */
+export type VerifiedSandboxPolicyRegistration =
+  | {
+      readonly policyAuthority: "nemoclaw-managed";
+      readonly policyCreationReceipt: import("../policy/merge").NemoClawPolicyCreationReceipt;
+      readonly observedPolicyAuthority: "owner-unknown";
+    }
+  | {
+      readonly policyAuthority: "externally-managed";
+      readonly policyCreationReceipt: null;
+      /** Generic evidence seam; the default #10115 verifier produces only global authority. */
+      readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
+      readonly policyIdentity: import("../policy/merge").OpenShellPolicyIdentity;
+    };
+
+/** Exact sandbox and policy result retained from the immediate create gate. */
+export interface VerifiedSandboxPolicyBoundary {
+  readonly registration: VerifiedSandboxPolicyRegistration;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly lifecycleLiveIdentityFingerprint: string;
+  readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
+}
+
+/** Exact context made available only after effective-policy verification. */
+export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxPolicyBoundary {
+  readonly revalidatePolicyRequirements: (operation: string) => void;
+}
+
+/** Ephemeral effects that may run only inside the exact post-create policy gate. */
+export type VerifiedSandboxCreateEffects = (
+  context: VerifiedSandboxCreateEffectsContext,
+) => Promise<void>;
 
 /** Durable onboarding-session identity that owns the pending inference route. */
 export interface InferenceRouteReservationAuthority {

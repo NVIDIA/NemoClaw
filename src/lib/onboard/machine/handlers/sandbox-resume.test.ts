@@ -37,6 +37,19 @@ describe("decideSandboxResume", () => {
     expect(decideSandboxResume(resumeSignals())).toEqual({ kind: "reuse" });
   });
 
+  it("continues pending Hermes Portable lifecycle custody instead of reusing its Ready sandbox (#9211)", () => {
+    expect(decideSandboxResume(resumeSignals({ hermesPortableLifecyclePending: true }))).toEqual({
+      kind: "create",
+      continueHermesPortableLifecycle: true,
+    });
+  });
+
+  it("reuses a Hermes Portable sandbox after lifecycle custody is finalized (#9211)", () => {
+    expect(decideSandboxResume(resumeSignals({ hermesPortableLifecyclePending: false }))).toEqual({
+      kind: "reuse",
+    });
+  });
+
   it.each([
     ["agent", { resumeAgentChanged: true }, false],
     ["compatible endpoint reasoning", { compatibleEndpointReasoningChanged: true }, false],
@@ -137,24 +150,55 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it.each([
-    "missing",
-    "not_ready",
-  ])("continues an owned recreate when the outer transaction leaves the source %s", (sandboxReuseState) => {
+  it.each(["missing", "not_ready"])(
+    "continues an owned recreate when the outer transaction leaves the source %s (#10056)",
+    (sandboxReuseState) => {
+      expect(
+        decideSandboxResume(
+          resumeSignals({
+            sandboxStepComplete: false,
+            sandboxReuseState,
+            recreateSandboxRequested: true,
+            recreateJournalHandoff: true,
+          }),
+        ),
+      ).toEqual({
+        kind: "recreate",
+        note: "  [resume] Continuing journaled sandbox recreation.",
+        removeRegistryEntry: false,
+      });
+    },
+  );
+
+  it.each(["ready", "missing", "not_ready"])(
+    "continues a validated active recreate while its source is %s (#10056)",
+    (sandboxReuseState) => {
+      expect(
+        decideSandboxResume(
+          resumeSignals({
+            sandboxStepComplete: false,
+            sandboxReuseState,
+            activeRecreateJournal: true,
+          }),
+        ),
+      ).toEqual({
+        kind: "recreate",
+        note: "  [resume] Continuing journaled sandbox recreation.",
+        removeRegistryEntry: false,
+      });
+    },
+  );
+
+  it("does not continue an active recreate when source state is unknown (#10056)", () => {
     expect(
       decideSandboxResume(
         resumeSignals({
           sandboxStepComplete: false,
-          sandboxReuseState,
-          recreateSandboxRequested: true,
-          recreateJournalHandoff: true,
+          sandboxReuseState: "unknown",
+          activeRecreateJournal: true,
         }),
       ),
-    ).toEqual({
-      kind: "recreate",
-      note: "  [resume] Continuing journaled sandbox recreation.",
-      removeRegistryEntry: false,
-    });
+    ).toEqual({ kind: "create" });
   });
 
   it("does not trust a journal handoff when the sandbox state is unknown", () => {
@@ -229,20 +273,23 @@ describe("decideSandboxResume", () => {
       { inferenceRouteConfigChanged: true },
       "Hermes inference route configuration changed",
     ],
-  ] as const)("uses compatibility recreate for %s drift even when not-ready", (_label, drift, expectedNoteFragment) => {
-    expect(
-      decideSandboxResume(
-        resumeSignals({
-          sandboxReuseState: "not_ready",
-          ...drift,
-        }),
-      ),
-    ).toEqual({
-      kind: "recreate",
-      note: expect.stringContaining(expectedNoteFragment),
-      removeRegistryEntry: false,
-    });
-  });
+  ] as const)(
+    "uses compatibility recreate for %s drift even when not-ready (#10056)",
+    (_label, drift, expectedNoteFragment) => {
+      expect(
+        decideSandboxResume(
+          resumeSignals({
+            sandboxReuseState: "not_ready",
+            ...drift,
+          }),
+        ),
+      ).toEqual({
+        kind: "recreate",
+        note: expect.stringContaining(expectedNoteFragment),
+        removeRegistryEntry: false,
+      });
+    },
+  );
 
   it.each([
     [
@@ -275,20 +322,23 @@ describe("decideSandboxResume", () => {
       "Observability configuration changed",
       false,
     ],
-  ] as const)("uses runtime-configuration recreate for %s even when not-ready", (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
-    expect(
-      decideSandboxResume(
-        resumeSignals({
-          sandboxReuseState: "not_ready",
-          ...drift,
-        }),
-      ),
-    ).toEqual({
-      kind: "recreate",
-      note: expect.stringContaining(expectedNoteFragment),
-      removeRegistryEntry: expectedRemoveRegistry,
-    });
-  });
+  ] as const)(
+    "uses runtime-configuration recreate for %s even when not-ready (#10056)",
+    (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
+      expect(
+        decideSandboxResume(
+          resumeSignals({
+            sandboxReuseState: "not_ready",
+            ...drift,
+          }),
+        ),
+      ).toEqual({
+        kind: "recreate",
+        note: expect.stringContaining(expectedNoteFragment),
+        removeRegistryEntry: expectedRemoveRegistry,
+      });
+    },
+  );
 
   it.each([
     [
@@ -298,20 +348,23 @@ describe("decideSandboxResume", () => {
       false,
     ],
     ["tool disclosure change", { toolDisclosureChanged: true }, "configuration changed", false],
-  ] as const)("uses tool-disclosure recreate for %s even when not-ready", (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
-    expect(
-      decideSandboxResume(
-        resumeSignals({
-          sandboxReuseState: "not_ready",
-          ...drift,
-        }),
-      ),
-    ).toEqual({
-      kind: "recreate",
-      note: expect.stringContaining(expectedNoteFragment),
-      removeRegistryEntry: expectedRemoveRegistry,
-    });
-  });
+  ] as const)(
+    "uses tool-disclosure recreate for %s even when not-ready (#10056)",
+    (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
+      expect(
+        decideSandboxResume(
+          resumeSignals({
+            sandboxReuseState: "not_ready",
+            ...drift,
+          }),
+        ),
+      ).toEqual({
+        kind: "recreate",
+        note: expect.stringContaining(expectedNoteFragment),
+        removeRegistryEntry: expectedRemoveRegistry,
+      });
+    },
+  );
 
   it("creates without resume-specific cleanup when the step is incomplete", () => {
     expect(
