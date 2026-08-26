@@ -74,7 +74,3 @@ export function buildGlobalPolicyGetFullJsonArgs(gatewayName?: string): string[]
 export function buildGlobalPolicyListArgs(gatewayName?: string): string[] {
   return ["policy", "list", ...policyGatewayArgs(gatewayName), "--global", "--limit", "1"];
 }
-
-export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand(buildPolicyGetFullJsonArgs(sandboxName, gatewayName));
-}

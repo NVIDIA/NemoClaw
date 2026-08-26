@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Issue 9880
+name: E2E / Issue 9880 Staging Reproduction
 
 on:
   workflow_dispatch:
@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   reproduce:
-    name: Reproduce on staging
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 210

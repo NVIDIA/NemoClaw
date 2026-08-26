@@ -100,6 +100,7 @@ type WorkflowJob = {
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
   "timeout-minutes"?: unknown;
+  with?: Record<string, unknown>;
 };
 
 export type OperationsWorkflow = {
@@ -597,7 +598,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
-    name: "Base Image Publication / Verify",
     needs: "generate-matrix",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
@@ -761,6 +761,26 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
     );
   }
+  for (const jobName of [
+    "catalogue-standard",
+    "catalogue-nvidia-api",
+    "catalogue-nvidia-inference",
+    "catalogue-github-read",
+    "catalogue-brave-nvidia-inference",
+  ]) {
+    const catalogue = workflow.jobs[jobName] ?? {};
+    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+      errors.push(`${jobName} must wait for matrix generation and base-image publication`);
+    }
+    if (
+      catalogue.with?.managed_image_revision !==
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    ) {
+      errors.push(
+        `${jobName} must use the selected managed-image revision when no exact PR catalog is present`,
+      );
+    }
+  }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
     "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
@@ -866,7 +886,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
-  if (job.name !== "Results / Require selected jobs" || job.if !== expectedCondition) {
+  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
     errors.push("relevant-e2e must be the stable aggregate check for main pushes");
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
