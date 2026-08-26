@@ -370,6 +370,23 @@ describe("pull request and main workflow contracts", () => {
     );
   });
 
+  // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
+  it("verifies changed Hugging Face catalog references without credentials", () => {
+    const job = prWorkflow.jobs["hugging-face-models"];
+
+    expect(job.needs).toBe("changes");
+    expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
+    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
+      "npm ci --ignore-scripts",
+    );
+    expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
+      "npm run catalog:verify-hugging-face",
+    );
+    expect(JSON.stringify(job)).not.toMatch(/HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\./u);
+  });
+
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
   it("executes pull request installer hash checks only from the PR base SHA", () => {
     expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
@@ -626,6 +643,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
+      HF_MODELS_CHANGED: "true",
+      HF_MODELS_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
@@ -649,12 +668,14 @@ describe("pull request and main workflow contracts", () => {
       prGate,
       {
         ...successfulCode,
+        HF_MODELS_RESULT: "failure",
         PLUGIN_TESTS_RESULT: "cancelled",
         STATIC_RESULT: "failure",
       },
       workflowJobListing([
         workflowJob(201, "static-checks", "failure"),
         workflowJob(202, "plugin-tests", "cancelled"),
+        workflowJob(203, "hugging-face-models", "failure"),
       ]),
     );
     const docsOnlySuccess = runWorkflowShellStep(prGate, {
@@ -663,6 +684,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "skipped",
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
+      HF_MODELS_CHANGED: "false",
+      HF_MODELS_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
@@ -698,6 +721,10 @@ describe("pull request and main workflow contracts", () => {
     expect(codeFailure.stdout).toContain("plugin-tests failed");
     expect(codeFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/202",
+    );
+    expect(codeFailure.stdout).toContain("hugging-face-models failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/203",
     );
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);

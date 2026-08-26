@@ -59,6 +59,7 @@
     "build:policy-boundary": "tsc -p nemoclaw/tsconfig.shared.json",
     "catalog:compile": "tsx src/lib/inference/serving/generate-catalog.ts",
     "catalog:check": "tsx src/lib/inference/serving/generate-catalog.ts --check",
+    "catalog:verify-hugging-face": "npm run catalog:compile && tsx tools/managed-inference/verify-hugging-face-models.ts",
     "build:cli": "npm run build:policy-boundary && tsc -p tsconfig.src.json && node dist/lib/core/generate-build-identity.js && node dist/lib/inference/serving/generate-catalog.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
