@@ -208,7 +208,7 @@ export async function prepareAdvisorSandboxInputs(
   resetDirectory(toolsDirectory);
 
   const contextEnv = { ...env };
-  delete contextEnv.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH;
+  if (options.collectContext) delete contextEnv.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH;
   const context = await (options.collectContext ?? collectGitHubReviewContext)(contextEnv);
   writeExclusive(
     path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME),

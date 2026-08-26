@@ -6,14 +6,49 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
+  assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
+  resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("APF create policy selection", () => {
+  it("selects a policyless external plan only from an absent global policy (#9833)", () => {
+    expect(resolveSandboxCreatePolicyAuthority("nemoclaw-managed", true)).toBe(
+      "externally-managed",
+    );
+    expect(resolveSandboxCreatePolicyAuthority("nemoclaw-managed", false)).toBe("nemoclaw-managed");
+    expect(resolveSandboxCreatePolicyAuthority("externally-managed", false)).toBe(
+      "externally-managed",
+    );
+  });
+
+  it("refuses APF creation when an active global policy exists (#9833)", () => {
+    expect(() => resolveSandboxCreatePolicyAuthority("externally-managed", true)).toThrow(
+      /active global policy to be absent/u,
+    );
+  });
+
+  it("requires APF effects to use the generic post-create gate (#9833)", () => {
+    expect(() =>
+      assertApfCreateIntent({
+        apfInterceptorRequested: true,
+      }),
+    ).toThrow(/missing deferred-effect authority/u);
+    expect(() =>
+      assertApfCreateIntent({
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilPolicyVerification: true,
+      }),
+    ).not.toThrow();
+    expect(() => assertApfCreateIntent(null)).not.toThrow();
+  });
+});
 
 describe("deferred provider effect authority", () => {
   it("refuses a second provider attachment after policy authority changes (#9833)", async () => {
