@@ -54,7 +54,10 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["first", "second"],
+      activateDeferredProviderEffects: (revalidate) => {
+        revalidate("cleaning up providers for sandbox 'alpha'");
+        return ["first", "second"];
+      },
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
       runOpenshell: runOpenshell as never,
       revalidateSandboxIdentity,
@@ -89,6 +92,7 @@ describe("deferred provider effect authority", () => {
       "attaching provider 'second' to sandbox 'alpha'",
     );
     expect(events).toContain("policy: attaching provider 'second' to sandbox 'alpha'");
+    expect(events).toContain("policy: cleaning up providers for sandbox 'alpha'");
     expect(events).not.toContain("sandbox provider attach -g nemoclaw alpha second");
   });
 });
