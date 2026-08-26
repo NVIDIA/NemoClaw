@@ -45,7 +45,7 @@ const SKILL_AGENT_UPLOAD_PATH = `${[
 const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
-    displayName: "Catalogue / Standard / ${{ matrix.display_name }}",
+    name: "Catalogue / Standard / ${{ matrix.display_name }}",
     matrix: "catalogue_standard_matrix",
     credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -54,7 +54,7 @@ const PROFILE_JOBS = {
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
-    displayName: "Catalogue / NVIDIA API / ${{ matrix.display_name }}",
+    name: "Catalogue / NVIDIA API / ${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_api_matrix",
     credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
@@ -63,7 +63,7 @@ const PROFILE_JOBS = {
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
-    displayName: "Catalogue / NVIDIA Inference / ${{ matrix.display_name }}",
+    name: "Catalogue / NVIDIA Inference / ${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
@@ -72,7 +72,7 @@ const PROFILE_JOBS = {
   },
   "github-read": {
     job: "catalogue-github-read",
-    displayName: "Catalogue / GitHub Read / ${{ matrix.display_name }}",
+    name: "Catalogue / GitHub Read / ${{ matrix.display_name }}",
     matrix: "catalogue_github_read_matrix",
     credentialBoundary: "GitHub read token",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -81,7 +81,7 @@ const PROFILE_JOBS = {
   },
   "brave-nvidia-inference": {
     job: "catalogue-brave-nvidia-inference",
-    displayName: "Catalogue / Brave and NVIDIA Inference / ${{ matrix.display_name }}",
+    name: "Catalogue / Brave and NVIDIA Inference / ${{ matrix.display_name }}",
     matrix: "catalogue_brave_nvidia_inference_matrix",
     credentialBoundary: "Brave and NVIDIA inference API keys",
     secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
@@ -132,7 +132,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
-    if (job.name !== contract.displayName) {
+    if (job.name !== contract.name) {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
