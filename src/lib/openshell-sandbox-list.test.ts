@@ -166,7 +166,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     );
   });
 
-  it("checks a healthy explicit gateway before observation without recovery mutation (#6114)", async () => {
+  it("checks a named gateway that needs no recovery before sandbox observation (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
     mocks.captureOpenshell.mockReturnValue({ status: 0, output: "alpha Ready" });
 

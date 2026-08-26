@@ -57,8 +57,8 @@ export async function captureSandboxListWithGatewayRecovery(
     ? namedOpenShellGateway(options.gatewayName)
     : selectedOpenShellGateway();
   let targetRecoveryAttempted = false;
-  // Installer retirement can leave an explicit target absent. Recover it before
-  // observation so an opaque missing-gateway error cannot skip bounded recovery.
+  // Installer retirement can remove the named gateway. Recover it before inventory
+  // so a missing-gateway command error cannot bypass bounded recovery.
   if (options.gatewayName) {
     const targetRecovery = await recoverNamedGatewayRuntime(recoveryOptions);
     targetRecoveryAttempted = targetRecovery.attempted === true;
