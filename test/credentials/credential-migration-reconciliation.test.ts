@@ -207,4 +207,76 @@ describe("legacy credential reconciliation", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("removes plaintext when the provider registers the canonical env name for a legacy alias key (#10388)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-migration-alias-"));
+    const legacyDir = path.join(tmpDir, ".nemoclaw");
+    const legacyFile = path.join(legacyDir, "credentials.json");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(legacyFile, JSON.stringify({ NVIDIA_API_KEY: LEGACY_SECRET }), {
+      mode: 0o600,
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`gateway registration exited ${String(code)}`);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await withProcessEnv(
+        { HOME: tmpDir, NVIDIA_API_KEY: undefined, NVIDIA_INFERENCE_API_KEY: undefined },
+        async () => {
+          const stagedLegacyKeys = stageLegacyCredentialsToEnv();
+          const stagedLegacyValues = new Map(
+            stagedLegacyKeys.map((key) => [key, process.env[key] ?? ""]),
+          );
+          const migratedLegacyKeys = new Set<string>();
+          const session = { stagedCredentialProviders: [] } as unknown as Session;
+          // Onboarding resolves a staged legacy alias into the canonical env var
+          // before registering the provider (see credentials/store.ts ensureApiKey()).
+          process.env.NVIDIA_INFERENCE_API_KEY = process.env.NVIDIA_API_KEY;
+          const runOpenshell = vi.fn((args: string[]) => ({
+            status: args.slice(0, 2).join(" ") === "provider get" ? 1 : 0,
+            stdout: "",
+            stderr: "",
+          }));
+          const deps: CredentialProviderRegistrationDeps = {
+            root: path.join(import.meta.dirname, "../.."),
+            runOpenshell:
+              runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
+            redact: (input) => input,
+            getGatewayName: () => "nemoclaw",
+            getCredential: (name) => process.env[name] ?? null,
+            normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
+            updateSession: (mutator) => mutator(session) ?? session,
+            stagedLegacyValues,
+            migratedLegacyKeys,
+            persistMigratedLegacyKeys: () => undefined,
+          };
+          const registration = createCredentialProviderRegistration(deps);
+
+          const result = registration.upsertProvider(
+            "nvidia-build",
+            "nvidia",
+            "NVIDIA_INFERENCE_API_KEY",
+            "https://integrate.api.nvidia.com/v1",
+            { NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY ?? "" },
+          );
+          expect(result).toEqual({ ok: true });
+
+          await finalizeMigration(stagedLegacyKeys, migratedLegacyKeys);
+
+          expect(stagedLegacyKeys).toEqual(["NVIDIA_API_KEY"]);
+          expect(migratedLegacyKeys.has("NVIDIA_API_KEY")).toBe(true);
+          expect(exit).not.toHaveBeenCalled();
+          expect(
+            fs.existsSync(legacyFile),
+            "successful alias-based registration must remove the legacy file",
+          ).toBe(false);
+        },
+      );
+    } finally {
+      error.mockRestore();
+      exit.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

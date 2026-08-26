@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getLegacyCredentialAliasKeys } from "../credentials/store";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
@@ -49,6 +50,20 @@ export interface CredentialProviderRegistrationDeps {
   persistMigratedLegacyKeys(): void;
 }
 
+// stagedLegacyValues is keyed by the literal env key found in the legacy
+// credentials.json (e.g. NVIDIA_API_KEY), but a provider can consume that
+// value under its canonical env key instead (e.g. NVIDIA_INFERENCE_API_KEY).
+// Check the canonical key first, then fall back to its known legacy
+// aliases, so migration is still recorded against whichever key was
+// actually staged.
+function findStagedLegacyKey(
+  envKey: string,
+  stagedLegacyValues: ReadonlyMap<string, string>,
+): string | undefined {
+  if (stagedLegacyValues.has(envKey)) return envKey;
+  return getLegacyCredentialAliasKeys(envKey).find((alias) => stagedLegacyValues.has(alias));
+}
+
 function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
@@ -56,18 +71,19 @@ function recordMigratedLegacyMessagingCredentials(
   revalidatePolicyRequirements?: (operation: string) => void,
 ): void {
   const registeredProviders = new Set(registeredProviderNames);
-  const migrations: Array<{ envKey: string; migrated: boolean }> = [];
+  const migrations: Array<{ stagedKey: string; migrated: boolean }> = [];
   for (const def of tokenDefs) {
     if (!registeredProviders.has(def.name) || !def.token || !def.envKey) continue;
-    const stagedValue = deps.stagedLegacyValues.get(def.envKey);
-    if (stagedValue === undefined) continue;
-    migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
+    const stagedKey = findStagedLegacyKey(def.envKey, deps.stagedLegacyValues);
+    if (stagedKey === undefined) continue;
+    const stagedValue = deps.stagedLegacyValues.get(stagedKey);
+    migrations.push({ stagedKey, migrated: def.token === stagedValue });
   }
   if (migrations.length === 0) return;
   revalidatePolicyRequirements?.("record migrated messaging provider credentials");
   for (const migration of migrations) {
-    if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
-    else deps.migratedLegacyKeys.delete(migration.envKey);
+    if (migration.migrated) deps.migratedLegacyKeys.add(migration.stagedKey);
+    else deps.migratedLegacyKeys.delete(migration.stagedKey);
   }
   deps.persistMigratedLegacyKeys();
 }
@@ -169,16 +185,17 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       options,
     );
     if (result.ok && credentialEnv) {
-      const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
-      if (stagedValue !== undefined) {
+      const stagedKey = findStagedLegacyKey(credentialEnv, deps.stagedLegacyValues);
+      if (stagedKey !== undefined) {
         options.revalidatePolicyRequirements?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
+        const stagedValue = deps.stagedLegacyValues.get(stagedKey);
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
         if (upsertedValue === stagedValue) {
-          deps.migratedLegacyKeys.add(credentialEnv);
+          deps.migratedLegacyKeys.add(stagedKey);
         } else {
-          deps.migratedLegacyKeys.delete(credentialEnv);
+          deps.migratedLegacyKeys.delete(stagedKey);
         }
         deps.persistMigratedLegacyKeys();
       }

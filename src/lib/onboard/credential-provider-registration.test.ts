@@ -276,6 +276,27 @@ describe("credential provider registration", () => {
     },
   );
 
+  it("records migration under the staged legacy alias key when the provider registers with the canonical env name (#10388)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = registrationDeps(runOpenshell, session);
+    deps.getCredential = vi.fn(() => "legacy-key");
+    deps.stagedLegacyValues = new Map([["NVIDIA_API_KEY", "legacy-key"]]);
+    const registration = createCredentialProviderRegistration(deps);
+
+    const result = registration.upsertProvider(
+      "nvidia-build",
+      "nvidia",
+      "NVIDIA_INFERENCE_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(deps.migratedLegacyKeys.has("NVIDIA_API_KEY")).toBe(true);
+    expect(deps.migratedLegacyKeys.has("NVIDIA_INFERENCE_API_KEY")).toBe(false);
+    expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
+  });
+
   it("does not record migration when provider registration fails", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) => ({
@@ -870,5 +891,29 @@ describe("credential provider registration", () => {
 
     expect(deps.migratedLegacyKeys).toEqual(new Set());
     expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
+  });
+
+  it("records messaging migration under the staged legacy alias key when the token def uses the canonical env name (#10388)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const success = { status: 0, stdout: "", stderr: "" };
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get" ? missing : success,
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.stagedLegacyValues = new Map([["NVIDIA_API_KEY", "legacy-key"]]);
+    const registration = createCredentialProviderRegistration(deps);
+
+    registration.upsertMessagingProviders([
+      {
+        name: "alpha-nvidia-bridge",
+        envKey: "NVIDIA_INFERENCE_API_KEY",
+        token: "legacy-key",
+      },
+    ]);
+
+    expect(deps.migratedLegacyKeys.has("NVIDIA_API_KEY")).toBe(true);
+    expect(deps.migratedLegacyKeys.has("NVIDIA_INFERENCE_API_KEY")).toBe(false);
+    expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
   });
 });
