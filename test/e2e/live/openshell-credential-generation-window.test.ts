@@ -37,7 +37,7 @@ import {
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
   parseCredentialWindowRequestObservation,
-} from "./openshell-credential-generation-window.ts";
+} from "./mcp-bridge-credential-generation-window.ts";
 
 const SANDBOX_NAME = "e2e-cred-window";
 const SERVER_NAME = "fake";
