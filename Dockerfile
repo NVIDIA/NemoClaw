@@ -1796,7 +1796,8 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     :
 
 # Add messaging source after the non-messaging install so channel-only changes
-# invalidate only the matching offline plugin layer.
+# invalidate only the matching offline plugin layer. Keep this as the single
+# owner; messaging intentionally stays out of openclaw-runtime-payload.
 USER root
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
