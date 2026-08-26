@@ -316,7 +316,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -329,6 +328,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
+  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
+    errors.push("Manual PR authentication must use the public PR metadata endpoint");
+  }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == refs/heads/*',
@@ -386,6 +388,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
+  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
+    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
   ) {
@@ -596,6 +601,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
+    name: "Base Image Publication / Verify",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
@@ -874,7 +880,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
-  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
+  if (job.name !== "Results / Require selected jobs" || job.if !== expectedCondition) {
     errors.push("relevant-e2e must be the stable aggregate check for main pushes");
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {

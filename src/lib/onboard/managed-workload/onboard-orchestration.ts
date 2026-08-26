@@ -35,7 +35,7 @@ import {
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -54,7 +54,6 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
-  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -77,8 +76,9 @@ type ManagedProfileInput = Omit<
 >;
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
-type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
-type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+type BootstrapProvider = RuntimeProviderBundle & {
+  readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+};
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
@@ -204,7 +204,11 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
 }
 
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
-  if (!provider || !provider.bootstrap.supported) {
+  if (
+    !provider ||
+    !provider.bootstrap.supported ||
+    provider.bootstrap.bootstrapKind !== "managed-image"
+  ) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
   }
   return provider as BootstrapProvider;
@@ -237,16 +241,11 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const liveCatalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
-    if (liveCatalogRevision && liveCatalog) {
+    if (catalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
     }
-    const catalogRevision =
-      liveCatalogRevision ??
-      (liveCatalog || input.tempManagedRuntimeCatalog || input.managedWorkloadRebuild
-        ? null
-        : installedManagedImageCatalogRevision(input.startupProfile.environment, input.rootDir));
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -347,6 +346,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly plan: {
     readonly intent: SandboxCreateIntent;
     readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
+    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: () => void;
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -380,6 +380,7 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
+  readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
   readonly initialGpuRoute: SelectedDockerGpuRoute;
   readonly sandboxReadyTimeoutSecs: number;
   readonly buildId: string;
@@ -421,6 +422,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     intent: input.plan.intent,
     fromRef,
     policyAuthority: input.plan.policyAuthority,
+    deferSandboxEffectsUntilPolicyVerification:
+      input.plan.deferSandboxEffectsUntilPolicyVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -506,6 +509,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
+    activateDeferredProviderEffects: createPlan.activateDeferredProviderEffects,
     initialGpuRoute,
     sandboxReadyTimeoutSecs,
     buildId,

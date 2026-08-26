@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
-  registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
+  registerAgentAdapter: vi.fn(),
   restoreExistingMcpBridgeRuntime: vi.fn(),
   unregisterAgentAdapter: vi.fn(),
 }));
@@ -27,8 +27,7 @@ vi.mock("../../state/registry", () => ({
 }));
 
 vi.mock("./mcp-bridge-adapters", () => ({
-  registerAgentAdapterAtCurrentCredentialRevision:
-    mocks.registerAgentAdapterAtCurrentCredentialRevision,
+  registerAgentAdapter: mocks.registerAgentAdapter,
   unregisterAgentAdapter: mocks.unregisterAgentAdapter,
 }));
 
@@ -113,7 +112,7 @@ describe("MCP adapter teardown rollback", () => {
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
-    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
+    mocks.registerAgentAdapter.mockReset();
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
   });
@@ -122,25 +121,24 @@ describe("MCP adapter teardown rollback", () => {
     ["rebuild", prepareMcpBridgesForRebuild],
     ["destroy", prepareMcpBridgesForDestroy],
   ] as const)(
-    "restores the fresh revision observed after a later %s step fails (#10155)",
+    "restores the revision observed before a later %s step fails (#10155)",
     async (_lifecycle, prepare) => {
       mocks.observeMcpCredentialRevision
         .mockReset()
         .mockReturnValueOnce("v12")
-        .mockReturnValueOnce("v13")
-        .mockReturnValue("v13");
+        .mockReturnValueOnce("absent");
 
       await expect(prepare("alpha")).rejects.toThrow(
         "forced lifecycle failure after adapter scrub",
       );
       expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
-      expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).toHaveBeenCalledWith(
+      expect(mocks.registerAgentAdapter).toHaveBeenCalledWith(
         "alpha",
         "hermes-config",
         expect.objectContaining({ ...entry, credentialRevision: "v12" }),
         {},
-        "v13",
         {
+          credentialRevision: "v12",
           replaceExisting: true,
           teardownRollback: true,
         },
@@ -164,6 +162,6 @@ describe("MCP adapter teardown rollback", () => {
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
-    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+    expect(mocks.registerAgentAdapter).not.toHaveBeenCalled();
   });
 });

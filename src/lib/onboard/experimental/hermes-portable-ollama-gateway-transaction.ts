@@ -834,14 +834,29 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   readonly credentialEnv: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
 }) {
-  const providerCredentialEnv = `${options.credentialEnv}_${options.transactionId.toUpperCase()}`;
+  const receiptProbe = createReceiptWriter(
+    options.directory,
+    options.transactionId,
+    options.targetSha256,
+    () => {},
+  );
+  const recoveredReceipt = receiptProbe.readPublished();
+  if (
+    recoveredReceipt !== null &&
+    (recoveredReceipt.publication === undefined ||
+      recoveredReceipt.publication.targetSha256 !== options.targetSha256)
+  ) {
+    throw new Error("Hermes Portable Ollama published transaction authority is inconsistent.");
+  }
+  const transactionId = recoveredReceipt?.publication?.transactionId ?? options.transactionId;
+  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
   const gatewayProviderJournal = createGatewayProviderJournalStore(
     options.directory,
     Object.freeze({
-      transactionId: options.transactionId,
+      transactionId,
       targetSha256: options.targetSha256,
       gatewayName: "nemoclaw",
       sandboxName: options.sandboxName,
@@ -855,7 +870,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   );
   const receiptWriter = createReceiptWriter(
     options.directory,
-    options.transactionId,
+    transactionId,
     options.targetSha256,
     gatewayProviderJournal.markCommitted,
   );

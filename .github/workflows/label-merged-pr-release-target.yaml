@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / Assign and Reconcile Release Targets
+name: Automation / Release Targets
 
 # pull_request_target runs in the base repo context, giving the token write
 # access even for fork PRs. This workflow is safe because it only reads trusted
@@ -31,6 +31,7 @@ concurrency:
 
 jobs:
   label-release-target:
+    name: Assign and reconcile
     if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
