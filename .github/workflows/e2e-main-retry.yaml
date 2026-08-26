@@ -8,7 +8,7 @@ run-name: E2E retry evidence for source run ${{ github.event.workflow_run.id }} 
 on:
   workflow_run:
     workflows:
-      - E2E / Main and Manual
+      - E2E / Main and Manual Suite
     types:
       - completed
 
@@ -16,7 +16,6 @@ permissions: {}
 
 jobs:
   evaluate:
-    name: Classify attempt
     if: >-
       ${{
       github.run_attempt == 1 &&
@@ -69,7 +68,6 @@ jobs:
           retention-days: 14
 
   report-same-commit-reliability:
-    name: Report same-commit reliability
     needs: evaluate
     if: >-
       ${{
