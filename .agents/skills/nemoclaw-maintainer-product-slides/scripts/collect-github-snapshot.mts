@@ -1,8 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import {
+  closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -509,7 +524,327 @@ type CliOptions = {
   baselineApproval?: string;
   presentationMap?: string;
   output?: string;
+  snapshotWorkerPath?: string;
 };
+
+type SnapshotSignal = "SIGINT" | "SIGTERM";
+
+export type SnapshotOutputOperations = {
+  open: (filePath: string, flags: number, mode: number) => number;
+  fchmod: (descriptor: number, mode: number) => void;
+  write: (descriptor: number, value: string) => void;
+  fsync: (descriptor: number) => void;
+  close: (descriptor: number) => void;
+  link: (temporaryPath: string, outputPath: string) => void;
+  lstat: (filePath: string) => { dev: number | bigint; ino: number | bigint };
+  unlink: (filePath: string) => void;
+};
+
+type SnapshotOutputOptions = {
+  operations?: Partial<SnapshotOutputOperations>;
+  beforeLink?: (temporaryPath: string, outputPath: string) => void;
+};
+
+const DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS: SnapshotOutputOperations = {
+  open: (filePath, flags, mode) => openSync(filePath, flags, mode),
+  fchmod: (descriptor, mode) => fchmodSync(descriptor, mode),
+  write: (descriptor, value) => writeFileSync(descriptor, value, "utf8"),
+  fsync: (descriptor) => fsyncSync(descriptor),
+  close: (descriptor) => closeSync(descriptor),
+  link: (temporaryPath, outputPath) => linkSync(temporaryPath, outputPath),
+  lstat: (filePath) => lstatSync(filePath),
+  unlink: (filePath) => unlinkSync(filePath),
+};
+
+class SnapshotInterruptionError extends Error {
+  readonly signal: SnapshotSignal;
+
+  constructor(signal: SnapshotSignal, context: string) {
+    super(`${signal} interrupted GitHub snapshot ${context}`);
+    this.name = "SnapshotInterruptionError";
+    this.signal = signal;
+  }
+}
+
+type TemporaryCleanup = {
+  detail: string;
+  unresolved: boolean;
+};
+
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
+function escapeDiagnosticControls(message: string): string {
+  return Array.from(message, (character) => {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) return character;
+    const isDiagnosticControl =
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029;
+    if (!isDiagnosticControl) return character;
+    if (character === "\n") return "\\n";
+    if (character === "\r") return "\\r";
+    if (character === "\t") return "\\t";
+    return `\\u${codePoint.toString(16).padStart(4, "0")}`;
+  }).join("");
+}
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === "object" && ("path" in error || "dest" in error)) {
+    const code = errorCode(error) ?? "filesystem error";
+    const syscall =
+      "syscall" in error && typeof error.syscall === "string" ? error.syscall : undefined;
+    return escapeDiagnosticControls(syscall ? `${code} during ${syscall}` : code);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return escapeDiagnosticControls(message);
+}
+
+function quotePath(filePath: string): string {
+  return escapeDiagnosticControls(JSON.stringify(filePath));
+}
+
+function assertSnapshotOutputAbsent(outputPath: string): void {
+  try {
+    lstatSync(outputPath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return;
+    throw new Error(
+      `Could not inspect snapshot output ${quotePath(outputPath)}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  throw new Error(
+    `Snapshot output already exists and will not be overwritten: ${quotePath(outputPath)}`,
+  );
+}
+
+function createPrivateSnapshotStage(
+  outputPath: string,
+  operations: SnapshotOutputOperations,
+): { descriptor: number; temporaryPath: string } {
+  const parent = path.dirname(outputPath);
+  const base = path.basename(outputPath);
+  const flags =
+    fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0);
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const temporaryPath = path.join(
+      parent,
+      `.${base}.nemoclaw-stage-${process.pid}-${randomBytes(12).toString("hex")}`,
+    );
+    try {
+      const descriptor = operations.open(temporaryPath, flags, 0o600);
+      return { descriptor, temporaryPath };
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+  }
+  throw new Error(`Could not allocate a unique snapshot staging path for ${quotePath(outputPath)}`);
+}
+
+function ensureSnapshotOutputParent(outputPath: string): void {
+  const parentPath = path.dirname(outputPath);
+  try {
+    mkdirSync(parentPath, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    throw new Error(
+      `Could not create snapshot output directory ${quotePath(parentPath)}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function sameFile(
+  left: { dev: number | bigint; ino: number | bigint },
+  right: { dev: number | bigint; ino: number | bigint },
+): boolean {
+  return String(left.dev) === String(right.dev) && String(left.ino) === String(right.ino);
+}
+
+function writeSnapshotToDescriptor(
+  snapshot: Record<string, unknown>,
+  descriptor: number,
+  operations: SnapshotOutputOperations,
+): void {
+  let failure: unknown;
+  try {
+    const actualHash = canonicalSha256(withoutTopLevelKey(snapshot, "snapshotSha256"));
+    if (snapshot.snapshotSha256 !== actualHash)
+      throw new Error("Snapshot hash verification failed");
+    operations.fchmod(descriptor, 0o600);
+    operations.write(descriptor, canonicalJson(snapshot));
+    operations.fsync(descriptor);
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    operations.close(descriptor);
+  } catch (error) {
+    failure = failure
+      ? new AggregateError([failure, error], "Snapshot write and descriptor close failed")
+      : error;
+  }
+  if (failure) throw failure;
+}
+
+function removeTemporaryPath(
+  temporaryPath: string,
+  operations: SnapshotOutputOperations,
+): TemporaryCleanup {
+  try {
+    operations.unlink(temporaryPath);
+    return {
+      detail: `Removed invocation-created temporary path ${quotePath(temporaryPath)}`,
+      unresolved: false,
+    };
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return {
+        detail: `Invocation-created temporary path is absent ${quotePath(temporaryPath)}`,
+        unresolved: false,
+      };
+    }
+    return {
+      detail: `Unresolved invocation-created temporary path ${quotePath(temporaryPath)}: ${errorMessage(error)}`,
+      unresolved: true,
+    };
+  }
+}
+
+type FileIdentityResult =
+  | {
+      kind: "present";
+      identity: { dev: number | bigint; ino: number | bigint };
+    }
+  | { kind: "absent" }
+  | { kind: "unknown"; error: unknown };
+
+function fileIdentity(filePath: string, operations: SnapshotOutputOperations): FileIdentityResult {
+  try {
+    return { kind: "present", identity: operations.lstat(filePath) };
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? { kind: "absent" } : { kind: "unknown", error };
+  }
+}
+
+function pathStateDetail(
+  label: "possible snapshot target" | "invocation-created temporary path",
+  filePath: string,
+  state: FileIdentityResult,
+): string {
+  if (state.kind === "present") return `Preserved ${label} ${quotePath(filePath)}`;
+  const sentenceLabel = `${label[0].toUpperCase()}${label.slice(1)}`;
+  if (state.kind === "absent") return `${sentenceLabel} is absent ${quotePath(filePath)}`;
+  return `${sentenceLabel} state is unknown for ${quotePath(filePath)}: ${errorMessage(state.error)}`;
+}
+
+function ambiguousFinalizationError(
+  outputPath: string,
+  temporaryPath: string,
+  cause: unknown,
+  target: FileIdentityResult,
+  temporary: FileIdentityResult,
+): Error {
+  return new Error(
+    `Snapshot finalization returned an error for ${quotePath(outputPath)}: ${errorMessage(cause)}. Target ownership is ambiguous. ${pathStateDetail("possible snapshot target", outputPath, target)}. ${pathStateDetail("invocation-created temporary path", temporaryPath, temporary)}. Inspect both paths; do not rerun with this output path.`,
+    { cause },
+  );
+}
+
+function reconcileLinkFailure(
+  temporaryPath: string,
+  outputPath: string,
+  cause: unknown,
+  operations: SnapshotOutputOperations,
+): never {
+  const target = fileIdentity(outputPath, operations);
+  if (target.kind === "unknown") {
+    const temporary = fileIdentity(temporaryPath, operations);
+    throw ambiguousFinalizationError(outputPath, temporaryPath, cause, target, temporary);
+  }
+  if (target.kind === "absent") {
+    const cleanup = removeTemporaryPath(temporaryPath, operations);
+    throw new Error(
+      `GitHub snapshot finalization failed for ${quotePath(outputPath)}: ${errorMessage(cause)}. This invocation did not publish the snapshot. ${cleanup.detail}.`,
+      { cause },
+    );
+  }
+
+  const temporary = fileIdentity(temporaryPath, operations);
+  if (temporary.kind !== "present") {
+    throw ambiguousFinalizationError(outputPath, temporaryPath, cause, target, temporary);
+  }
+  if (sameFile(target.identity, temporary.identity)) {
+    throw ambiguousFinalizationError(outputPath, temporaryPath, cause, target, temporary);
+  }
+
+  const cleanup = removeTemporaryPath(temporaryPath, operations);
+  const message =
+    errorCode(cause) === "EEXIST"
+      ? `Snapshot output already exists and was not changed: ${quotePath(outputPath)}`
+      : `GitHub snapshot finalization failed while a different target exists at ${quotePath(outputPath)}: ${errorMessage(cause)}`;
+  throw new Error(`${message}. ${cleanup.detail}.`, { cause });
+}
+
+function finalizeSnapshotStage(
+  temporaryPath: string,
+  outputPath: string,
+  operations: SnapshotOutputOperations,
+  beforeLink?: SnapshotOutputOptions["beforeLink"],
+): void {
+  try {
+    beforeLink?.(temporaryPath, outputPath);
+    operations.link(temporaryPath, outputPath);
+  } catch (error) {
+    reconcileLinkFailure(temporaryPath, outputPath, error, operations);
+  }
+
+  const cleanup = removeTemporaryPath(temporaryPath, operations);
+  if (cleanup.unresolved) {
+    throw new Error(
+      `GitHub snapshot was published at ${quotePath(outputPath)}, but temporary cleanup failed. Preserved published snapshot target ${quotePath(outputPath)}. ${cleanup.detail}.`,
+    );
+  }
+}
+
+export function writeGitHubSnapshotOutput(
+  snapshot: Record<string, unknown>,
+  requestedOutputPath: string,
+  options: SnapshotOutputOptions = {},
+): void {
+  const outputPath = path.resolve(requestedOutputPath);
+  ensureSnapshotOutputParent(outputPath);
+  assertSnapshotOutputAbsent(outputPath);
+
+  const operations = {
+    ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
+    ...options.operations,
+  };
+  let stage: { descriptor: number; temporaryPath: string };
+  try {
+    stage = createPrivateSnapshotStage(outputPath, operations);
+  } catch (error) {
+    throw new Error(
+      `GitHub snapshot staging allocation failed for ${quotePath(outputPath)}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  try {
+    writeSnapshotToDescriptor(snapshot, stage.descriptor, operations);
+  } catch (error) {
+    const cleanup = removeTemporaryPath(stage.temporaryPath, operations);
+    throw new Error(
+      `GitHub snapshot staging failed for ${quotePath(outputPath)}: ${errorMessage(error)}. This invocation did not publish the snapshot. ${cleanup.detail}.`,
+      { cause: error },
+    );
+  }
+  finalizeSnapshotStage(stage.temporaryPath, outputPath, operations, options.beforeLink);
+}
 
 function validUtcDateTime(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -657,7 +992,10 @@ export function collectRoadmapEpicEvidence(options: {
     issue: RawIssue | DetailedRawOpenIssue,
     nativeMilestone: RawMilestone | null,
   ) => void;
-}): { excludedIssues: Array<Record<string, unknown>>; findings: ValidationFinding[] } {
+}): {
+  excludedIssues: Array<Record<string, unknown>>;
+  findings: ValidationFinding[];
+} {
   const excludedIssues: Array<Record<string, unknown>> = [];
   const findings: ValidationFinding[] = [];
   for (const milestone of options.selectedMilestones) {
@@ -2225,6 +2563,7 @@ function parseArgs(argv: string[]): CliOptions {
     else if (argument === "--baseline-approval") options.baselineApproval = take();
     else if (argument === "--presentation-map") options.presentationMap = take();
     else if (argument === "--output") options.output = take();
+    else if (argument === "--snapshot-worker-path") options.snapshotWorkerPath = take();
     else if (argument === "--help" || argument === "-h") {
       console.log(
         "Usage: node --import tsx collect-github-snapshot.mts [--repo NVIDIA/NemoClaw] [--milestone TITLE ...] --output PATH [--release-count 5] [--metric-mode retained_additions|net_change] [--baseline-snapshot PATH --baseline-approval PATH] [--presentation-map PATH]",
@@ -2235,20 +2574,478 @@ function parseArgs(argv: string[]): CliOptions {
   return options;
 }
 
-function main(): void {
-  const options = parseArgs(process.argv.slice(2));
-  if (!options.output) throw new Error("--output is required");
+type SnapshotWorkerReceipt = { complete: boolean };
+export type SnapshotWorkerResult = {
+  receipt?: SnapshotWorkerReceipt;
+  failure?: unknown;
+};
+type SnapshotStagingWorkspace = { directory: string; temporaryPath: string };
+type SnapshotWorkerObservation = {
+  wait: Promise<SnapshotWorkerResult>;
+  detach: () => void;
+};
+type PromiseSettlement<T> =
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: unknown }
+  | { status: "timeout" };
+
+export type SnapshotCollectorRuntime = {
+  outputOperations?: Partial<SnapshotOutputOperations>;
+  onWorkerSpawn?: (worker: ChildProcess) => void;
+  terminateWorkerTree?: (worker: ChildProcess, signal: SnapshotSignal) => Promise<boolean>;
+  treeTerminationTimeoutMilliseconds?: number;
+  workerCloseTimeoutMilliseconds?: number;
+};
+
+const TREE_TERMINATION_TIMEOUT_MILLISECONDS = 4_500;
+const WORKER_CLOSE_TIMEOUT_MILLISECONDS = 500;
+
+function createSnapshotStagingWorkspace(outputPath: string): SnapshotStagingWorkspace {
+  const prefix = path.join(
+    path.dirname(outputPath),
+    `.${path.basename(outputPath)}.nemoclaw-stage-`,
+  );
+  try {
+    const directory = mkdtempSync(prefix);
+    return { directory, temporaryPath: path.join(directory, "snapshot.json") };
+  } catch (error) {
+    throw new Error(
+      `Could not create private snapshot staging directory from ${quotePath(prefix)}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function cleanupStagingWorkspace(
+  workspace: SnapshotStagingWorkspace,
+  operations: SnapshotOutputOperations,
+): TemporaryCleanup {
+  const temporary = removeTemporaryPath(workspace.temporaryPath, operations);
+  if (temporary.unresolved) {
+    return {
+      detail: `${temporary.detail}. Preserved invocation-created staging directory ${quotePath(workspace.directory)} because its temporary path remains unresolved`,
+      unresolved: true,
+    };
+  }
+  try {
+    rmdirSync(workspace.directory);
+    return {
+      detail: `${temporary.detail}. Removed invocation-created staging directory ${quotePath(workspace.directory)}`,
+      unresolved: false,
+    };
+  } catch (error) {
+    return {
+      detail: `${temporary.detail}. Unresolved invocation-created staging directory ${quotePath(workspace.directory)}: ${errorMessage(error)}`,
+      unresolved: true,
+    };
+  }
+}
+
+function stagingWorkspaceState(workspace: SnapshotStagingWorkspace): string {
+  const temporary = fileIdentity(workspace.temporaryPath, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
+  return `${pathStateDetail("invocation-created temporary path", workspace.temporaryPath, temporary)}. Preserved invocation-created staging directory ${quotePath(workspace.directory)}`;
+}
+
+function cleanupWorkspaceAfterFinalization(workspace: SnapshotStagingWorkspace): TemporaryCleanup {
+  const temporary = fileIdentity(workspace.temporaryPath, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
+  if (temporary.kind !== "absent") {
+    return { detail: stagingWorkspaceState(workspace), unresolved: true };
+  }
+  try {
+    rmdirSync(workspace.directory);
+    return {
+      detail: `Invocation-created temporary path is absent ${quotePath(workspace.temporaryPath)}. Removed invocation-created staging directory ${quotePath(workspace.directory)}`,
+      unresolved: false,
+    };
+  } catch (error) {
+    return {
+      detail: `Invocation-created temporary path is absent ${quotePath(workspace.temporaryPath)}. Unresolved invocation-created staging directory ${quotePath(workspace.directory)}: ${errorMessage(error)}`,
+      unresolved: true,
+    };
+  }
+}
+
+function signalSnapshotWorker(child: ChildProcess, signal: SnapshotSignal | "SIGKILL"): void {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The worker can exit between the signal request and process-group lookup.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The close event reconciles a worker that exited before the fallback signal.
+  }
+}
+
+function observeSnapshotWorker(child: ChildProcess): SnapshotWorkerObservation {
+  let stdout = "";
+  let stderr = "";
+  let childError: unknown;
+  let detached = false;
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
+  stdoutStream?.setEncoding("utf8");
+  stderrStream?.setEncoding("utf8");
+  const onStdout = (chunk: string): void => {
+    stdout += chunk;
+  };
+  const onStderr = (chunk: string): void => {
+    stderr += chunk;
+  };
+  let onError: (error: Error) => void;
+  let onClose: (code: number | null, signal: NodeJS.Signals | null) => void;
+  const removeObservationListeners = (): void => {
+    stdoutStream?.off("data", onStdout);
+    stderrStream?.off("data", onStderr);
+    child.off("error", onError);
+    child.off("close", onClose);
+  };
+  const wait = new Promise<SnapshotWorkerResult>((resolve) => {
+    onError = (error): void => {
+      childError = error;
+    };
+    onClose = (code, signal): void => {
+      removeObservationListeners();
+      if (childError) {
+        resolve({ failure: childError });
+        return;
+      }
+      if (code !== 0) {
+        resolve({
+          failure: new Error(
+            `GitHub snapshot worker stopped before publication (exit ${String(code)}, signal ${String(signal)}). Worker diagnostic: ${JSON.stringify(stderr.trim() || "no worker diagnostic")}`,
+          ),
+        });
+        return;
+      }
+      try {
+        const receipt = JSON.parse(stdout) as Partial<SnapshotWorkerReceipt>;
+        if (typeof receipt.complete !== "boolean") {
+          throw new Error("worker receipt lacks a boolean complete field");
+        }
+        resolve({ receipt: { complete: receipt.complete } });
+      } catch (error) {
+        resolve({
+          failure: new Error(
+            `GitHub snapshot worker returned an invalid receipt: ${errorMessage(error)}`,
+          ),
+        });
+      }
+    };
+    stdoutStream?.on("data", onStdout);
+    stderrStream?.on("data", onStderr);
+    child.once("error", onError);
+    child.once("close", onClose);
+  });
+  return {
+    wait,
+    detach: () => {
+      if (detached) return;
+      detached = true;
+      removeObservationListeners();
+      stdoutStream?.destroy();
+      stderrStream?.destroy();
+      child.on("error", () => undefined);
+      child.unref();
+    },
+  };
+}
+
+export function waitForSnapshotWorker(child: ChildProcess): Promise<SnapshotWorkerResult> {
+  return observeSnapshotWorker(child).wait;
+}
+
+function waitForPromiseSettlement<T>(
+  promise: Promise<T>,
+  timeoutMilliseconds: number,
+): Promise<PromiseSettlement<T>> {
+  return new Promise((resolve) => {
+    let complete = false;
+    const timeout = setTimeout(() => {
+      if (complete) return;
+      complete = true;
+      resolve({ status: "timeout" });
+    }, timeoutMilliseconds);
+    promise.then(
+      (value) => {
+        if (complete) return;
+        complete = true;
+        clearTimeout(timeout);
+        resolve({ status: "fulfilled", value });
+      },
+      (reason: unknown) => {
+        if (complete) return;
+        complete = true;
+        clearTimeout(timeout);
+        resolve({ status: "rejected", reason });
+      },
+    );
+  });
+}
+
+function processGroupIsActive(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) !== "ESRCH";
+  }
+}
+
+function waitForDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+async function waitForProcessGroupExit(
+  processGroupId: number,
+  timeoutMilliseconds: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    if (!processGroupIsActive(processGroupId)) return true;
+    await waitForDelay(25);
+  }
+  return !processGroupIsActive(processGroupId);
+}
+
+async function terminateSnapshotWorkerTree(
+  child: ChildProcess,
+  signal: SnapshotSignal,
+): Promise<boolean> {
+  if (process.platform === "win32") return terminateWindowsSnapshotWorkerTree(child);
+  signalSnapshotWorker(child, signal);
+  if (!child.pid) {
+    await waitForDelay(2_000);
+    signalSnapshotWorker(child, "SIGKILL");
+    return false;
+  }
+  if (await waitForProcessGroupExit(child.pid, 2_000)) return true;
+  signalSnapshotWorker(child, "SIGKILL");
+  return waitForProcessGroupExit(child.pid, 2_000);
+}
+
+function terminateWindowsSnapshotWorkerTree(child: ChildProcess): Promise<boolean> {
+  if (!child.pid) {
+    signalSnapshotWorker(child, "SIGKILL");
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    let complete = false;
+    let taskkillError: unknown;
+    const taskkill = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    const finish = (confirmed: boolean): void => {
+      if (complete) return;
+      complete = true;
+      clearTimeout(timeout);
+      taskkill.off("error", onError);
+      taskkill.off("close", onClose);
+      resolve(confirmed);
+    };
+    const onError = (error: Error): void => {
+      taskkillError = error;
+    };
+    const onClose = (code: number | null): void => {
+      finish(taskkillError === undefined && code === 0);
+    };
+    const timeout = setTimeout(() => {
+      taskkill.on("error", () => undefined);
+      taskkill.kill("SIGKILL");
+      taskkill.unref();
+      finish(false);
+    }, 4_000);
+    taskkill.once("error", onError);
+    taskkill.once("close", onClose);
+  });
+}
+
+function runSnapshotWorker(options: CliOptions): void {
+  if (process.env.NEMOCLAW_SNAPSHOT_WORKER !== "1" || !options.snapshotWorkerPath) {
+    throw new Error("The snapshot worker requires its supervised staging path");
+  }
+  if (!path.isAbsolute(options.snapshotWorkerPath)) {
+    throw new Error("The supervised snapshot staging path must be absolute");
+  }
   const snapshot = collectGitHubSnapshot(options);
-  const outputPath = path.resolve(options.output);
-  mkdirSync(path.dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, canonicalJson(snapshot), "utf8");
-  const actualHash = canonicalSha256(withoutTopLevelKey(snapshot, "snapshotSha256"));
-  if (snapshot.snapshotSha256 !== actualHash) throw new Error("Snapshot hash verification failed");
-  console.log(`GitHub snapshot written: ${outputPath}`);
+  const descriptor = DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS.open(
+    options.snapshotWorkerPath,
+    fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    0o600,
+  );
+  writeSnapshotToDescriptor(snapshot, descriptor, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
   const collection = snapshot.collection as { complete: boolean };
-  if (!collection.complete) process.exitCode = 1;
+  process.stdout.write(`${JSON.stringify({ complete: collection.complete })}\n`);
+}
+
+export async function runGitHubSnapshotCollector(
+  argv: string[],
+  runtime: SnapshotCollectorRuntime = {},
+): Promise<void> {
+  const options = parseArgs(argv);
+  if (options.snapshotWorkerPath !== undefined) {
+    runSnapshotWorker(options);
+    return;
+  }
+  if (!options.output) throw new Error("--output is required");
+  const outputPath = path.resolve(options.output);
+  ensureSnapshotOutputParent(outputPath);
+  assertSnapshotOutputAbsent(outputPath);
+  const outputOperations = {
+    ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
+    ...runtime.outputOperations,
+  };
+
+  const interruption: { signal?: SnapshotSignal } = {};
+  let activeWorker: ChildProcess | undefined;
+  let workerObservation: SnapshotWorkerObservation | undefined;
+  let shutdown: Promise<boolean> | undefined;
+  let resolveInterruption: (signal: SnapshotSignal) => void = () => undefined;
+  const interruptionWait = new Promise<SnapshotSignal>((resolve) => {
+    resolveInterruption = resolve;
+  });
+  const terminateWorkerTree = runtime.terminateWorkerTree ?? terminateSnapshotWorkerTree;
+  const requestInterruption = (signal: SnapshotSignal): void => {
+    interruption.signal ??= signal;
+    resolveInterruption(signal);
+    if (!activeWorker) return;
+    const worker = activeWorker;
+    shutdown ??= Promise.resolve().then(() => terminateWorkerTree(worker, signal));
+  };
+  const handlers = new Map<SnapshotSignal, () => void>(
+    (["SIGINT", "SIGTERM"] as const).map((signal) => [signal, () => requestInterruption(signal)]),
+  );
+  for (const [signal, handler] of handlers) process.on(signal, handler);
+
+  let workspace: SnapshotStagingWorkspace | undefined;
+  let finalizationStarted = false;
+  let workerTreeConfirmed = true;
+  let failure: unknown;
+  let receipt: SnapshotWorkerReceipt | undefined;
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "setup");
+    workspace = createSnapshotStagingWorkspace(outputPath);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "setup");
+
+    activeWorker = spawn(
+      process.execPath,
+      [
+        ...process.execArgv,
+        path.resolve(process.argv[1]),
+        ...argv,
+        "--snapshot-worker-path",
+        workspace.temporaryPath,
+      ],
+      {
+        cwd: process.cwd(),
+        detached: process.platform !== "win32",
+        env: { ...process.env, NEMOCLAW_SNAPSHOT_WORKER: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    workerTreeConfirmed = false;
+    workerObservation = observeSnapshotWorker(activeWorker);
+    runtime.onWorkerSpawn?.(activeWorker);
+    const workerOutcome = await Promise.race([
+      workerObservation.wait.then((result) => ({ kind: "worker" as const, result })),
+      interruptionWait.then((signal) => ({ kind: "interruption" as const, signal })),
+    ]);
+    if (workerOutcome.kind === "interruption") {
+      throw new SnapshotInterruptionError(workerOutcome.signal, "collection");
+    }
+    const result = workerOutcome.result;
+    if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "collection");
+    if (result.failure) throw result.failure;
+    if (!result.receipt) throw new Error("GitHub snapshot worker returned no receipt");
+    receipt = result.receipt;
+    if (
+      process.platform !== "win32" &&
+      activeWorker.pid &&
+      processGroupIsActive(activeWorker.pid)
+    ) {
+      throw new Error("GitHub snapshot worker exited while its process group remained active");
+    }
+    workerTreeConfirmed = true;
+    activeWorker = undefined;
+    if (interruption.signal) throw new SnapshotInterruptionError(interruption.signal, "collection");
+
+    finalizationStarted = true;
+    try {
+      finalizeSnapshotStage(workspace.temporaryPath, outputPath, outputOperations);
+    } catch (error) {
+      const workspaceState = cleanupWorkspaceAfterFinalization(workspace);
+      throw new Error(`${errorMessage(error)}. ${workspaceState.detail}.`, {
+        cause: error,
+      });
+    }
+    const workspaceCleanup = cleanupWorkspaceAfterFinalization(workspace);
+    if (workspaceCleanup.unresolved) {
+      throw new Error(
+        `GitHub snapshot was published at ${quotePath(outputPath)}, but staging-directory cleanup failed. ${workspaceCleanup.detail}.`,
+      );
+    }
+  } catch (error) {
+    failure = error;
+    if (activeWorker && workerObservation) {
+      const worker = activeWorker;
+      shutdown ??= Promise.resolve().then(() =>
+        terminateWorkerTree(worker, interruption.signal ?? "SIGTERM"),
+      );
+      const shutdownSettlement = await waitForPromiseSettlement(
+        shutdown,
+        runtime.treeTerminationTimeoutMilliseconds ?? TREE_TERMINATION_TIMEOUT_MILLISECONDS,
+      );
+      const closeSettlement = await waitForPromiseSettlement(
+        workerObservation.wait,
+        runtime.workerCloseTimeoutMilliseconds ?? WORKER_CLOSE_TIMEOUT_MILLISECONDS,
+      );
+      workerTreeConfirmed =
+        shutdownSettlement.status === "fulfilled" &&
+        shutdownSettlement.value &&
+        closeSettlement.status === "fulfilled";
+      if (closeSettlement.status !== "fulfilled") workerObservation.detach();
+      activeWorker = undefined;
+    }
+  }
+
+  let cleanup: TemporaryCleanup | undefined;
+  if (failure && !finalizationStarted && workspace) {
+    cleanup = workerTreeConfirmed
+      ? cleanupStagingWorkspace(workspace, outputOperations)
+      : {
+          detail: `Worker-tree termination was not confirmed. ${stagingWorkspaceState(workspace)}`,
+          unresolved: true,
+        };
+  }
+  if (interruption.signal) {
+    console.error(
+      `${interruption.signal} interrupted GitHub snapshot collection for ${quotePath(outputPath)}. This invocation did not publish the snapshot. ${cleanup?.detail ?? "No invocation-created temporary path was allocated"}.`,
+    );
+    process.exitCode = interruption.signal === "SIGINT" ? 130 : 143;
+  } else if (failure) {
+    console.error(
+      `collect-github-snapshot: error: ${errorMessage(failure)}${cleanup ? `. ${cleanup.detail}.` : ""}`,
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(`GitHub snapshot written: ${quotePath(outputPath)}`);
+    if (!receipt?.complete) process.exitCode = 1;
+  }
+  for (const [signal, handler] of handlers) process.off(signal, handler);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main();
+  void runGitHubSnapshotCollector(process.argv.slice(2)).catch((error: unknown) => {
+    console.error(`collect-github-snapshot: error: ${errorMessage(error)}`);
+    process.exitCode = 1;
+  });
 }

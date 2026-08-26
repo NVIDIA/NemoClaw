@@ -90,6 +90,8 @@ Local logout does not revoke the GitHub OAuth grant; tell the user when server-s
 
 Select each milestone in the required display order.
 The collector uses authenticated, read-only GitHub access.
+The `--output` path must be absent before collection.
+The collector never replaces an existing snapshot.
 
 ```bash
 node --import tsx "$SLIDE_SKILL/scripts/collect-github-snapshot.mts" \
@@ -101,6 +103,43 @@ node --import tsx "$SLIDE_SKILL/scripts/collect-github-snapshot.mts" \
   --presentation-map "$SLIDE_SKILL/references/roadmap-presentation.json" \
   --output "$SLIDE_RUN/snapshot.json"
 ```
+
+The collector creates an owner-only staging directory beside the destination and stages mode-`0600`
+canonical JSON inside it.
+It synchronizes and closes that file before claiming the absent destination with a no-clobber hard
+link.
+The successful link publishes the snapshot.
+The collector never removes a published destination.
+It removes the invocation-created temporary hard-link witness after publication.
+
+The supervising process remains responsive while its worker collects GitHub data and writes the
+staged snapshot.
+On `SIGINT` or `SIGTERM`, it requests worker process-group termination where supported, falls back
+to child-tree termination, and uses bounded deadlines to confirm both termination and worker close.
+It removes the private staging workspace only after both are confirmed.
+If either cannot be confirmed, it preserves the workspace and reports its exact paths.
+If worker close times out, it detaches the worker streams before returning.
+In either case, it leaves the destination absent and exits with status `130` or `143`.
+
+Diagnostics JSON-quote every path and distinguish these recovery cases:
+
+- `This invocation did not publish the snapshot` means the destination remains absent. If the
+  named temporary path and staging directory were removed, rerun with the same absent `--output`
+  path. If either path is unresolved, confirm that no collector process is active, inspect the exact
+  named paths, remove only the temporary path, and remove the staging directory only when it is
+  empty.
+- `Snapshot output already exists and was not changed` means another file claimed the destination.
+  Preserve that file and use a different absent output path unless the user directs otherwise.
+- `Target ownership is ambiguous` means finalization returned an error after a target may have been
+  linked. Preserve and inspect the named possible target, temporary witness, and staging directory.
+  Do not rerun with that output path, and do not remove any named path without user direction.
+- `GitHub snapshot was published` means the destination contains the published snapshot. If temporary
+  cleanup failed, preserve the published target. After confirming that no collector process is
+  active, remove only the exact named temporary witness, then remove the exact named staging
+  directory only when it is empty.
+
+The collector never changes a destination that another process created first.
+Do not broaden cleanup beyond an exact JSON-quoted path named by the diagnostic.
 
 Repeat `--milestone` for every explicit selection.
 Explicit selection preserves the requested order, but it does not override lifecycle eligibility.
@@ -606,21 +645,31 @@ Do not publish a one-format result.
 
 ## Prepare the PowerPoint Template Workspace
 
-Call the workspace dependency loader before running a PowerPoint helper or builder.
-Copy its three returned absolute paths exactly:
+Call the host `load_workspace_dependencies` operation before running a PowerPoint helper or
+builder.
+From its result, copy these three returned absolute paths exactly:
 
 ```bash
-RUNTIME_NODE="<absolute loader-provided Node.js executable>"
-RUNTIME_NODE_MODULES="<absolute loader-provided Node.js packages directory>"
-RUNTIME_BIN_DIR="<absolute loader-provided override binaries directory>"
-SKILL_DIR="<absolute presentations skill directory>"
+RUNTIME_NODE="<Node.js executable from load_workspace_dependencies>"
+RUNTIME_NODE_MODULES="<Node.js packages from load_workspace_dependencies>"
+RUNTIME_BIN_DIR="<Override binaries from load_workspace_dependencies>"
 ```
 
 Do not derive one runtime path from another.
 Do not substitute a system, global, or repository-local Node.js executable or package tree.
+The loader does not return `SKILL_DIR`.
+Resolve the selected Presentations `SKILL.md` from the available-skills catalog.
+If its location uses an alias, expand that alias with the catalog's skill-root mapping.
+Set `SKILL_DIR` to the absolute directory that contains that `SKILL.md`:
+
+```bash
+SKILL_DIR="<absolute directory containing the selected Presentations SKILL.md>"
+TMP_DIR="$SLIDE_RUN"
+```
+
 `SKILL_DIR` identifies the Presentations skill.
 `SLIDE_SKILL` identifies this repo-local NemoClaw skill.
-Keep `TMP_DIR` equal to the owner-only `SLIDE_RUN` path.
+`TMP_DIR` must equal the owner-only `SLIDE_RUN` path.
 
 Select exactly one runtime PowerPoint template path.
 For the default, assign the fresh export path:
