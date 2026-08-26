@@ -314,6 +314,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -338,7 +339,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
     '"$INCLUDE_LAUNCHABLE" == "true"',
     '",${JOBS}," == *",staging-brev-launchable,"*',
@@ -388,9 +389,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
   }
-  if (validation.env?.WORKFLOW_SHA !== "${{ github.workflow_sha }}") {
-    errors.push("Manual PR checkout validation must bind the live controller workflow SHA");
-  }
   for (const fragment of [
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
@@ -398,7 +396,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pull request base repository changed before execution",
     "pull request base branch changed before execution",
     "checkout_repository changed before execution",
-    "controller workflow SHA changed before execution",
+    "checkout_sha changed before execution",
     "base_sha changed before execution",
     '"$NVIDIA_OWNED" == "true"',
     "PR source repository ownership changed before execution",
@@ -600,7 +598,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       dcode_base_ref:
         "${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}",
       managed_image_revision:
-        "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'a08118defb7760a6b47ad37949031977534058c1') || inputs.checkout_sha || github.sha }}",
+        "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}",
     },
     permissions: {
       actions: "read",
@@ -671,9 +669,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REUSE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
-          PUBLICATION_HEAD_SHA: "28beb3d6ddd5fbd2fc94c2e67c7fed8fec07c74e",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32912571171",
+          PUBLICATION_RUN_ID: "32544159037",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
       },
@@ -693,9 +691,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Validate reused Deep Agents Code base",
         if: PUBLICATION_REUSE_CONDITION,
         env: {
-          PUBLICATION_HEAD_SHA: "28beb3d6ddd5fbd2fc94c2e67c7fed8fec07c74e",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32912571171",
+          PUBLICATION_RUN_ID: "32544159037",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },
