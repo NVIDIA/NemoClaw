@@ -7,7 +7,7 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import { buildPolicyGetFullJsonCommand } from "../../policy/commands";
+import { buildPolicyGetFullJsonArgs } from "../../policy/commands";
 import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
@@ -15,6 +15,7 @@ import {
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../policy/merge";
+import * as openshellRuntime from "./runtime";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -54,22 +55,9 @@ export function isExternalPolicyAuthorityRefusalError(error: unknown): boolean {
   );
 }
 
-interface PolicyAuthorityCaptureResult {
-  readonly stdout: string;
-  readonly stderr?: string;
-  readonly exitCode: number | null;
-  readonly timedOut: boolean;
-}
-
-export type PolicyAuthorityCapture = (
-  command: readonly string[],
-  options?: { readonly maxBuffer?: number; readonly timeout?: number },
-) => PolicyAuthorityCaptureResult;
-
 interface SandboxPolicyAuthorityInspectionOptions {
   readonly sandboxName: string;
   readonly gatewayName?: string;
-  readonly runCaptureEx: PolicyAuthorityCapture;
 }
 
 function validatePolicyAuthorityName(name: string, label: string): string {
@@ -100,58 +88,52 @@ function failInspection(subject: "sandbox" | "global", reason: string): never {
 }
 
 function capturePolicyQuery(
-  command: readonly string[],
-  capture: PolicyAuthorityCapture,
+  args: string[],
   subject: "sandbox" | "global",
   queryKind: "machine-readable policy" | "policy history",
-): { readonly stdout: string; readonly stderr: string } {
-  let result: PolicyAuthorityCaptureResult;
+): string {
+  let result: ReturnType<typeof openshellRuntime.captureResolvedOpenshell>;
   try {
-    result = capture(command, {
+    result = openshellRuntime.captureResolvedOpenshell(args, {
+      env: openshellRuntime.buildOpenShellSubprocessEnv(),
+      ignoreError: true,
+      includeStreams: true,
       maxBuffer: POLICY_AUTHORITY_CAPTURE_MAX_BYTES,
+      replaceEnv: true,
       timeout: POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS,
     });
   } catch {
     failInspection(subject, `the ${queryKind} query could not run`);
   }
 
-  if (
-    !isObject(result) ||
-    typeof result.stdout !== "string" ||
-    (result.stderr !== undefined && typeof result.stderr !== "string")
-  ) {
-    failInspection(subject, `the ${queryKind} query returned an invalid capture result`);
-  }
-  const stderr = result.stderr ?? "";
-  if (
-    Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(stderr, "utf8") >
-    POLICY_AUTHORITY_CAPTURE_MAX_BYTES
-  ) {
+  const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  if (errorCode === "ENOBUFS") {
     failInspection(subject, `the ${queryKind} response exceeded the capture limit`);
   }
-  if (result.timedOut === true) {
+  if (errorCode === "ETIMEDOUT") {
     failInspection(subject, `the ${queryKind} query timed out`);
   }
-  if (result.timedOut !== false || result.exitCode !== 0) {
+  if (result.error) {
+    failInspection(subject, `the ${queryKind} query could not run`);
+  }
+  if (result.status !== 0) {
     failInspection(subject, `the ${queryKind} query did not complete successfully`);
   }
-  return { stdout: result.stdout, stderr };
+  return result.stdout ?? "";
 }
 
 /** Inspect the effective policy source for one live sandbox. */
 export function inspectSandboxPolicyAuthority({
   sandboxName,
   gatewayName,
-  runCaptureEx,
 }: SandboxPolicyAuthorityInspectionOptions): SandboxPolicyAuthorityInspection {
   const validatedSandboxName = validatePolicyAuthorityName(sandboxName, "sandbox name");
   const validatedGatewayName =
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const { stdout: raw } = capturePolicyQuery(
-    buildPolicyGetFullJsonCommand(validatedSandboxName, validatedGatewayName),
-    runCaptureEx,
+  const raw = capturePolicyQuery(
+    buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
     "sandbox",
     "machine-readable policy",
   );

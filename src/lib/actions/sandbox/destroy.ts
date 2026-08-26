@@ -35,10 +35,14 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
+import {
+  cleanupShieldsDestroyArtifacts as cleanupShieldsDestroyArtifactsOwned,
+  type CleanupShieldsDestroyArtifactsDeps,
+  removeShieldsState as removeShieldsStateOwned,
+  type RemoveShieldsStateDeps,
+} from "../../shields/destroy-cleanup";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
   assertSandboxDestroyCommandAvailable,
@@ -116,22 +120,6 @@ export type CleanupSandboxServicesDeps = {
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
-};
-
-type ShieldsTimerNeutralizeResult = {
-  warnings?: string[];
-};
-
-type CleanupShieldsDestroyArtifactsDeps = {
-  killShieldsTimer?: (sandboxName: string) => ShieldsTimerNeutralizeResult | void;
-  rmSync?: typeof fs.rmSync;
-  stateDir?: string;
-  warn?: (message: string) => void;
-};
-
-type RemoveShieldsStateDeps = {
-  rmSync?: typeof fs.rmSync;
-  warn?: (message: string) => void;
 };
 
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
@@ -276,52 +264,15 @@ export function cleanupSandboxServices(
   }
 }
 
-/**
- * Remove host-side Shields state and recovery artifacts for a sandbox.
- *
- * Without this cleanup, stale state or an external policy handoff from a
- * previous sandbox can survive destroy → re-onboard under the same name.
- *
- * See: https://github.com/NVIDIA/NemoClaw/issues/3114
- */
 export function removeShieldsState(
   sandboxName: string,
-  stateDir = resolveNemoclawStateDir(),
+  stateDir?: string,
   deps: RemoveShieldsStateDeps = {},
 ): void {
-  const rmSync = deps.rmSync ?? fs.rmSync;
-  const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
-  const resolvedStateDir = path.resolve(stateDir);
-  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
-  const artifactNames = [
-    recoveryArtifactName,
-    `shields-${sandboxName}.json`,
-    `shields-timer-${sandboxName}.json`,
-  ];
-  for (const artifactName of artifactNames) {
-    const filePath = path.resolve(resolvedStateDir, artifactName);
-    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
-      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
-      // all entry points, but reject traversal attempts just in case.
-      continue;
-    }
-    try {
-      rmSync(filePath, { force: true });
-    } catch (error) {
-      // force: true already suppresses ENOENT. A recovery handoff must not
-      // become unbound under a reusable sandbox name, so preserve Shields
-      // state and stop cleanup when that artifact cannot be removed.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      const message = error instanceof Error ? error.message : String(error);
-      if (artifactName === recoveryArtifactName) {
-        throw new Error(
-          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
-          { cause: error },
-        );
-      }
-      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
-    }
-  }
+  removeShieldsStateOwned(sandboxName, stateDir, {
+    ...deps,
+    warn: deps.warn ?? defaultDestroyWarn,
+  });
 }
 
 /**
@@ -415,6 +366,16 @@ function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
 }
 
+export function cleanupShieldsDestroyArtifacts(
+  sandboxName: string,
+  deps: CleanupShieldsDestroyArtifactsDeps = {},
+): void {
+  cleanupShieldsDestroyArtifactsOwned(sandboxName, {
+    ...deps,
+    warn: deps.warn ?? defaultDestroyWarn,
+  });
+}
+
 export async function revokeDestroyedSandboxHttpsPinRoute(
   gatewayName: string,
   routeId: string,
@@ -449,25 +410,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
         `to stop the adapter and purge its in-memory credentials.`,
     );
   }
-}
-
-export function cleanupShieldsDestroyArtifacts(
-  sandboxName: string,
-  deps: CleanupShieldsDestroyArtifactsDeps = {},
-): void {
-  const killShieldsTimer = deps.killShieldsTimer ?? defaultKillShieldsTimer;
-  const stateDir = deps.stateDir ?? resolveNemoclawStateDir();
-  const warn = deps.warn ?? defaultDestroyWarn;
-
-  const timerResult = killShieldsTimer(sandboxName);
-  for (const warning of timerResult?.warnings ?? []) {
-    warn(warning);
-  }
-
-  removeShieldsState(sandboxName, stateDir, {
-    rmSync: deps.rmSync ?? fs.rmSync,
-    warn,
-  });
 }
 
 export type { WipeSandboxStateDeps };

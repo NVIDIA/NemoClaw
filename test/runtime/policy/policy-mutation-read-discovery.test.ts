@@ -51,7 +51,7 @@ function shieldsAuditSource(
 describe("OpenShell policy mutation read discovery (#6921)", () => {
   it("counts canonical builder bindings and direct argv reads", () => {
     const source = [
-      'import { buildPolicyGetCommand as buildBase } from "./policy/commands";',
+      'import { buildPolicyGetCommand as buildBase, buildPolicyGetFullJsonArgs as buildFullJsonArgs } from "./policy/commands";',
       'import * as policyBuilders from "./policy/index";',
       'const { buildPolicyGetFullCommand: buildFull } = require("./policy");',
       'const requiredPolicyBuilders = require("./policy");',
@@ -62,13 +62,14 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
       'policyBuilders["buildPolicyGetFullCommand"](sandboxName);',
       "buildFull(sandboxName);",
       "requiredPolicyBuilders.buildPolicyGetCommand(sandboxName);",
+      "buildFullJsonArgs(sandboxName);",
       '["openshell", "policy", "get", "--base", sandboxName];',
       '["policy", "get", "--full", sandboxName];',
       'const arrayDecoy = `["policy", "get", "--base", sandboxName]`;',
       '["not-openshell", "policy", "get", "--base", sandboxName];',
     ].join("\n");
 
-    expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(7);
+    expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(8);
   });
 
   it("classifies gateway-pinned direct policy reads", () => {
@@ -81,15 +82,16 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
       "}",
     ].join("\n");
 
-    expect(classifyPolicyReadCalls(source, "/repo/nemoclaw/src/blueprint/runner.ts", "/repo"))
-      .toEqual([
-        { site: "actionApply", view: "base", failureHandling: "error-preserving" },
-        {
-          site: "inspectAuthority",
-          view: "full",
-          failureHandling: "error-preserving",
-        },
-      ]);
+    expect(
+      classifyPolicyReadCalls(source, "/repo/nemoclaw/src/blueprint/runner.ts", "/repo"),
+    ).toEqual([
+      { site: "actionApply", view: "base", failureHandling: "error-preserving" },
+      {
+        site: "inspectAuthority",
+        view: "full",
+        failureHandling: "error-preserving",
+      },
+    ]);
   });
 
   it("ignores direct policy reads with ambiguous view flags (#9833)", () => {

@@ -46,8 +46,8 @@ function policyGatewayArgs(gatewayName?: string): string[] {
 }
 
 /** Read effective sandbox policy and its authority metadata as JSON. */
-export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
+export function buildPolicyGetFullJsonArgs(sandboxName: string, gatewayName?: string): string[] {
+  return [
     "policy",
     "get",
     ...policyGatewayArgs(gatewayName),
@@ -55,5 +55,10 @@ export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?:
     "--output",
     "json",
     sandboxName,
-  ]);
+  ];
+}
+
+/** Read effective sandbox policy and its authority metadata as JSON. */
+export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
+  return buildOpenshellCommand(buildPolicyGetFullJsonArgs(sandboxName, gatewayName));
 }

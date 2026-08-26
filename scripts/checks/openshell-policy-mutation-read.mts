@@ -124,7 +124,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "full",
         failureHandling: "unclassified",
       },
-      unclassifiedFull("buildPolicyGetFullJsonCommand"),
+      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;
@@ -138,6 +138,7 @@ export interface DiscoveredPolicyReadSite {
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetFullCommand", "full"],
+  ["buildPolicyGetFullJsonArgs", "full"],
   ["buildPolicyGetFullJsonCommand", "full"],
 ]);
 

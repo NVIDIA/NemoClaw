@@ -38,7 +38,7 @@ import {
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
-import { ROOT, run, runCapture, runCaptureEx } from "../runner";
+import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import { redact } from "../security/redact";
 import * as registry from "../state/registry";
@@ -636,7 +636,6 @@ function inspectLivePolicyAuthority(
   const inspection = inspectSandboxPolicyAuthority({
     sandboxName,
     gatewayName,
-    runCaptureEx,
   });
   return {
     sandbox,

@@ -41,6 +41,7 @@ function largeOutputExecutable(name: string): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -92,5 +93,25 @@ describe("captureResolvedOpenshell", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toBe("snapshot");
+  });
+
+  it("keeps ignored spawn failures nonfatal and redacted (#9833)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-runtime-test-"));
+    directories.push(directory);
+    const unavailable = path.join(directory, "openshell");
+    fs.writeFileSync(unavailable, "not executable", { mode: 0o600 });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`unexpected exit ${String(code)}`);
+    });
+    const errorLine = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      captureResolvedOpenshell([], {
+        ignoreError: true,
+        openshellBinary: unavailable,
+      }),
+    ).toThrow("OpenShell capture could not run");
+    expect(exit).not.toHaveBeenCalled();
+    expect(errorLine).not.toHaveBeenCalled();
   });
 });

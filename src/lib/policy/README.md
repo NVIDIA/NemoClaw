@@ -11,8 +11,11 @@ under `src/lib/domain/**` when they can be isolated.
 ## Policy authority
 
 The policy module reads the effective OpenShell policy through the sandbox's recorded gateway.
-NemoClaw records the first qualified authority before another policy read or set.
+For a policy-mutation flow, NemoClaw records the first qualified authority before another policy
+read or set.
 NemoClaw refuses the operation when it cannot write that record.
+
+Shields recovery can read live authority without changing the durable recorded authority.
 
 Immediately before each policy set, NemoClaw reads authority again and compares it with the record.
 NemoClaw refuses the policy set when:
