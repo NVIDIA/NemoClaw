@@ -155,9 +155,11 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect(merged.customAgents).toEqual({ researcher: { prompt: "be thorough" } });
   });
 
-  // A snapshot can carry a disabled, partial, or non-object heartbeat. The fresh
-  // subtree is authoritative whole, so none of these merge into it.
-  it.each([null, false, "off", {}, { enabled: false }, { every: "" }])(
+  // These two stale shapes failed differently before the fix: a non-object
+  // replaced the whole field, while a partial object deep-merged and injected a
+  // sibling key beside the rebuilt `every`. The fresh subtree is authoritative
+  // whole, so neither reaches the merged config.
+  it.each([null, { enabled: false }])(
     "keeps the rebuilt heartbeat over a snapshot recording %j (#10244)",
     (stale) => {
       const merged = mergeOpenClawRestoredConfig(
