@@ -170,10 +170,11 @@ For this direct local invocation outside the workflow's OpenShell wrapper, set
 
 ## Output contract
 
-`tools/pr-review-advisor/schema.json` defines the normalized JSON result shape used for the PR
-comment and future reporting work. Findings include probe-shaped fields for impact, verification
-hints, and missing regression-test guidance so agents know what to check rather than treating findings
-as generic commentary. The required `terminologyReview` field contains the canonical receipt with
+`tools/pr-review-advisor/schema.json` defines the normalized JSON result shape used by direct local
+analysis and future reporting work. Workflow specialists publish Markdown reviews and native session
+artifacts instead of a combined normalized result. Findings include probe-shaped fields for impact,
+verification hints, and missing regression-test guidance so agents know what to check rather than
+treating findings as generic commentary. The required `terminologyReview` field contains the canonical receipt with
 each candidate's change type, disposition, meaning, contrast, established alternative, semantic
 impact, recommendation, trace ID, and source bound to the head commit. The dispositions are `established`,
 `justified`, `define`, `replace`, and `conflict`. The trusted terminology tools are
@@ -181,25 +182,18 @@ impact, recommendation, trace ID, and source bound to the head commit. The dispo
 Trusted tracing verifies repository evidence after the model selects a candidate; it does not scan
 or classify changed text to select terms. Every source-of-truth review item includes a `findingId`: unresolved items
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
-Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The fields stay
-separate in JSON, but comments and summaries combine their IDs into one `Recommended E2E` list and
-one optional list. Duplicate IDs appear once. If a list is longer than the display limit, the output
-reports how many more IDs exist. The trusted normalizer
+Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
-and supported selector tuples, and replaces model-authored reasons with trusted
-reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
-For a changed credential-free test, the normalizer also records structured head evidence only
-after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
-trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the
-result head and changed-file identity, and renders only trusted IDs.
-The compatibility schema retains `requiredTests` and `targets.required`, but those names describe
-the normalized advisory tier, not merge requirements. Rendered comments label them as recommended;
-the independent PR E2E controller does not consume advisor output.
+and supported selector tuples, and replaces model-authored reasons with trusted reasons. It discards
+free-form E2E domains, new-test recommendations, and no-selection explanations. For a changed
+credential-free test, the normalizer records structured head evidence only after the trusted
+module-tag parser accepts the source; model-provided evidence is overwritten. The compatibility
+schema retains `requiredTests` and `targets.required`, but those names describe the normalized
+advisory tier, not merge requirements. The independent PR E2E controller does not consume advisor
+output.
 Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
-and required tests intact. A blocker keeps its evidence and required outcome in the blocker card.
-Its simplification metadata renders once in a brief `Recommended refactoring` section below the
-blockers.
+and required tests intact.
 Trusted submission derives `merge_after_fixes` when findings remain and `info_only` for low-confidence
 review evidence. A finding-free `superseded` request succeeds only when deterministic context identifies
 an open PR that explicitly replaces the PR under review. Without that evidence, `submit_review` rejects

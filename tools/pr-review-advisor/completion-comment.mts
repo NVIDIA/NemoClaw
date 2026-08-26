@@ -3,12 +3,18 @@
 
 import { pathToFileURL } from "node:url";
 
-import { githubRest, upsertStickyComment } from "../advisors/github.mts";
+import { githubApi, githubRest, type GitHubComment } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 
 type LivePull = { head?: { sha?: string } };
+type PublicationDependencies = {
+  readPull?: (apiPath: string, token: string) => Promise<LivePull>;
+  createComment?: (apiPath: string, token: string, body: string) => Promise<GitHubComment>;
+  deleteComment?: (apiPath: string, token: string) => Promise<void>;
+  listComments?: (apiPath: string, token: string) => Promise<GitHubComment[]>;
+};
 
 export async function assertLatestPullCommit(
   repo: string,
@@ -22,6 +28,71 @@ export async function assertLatestPullCommit(
     throw new Error(
       `PR review advisor will not publish stale commit ${expectedHeadSha}; latest PR commit is ${pull.head?.sha ?? "unavailable"}`,
     );
+  }
+}
+
+export async function publishCompletionComment(
+  options: {
+    repo: string;
+    pr: string;
+    token: string;
+    commitSha: string;
+    body: string;
+    marker?: string;
+  },
+  dependencies: PublicationDependencies = {},
+): Promise<void> {
+  const marker = validateMarker(options.marker ?? MARKER);
+  const readPull = dependencies.readPull ?? githubRest;
+  const createComment =
+    dependencies.createComment ??
+    ((apiPath, token, body) =>
+      githubApi<GitHubComment>(apiPath, token, { method: "POST", body: { body } }));
+  const deleteComment =
+    dependencies.deleteComment ??
+    ((apiPath, token) => githubApi<void>(apiPath, token, { method: "DELETE" }));
+  const listComments =
+    dependencies.listComments ?? ((apiPath, token) => githubApi<GitHubComment[]>(apiPath, token));
+
+  await assertLatestPullCommit(
+    options.repo,
+    options.pr,
+    options.commitSha,
+    options.token,
+    readPull,
+  );
+  const comments = await listComments(
+    `repos/${options.repo}/issues/${options.pr}/comments?per_page=100`,
+    options.token,
+  );
+  const stale = comments.filter(
+    (comment) =>
+      comment.user?.login === "github-actions[bot]" && firstCommentLine(comment.body) === marker,
+  );
+  for (const comment of stale) {
+    await deleteComment(`repos/${options.repo}/issues/comments/${comment.id}`, options.token);
+  }
+
+  const created = await createComment(
+    `repos/${options.repo}/issues/${options.pr}/comments`,
+    options.token,
+    options.body,
+  );
+  if (!Number.isSafeInteger(created.id) || created.id <= 0) {
+    throw new Error("PR review advisor comment creation returned an invalid comment ID");
+  }
+
+  try {
+    await assertLatestPullCommit(
+      options.repo,
+      options.pr,
+      options.commitSha,
+      options.token,
+      readPull,
+    );
+  } catch (error) {
+    await deleteComment(`repos/${options.repo}/issues/comments/${created.id}`, options.token);
+    throw error;
   }
 }
 
@@ -43,6 +114,10 @@ PR review advisory complete for commit \`${commitSha.slice(0, 7)}\`: [read the f
 
 [All previous runs](${historyUrl.href})
 `;
+}
+
+function firstCommentLine(body: string | undefined): string {
+  return body?.trimStart().split(/\r?\n/u, 1)[0]?.trim() ?? "";
 }
 
 function validateGithubUrl(value: string, label: string): URL {
@@ -82,21 +157,14 @@ async function main(): Promise<void> {
       "PR review advisor comment requires repo, PR number, token, commit SHA, and workflow URLs",
     );
   }
-
-  await assertLatestPullCommit(repo, pr, commitSha, token);
-
-  await upsertStickyComment({
+  const marker = args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER;
+  await publishCompletionComment({
     repo,
     pr,
     token,
-    marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
-    body: buildCompletionComment(
-      runUrl,
-      commitSha,
-      workflowRunsUrl,
-      args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
-    ),
-    label: "PR review advisor",
+    commitSha,
+    marker,
+    body: buildCompletionComment(runUrl, commitSha, workflowRunsUrl, marker),
   });
 }
 

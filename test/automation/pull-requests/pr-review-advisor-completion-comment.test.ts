@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertLatestPullCommit,
   buildCompletionComment,
+  publishCompletionComment,
 } from "../../../tools/pr-review-advisor/completion-comment.mts";
 
 const RUN_URL = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
@@ -46,6 +47,65 @@ describe("PR review advisor completion comment", () => {
     await expect(
       assertLatestPullCommit("NVIDIA/NemoClaw", "10303", COMMIT_SHA, "token", readPull),
     ).rejects.toThrow(`latest PR commit is ${latestSha}`);
+  });
+
+  it("removes its stale comment when the PR commit changes during publication", async () => {
+    const latestSha = "1234567890abcdef1234567890abcdef12345678";
+    const deleted: string[] = [];
+    let reads = 0;
+    await expect(
+      publishCompletionComment(
+        {
+          repo: "NVIDIA/NemoClaw",
+          pr: "10303",
+          token: "token",
+          commitSha: COMMIT_SHA,
+          body: "<!-- nemoclaw-pr-review-advisor -->\nreview",
+        },
+        {
+          readPull: async () => ({ head: { sha: reads++ === 0 ? COMMIT_SHA : latestSha } }),
+          listComments: async () => [],
+          createComment: async () => ({ id: 41 }),
+          deleteComment: async (path) => {
+            deleted.push(path);
+          },
+        },
+      ),
+    ).rejects.toThrow("latest PR commit is " + latestSha);
+    expect(deleted).toEqual(["repos/NVIDIA/NemoClaw/issues/comments/41"]);
+  });
+
+  it("replaces only the existing bot-owned advisor comment", async () => {
+    const deleted: string[] = [];
+    await publishCompletionComment(
+      {
+        repo: "NVIDIA/NemoClaw",
+        pr: "10303",
+        token: "token",
+        commitSha: COMMIT_SHA,
+        body: "<!-- nemoclaw-pr-review-advisor -->\nreview",
+      },
+      {
+        readPull: async () => ({ head: { sha: COMMIT_SHA } }),
+        listComments: async () => [
+          {
+            id: 98,
+            body: "<!-- nemoclaw-pr-review-advisor -->\nolder review",
+            user: { login: "github-actions[bot]" },
+          },
+          {
+            id: 99,
+            body: "<!-- nemoclaw-pr-review-advisor -->\nuser text",
+            user: { login: "contributor" },
+          },
+        ],
+        createComment: async () => ({ id: 100 }),
+        deleteComment: async (path) => {
+          deleted.push(path);
+        },
+      },
+    );
+    expect(deleted).toEqual(["repos/NVIDIA/NemoClaw/issues/comments/98"]);
   });
 
   it("rejects an invalid commit SHA", () => {
