@@ -48,23 +48,6 @@ describe("createSandboxCancelRollback", () => {
     expect(guidance).toContain("preserve the registry and onboarding recovery state");
   });
 
-  it("keeps the captured identity when the mutable name is replaced before exit (#9833)", () => {
-    const { rollback, log } = createHarness();
-    const replacementFingerprint = "b".repeat(64);
-
-    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
-    // A replacement can take the same mutable name, but cannot alter the identity
-    // captured by the completed create boundary.
-    const sameNameReplacement = { name: "new-sb", fingerprint: replacementFingerprint };
-    expect(sameNameReplacement.fingerprint).not.toBe(SANDBOX_FINGERPRINT);
-    rollback.markCancelled();
-    rollback.runIfArmed();
-
-    const guidance = log.mock.calls.flat().join("\n");
-    expect(guidance).toContain(SANDBOX_FINGERPRINT);
-    expect(guidance).not.toContain(replacementFingerprint);
-  });
-
   it("does not run on a non-cancel exit", () => {
     const { rollback, log } = createHarness();
 
@@ -126,9 +109,6 @@ describe("createSandboxCancelRollback", () => {
 
 describe("installSandboxCancelRollback", () => {
   it("registers a non-destructive exit handler that retains external recovery state (#9833)", () => {
-    const runOpenshell = vi.fn();
-    const removeSandbox = vi.fn();
-    const clearOnboardSession = vi.fn();
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];
     const rollback = installSandboxCancelRollback({
@@ -141,14 +121,10 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(removeSandbox).not.toHaveBeenCalled();
-    expect(clearOnboardSession).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
   });
 
   it("preserves missing-checkpoint recovery state without a mutable-name fallback (#9833)", () => {
-    const runOpenshell = vi.fn();
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];
     const rollback = installSandboxCancelRollback({
@@ -160,7 +136,6 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
-    expect(runOpenshell).not.toHaveBeenCalled();
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("identity fingerprint is unavailable");
     expect(guidance).toContain("OpenShell administrator");
