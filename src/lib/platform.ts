@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
+import { isSubprocessEnvNameAllowed } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -40,13 +41,17 @@ export type DockerVersionIdentity = "docker" | "podman" | "unknown";
 export interface DockerHostProbeResult {
   reachable: boolean;
   identity: DockerVersionIdentity;
+  /**
+   * The probe never reached a verdict — the Docker CLI could not be spawned,
+   * or it was killed by the probe timeout. Unreachability was not observed.
+   */
+  inconclusive?: boolean;
 }
 
 export type DockerHostProbe = (dockerHost: string | undefined) => DockerHostProbeResult;
 
 const DOCKER_PROBE_TIMEOUT_MS = 3_000;
 const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
-const DOCKER_PROBE_ENV_NAMES = ["HOME", "USER", "LOGNAME", "PATH"] as const;
 
 function isWsl(opts: WslDetectionOptions = {}): boolean {
   // Explicit override — lets tests pin behavior regardless of the host kernel.
@@ -124,14 +129,27 @@ function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentit
   return "unknown";
 }
 
+/**
+ * Probe the Docker CLI in the same environment the CLI's real Docker
+ * commands run in (`buildSubprocessEnv`), minus the authority under test.
+ *
+ * A narrower environment makes the probe answer a different question than
+ * the one that matters: `XDG_RUNTIME_DIR` selects a rootless daemon socket,
+ * `SSH_AUTH_SOCK` authenticates an `ssh://` context, and the proxy names
+ * reach a `tcp://` one. Dropping them can report "unreachable" for a daemon
+ * that every later command talks to, which sends detection to a fallback
+ * socket the host never meant to use (#10367).
+ */
 function buildDockerProbeEnv(
   source: NodeJS.ProcessEnv,
   dockerHost: string | undefined,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const name of DOCKER_PROBE_ENV_NAMES) {
-    const value = source[name];
-    if (value !== undefined) env[name] = value;
+  for (const [name, value] of Object.entries(source)) {
+    // The probe pins its own authority; an ambient one would mask it.
+    if (name === "DOCKER_HOST") continue;
+    if (value === undefined) continue;
+    if (isSubprocessEnvNameAllowed(name)) env[name] = value;
   }
   if (dockerHost === undefined) {
     if (source.DOCKER_CONFIG !== undefined) env.DOCKER_CONFIG = source.DOCKER_CONFIG;
@@ -153,7 +171,10 @@ function probeDockerHost(
     timeout: DOCKER_PROBE_TIMEOUT_MS,
     maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
   });
-  if (!result || result.status !== 0) return { reachable: false, identity: "unknown" };
+  if (!result || result.error || result.status === null) {
+    return { reachable: false, identity: "unknown", inconclusive: true };
+  }
+  if (result.status !== 0) return { reachable: false, identity: "unknown" };
   return {
     reachable: true,
     identity: classifyDockerVersionIdentity(String(result.stdout ?? "")),
@@ -240,10 +261,14 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
+    const uid = opts.uid ?? process.getuid?.() ?? 1000;
+    // Docker sockets first: NemoClaw targets Docker, and the rootless daemon
+    // socket sits in the same runtime directory as Podman's (#10367).
     return [
-      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
       "/run/docker.sock",
       "/var/run/docker.sock",
+      `/run/user/${String(uid)}/docker.sock`,
+      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
     ];
   }
 
@@ -261,7 +286,11 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
   }
 
   const probe = opts.probeDockerHost ?? ((dockerHost) => probeDockerHost(dockerHost, env));
-  if (probe(undefined).reachable) return null;
+  const ambient = probe(undefined);
+  // Redirect the CLI away from the host's own default authority only after
+  // observing that the default refuses to answer. A probe that timed out or
+  // never ran is no evidence at all (#10367).
+  if (ambient.reachable || ambient.inconclusive) return null;
 
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;

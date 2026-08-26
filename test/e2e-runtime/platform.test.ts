@@ -79,14 +79,15 @@ describe("platform helpers", () => {
       ]);
     });
 
-    it("returns Linux candidates (Podman > native Docker)", () => {
+    it("returns Linux candidates (native Docker > rootless Docker > Podman)", () => {
       expect(
         getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1000 }),
       ).toEqual([
-        "/run/user/1000/podman/podman.sock",
-        "/run/podman/podman.sock",
         "/run/docker.sock",
         "/var/run/docker.sock",
+        "/run/user/1000/docker.sock",
+        "/run/user/1000/podman/podman.sock",
+        "/run/podman/podman.sock",
       ]);
     });
   });
@@ -370,6 +371,65 @@ describe("platform helpers", () => {
       } finally {
         rmSync(fixtureDir, { recursive: true, force: true });
       }
+    });
+
+    it("probes the default authority with the environment real Docker commands get (#10367)", () => {
+      const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-probe-env-"));
+      try {
+        const docker = path.join(fixtureDir, "docker");
+        // Stands in for a daemon the CLI only finds through the runtime
+        // directory — a rootless socket, an ssh:// context agent, a proxied
+        // tcp:// endpoint. Answering Podman under an explicit DOCKER_HOST
+        // makes a narrowed probe environment redirect the whole CLI.
+        writeFileSync(
+          docker,
+          [
+            "#!/bin/sh",
+            'test "$1" = "version" || exit 2',
+            'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
+            'if test -z "${DOCKER_HOST:-}"; then',
+            '  test -n "${XDG_RUNTIME_DIR:-}" || exit 3',
+            "  printf '%s\\n' '{\"Server\":{\"Platform\":{\"Name\":\"Docker Engine - Community\"}}}'",
+            "else",
+            "  printf '%s\\n' '{\"Server\":{\"Components\":[{\"Name\":\"Podman Engine\"}]}}'",
+            "fi",
+          ].join("\n"),
+        );
+        chmodSync(docker, 0o755);
+
+        expect(
+          detectDockerHost({
+            env: {
+              HOME: fixtureDir,
+              PATH: fixtureDir,
+              XDG_RUNTIME_DIR: "/run/user/1000",
+              NVIDIA_INFERENCE_API_KEY: "test-secret-must-not-cross-probe-boundary",
+            },
+            platform: "linux",
+            uid: 1000,
+            existsSync: (candidate) => candidate === "/run/user/1000/podman/podman.sock",
+          }),
+        ).toBe(null);
+      } finally {
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps the host default authority when the default probe never answers (#10367)", () => {
+      const socketPath = "/run/user/1000/podman/podman.sock";
+
+      expect(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => candidate === socketPath,
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? { reachable: true, identity: "podman" }
+              : { reachable: false, identity: "unknown", inconclusive: true },
+        }),
+      ).toBe(null);
     });
   });
 
