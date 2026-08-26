@@ -33,9 +33,7 @@ export function parseOpenShellSandboxId(output: string): string | null {
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
 export function fingerprintOpenShellSandboxLiveIdentity(output: string): string | null {
-  const clean = String(output).replace(ANSI_RE, "");
-  const match = clean.match(/^\s*Id:\s+(\S+)\s*$/im);
-  return fingerprintOpenShellSandboxId(match?.[1] ?? "");
+  return fingerprintOpenShellSandboxId(parseOpenShellSandboxId(output) ?? "");
 }
 
 export function resolveOpenShellSandboxId(
