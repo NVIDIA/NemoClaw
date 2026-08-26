@@ -20,18 +20,6 @@ export type McpAttachedCredentialRevision = Exclude<
   "absent" | "canonical"
 >;
 
-export function mcpAdapterCredentialRevisionUnavailableError(server: string): McpBridgeError {
-  return new McpBridgeError(
-    `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${server}'.`,
-  );
-}
-
-export function mcpAdapterCredentialRevisionUnstableError(server: string): McpBridgeError {
-  return new McpBridgeError(
-    `OpenShell credential revision did not stabilize while reconciling MCP adapter '${server}'.`,
-  );
-}
-
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
   | { kind: "transport-unavailable" }

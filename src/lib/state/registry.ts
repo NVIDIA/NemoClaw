@@ -501,6 +501,38 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
+/** Publish a missing gateway port only while the complete qualified row remains current. */
+export function compareAndSetSandboxGatewayPort(
+  name: string,
+  expected: SandboxEntry,
+  gatewayPort: number,
+): boolean {
+  const expectedSnapshot = structuredClone(expected);
+  if (
+    expectedSnapshot.name !== name ||
+    expectedSnapshot.gatewayPort !== undefined ||
+    !Number.isSafeInteger(gatewayPort) ||
+    gatewayPort < 1 ||
+    gatewayPort > 65_535
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (
+      !current ||
+      current.gatewayPort !== undefined ||
+      !isDeepStrictEqual(current, expectedSnapshot)
+    ) {
+      return false;
+    }
+    data.sandboxes[name] = { ...current, gatewayPort };
+    save(data);
+    return true;
+  });
+}
+
 /** Publish only the owning route transaction and retain its receipt for exact retries. */
 export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
   return withLock(() => {
