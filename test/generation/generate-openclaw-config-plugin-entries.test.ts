@@ -103,22 +103,19 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.entries.qqbot).toBeUndefined();
   });
 
-  it("disables the bundled Tavily plugin when web search is not Tavily (#10325)", () => {
-    // Tavily ships bundled in every sandbox image, like bonjour. Leaving its
-    // entry absent (instead of explicitly disabled) makes OpenClaw warn
-    // "plugin not installed: tavily" on every `logs --follow`, and that
-    // warning banner's continuation lines are unattributable to any source.
-    const config = buildConfig({ ...BASE_ENV });
-    expect(config.plugins.entries.tavily).toEqual({ enabled: false });
-  });
-
-  it("disables the bundled Tavily plugin when Brave web search is selected instead (#10325)", () => {
+  it("does not reference the uninstalled Tavily plugin in a managed image (#10325)", () => {
+    // Unlike diagnostics-otel and brave-plugin, the managed image build never
+    // installs Tavily (Dockerfile only installs diagnostics-otel and
+    // brave-plugin for a capability-union build). Declaring an entry for it —
+    // even { enabled: false } — still makes OpenClaw warn "plugin not
+    // installed: tavily" on every `logs --follow`, because OpenClaw's config
+    // validator checks entry keys against installed plugins regardless of
+    // `enabled`. Omit the entry instead, like the qqbot fix above.
     const config = buildConfig({
       ...BASE_ENV,
-      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
-    expect(config.plugins.entries.tavily).toEqual({ enabled: false });
+    expect(config.plugins.entries.tavily).toBeUndefined();
   });
 
   it("keeps every managed-image plugin and channel explicitly inert before first start (#7744)", () => {
@@ -137,9 +134,13 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     });
-    ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
+    // diagnostics-otel and brave are actually installed by the managed-image
+    // build (Dockerfile), so declaring them disabled is safe. Tavily is not
+    // installed there, so it must stay omitted (see the Tavily test above).
+    ["diagnostics-otel", "brave"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     });
+    expect(config.plugins.entries.tavily).toBeUndefined();
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 

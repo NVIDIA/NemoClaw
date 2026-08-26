@@ -1727,7 +1727,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("omits stale disabled entries for optional bundled plugins", () => {
     const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "inference" });
-    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour", "tavily"]);
+    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour"]);
   });
 
   it("keeps the selected bundled provider plugin available", () => {

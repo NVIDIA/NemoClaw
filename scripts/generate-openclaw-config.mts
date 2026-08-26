@@ -146,11 +146,17 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
+// diagnostics-otel and brave-plugin are installed unconditionally by the
+// managed-image build (see the managed_image_union branch in Dockerfile), so
+// declaring them present-but-disabled is safe. Tavily is NOT installed there
+// (#10325): declaring a plugins.entries.tavily key when the plugin isn't
+// actually registered makes OpenClaw warn "plugin not installed: tavily" on
+// every log stream, because OpenClaw checks entry keys against installed
+// plugins regardless of `enabled`. Omit it instead of listing it here.
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
-  "tavily",
 ] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
@@ -1414,14 +1420,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     },
   };
 
-  const webSearchProvider =
-    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
-    // Tavily ships bundled in every sandbox image, like bonjour. Leaving its
-    // entry absent when it is not selected makes OpenClaw warn "plugin not
-    // installed: tavily" on every log stream (#10325).
-    ...(webSearchProvider !== "tavily" ? { tavily: { enabled: false } } : {}),
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,
@@ -1436,6 +1436,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
   }
+  const webSearchProvider =
+    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
   const plugins: JsonObject = {
     allow: unique([
