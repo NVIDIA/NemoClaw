@@ -75,7 +75,7 @@ export type DockerGpuSupervisorReconnectDeps = {
 
 type DockerLifecycleReleaseDeps = Pick<
   DockerGpuSupervisorReconnectDeps,
-  "runOpenshell" | "sleep"
+  "runCaptureOpenshell" | "sleep"
 > & {
   /** Corroborates a retiring lifecycle row with the stopped exact replacement. */
   soleLabeledReplacementCorroboratesRetiringPhase?: (remainingMs: number) => boolean;
@@ -114,7 +114,7 @@ export function waitForOpenShellSandboxLifecycleRelease(
   timeoutSecs: number,
   deps: DockerLifecycleReleaseDeps,
 ): boolean {
-  if (!deps.runOpenshell) return false;
+  if (!deps.runCaptureOpenshell) return false;
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
   const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
@@ -122,14 +122,22 @@ export function waitForOpenShellSandboxLifecycleRelease(
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
-    const result = deps.runOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
-      suppressOutput: true,
-      timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
-    });
-    if (hasZeroDockerExitStatus(result)) {
-      const output = String(result.stdout ?? "").trim();
+    let output = "";
+    try {
+      // The streaming runner does not return sandbox-list stdout. Capture the
+      // row so a successful command cannot hide a retiring lifecycle phase.
+      output = deps
+        .runCaptureOpenshell(["sandbox", "list"], {
+          ignoreError: true,
+          ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
+          suppressOutput: true,
+          timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
+        })
+        .trim();
+    } catch {
+      output = "";
+    }
+    if (output) {
       const entries = parseLiveSandboxEntries(output);
       const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
       const retiring = entries.some(

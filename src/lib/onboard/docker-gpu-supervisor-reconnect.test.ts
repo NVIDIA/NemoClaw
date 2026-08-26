@@ -14,20 +14,19 @@ import {
 describe("Docker GPU final lifecycle release", () => {
   it("requires corroboration for a retiring lifecycle row (#9962)", () => {
     const corroborate = vi.fn(() => true);
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
-    }));
+    const runCaptureOpenshell = vi.fn(
+      () => "alpha  2026-08-23 01:40:35  Deleting\n",
+    );
 
     expect(
       waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell,
+        runCaptureOpenshell,
         sleep: vi.fn(),
         soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
       }),
     ).toBe(true);
     expect(corroborate).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list"],
       expect.objectContaining({
         killProcessTreeOnTimeout: true,
@@ -38,17 +37,29 @@ describe("Docker GPU final lifecycle release", () => {
   });
 
   it("does not accept an uncorroborated retiring lifecycle row (#9962)", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "alpha  2026-08-23 01:40:35  Error\n",
-    }));
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 01:40:35  Error\n");
 
     expect(
       waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell,
+        runCaptureOpenshell,
         sleep: vi.fn(),
       }),
     ).toBe(false);
+  });
+
+  it("does not release the lifecycle when the captured sandbox list is unavailable (#10153)", () => {
+    const corroborate = vi.fn(() => true);
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runCaptureOpenshell: vi.fn(() => {
+          throw new Error("sandbox list transport unavailable");
+        }),
+        sleep: vi.fn(),
+        soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
+      }),
+    ).toBe(false);
+    expect(corroborate).not.toHaveBeenCalled();
   });
 
   it("does not report reconnect without an OpenShell execution boundary (#9531)", () => {

@@ -172,7 +172,7 @@ export function finalizeDockerGpuPatchBackup(
       options.sandboxName,
       options.finalHandoffTimeoutSecs,
       {
-        runOpenshell: deps.runOpenshell,
+        runCaptureOpenshell: deps.runCaptureOpenshell,
         sleep: deps.sleep,
         soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) => {
           const expectedContainerId = fullDockerContainerId(options.result.newContainerId);

@@ -40,12 +40,12 @@ function exactDeferredCreateResult(): DockerGpuPatchResult {
 
 function readyHandoffDeps() {
   return {
-    runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
-    runOpenshell: vi.fn((args: readonly string[]) =>
-      args[1] === "list"
-        ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
-        : { status: 0 },
-    ),
+    runCaptureOpenshell: vi
+      .fn()
+      .mockReturnValueOnce("beta  2026-08-23 10:00:00  Ready\n")
+      .mockReturnValue("alpha  2026-08-23 10:00:02  Ready\n"),
+    runOpenshell: vi.fn(() => ({ status: 0 })),
+    sleep: vi.fn(),
   };
 }
 
@@ -124,21 +124,19 @@ describe("finalizeDockerGpuPatchBackup", () => {
       events.push("start replacement");
       return { status: 0 };
     });
-    const runCaptureOpenshell = vi.fn(() => {
-      events.push("observe ready");
-      return "alpha  2026-08-23 10:00:00  Ready\n";
-    });
-    const runOpenshellResults = {
-      exec: { event: "exec ready", result: { status: 0 } },
-      list: {
-        event: "observe lifecycle release",
-        result: { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" },
-      },
-    } as const;
-    const runOpenshell = vi.fn((args: readonly string[]) => {
-      const response = runOpenshellResults[args[1] === "list" ? "list" : "exec"];
-      events.push(response.event);
-      return response.result;
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        events.push("observe lifecycle release");
+        return "beta  2026-08-23 10:00:00  Ready\n";
+      })
+      .mockImplementation(() => {
+        events.push("observe ready");
+        return "alpha  2026-08-23 10:00:02  Ready\n";
+      });
+    const runOpenshell = vi.fn(() => {
+      events.push("exec ready");
+      return { status: 0 };
     });
     const dockerResults = {
       ps: {
@@ -228,15 +226,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
           events.push("start replacement");
           return { status: 0 };
         }),
-        runCaptureOpenshell: vi.fn(() => {
-          events.push("observe deleting");
-          return "alpha  2026-08-23 10:00:00  Deleting\n";
-        }),
-        runOpenshell: vi.fn((args: readonly string[]) =>
-          args[1] === "list"
-            ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
-            : { status: 1 },
-        ),
+        runCaptureOpenshell: vi
+          .fn()
+          .mockReturnValueOnce("beta  2026-08-23 10:00:00  Ready\n")
+          .mockImplementation(() => {
+            events.push("observe deleting");
+            return "alpha  2026-08-23 10:00:02  Deleting\n";
+          }),
+        runOpenshell: vi.fn(() => ({ status: 1 })),
         dockerRun: vi.fn(() => ({ status: 0, stdout: `${result.newContainerId}\n` })),
         sleep,
       },
@@ -283,12 +280,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
-        runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:35  Ready\n"),
-        runOpenshell: vi.fn((args: readonly string[]) =>
-          args[1] === "list"
-            ? { status: 0, stdout: "restored-name  2026-08-23 01:40:35  Error\n" }
-            : { status: 0 },
-        ),
+        runCaptureOpenshell: vi
+          .fn()
+          .mockReturnValueOnce("restored-name  2026-08-23 01:40:35  Error\n")
+          .mockReturnValue("restored-name  2026-08-23 01:40:37  Ready\n"),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
         sleep: vi.fn(),
       },
     );
@@ -322,9 +318,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       .fn()
       .mockReturnValueOnce("alpha  2026-08-23 10:00:00  Error\n")
       .mockReturnValueOnce("alpha  2026-08-23 10:00:02  Ready\n");
-    const runOpenshell = vi.fn((args: readonly string[]) =>
-      args[1] === "list" ? { status: 0 } : { status: 0 },
-    );
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
 
     const outcome = finalizeDockerGpuPatchBackup(
       {
@@ -387,11 +381,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerRun: vi.fn(() => query),
         dockerStart,
-        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
-        runOpenshell: vi.fn(() => ({
-          status: 0,
-          stdout: "alpha  2026-08-23 01:40:35  Error\n",
-        })),
+        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Error\n"),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
         sleep: vi.fn(),
       },
     );

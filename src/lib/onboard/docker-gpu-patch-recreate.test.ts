@@ -42,7 +42,10 @@ describe("Docker GPU recreate orchestration", () => {
     const runOpenshell = vi.fn((args: readonly string[]) =>
       args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
     );
-    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n");
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce("No sandboxes found.\n")
+      .mockReturnValue("alpha  2026-08-23 10:00:02  Ready\n");
 
     const result = recreateOpenShellDockerSandboxWithGpu(
       { sandboxName: "alpha", timeoutSecs: 1 },
@@ -125,7 +128,10 @@ describe("Docker GPU recreate orchestration", () => {
           dockerStop: vi.fn(() => ({ status: 0 })),
           dockerRm: vi.fn(() => ({ status: 0 })),
           dockerStart: vi.fn(() => ({ status: 0 })),
-          runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Deleting\n"),
+          runCaptureOpenshell: vi
+            .fn()
+            .mockReturnValueOnce("No sandboxes found.\n")
+            .mockReturnValue("alpha  2026-08-23 10:00:02  Deleting\n"),
           runOpenshell: vi.fn((args: readonly string[]) =>
             args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
           ),
