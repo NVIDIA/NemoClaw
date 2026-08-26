@@ -47,6 +47,7 @@ type AuditConfig = Readonly<{
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
+  sourceRegistryPackages: readonly ReviewedPackage[];
 }>;
 type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
 
@@ -143,6 +144,20 @@ export function parseAuditConfig(contents: string): AuditConfig {
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
+    !Array.isArray(parsed.sourceRegistryPackages) ||
+    parsed.sourceRegistryPackages.some(
+      (reviewed) =>
+        typeof reviewed.label !== "string" ||
+        !reviewed.label ||
+        typeof reviewed.packageSpec !== "string" ||
+        !reviewed.packageSpec ||
+        typeof reviewed.integrity !== "string" ||
+        !reviewed.integrity ||
+        typeof reviewed.tarballUrl !== "string" ||
+        !reviewed.tarballUrl,
+    ) ||
+    new Set(parsed.sourceRegistryPackages.map(({ packageSpec }) => packageSpec)).size !==
+      parsed.sourceRegistryPackages.length ||
     parsed.lockedGraphs.some(
       (graph) =>
         typeof graph.id !== "string" ||
@@ -306,17 +321,33 @@ function assertRegularFile(file: string, label: string): void {
   }
 }
 
+function installProductionSourceDependencies(directory: string): void {
+  run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory);
+}
+
 export function materializeSourceGraph(
   sourcePackage: string,
   sourceLock: string,
   destination: string,
   registryOrigin: string,
-  installProductionDependencies: (directory: string) => void = (directory) =>
-    void run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory),
+  installProductionDependencies: (directory: string) => void = installProductionSourceDependencies,
+  sourceRegistryPackages: readonly ReviewedPackage[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  verifyReviewedNpmLockPackages({ lockfilePath: sourceLock, omitDev: true, registryOrigin });
+  verifyReviewedNpmLockPackages({
+    lockfilePath: sourceLock,
+    omitDev: true,
+    registryOrigin,
+    reviewedRegistryPackages: sourceRegistryPackages.map(
+      ({ integrity, label, packageSpec, tarballUrl }) => ({
+        expectedIntegrity: integrity,
+        label,
+        packageSpec,
+        tarballUrl,
+      }),
+    ),
+  });
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
@@ -453,6 +484,8 @@ function auditSourceGraph(
     sourceLock,
     path.join(tempRoot, "source-graph"),
     config.registryOrigin,
+    installProductionSourceDependencies,
+    config.sourceRegistryPackages,
   );
   return auditMaterializedSourceGraph({
     directory,

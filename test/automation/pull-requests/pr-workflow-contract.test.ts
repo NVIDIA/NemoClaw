@@ -365,9 +365,20 @@ describe("pull request and main workflow contracts", () => {
     ["pull_request", prWorkflow],
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
-    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(
-      cliShardTimeoutMinutes,
-    );
+    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+  });
+
+  it.each([
+    ["pull_request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)("limits %s package reads to dependency-install jobs", (_workflowName, workflow) => {
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(
+      Object.entries(workflow.jobs)
+        .filter(([, job]) => job.permissions?.packages === "read")
+        .map(([jobName]) => jobName)
+        .sort(),
+    ).toEqual(["build-typecheck", "cli-test-shards", "installer-integration", "plugin-tests"]);
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes

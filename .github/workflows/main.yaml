@@ -34,6 +34,9 @@ jobs:
         uses: ./.github/actions/ci-static-checks
 
   build-typecheck:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -46,6 +49,9 @@ jobs:
         uses: ./.github/actions/ci-build-typecheck
 
   installer-integration:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -139,6 +145,9 @@ jobs:
         run: npx vitest run --project integration test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-24.04
     # Keep the post-merge budget aligned with pull requests so the same
     # duration-weighted coverage roster can finish and upload its artifacts.
@@ -241,6 +250,7 @@ jobs:
     permissions:
       code-quality: write
       contents: read
+      packages: read
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -54,10 +54,13 @@ function writeProductionSourceGraph(
   root: string,
   packageRecord: Readonly<Record<string, unknown>>,
   additionalPackageRecords: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {},
+  optional = false,
 ): Readonly<{ sourceLock: string; sourcePackage: string }> {
   const source = path.join(root, "source");
   const manifest = {
-    dependencies: { "fixture-package": "1.0.0" },
+    ...(optional
+      ? { optionalDependencies: { "fixture-package": "1.0.0" } }
+      : { dependencies: { "fixture-package": "1.0.0" } }),
     name: "source-graph-fixture",
     private: true,
     version: "1.0.0",
@@ -124,6 +127,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",
+      sourceRegistryPackages: [],
     };
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
@@ -136,6 +140,16 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const config = parseAuditConfig(fs.readFileSync(configFile, "utf-8"));
 
     expect(config.archiveTarVersion).toBe("7.5.21");
+    expect(config.sourceRegistryPackages).toEqual([
+      {
+        integrity:
+          "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
+        label: "OpenShell TypeScript SDK 0.0.106",
+        packageSpec: "@nvidia/openshell-sdk@0.0.106",
+        tarballUrl:
+          "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d",
+      },
+    ]);
     expect(reviewedArchiveGraphManifest(config.archiveTarVersion)).toEqual({
       name: "nemoclaw-reviewed-production-graph",
       overrides: { tar: "7.5.21" },
@@ -377,6 +391,88 @@ esac
         ),
       ).toThrow(
         "reviewed npm lock package must use the reviewed registry: node_modules/fixture-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts one exact package identity from an approved additional registry", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-reviewed-registry-"));
+    const destination = path.join(root, "materialized");
+    const integrity = "sha512-fixture";
+    const tarballUrl = "https://npm.pkg.github.com/download/fixture-package/1.0.0/revision";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity,
+        optional: true,
+        resolved: tarballUrl,
+        version: "1.0.0",
+      },
+      {},
+      true,
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          [
+            {
+              integrity,
+              label: "reviewed fixture package",
+              packageSpec: "fixture-package@1.0.0",
+              tarballUrl,
+            },
+          ],
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects drift from an approved additional-registry package identity", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-registry-drift-"));
+    const destination = path.join(root, "materialized");
+    const tarballUrl = "https://npm.pkg.github.com/download/fixture-package/1.0.0/revision";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      integrity: "sha512-fixture",
+      resolved: tarballUrl,
+      version: "1.0.0",
+    });
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          [
+            {
+              integrity: "sha512-another-value",
+              label: "reviewed fixture package",
+              packageSpec: "fixture-package@1.0.0",
+              tarballUrl,
+            },
+          ],
+        ),
+      ).toThrow(
+        "reviewed npm lock package does not match its approved registry identity: node_modules/fixture-package",
       );
       expect(installCalled).toBe(false);
       expect(fs.existsSync(destination)).toBe(false);

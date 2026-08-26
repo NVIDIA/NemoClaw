@@ -421,9 +421,31 @@ function readReviewedLockPackages(
   omitDev = false,
   allowEmpty = false,
   allowNestedShrinkwrap = false,
+  reviewedRegistryPackages: readonly ReviewedNpmArchiveRequest[] = [],
 ): readonly ReviewedNpmArchiveRequest[] {
   const reviewed: ReviewedNpmArchiveRequest[] = [];
   const identities = new Map<string, ReviewedNpmArchiveRequest>();
+  const reviewedRegistryIdentities = new Map<string, ReviewedNpmArchiveRequest>();
+  for (const reviewedPackage of reviewedRegistryPackages) {
+    requireReviewedRequest(reviewedPackage);
+    let parsedTarball: URL;
+    try {
+      parsedTarball = new URL(reviewedPackage.tarballUrl);
+    } catch {
+      throw new Error(`${reviewedPackage.label} must use a valid reviewed npm tarball URL`);
+    }
+    if (
+      parsedTarball.protocol !== "https:" ||
+      parsedTarball.username ||
+      parsedTarball.password ||
+      reviewedRegistryIdentities.has(reviewedPackage.packageSpec)
+    ) {
+      throw new Error(
+        `${reviewedPackage.label} must use one credential-free HTTPS package identity`,
+      );
+    }
+    reviewedRegistryIdentities.set(reviewedPackage.packageSpec, reviewedPackage);
+  }
   const productionLocations = omitDev ? productionLockLocations(packages) : undefined;
   for (const [location, value] of Object.entries(packages)) {
     if (location === "") continue;
@@ -456,7 +478,19 @@ function readReviewedLockPackages(
     } catch {
       throw new Error(`reviewed npm lock has an invalid tarball URL: ${location}`);
     }
-    if (
+    const reviewedRegistryIdentity = reviewedRegistryIdentities.get(packageSpec);
+    if (reviewedRegistryIdentity) {
+      if (
+        reviewedRegistryIdentity.expectedIntegrity !== expectedIntegrity ||
+        reviewedRegistryIdentity.tarballUrl !== tarballUrl ||
+        parsedTarball.username ||
+        parsedTarball.password
+      ) {
+        throw new Error(
+          `reviewed npm lock package does not match its approved registry identity: ${location}`,
+        );
+      }
+    } else if (
       parsedTarball.origin !== registryOrigin ||
       parsedTarball.username ||
       parsedTarball.password
@@ -490,6 +524,7 @@ export function verifyReviewedNpmLockPackages(
     allowNestedShrinkwrap?: boolean;
     lockfilePath: string;
     omitDev?: boolean;
+    reviewedRegistryPackages?: readonly ReviewedNpmArchiveRequest[];
     registryOrigin: string;
   }>,
 ): readonly string[] {
@@ -501,6 +536,7 @@ export function verifyReviewedNpmLockPackages(
     request.omitDev,
     true,
     request.allowNestedShrinkwrap,
+    request.reviewedRegistryPackages,
   ).map(({ packageSpec }) => packageSpec);
 }
 

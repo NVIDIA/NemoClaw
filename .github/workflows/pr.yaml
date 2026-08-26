@@ -129,6 +129,9 @@ jobs:
   build-typecheck:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -159,6 +162,9 @@ jobs:
   installer-integration:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -254,6 +260,9 @@ jobs:
   cli-test-shards:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-24.04
     # Coverage startup plus the stable, duration-weighted roster can exceed
     # the former 15-minute cap before Vitest writes its shard artifacts.
@@ -392,6 +401,7 @@ jobs:
     permissions:
       code-quality: write
       contents: read
+      packages: read
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
