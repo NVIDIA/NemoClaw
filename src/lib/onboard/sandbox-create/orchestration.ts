@@ -292,7 +292,7 @@ function hasPreservedManagedMcpRebuildHandoff(
   return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
 }
 
-function backfillExistingSandboxPolicyAuthority(input: {
+export function backfillVerifiedExternalSandboxPolicyAuthority(input: {
   readonly sandboxName: string;
   readonly existingEntry: SandboxEntry | null;
   readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
@@ -301,7 +301,13 @@ function backfillExistingSandboxPolicyAuthority(input: {
     updates: { policyAuthority: "nemoclaw-managed" | "externally-managed" },
   ) => boolean;
 }): void {
-  if (!input.existingEntry || input.existingEntry.policyAuthority) return;
+  if (
+    !input.existingEntry ||
+    input.existingEntry.policyAuthority ||
+    input.policyAuthority !== "externally-managed"
+  ) {
+    return;
+  }
   if (input.updateSandbox(input.sandboxName, { policyAuthority: input.policyAuthority })) return;
   throw new Error(`Could not record policy authority for sandbox '${input.sandboxName}'.`);
 }
@@ -832,7 +838,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agentCreateInput.hermesPortableLifecycle,
       resolvedPolicyAuthority,
     );
-    backfillExistingSandboxPolicyAuthority({
+    backfillVerifiedExternalSandboxPolicyAuthority({
       sandboxName,
       existingEntry,
       policyAuthority: resolvedPolicyAuthority,

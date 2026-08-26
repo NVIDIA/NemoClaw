@@ -162,6 +162,15 @@ if [ "${1:-}" = "status" ]; then
   printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
   exit 0
 fi
+if [ "${1:-} ${2:-}" = "gateway info" ]; then
+  printf '%s\n' 'Gateway endpoint: http://127.0.0.1:8080'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "sandbox get" ]; then
+  sandbox="${@: -1}"
+  printf 'Name: %s\nId: fixture-sandbox-id\nPhase: Ready\n' "$sandbox"
+  exit 0
+fi
 if [ "${1:-} ${2:-}" = "policy list" ]; then
   exit 0
 fi
@@ -170,7 +179,23 @@ if [ "${1:-} ${2:-}" = "policy get" ]; then
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
-  printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\n' "$sandbox"
+  node -e '
+    const fs = require("node:fs");
+    const YAML = require("/opt/nemoclaw/node_modules/yaml");
+    const policy = YAML.parse(fs.readFileSync(
+      "/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+      "utf8",
+    ));
+    process.stdout.write(JSON.stringify({
+      scope: "sandbox",
+      sandbox: process.argv[1],
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "sha256:fixture-policy",
+      active_version: 1,
+      policy,
+    }) + "\n");
+  ' "$sandbox"
   exit 0
 fi
 case "$*" in

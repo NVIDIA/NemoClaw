@@ -6,11 +6,42 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
+  backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("policy authority backfill", () => {
+  it("does not assign managed authority before completed sandbox registration (#9833)", () => {
+    const updateSandbox = vi.fn(() => true);
+
+    backfillVerifiedExternalSandboxPolicyAuthority({
+      sandboxName: "alpha",
+      existingEntry: { name: "alpha", pendingRouteReservation: true },
+      policyAuthority: "nemoclaw-managed",
+      updateSandbox,
+    });
+
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("records verified external authority on an unattributed existing row (#9833)", () => {
+    const updateSandbox = vi.fn(() => true);
+
+    backfillVerifiedExternalSandboxPolicyAuthority({
+      sandboxName: "alpha",
+      existingEntry: { name: "alpha" },
+      policyAuthority: "externally-managed",
+      updateSandbox,
+    });
+
+    expect(updateSandbox).toHaveBeenCalledExactlyOnceWith("alpha", {
+      policyAuthority: "externally-managed",
+    });
+  });
+});
 
 describe("managed MCP rebuild handoff", () => {
   const targetIntentFingerprint = "a".repeat(64);
