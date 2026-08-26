@@ -67,6 +67,10 @@ export interface InitialOnboardFlowPhaseOptions<
   getInitialGatewayReuseState(): GatewayReuseState;
   assertGatewayReadiness(): Promise<void>;
   gatewayName: string;
+  bindPolicyAuthority(
+    gatewayName: string,
+    session: import("../../state/onboard-session").Session | null,
+  ): Promise<import("../../state/onboard-session").Session | null>;
   recreateSandbox(): boolean;
   requiresBindMounts?: boolean;
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
@@ -209,8 +213,12 @@ export function createInitialOnboardFlowPhases<
         requiresBindMounts: options.requiresBindMounts === true,
         deps: options.gatewayDeps,
       });
+      const policySession = await options.bindPolicyAuthority(
+        options.gatewayName,
+        gatewayResult.session,
+      );
       return {
-        context: { ...context, session: gatewayResult.session },
+        context: { ...context, session: policySession },
         result: gatewayResult.stateResult,
       };
     },

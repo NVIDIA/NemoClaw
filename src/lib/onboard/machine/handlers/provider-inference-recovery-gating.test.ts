@@ -49,6 +49,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(String),
+      expect.any(Function),
     );
   });
 
@@ -71,6 +72,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
   });
 
@@ -108,6 +110,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
   });
 
@@ -139,6 +142,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
   });
 
@@ -172,6 +176,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
   });
 
@@ -195,6 +200,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(String),
+      expect.any(Function),
     );
     expect(getAuthority).toHaveBeenCalledWith("dc-after", expect.any(String));
   });
@@ -233,6 +239,7 @@ describe("provider inference recovery gating", () => {
         expect.any(Function),
         expect.any(Function),
         session.sessionId,
+        expect.any(Function),
       );
       expect(getAuthority).toHaveBeenCalledWith("dc-after", session.sessionId);
     },
@@ -267,6 +274,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
     expect(getAuthority).toHaveBeenCalledWith("dc-after", session.sessionId);
   });
@@ -327,6 +335,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
     expect(getAuthority).toHaveBeenNthCalledWith(1, "dc-after", session.sessionId);
     expect(getAuthority).toHaveBeenLastCalledWith("dc-after", session.sessionId);
@@ -406,6 +415,7 @@ describe("provider inference recovery gating", () => {
           expect.any(Function),
           expect.any(Function),
           sessionId,
+          expect.any(Function),
         );
       } finally {
         vi.unstubAllEnvs();
@@ -435,6 +445,7 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
   });
 

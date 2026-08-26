@@ -87,6 +87,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
   readWatcherStatus(name: string, gatewayName: string): AutoPairWatcherStatus | null;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
+  revalidatePolicyRequirements?(operation: string): void;
   now(): number;
   sleep(milliseconds: number): Promise<void>;
 }
@@ -253,7 +254,12 @@ export async function settleOrdinaryOpenClawPairing(
           if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "pairing-unavailable" };
           }
-          if (initial?.state === "settled") return { kind: "settled" };
+          if (initial?.state === "settled") {
+            deps.revalidatePolicyRequirements?.(
+              `publish settled OpenClaw pairing for sandbox '${name}'`,
+            );
+            return { kind: "settled" };
+          }
 
           if (!initial) {
             const pairingAppearance = await waitForPairingObservation(
@@ -274,11 +280,19 @@ export async function settleOrdinaryOpenClawPairing(
             }
             initial = pairingAppearance.value;
           }
-          if (initial.state === "settled") return { kind: "settled" };
+          if (initial.state === "settled") {
+            deps.revalidatePolicyRequirements?.(
+              `publish settled OpenClaw pairing for sandbox '${name}'`,
+            );
+            return { kind: "settled" };
+          }
 
           const deviceIdentitySha256 = initial.deviceIdentitySha256;
           let warmupResult: SandboxScopeWarmupResult | null = null;
           if (initial.state === "pairing-only") {
+            deps.revalidatePolicyRequirements?.(
+              `run OpenClaw pairing warm-up for sandbox '${name}'`,
+            );
             try {
               warmupResult = await deps.runWarmup(name, target.gatewayName);
             } catch {
@@ -299,7 +313,12 @@ export async function settleOrdinaryOpenClawPairing(
           if (final.kind === "target-changed" || final.kind === "identity-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (final.kind === "observed") return { kind: "settled" };
+          if (final.kind === "observed") {
+            deps.revalidatePolicyRequirements?.(
+              `publish settled OpenClaw pairing for sandbox '${name}'`,
+            );
+            return { kind: "settled" };
+          }
 
           if (
             final.last?.state === "pairing-only" &&
@@ -355,7 +374,16 @@ export const finalizationHandlerDeps = {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
-  settleOrdinaryOpenClawPairing,
+  settleOrdinaryOpenClawPairing(
+    name: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<OrdinaryOpenClawPairingSettlementResult> {
+    const deps = defaultPairingSettlementDeps();
+    return settleOrdinaryOpenClawPairing(
+      name,
+      revalidatePolicyRequirements ? { ...deps, revalidatePolicyRequirements } : deps,
+    );
+  },
   ordinaryOpenClawPairingIncompleteMessage,
   readRegistryAgent(name: string): string | null {
     try {
@@ -371,6 +399,7 @@ export const finalizationHandlerDeps = {
     name: string,
     options: {
       readonly portableRequired: true;
+      readonly revalidatePolicyRequirements?: (operation: string) => void;
     },
   ): ReturnType<
     (typeof import("../../actions/sandbox/launch-readiness"))["settlePortableOpenClawPairing"]

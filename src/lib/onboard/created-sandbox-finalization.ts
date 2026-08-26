@@ -57,6 +57,7 @@ export type CreatedSandboxFinalizationOptions = {
 };
 
 export type CreatedSandboxFinalizationDeps = {
+  revalidatePolicyAuthority?(operation: string): void;
   discoverFreshOpenClawImagePluginInstalls(
     sandboxName: string,
   ): OpenClawManagedExtensionDiscoveryResult;
@@ -118,7 +119,11 @@ export interface CreatedSandboxCompletionOptions {
     readonly ensureForward: (
       sandboxName: string,
       chatUiUrl: string,
-      options: { rollbackSandboxOnFailure: true },
+      options: {
+        rollbackSandboxOnFailure: true;
+        gatewayName: string;
+        revalidatePolicyAuthority?: (operation: string) => void;
+      },
     ) => number;
     readonly getForwardPort: (chatUiUrl: string) => string;
     readonly resolveHermesState: (port: number) => HermesDashboardOnboardState;
@@ -126,6 +131,7 @@ export interface CreatedSandboxCompletionOptions {
       state: HermesDashboardOnboardState,
       sandboxName: string,
       rollback: true,
+      revalidatePolicyAuthority?: (operation: string) => void,
     ) => void;
   };
   readonly workload: Omit<
@@ -230,8 +236,12 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly armCancelRollback: (sandboxName: string) => void;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
+    readonly revalidatePolicyAuthority: (operation: string) => void;
+    readonly applyVmDnsMonkeypatch?: typeof applyOnboardVmDnsMonkeypatch;
   },
 ): string {
+  deps.revalidatePolicyAuthority(`completing sandbox '${input.sandboxName}'`);
+  deps.revalidatePolicyAuthority(`starting DNS setup for sandbox '${input.sandboxName}'`);
   if (input.runtimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     deps.runFile(
@@ -239,11 +249,17 @@ export function completeOrdinaryOnboardSandboxCreation(
       [path.join(deps.scriptsDir, "setup-dns-proxy.sh"), deps.gatewayName, input.sandboxName],
       { ignoreError: true },
     );
+    deps.revalidatePolicyAuthority(`applying DNS settings for sandbox '${input.sandboxName}'`);
   }
-  applyOnboardVmDnsMonkeypatch(input.sandboxName, input.runtimeFields);
+  (deps.applyVmDnsMonkeypatch ?? applyOnboardVmDnsMonkeypatch)(
+    input.sandboxName,
+    input.runtimeFields,
+    { revalidatePolicyAuthority: deps.revalidatePolicyAuthority },
+  );
   for (const provider of input.messagingProviders) {
     if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
   }
+  deps.revalidatePolicyAuthority(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
   warnIfLandlockUnsupported(deps);
   if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
@@ -301,6 +317,10 @@ export function createCreatedSandboxCompletionActions(
         log: console.log,
       },
       created.runtimePatch,
+      () =>
+        deps.revalidatePolicyAuthority?.(
+          `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        ),
     );
   }
   function recordHermesGpuProof(): void {
@@ -310,18 +330,33 @@ export function createCreatedSandboxCompletionActions(
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
+    deps.revalidatePolicyAuthority?.(
+      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      gatewayName: options.registration.gatewayName,
+      revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
     });
+    deps.revalidatePolicyAuthority?.(
+      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
       chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
     }
     process.env.CHAT_UI_URL = chatUiUrl;
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
+    deps.revalidatePolicyAuthority?.(
+      `configuring Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     options.dashboard.ensureHermesForward(
       hermesDashboardState,
       options.finalization.sandboxName,
       true,
+      deps.revalidatePolicyAuthority,
+    );
+    deps.revalidatePolicyAuthority?.(
+      `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
   }
   return {
@@ -335,11 +370,22 @@ export function createCreatedSandboxCompletionActions(
       inferenceRouteReservation,
     ) => {
       if (providerGpuDisposition === "created") {
+        deps.revalidatePolicyAuthority?.(
+          `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        );
         await verifyCreatedProviderGpu(created!);
       } else if (providerGpuDisposition === "hermes") {
+        deps.revalidatePolicyAuthority?.(
+          `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        );
         recordHermesGpuProof();
       }
-      if (manageDashboard) await finalizeDashboard();
+      if (manageDashboard) {
+        deps.revalidatePolicyAuthority?.(
+          `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+        );
+        await finalizeDashboard();
+      }
       const resolved = managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
         ...options.workload,
         registryImageRef: created?.registryImageRef ?? configuredReceipt?.container.imageId ?? null,
@@ -425,8 +471,10 @@ type OnboardGatewayBinding = {
 };
 type OnboardPreparedPolicy = Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
-  "initialSandboxPolicy" | "policyTier" | "dashboardRemoteBindPrepared"
->;
+  "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
+> & {
+  readonly revalidatePolicyAuthority: (operation: string) => void;
+};
 
 /** Assemble the exact post-Ready owners without adding an onboarding decision. */
 export function createOnboardCreatedSandboxCompletion(
@@ -494,7 +542,11 @@ export function createOnboardCreatedSandboxCompletion(
         agent,
         agentVersionKnown: !fromDockerfile,
         portableLifecycle,
-        appliedPolicies: preparedPolicy.initialSandboxPolicy.appliedPresets,
+        appliedPolicies:
+          preparedPolicy.policyAuthority === "externally-managed"
+            ? []
+            : preparedPolicy.initialSandboxPolicy.appliedPresets,
+        policyAuthority: preparedPolicy.policyAuthority,
         toolDisclosure: policyRegistration.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
         ...(agentFlags.isManagedDcodeAgent
@@ -554,6 +606,7 @@ export function createOnboardCreatedSandboxCompletion(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
+      revalidatePolicyAuthority: preparedPolicy.revalidatePolicyAuthority,
     },
   );
 }
@@ -586,6 +639,7 @@ export function finalizeCreatedSandbox(
         ? "  Restoring workspace state from pre-upgrade backup..."
         : "  Restoring workspace state from pre-recreate backup...",
     );
+    deps.revalidatePolicyAuthority?.(`restoring files for sandbox '${options.sandboxName}'`);
     const restore = deps.restoreRecreatedSandboxState(
       options.sandboxName,
       options.restoreBackupPath,
@@ -596,6 +650,9 @@ export function finalizeCreatedSandbox(
           ? { freshOpenClawImagePluginInstalls }
           : {}),
       },
+    );
+    deps.revalidatePolicyAuthority?.(
+      `reporting restored state for sandbox '${options.sandboxName}'`,
     );
     if (restore.success) {
       deps.note(
@@ -682,5 +739,6 @@ export function finalizeCreatedSandbox(
     }
   }
 
+  deps.revalidatePolicyAuthority?.(`registering sandbox '${options.sandboxName}'`);
   return deps.register(freshOpenClawImagePluginInstalls);
 }
