@@ -111,8 +111,15 @@ a package name or version, and do not use a branch-defined validator as independ
 the same branch.
 
 If an execution surface differs, is unavailable, or cannot be traced completely, do not execute
-the candidate validator, push, or open the PR. Report that trusted-base validation is unavailable
-and require a trusted-base validation environment or maintainer direction before publication.
+the candidate validator, push, or open the PR. Report the exact differing or untraceable path,
+dependency input, or executable and the trusted-base SHA.
+
+Resume only after the surface matches the trusted base or a maintainer provides recorded evidence
+from a trusted-base validation environment. The evidence must identify the base and candidate SHAs,
+the isolated environment, the trusted validator entry point and resolved executable identities, the
+exact command and result, and the maintainer's publication authorization. The environment must not
+give candidate code contributor-host credentials. Record the evidence in the task and PR body. If
+any item is missing, trusted-base validation remains unavailable and publication stays blocked.
 
 After the final commit, refresh `origin/main` with the explicit remote-tracking ref update in Step 1
 and complete the final review collection immediately before direct validation. Then run this command
@@ -126,9 +133,11 @@ The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the d
 It compares the branch with the refreshed `origin/main` ref from Step 1.
 Do not push when the command fails or its result is inconclusive.
 If the command changes a tracked file, do not push. Commit the file, return to Review-Driven Repair
-Closure, repeat the complete final collection and stable-`headRefOid` check for the new commit,
-reestablish the trusted validation surface, and run the command again. Push only when validation
-after the final collection changes no tracked file.
+Closure when an open PR exists, repeat the complete final collection and stable-`headRefOid` check
+for the new commit, reestablish the trusted validation surface, and run the command again. Before
+the first push, no PR collection exists: commit the autofix, reestablish trusted validation, and
+rerun the command without attempting PR review collection. Push only when validation for the final
+commit changes no tracked file.
 Use normal hook results as supplemental evidence. They do not replace this command.
 
 Use `npm run check` for changes to repository-wide validation.
@@ -242,13 +251,6 @@ Use this workflow:
 ```bash
 git show origin/main:.github/PULL_REQUEST_TEMPLATE.md > /tmp/nemoclaw-pr-body.md
 git diff origin/main...HEAD
-```
-
-If `origin/main` is unavailable, use a local `main` that matches the trusted base:
-
-```bash
-git show main:.github/PULL_REQUEST_TEMPLATE.md > /tmp/nemoclaw-pr-body.md
-git diff main...HEAD
 ```
 
 Edit `/tmp/nemoclaw-pr-body.md` and add a `Signed-off-by:` line.
