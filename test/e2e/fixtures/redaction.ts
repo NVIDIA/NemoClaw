@@ -39,7 +39,7 @@ const EXPLICIT_REDACTED = "[REDACTED]";
 // embedded in a longer credential value remains eligible for canonical
 // redaction instead of becoming a bypass.
 const SAFE_EXPLICIT_REDACTION_PATTERN = /(^|[\s=:,'"(]|\[|\{)\[REDACTED\](?=$|[\s,;:.'")\]}])/g;
-const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127})`;
+const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]+_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]+_)?[A-Z][A-Z0-9_]{0,127})`;
 const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
   "g",
@@ -49,7 +49,7 @@ const SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   "g",
 );
 const SAFE_ENV_ASSIGNMENT_PATTERN =
-  /^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]{0,127})[ \t]*=[ \t]*(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?\1|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?\1)[ \t]*$/gm;
+  /^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]{0,127})[ \t]*=[ \t]*(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]+_)?\1|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]+_)?\1)[ \t]*$/gm;
 
 // Fixture-local mirror of src/lib/security/secret-patterns.ts. The
 // fixture layer deliberately does not import from src/lib/security/ so it

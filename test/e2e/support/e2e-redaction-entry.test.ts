@@ -151,21 +151,30 @@ describe("fixture redaction entry point", () => {
     expect(redactString("nothing sensitive here", [])).toBe("nothing sensitive here");
   });
 
-  it("preserves managed credential references and non-credential JSON identifiers", () => {
+  it("preserves long-revision managed credential references and JSON identifiers", () => {
     const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
-    const versionedReference = "openshell:resolve:env:v2237303833964223913_WECHAT_BOT_TOKEN";
-    const slackReference = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const revision = `v${"1".repeat(21)}`;
+    const versionedReference = `openshell:resolve:env:${revision}_WECHAT_BOT_TOKEN`;
+    const slackBotReference = `xoxb-OPENSHELL-RESOLVE-ENV-${revision}_SLACK_BOT_TOKEN`;
+    const slackAppReference = `xapp-OPENSHELL-RESOLVE-ENV-${revision}_SLACK_APP_TOKEN`;
     const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
+    const versionedAssignment = `WECHAT_BOT_TOKEN=${versionedReference}`;
+    const slackBotAssignment = `SLACK_BOT_TOKEN=${slackBotReference}`;
+    const slackAppAssignment = `SLACK_APP_TOKEN=${slackAppReference}`;
     const text = JSON.stringify({
       key: "agent:main:main",
       replyMarker: "A2603-REPLY",
       token: discordReference,
       versionedToken: versionedReference,
-      botToken: slackReference,
+      botToken: slackBotReference,
+      appToken: slackAppReference,
     });
 
     expect(redactString(text)).toBe(text);
     expect(redactString(discordAssignment)).toBe(discordAssignment);
+    expect(redactString(versionedAssignment)).toBe(versionedAssignment);
+    expect(redactString(slackBotAssignment)).toBe(slackBotAssignment);
+    expect(redactString(slackAppAssignment)).toBe(slackAppAssignment);
     const collision = `\uE000 NEMOCLAW_SAFE_CREDENTIAL_REFERENCE_0 \uE001 ${text}`;
     expect(redactString(collision)).toBe(collision);
     expect(redactString(text, [discordReference])).not.toContain(discordReference);
@@ -193,7 +202,7 @@ describe("fixture redaction entry point", () => {
     ["bracket suffix", "TOKEN=openshell:resolve:env:FOO]opaqueCredentialPayloadZ1234567890"],
     ["nested assignment", "TOKEN=foo=openshell:resolve:env:FOO"],
     ["short prefix", "TOKEN=short:openshell:resolve:env:FOO"],
-    ["oversized revision", `TOKEN=openshell:resolve:env:v${"1".repeat(21)}_FOO`],
+    ["revision without digits", "TOKEN=openshell:resolve:env:v_FOO"],
     ["oversized identifier", `TOKEN=openshell:resolve:env:${"A".repeat(129)}`],
     ["mixed case", "TOKEN=OpenShell:Resolve:Env:FOO"],
     ["lowercase Slack", "TOKEN=xoxb-openshell-resolve-env-SLACK_BOT_TOKEN"],
