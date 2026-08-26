@@ -178,6 +178,34 @@ describe("prepareOnboardSession", () => {
     expect(deps.saveSession).not.toHaveBeenCalled();
   });
 
+  it("rejects APF with the Portable profile before fresh-session mutation (#9833)", async () => {
+    const { deps } = createDeps(createSession({ sessionId: "existing" }));
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: false,
+          fresh: true,
+          apfInterceptorRequested: true,
+          checkpointProfile: "portable",
+          requestedFromDockerfile: null,
+          requestedSandboxName: "alpha",
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  APF interceptor selection cannot use the Portable experimental profile.",
+    );
+    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+    expect(deps.clearSession).not.toHaveBeenCalled();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);

@@ -344,6 +344,27 @@ export function createSandboxGpuCreateAttemptRunner(
     const createAttemptNonce = deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+    const captureRetainedSandboxRecovery = () => {
+      if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
+      let liveIdentityFingerprint: string | null = null;
+      try {
+        const sandboxId = resolveCreatedOpenShellSandboxId({
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          createAttemptNonce,
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+        });
+        liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+      } catch {
+        // The nonce remains durable recovery evidence when identity lookup is unavailable.
+      }
+      return {
+        retainedSandboxRecovery: {
+          createAttemptNonce,
+          liveIdentityFingerprint,
+        },
+      } as const;
+    };
     const attemptArgv = createAttemptNonce
       ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
       : unboundAttemptArgv;
@@ -620,6 +641,7 @@ export function createSandboxGpuCreateAttemptRunner(
           stage: "create",
           error: new Error("Native OpenShell GPU sandbox creation was rejected."),
           fallbackEligible: true,
+          ...captureRetainedSandboxRecovery(),
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -748,6 +770,7 @@ export function createSandboxGpuCreateAttemptRunner(
             `Native OpenShell GPU sandbox did not become ready${readiness.failurePhase ? ` (${readiness.failurePhase})` : ""}.`,
           ),
           fallbackEligible: true,
+          ...captureRetainedSandboxRecovery(),
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -814,6 +837,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
               ),
               fallbackEligible: true,
+              ...captureRetainedSandboxRecovery(),
               ...nativeCleanup,
             } as const;
           }

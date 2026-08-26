@@ -1766,7 +1766,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
-              ...(apfInterceptorRequested ? { requirePolicylessCreate: true as const } : {}),
+              ...(apfInterceptorRequested
+                ? {
+                    requirePolicylessCreate: true as const,
+                    persistRetainedApfSandboxRecovery: (
+                      recovery: import("../sandbox-gpu-create-flow").RetainedApfSandboxRecovery,
+                    ) =>
+                      onboardSession.finalizeIncompleteOnboardStep("sandbox", recovery.message) !==
+                      null,
+                  }
+                : {}),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,

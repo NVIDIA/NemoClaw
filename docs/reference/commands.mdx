@@ -461,7 +461,7 @@ Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the s
 
 #### `--apf-interceptor`
 
-Use this option to create a new sandbox whose policy is supplied during OpenShell creation.
+Use this option to request a policyless sandbox creation for an APF-interceptor flow.
 The option requires these conditions:
 
 - Start a new onboarding session.
@@ -482,9 +482,10 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 ```
 
 <Warning title="Recover an Incomplete APF Creation">
-If post-create verification fails, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
+If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
 Do not destroy that sandbox by name.
-Retain the reported sandbox name and durable identity fingerprint for comparison only.
+Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
+If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
 Ask an OpenShell administrator to obtain the exact live durable ID, verify it against the fingerprint, and use an identity-bound removal procedure.
 After the administrator confirms removal, start a fresh onboarding attempt.
 `--resume` and `--recreate-sandbox` cannot recover the incomplete attempt.

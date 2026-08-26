@@ -448,13 +448,15 @@ function reportLegacyResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never 
 }
 
 function reportUnsupportedApfLifecycle(
-  reason: "resume" | "recreate",
+  reason: "resume" | "recreate" | "portable",
   deps: OnboardSessionBootstrapDeps,
 ): never {
   deps.error(
     reason === "resume"
       ? "  APF interceptor selection cannot resume an onboarding session."
-      : "  APF interceptor selection cannot recreate a sandbox.",
+      : reason === "recreate"
+        ? "  APF interceptor selection cannot recreate a sandbox."
+        : "  APF interceptor selection cannot use the Portable experimental profile.",
   );
   deps.error(
     `  Start a new sandbox with a new name: ${deps.cliName()} onboard --fresh --apf-interceptor --name <sandbox>`,
@@ -619,6 +621,9 @@ function prepareFreshSession(
 ): OnboardSessionBootstrapResult {
   if (input.apfInterceptorRequested === true && input.recreateSandboxRequested === true) {
     reportUnsupportedApfLifecycle("recreate", deps);
+  }
+  if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
+    reportUnsupportedApfLifecycle("portable", deps);
   }
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
