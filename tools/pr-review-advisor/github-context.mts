@@ -410,8 +410,16 @@ export async function writeGitHubReviewContext(
 ): Promise<void> {
   if (!outputPath) throw new Error("PR_REVIEW_ADVISOR_GITHUB_CONTEXT_OUTPUT is required");
   const context = await collectGitHubReviewContext(env);
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, serializePreparedGitHubContext(context), { flag: "wx", mode: 0o600 });
+  const outputDirectory = path.dirname(outputPath);
+  fs.mkdirSync(outputDirectory, { recursive: true });
+  const resolvedOutput = path.resolve(outputPath);
+  if (resolvedOutput !== path.join(path.resolve(outputDirectory), "github-context.json")) {
+    throw new Error("Prepared GitHub context output must be named github-context.json");
+  }
+  fs.writeFileSync(resolvedOutput, serializePreparedGitHubContext(context), {
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
 export function hasOpenPrReplacement(overlaps: readonly OpenPrOverlap[] | undefined): boolean {

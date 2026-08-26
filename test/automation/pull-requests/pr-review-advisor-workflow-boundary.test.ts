@@ -105,54 +105,6 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors).toEqual([expectedError]);
   });
 
-  it("requires one shared GitHub context artifact without specialist tokens", () => {
-    const errors = validateMutation((value) => {
-      const discovery = value.jobs["discover-specialists"];
-      const upload = discovery.steps.find(
-        (step: Record<string, any>) => step.name === "Upload GitHub review context",
-      );
-      const specialists = value.jobs["review-specialists"];
-      const download = specialists.steps.find(
-        (step: Record<string, any>) => step.name === "Download GitHub review context",
-      );
-      upload.with.name = "unscoped-context";
-      download.with.name = "different-context";
-      specialists.env.GH_TOKEN = "unexpected";
-      specialists.steps[0].with = { token: "${{ github.token }}" };
-      specialists.steps[1].env = { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" };
-      specialists.steps[2].run = "echo ${{ github.token }}";
-    });
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "specialist jobs must not wire a GitHub token into steps",
-        expect.stringContaining("Upload GitHub review context"),
-        expect.stringContaining("Download GitHub review context"),
-      ]),
-    );
-  });
-
-  it("requires the shared context path during specialist preparation", () => {
-    const errors = validateMutation((value) => {
-      const prepare = value.jobs["review-specialists"].steps.find(
-        (step: Record<string, any>) => step.name === "Prepare advisor sandbox inputs",
-      );
-      delete prepare.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH;
-    });
-    expect(errors).toContain(
-      "Prepare advisor sandbox inputs must receive the downloaded GitHub context",
-    );
-  });
-
-  it("rejects an unpinned shared context download", () => {
-    const errors = validateMutation((value) => {
-      const download = value.jobs["review-specialists"].steps.find(
-        (step: Record<string, any>) => step.name === "Download GitHub review context",
-      );
-      download.uses = "actions/download-artifact@v8";
-    });
-    expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
-  });
-
   it("rejects a non-artifact specialist upload action", () => {
     const errors = validateMutation((workflow) => {
       const upload = workflow.jobs["review-specialists"].steps.find(

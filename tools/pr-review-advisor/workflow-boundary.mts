@@ -180,8 +180,9 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("publish job must not receive the advisor model credential");
   if (JSON.stringify(publish).includes("ADVISOR_WORKDIR"))
     errors.push("publish job must not receive the untrusted analysis worktree");
-  if (!JSON.stringify(discovery).includes("GH_TOKEN"))
-    errors.push("specialist discovery must receive the GitHub token for shared context");
+  const contextCollection = namedStep(discovery, "Collect GitHub review context");
+  if (object(contextCollection?.env).GH_TOKEN !== "${{ github.token }}")
+    errors.push("shared context collection must receive github.token as GH_TOKEN");
   const specialistTokenWiring = JSON.stringify(specialists);
   const specialistEnvironments = [specialists, ...jobSteps(specialists)].map((item) =>
     object(item.env),
@@ -197,6 +198,17 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("specialist jobs must not wire a GitHub token into steps");
   const contextUpload = namedStep(discovery, "Upload GitHub review context");
   const contextDownload = namedStep(specialists, "Download GitHub review context");
+  if (!String(contextUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
+    errors.push("shared context upload must use actions/upload-artifact");
+  if (!String(contextDownload?.uses ?? "").startsWith("actions/download-artifact@"))
+    errors.push("shared context download must use actions/download-artifact");
+  requireWith(errors, contextUpload, "path", "artifacts/pr-review-advisor-context/github-context.json");
+  requireWith(
+    errors,
+    contextDownload,
+    "path",
+    "${{ runner.temp }}/shared-pr-review-advisor-context",
+  );
   requireWith(errors, contextUpload, "if-no-files-found", "error");
   requireWith(errors, contextUpload, "retention-days", 1);
   requireWith(
