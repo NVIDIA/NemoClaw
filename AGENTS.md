@@ -188,6 +188,12 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 ## Working with This Repo
 
+### Maintainer Git Workflow
+
+NemoClaw maintainers must create feature branches directly in `NVIDIA/NemoClaw` from the latest upstream `main` commit.
+Maintainers must not create or use a fork for NemoClaw work.
+If an upstream push is denied, stop and ask the user to correct the access problem.
+
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
