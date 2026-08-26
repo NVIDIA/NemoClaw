@@ -448,6 +448,13 @@ navigation:
               - page: "Quickstart with Pi"
                 path: get-started/quickstart-pi.mdx
                 slug: quickstart
+          - section: "Inference"
+            slug: inference
+            collapsed: open-by-default
+            contents:
+              - page: "Configure Model Limits"
+                path: _build/agent-variants/inference/configure-model-limits.pi.generated.mdx
+                slug: configure-model-limits
           - section: "Operate Pi"
             slug: manage-sandboxes
             collapsed: open-by-default

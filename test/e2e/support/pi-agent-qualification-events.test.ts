@@ -135,6 +135,9 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask(parsePiJsonEvents(events(start, success, success, reply)), PATH, TOKEN),
     ).toThrow("did not complete successfully");
+    expect(() =>
+      qualifyPiReadTask(parsePiJsonEvents(events(start, reply, success)), PATH, TOKEN),
+    ).toThrow("after the successful read");
   });
 
   it("accepts the managed Pi inference route and runtime package evidence", () => {

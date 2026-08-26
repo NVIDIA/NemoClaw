@@ -19,9 +19,9 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import type {
   BuiltManagedStartupOnboardProfile,
@@ -34,6 +34,7 @@ import {
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import {
   buildManagedWorkloadRebuildReceipt,
+  type ManagedWorkloadRebuildCatalogHandoff,
   type ManagedWorkloadRebuildHandoff,
   type ManagedWorkloadReceipt,
   managedWorkloadRebuildDependencies,
@@ -52,7 +53,7 @@ type RebuildProfileInput = Omit<
   "agentName" | "environment" | "corporateCa"
 >;
 
-function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInput {
+function rebuildProfileInput(agent: ManagedImageAgent): RebuildProfileInput {
   const common = {
     chatUiUrl: "http://127.0.0.1:18789",
     effectiveDashboardPort: 18_789,
@@ -113,12 +114,29 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
       manageDashboard: false,
       hermesDashboardState: { config: null, enabled: false },
     },
-  } as const satisfies Record<ShippedManagedImageAgent, RebuildProfileInput>;
+    pi: {
+      ...common,
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "nvidia",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      chatUiUrl: "",
+      effectiveDashboardPort: 0,
+      manageDashboard: false,
+      hermesDashboardState: { config: null, enabled: false },
+    },
+  } as const satisfies Record<ManagedImageAgent, RebuildProfileInput>;
   return profiles[agent];
 }
 
 function managedContract(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedImageContractV1 {
@@ -143,7 +161,7 @@ function managedContract(
   };
 }
 
-function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupOnboardProfile {
+function profileTransport(agent: ManagedImageAgent): BuiltManagedStartupOnboardProfile {
   const profile = managedStartupE2eProfile(agent);
   const encodedProfile = encodeManagedStartupProfile(profile);
   return {
@@ -155,7 +173,7 @@ function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupO
 }
 
 function receipt(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedWorkloadReceipt {
@@ -179,7 +197,7 @@ function receipt(
 }
 
 function entry(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
 ): SandboxEntry {
   const workload = receipt(agent, "old", platform);
@@ -241,7 +259,7 @@ function provider(
 }
 
 function replacement(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
 ) {
   const image = managedContract(agent, "new", platform);
@@ -257,7 +275,7 @@ function replacement(
 }
 
 function completeHandoff(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   catalog: Awaited<ReturnType<typeof prepareManagedWorkloadRebuildHandoff>>,
 ): ManagedWorkloadRebuildHandoff {
   return {
@@ -594,6 +612,44 @@ describe("managed workload rebuild preflight", () => {
     expect(decoded.proxy.hostNoProxy).toEqual(
       expect.arrayContaining([...catalog!.previousProfile.proxy.hostNoProxy]),
     );
+  });
+
+  it("preserves Pi model tuning during startup-profile reconstruction", () => {
+    const previousProfile = {
+      ...managedStartupE2eProfile("pi"),
+      tuning: {
+        contextWindow: 65_536,
+        maxTokens: 8_192,
+        reasoning: false,
+        reasoningEffort: null,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(previousProfile);
+    const catalog: ManagedWorkloadRebuildCatalogHandoff = {
+      schemaVersion: 1,
+      providerId: "mxc",
+      agent: "pi",
+      previousReceipt: {
+        ...receipt("pi", "old"),
+        encodedProfile,
+        startupProfileSha256: createHash("sha256")
+          .update(encodedProfile, "utf8")
+          .digest("hex"),
+      },
+      previousContract: managedContract("pi", "old"),
+      previousProfile,
+      replacement: replacement("pi"),
+      corporateCa: null,
+    };
+
+    const staged = stageManagedWorkloadRebuildProfile(
+      catalog,
+      rebuildProfileInput("pi"),
+      {},
+    );
+    const decoded = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
+
+    expect(decoded.tuning).toEqual(previousProfile.tuning);
   });
 
   it("replays credential-bearing proxy intent without persisting credentials", async () => {

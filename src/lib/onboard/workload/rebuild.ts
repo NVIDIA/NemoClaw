@@ -306,6 +306,16 @@ export function managedWorkloadRebuildProfileEnvironment(
     result.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = String(config.otel.sampleRate);
   } else if (previous.agent === "hermes" && previous.tuning.contextWindow !== null) {
     result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+  } else if (previous.agent === "pi") {
+    if (previous.tuning.contextWindow !== null) {
+      result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+    }
+    if (previous.tuning.maxTokens !== null) {
+      result.NEMOCLAW_MAX_TOKENS = String(previous.tuning.maxTokens);
+    }
+    if (previous.tuning.reasoning !== null) {
+      result.NEMOCLAW_REASONING = String(previous.tuning.reasoning);
+    }
   }
 
   if (handoff.previousReceipt.credentialProxyReplayRequired) {

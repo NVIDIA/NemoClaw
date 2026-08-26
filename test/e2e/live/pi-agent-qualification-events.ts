@@ -204,12 +204,16 @@ export function qualifyPiReadTask(
   ) {
     throw new Error("Pi read tool call did not complete successfully");
   }
-  const replies = events.flatMap((event) => {
+  const replies = events.flatMap((event, index) => {
     if (event.type !== "message_end") return [];
     const text = assistantText(event.message);
-    return text === null ? [] : [text];
+    return text === null ? [] : [{ index, text }];
   });
-  const finalText = replies.at(-1);
+  const finalReply = replies.at(-1);
+  if (!finalReply || finalReply.index <= completions[0]!.index) {
+    throw new Error("Pi task did not return an assistant response after the successful read");
+  }
+  const finalText = finalReply.text;
   if (finalText !== expectedText) {
     throw new Error(`Pi task returned ${JSON.stringify(finalText)} instead of exact file contents`);
   }

@@ -53,6 +53,19 @@ Choose a provider and model that use the OpenAI Chat Completions API. NemoClaw k
 
 Stock onboarding selects an exact Pi managed-image digest. It does not build the Pi Dockerfile on the host. The reviewed Dockerfile is a trusted CI image-build source, not a user onboarding mechanism. A missing, incomplete, mutable, or inconsistent image contract fails before sandbox creation.
 
+Set optional Pi model metadata before onboarding when the selected model needs an explicit context window, output limit, or reasoning declaration. Refer to [Configure Model Limits](../inference/configure-model-limits).
+
+## Resume Interrupted Onboarding
+
+Correct the reported condition, then continue the recorded Pi onboarding session.
+
+```bash
+nemoclaw onboard --resume
+```
+
+Resume reuses the recorded agent, provider, model, and sandbox name. Pi model-tuning environment values are not stored in an incomplete onboarding checkpoint, so re-export `NEMOCLAW_CONTEXT_WINDOW`, `NEMOCLAW_MAX_TOKENS`, and `NEMOCLAW_REASONING` before resuming when the original run supplied them. Resume does not change a completed sandbox.
+Use `nemoclaw onboard --agent pi --name my-pi --fresh` to discard an incomplete Pi session and start again. Add `--recreate-sandbox` when replacing an existing completed sandbox.
+
 ## Check the Sandbox
 
 Wait for onboarding to finish, then inspect the registered agent and runtime.
@@ -103,5 +116,6 @@ nemoclaw my-pi exec --workdir /sandbox --no-tty -- \
 ## Continue
 
 - [Run and Manage Pi](../manage-sandboxes/run-pi) covers lifecycle, state, backup, rebuild, recovery, and troubleshooting.
+- [Configure Model Limits](../inference/configure-model-limits) covers Pi context-window, output-token, and reasoning metadata.
 - [NemoClaw for Pi CLI Commands Reference](../reference/commands) lists host and in-sandbox command forms.
 - [Pi Support and Security](../reference/pi-support) records the initial compatibility matrix, policy, credential, and qualification boundaries.

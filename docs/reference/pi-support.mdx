@@ -60,13 +60,25 @@ The upstream credential remains in OpenShell provider state. It survives rebuild
 
 The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-super-120b-a12b`.
 
+## Model Metadata and Route Changes
+
+Pi accepts `NEMOCLAW_CONTEXT_WINDOW`, `NEMOCLAW_MAX_TOKENS`, and `NEMOCLAW_REASONING` through the managed startup profile. The context window must be a positive integer no larger than `4194304`, the output limit must be from `1` to `1000000000`, and reasoning accepts `true` or `false`. Unset fields remain absent from `models.json`, so Pi uses the selected model's defaults.
+
+A rebuild replays the recorded values. Pi does not support `NEMOCLAW_REASONING_EFFORT` or runtime mutation through `nemoclaw inference set`. Changing the provider, model, or model metadata requires `nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox`.
+
 ## Network and Filesystem Policy
 
 The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
 
 Direct access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
 
-Pi runs as the unprivileged `sandbox` user. Landlock strict mode and the OpenShell filesystem policy protect the image and host boundary. Writable paths are limited to the sandbox workspace and required temporary device paths.
+Pi runs as the unprivileged `sandbox` user. Landlock strict mode and the OpenShell filesystem policy protect the image and host boundary. Writable paths are limited to `/sandbox`, `/sandbox/.pi`, `/tmp`, and `/dev/null`.
+
+## Startup and Corporate CA Controls
+
+The managed image starts as root only to establish the protected workspace, merge an optional corporate CA, enforce resource limits, and switch to the `sandbox` user with `setpriv`. Pi and its interactive or headless commands never run as root. Startup and independent shell hooks fail closed when the privilege drop or exact limits cannot be verified.
+
+Set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding when an enterprise proxy re-signs TLS. The managed startup profile carries the validated public CA without changing the exact Pi image digest. On a successful merge, the entrypoint appends it to the OpenShell trust bundle, protects the merged file as root-owned mode `0444`, and points curl, Python, Git, and Node.js at that bundle. An ordinary runtime merge failure warns and keeps OpenShell-only trust, so external TLS through the corporate proxy may fail. A symlinked source or invalid root-to-sandbox handoff aborts startup because it breaks the trust boundary. Invalid explicit CA input stops onboarding rather than weakening trust.
 
 ## Tool and Project Trust
 
@@ -97,4 +109,4 @@ The release gate runs one repository-owned target on native Linux AMD64 and Linu
 - absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
 - exact cleanup after destroy.
 
-The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) receipts. Each trusted run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to passing results for both platforms and must not require manual sandbox repair.
+The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) image receipts. These receipts prove exact image publication; they are not live agent-runtime results. Each trusted qualification run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to passing results for both platforms and must not require manual sandbox repair.

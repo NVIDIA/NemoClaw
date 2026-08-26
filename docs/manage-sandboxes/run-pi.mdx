@@ -96,7 +96,7 @@ nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
 
 ## Rebuild and Recover
 
-Rebuild validates the recorded workload authority, resolves the current release's exact Pi image, and preserves declared Pi state.
+Rebuild validates the recorded workload authority, resolves the current release's exact Pi image, and preserves declared Pi state. It also replays the recorded context window, maximum output-token count, and reasoning flag.
 
 ```bash
 nemoclaw <sandbox-name> rebuild --yes
@@ -109,7 +109,29 @@ nemoclaw <sandbox-name> recover
 nemoclaw <sandbox-name> status
 ```
 
-After a NemoClaw update, rebuild the sandbox to consume a newer reviewed Pi package and image. Each Pi update requires a new exact package integrity, dependency review, image digest, and qualification result.
+Pi has no long-running agent gateway or host forward. `recover` re-enters the shared sandbox readiness path; it does not restart a Pi process. Rebuild when the Pi entrypoint, managed configuration, or image is inconsistent.
+
+Pi has no runtime `inference set` path. To change the provider, model, context window, output limit, or reasoning flag, create a snapshot, set the new selection, and run a fresh replacement.
+
+```bash
+nemoclaw <sandbox-name> shields down
+nemoclaw <sandbox-name> snapshot create --name before-model-change
+nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
+```
+
+Refer to [Configure Model Limits](../inference/configure-model-limits) for the supported environment variables.
+
+## Update NemoClaw and Pi
+
+Update the host CLI, inspect registered sandboxes, then rebuild Pi to consume a newer reviewed package and image.
+
+```bash
+nemoclaw update --yes
+nemoclaw upgrade-sandboxes --check
+nemoclaw <sandbox-name> rebuild --yes
+```
+
+Each Pi update requires a new exact package integrity, dependency review, image digest, and qualification result. Pi runtime self-update and package auto-update remain unsupported.
 
 ## Stop, Start, and Destroy
 
@@ -137,6 +159,10 @@ The selected build cannot prove an accepted immutable Pi image. Do not replace t
 ### Fix an Unsupported API
 
 Pi v1 accepts `openai-completions`. Select a Chat Completions-compatible provider or re-onboard with a supported provider and model.
+
+### Fix a Runtime Startup Security Refusal
+
+Pi requires exact soft and hard limits of `nproc=512` and `nofile=65536`. It refuses to start when its protected shell initialization, privilege drop, or either limit cannot be applied. Correct the reported container-runtime constraint before rebuilding from the accepted image, then check status. Do not bypass the failed control or replace the managed entrypoint.
 
 ### Diagnose an Inference Failure
 
