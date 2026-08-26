@@ -19,10 +19,10 @@ network_policies:
       #   policy is rejected as ambiguous, and sandbox creation fails.
       - host: slack.com
         port: 443
+        path: /api/apps.connections.open
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
-        path: /api/apps.connections.open
         credential_binding:
           provider: "{sandboxName}-slack-app"
         rules:

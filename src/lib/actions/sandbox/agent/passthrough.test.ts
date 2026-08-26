@@ -5,7 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() =>
-  vi.fn(async () => ({ state: "present", output: "Phase: Ready" }) as { output?: string }),
+  vi.fn(
+    async () =>
+      ({ state: "present", phase: "Ready", output: "Phase: Ready" }) as {
+        state: string;
+        phase: string | null;
+        output: string;
+      },
+  ),
 );
 const getSandboxMock = vi.hoisted(() =>
   vi.fn(
@@ -164,10 +171,7 @@ describe("runAgentPassthrough", () => {
         headless_command: "python3 /app/run_with_harness.py",
       },
     });
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["start", "--task-id", "demo"] },
-    );
+    await runAgentPassthrough("alpha", { extraArgs: ["start", "--task-id", "demo"] });
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
       ["python3", "/app/run_with_harness.py", "start", "--task-id", "demo"],
@@ -599,7 +603,11 @@ describe("runAgentPassthrough", () => {
   });
 
   it("prints recovery hints with exit 1 before selector rejection for the literal stopped-sandbox repro `agent -m ping` (#5655)", async () => {
-    ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
+    ensureLiveMock.mockResolvedValueOnce({
+      state: "present",
+      phase: "Error",
+      output: "Phase: Error",
+    });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();
     await expect(
@@ -652,7 +660,11 @@ describe("runAgentPassthrough", () => {
   });
 
   it("rejects with exit 1 + recovery hints when sandbox phase is non-Ready", async () => {
-    ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
+    ensureLiveMock.mockResolvedValueOnce({
+      state: "present",
+      phase: "Error",
+      output: "Phase: Error",
+    });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();
     await expect(
@@ -673,8 +685,12 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/onboard --resume/);
   });
 
-  it("fails closed with exit 2 when ensureLive returns output without a parseable Phase line, never invoking exec", async () => {
-    ensureLiveMock.mockResolvedValueOnce({ output: "Name: alpha\n(no phase line here)\n" });
+  it("fails closed with exit 2 when ensureLive returns no observed phase, never invoking exec", async () => {
+    ensureLiveMock.mockResolvedValueOnce({
+      state: "present",
+      phase: null,
+      output: "Name: alpha\n(no phase line here)\n",
+    });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();
     await expect(
@@ -781,10 +797,15 @@ describe("runAgentNonJsonPassthrough", () => {
     const { proc } = makeNonJsonProcMock();
     const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
     await expect(
-      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main", "-m", "ping"], proc, {
-        getOpenshellBinary: stubBinary,
-        runDispatch: runDispatchMock,
-      }),
+      runAgentNonJsonPassthrough(
+        "my-sb",
+        ["openclaw", "agent", "--agent", "main", "-m", "ping"],
+        proc,
+        {
+          getOpenshellBinary: stubBinary,
+          runDispatch: runDispatchMock,
+        },
+      ),
     ).rejects.toThrow("__exit:0");
     expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBeUndefined();
   });

@@ -6,11 +6,27 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { runCapture } = vi.hoisted(() => ({ runCapture: vi.fn() }));
+const { getSandbox, inspectSandboxPolicyAuthority, runCapture } = vi.hoisted(() => ({
+  getSandbox: vi.fn(),
+  inspectSandboxPolicyAuthority: vi.fn(),
+  runCapture: vi.fn(),
+}));
+
+vi.mock("../../../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../src/lib/adapters/openshell/policy-authority")
+  >()),
+  inspectSandboxPolicyAuthority,
+}));
 
 vi.mock("../../../src/lib/runner", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/lib/runner")>()),
   runCapture,
+}));
+
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
+  getSandbox,
 }));
 
 import { applyPresetContent, loadPreset, loadPresetFromFile } from "../../../src/lib/policy";
@@ -28,6 +44,18 @@ network_policies:
 `;
 
 beforeEach(() => {
+  getSandbox.mockReset();
+  getSandbox.mockImplementation((name: string) => ({
+    name,
+    agent: "openclaw",
+    policies: [],
+    policyAuthority: "nemoclaw-managed",
+  }));
+  inspectSandboxPolicyAuthority.mockReset();
+  inspectSandboxPolicyAuthority.mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
   runCapture.mockReset();
 });
 

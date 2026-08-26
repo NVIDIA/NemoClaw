@@ -75,13 +75,9 @@ export const discordManifest = {
   policyPresets: [
     {
       name: "discord",
-      // requiredAtCreate - the preset carries this channel's credential_binding:
-      // - The provider profile is endpointless, so the binding is the only thing
-      //   that makes DISCORD_BOT_TOKEN injectable.
-      // - The sandbox reads the provider environment once, at boot; the agent
-      //   inherits that read for the life of the container.
-      // - A preset applied after boot never reaches the agent, and no restart
-      //   recovers it.
+      // The Discord policy owns the credential binding that sets
+      // DISCORD_BOT_TOKEN to a revision-scoped placeholder. The sandbox process
+      // reads that environment at boot, so applying this preset afterwards is too late.
       requiredAtCreate: true,
       validationWarningLines: [
         "For Discord preset validation, do not use curl as the success signal:",
@@ -105,11 +101,9 @@ export const discordManifest = {
           enabled: true,
           accounts: {
             default: {
-              // No token here: OpenShell 0.0.106 injects
-              // DISCORD_BOT_TOKEN as a revision-scoped placeholder and
-              // rejects the canonical form once the policy binds the
-              // credential. resolveDiscordToken falls back to
-              // process.env.DISCORD_BOT_TOKEN for the default account.
+              // OpenShell sets DISCORD_BOT_TOKEN to the current revision-scoped
+              // placeholder. Persisting the canonical placeholder here shadows
+              // that process value and is rejected by the credential endpoint.
               enabled: true,
               healthMonitor: {
                 enabled: false,

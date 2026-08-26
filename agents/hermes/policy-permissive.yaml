@@ -208,6 +208,7 @@ network_policies:
     endpoints:
       - host: slack.com
         port: 443
+        path: /api/apps.connections.open
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true

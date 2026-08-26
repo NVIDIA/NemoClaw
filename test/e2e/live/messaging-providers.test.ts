@@ -467,14 +467,15 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
     const telegramBotToken = accountString(telegramAccount, "botToken");
-    const discordToken = accountString(discordAccount, "token");
     check(telegramBotToken.length > 0, "M6: Telegram botToken present in openclaw.json");
     check(
       telegramBotToken !== state.tokens.telegram,
       "M7: Telegram botToken is not the host token",
     );
-    check(discordToken.length > 0, "M8: Discord token present in openclaw.json");
-    check(discordToken !== state.tokens.discord, "M9: Discord token is not the host token");
+    check(
+      !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
+      "M8: Discord token is omitted from openclaw.json",
+    );
     const expectedManagedProxyHost = nonEmpty(state.env.NEMOCLAW_PROXY_HOST) ?? "10.200.0.1";
     const expectedManagedProxyPort = nonEmpty(state.env.NEMOCLAW_PROXY_PORT) ?? "3128";
     const expectedManagedProxy = `http://${expectedManagedProxyHost}:${expectedManagedProxyPort}`;
@@ -1008,12 +1009,14 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     });
     await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
-    const gatewayProof = await runDiscordGatewayClient(
-      sandbox,
-      fakeGateway.port,
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    const gatewayProof = await runDiscordGatewayClient(sandbox, {
+      port: fakeGateway.port,
+      identifyToken: {
+        kind: "explicit",
+        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      },
       redactionValues,
-    );
+    });
     check(
       gatewayProof.includes("UPGRADE"),
       "M13d: native WebSocket upgrade reached fake Discord Gateway",

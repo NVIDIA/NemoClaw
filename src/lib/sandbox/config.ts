@@ -20,6 +20,9 @@ const {
   DEFAULT_AGENT_CONFIG,
   resolveAgentConfig: resolveAgentConfigTarget,
 }: typeof import("./agent-config") = require("./agent-config");
+const {
+  stripAnsi,
+}: typeof import("../adapters/openshell/client") = require("../adapters/openshell/client");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -448,6 +451,26 @@ function parseCliConfigValue(rawValue: string): ConfigValue {
 }
 
 /**
+ * True when an OpenShell `sandbox exec` failure detail reports the sandbox
+ * itself is not ready (for example, stopped), rather than an unrelated exec
+ * failure. Normalizes ANSI codes, the CLI's box-drawing error marker, and
+ * line-wrapping whitespace so a wrapped multi-line rendering of the same
+ * message still matches (#10251).
+ */
+function isSandboxNotReadyExecDetail(detail: string): boolean {
+  const normalized = stripAnsi(detail)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return (
+    /sandbox '[^']*' is not ready \(phase: \w+\)/i.test(normalized) ||
+    /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i.test(
+      normalized,
+    )
+  );
+}
+
+/**
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
@@ -473,7 +496,12 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
       const detail = result.error?.message || result.stderr?.trim();
       // Preserve a failed exec's detail. `configFail` throws, so it must not be
       // caught and replaced with the generic stopped-sandbox message below.
-      if (detail) {
+      // Exception: a "sandbox is not ready" detail IS the stopped-sandbox case
+      // (#10251, a regression of #6997) — fall through to the generic message
+      // below instead, so the actionable "Is the sandbox running?" / "Start
+      // the sandbox and retry." guidance survives instead of a raw OpenShell
+      // error.
+      if (detail && !isSandboxNotReadyExecDetail(detail)) {
         configFail(`  Cannot read ${target.agentName} config (${target.configPath}): ${detail}`);
       }
       raw = "";

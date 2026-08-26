@@ -270,17 +270,14 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
-  // Regression for #5967 - when the boot policy did not already carry an enabled
-  // channel's preset, finalization must merge it into the effective selection:
-  // - Otherwise the preset never reaches the gateway or the registry.
-  // - `policy-list` then shows `○ discord` even though Discord was configured
-  //   during onboard.
-  // The scenarios below start from an empty already-applied set to model that.
+  // Regression for #5967: policy finalization must retain Discord even when an
+  // older or interrupted onboarding session did not record its create-time
+  // preset. Otherwise, `policy-list` can show `○ discord` after configuration.
   it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
-      // Model a boot policy that did not carry the channel preset.
+      // Model an older or interrupted session that did not record the preset.
       alreadyApplied: [],
       selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["discord"] },
     });
@@ -322,11 +319,11 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
-  // The #5967 fix is channel-agnostic: it iterates the channel→preset registry
-  // rather than special-casing any channel. Telegram is not `requiredAtCreate`,
-  // so its preset is never injected at create time. Running it through the real
-  // `setupPoliciesWithSelection` path guards egress-policy application for a
-  // second, distinct channel.
+  // The #5967 fix is channel-agnostic - it iterates the channel→preset registry
+  // rather than special-casing any channel. Telegram binds a credential in its
+  // preset, so it is create-time required; running it end-to-end through the real
+  // `setupPoliciesWithSelection` path still guards the security-critical
+  // egress-policy application for a second, distinct channel.
   it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
