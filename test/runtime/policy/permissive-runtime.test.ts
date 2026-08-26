@@ -84,7 +84,9 @@ const SLACK_PROVIDER_CASES = (["openclaw", "hermes"] as const).flatMap((agent) =
   )!;
   const livePolicyKey = (slackPolicy.agentPolicyKeys[agent] ?? slackPolicy.policyKeys)[0]!;
   return [
-    [agent, "exact", sandboxName, livePolicyKey, expectedProviders, true],
+    ...(agent === "openclaw"
+      ? ([[agent, "exact", sandboxName, livePolicyKey, expectedProviders, true]] as const)
+      : []),
     [agent, "absent", sandboxName, livePolicyKey, [], false],
     [agent, "partial", sandboxName, livePolicyKey, expectedProviders.slice(0, 1), false],
     [

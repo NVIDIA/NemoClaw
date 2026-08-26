@@ -5788,6 +5788,13 @@ function shieldsDownWithoutHostLock(
           ? {
               messagingAgent: target.agentName,
               messagingPlan: readMessagingPolicyPlan(sandboxName),
+              reportMessagingPolicyOmission: (omission) => {
+                console.error(
+                  `  Warning: omitted the credential-bound messaging route for sandbox ` +
+                    `'${sandboxName}', channel '${omission.channelId}': ${omission.reason}. ` +
+                    `Recovery: ${omission.recoveryAction}.`,
+                );
+              },
               sandboxName,
             }
           : {}),

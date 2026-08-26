@@ -207,10 +207,11 @@ describe("applyPermissivePolicy", () => {
     },
   );
 
-  it("omits credential-bound routes when OpenClaw has no live providers (#10153)", () => {
+  it("reports an enabled OpenClaw route omitted for absent live providers (#10153)", () => {
     const sandboxName = "fallback-openclaw";
     const observed = runPermissivePolicy({
       agent: "openclaw",
+      enabledChannels: ["telegram"],
       policySetStatus: 0,
       sandboxName,
     });
@@ -222,6 +223,13 @@ describe("applyPermissivePolicy", () => {
       expect(policy.network_policies.telegram).toBeUndefined();
       expect(policy.network_policies.slack).toBeUndefined();
       expect(observed.policy).not.toContain("{sandboxName}");
+      expect(observed.result.stderr).toContain(
+        `sandbox '${sandboxName}', channel 'telegram': ` +
+          "the live policy has no credential providers; expected 1. Recovery: " +
+          `run \`nemoclaw ${sandboxName} channels add telegram\` to replace the channel ` +
+          "credentials, then rebuild the sandbox before retrying.",
+      );
+      expect(observed.result.stderr).not.toContain("channel 'slack'");
     } finally {
       observed.cleanup();
     }

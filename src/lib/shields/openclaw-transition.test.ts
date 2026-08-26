@@ -445,6 +445,41 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     return createShieldsFlowHarness(requireSource, tmpDir, options);
   }
 
+  function openClawMessagingSandboxEntry(sandboxName: string, channelIds: string[]) {
+    return {
+      name: sandboxName,
+      agent: "openclaw" as const,
+      openshellDriver: "docker" as const,
+      messaging: {
+        schemaVersion: 1 as const,
+        plan: {
+          schemaVersion: 1 as const,
+          sandboxName,
+          agent: "openclaw" as const,
+          workflow: "onboard" as const,
+          channels: channelIds.map((channelId) => ({
+            channelId,
+            displayName: channelId,
+            authMode: "token-paste" as const,
+            active: true,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [],
+            hooks: [],
+          })),
+          disabledChannels: [],
+          credentialBindings: [],
+          networkPolicy: { presets: [], entries: [] },
+          agentRender: [],
+          buildSteps: [],
+          stateUpdates: [],
+          healthChecks: [],
+        },
+      },
+    };
+  }
+
   function expectStagedDriverNeutralRecovery(
     errorSpy: MockInstance,
     sandboxName: string,
@@ -542,38 +577,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
         },
       }),
       processStartIdentity: "issue-10153-openclaw-owner",
-      sandboxEntry: {
-        name: sandboxName,
-        agent: "openclaw",
-        openshellDriver: "docker",
-        messaging: {
-          schemaVersion: 1,
-          plan: {
-            schemaVersion: 1,
-            sandboxName,
-            agent: "openclaw",
-            workflow: "onboard",
-            channels: ["telegram", "slack"].map((channelId) => ({
-              channelId,
-              displayName: channelId,
-              authMode: "token-paste" as const,
-              active: true,
-              selected: true,
-              configured: true,
-              disabled: false,
-              inputs: [],
-              hooks: [],
-            })),
-            disabledChannels: [],
-            credentialBindings: [],
-            networkPolicy: { presets: [], entries: [] },
-            agentRender: [],
-            buildSteps: [],
-            stateUpdates: [],
-            healthChecks: [],
-          },
-        },
-      },
+      sandboxEntry: openClawMessagingSandboxEntry(sandboxName, ["telegram", "slack"]),
       sandboxName,
     });
     fs.writeFileSync(
@@ -604,6 +608,47 @@ describe("OpenClaw shields flow rollback and recovery", () => {
         `${sandboxName}-slack-app`,
         `${sandboxName}-slack-bridge`,
       ]),
+    );
+  });
+
+  it("reports an enabled Slack route omitted for partial live providers (#10153)", () => {
+    const sandboxName = "partial-slack";
+    const harness = createHarness({
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: {
+          slack: {
+            endpoints: [{ credential_binding: { provider: `${sandboxName}-slack-app` } }],
+          },
+        },
+      }),
+      processStartIdentity: "issue-10153-partial-slack-owner",
+      sandboxEntry: openClawMessagingSandboxEntry(sandboxName, ["slack"]),
+      sandboxName,
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, "permissive.yaml"),
+      fs.readFileSync(
+        path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
+        "utf8",
+      ),
+    );
+
+    harness.shieldsDown(sandboxName, {
+      timeout: "5m",
+      reason: "partial messaging provider binding",
+      throwOnError: true,
+    });
+
+    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
+    expect(applied.network_policies.slack).toBeUndefined();
+    const stderr = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(stderr).toContain(
+      `sandbox '${sandboxName}', channel 'slack': ` +
+        "the live policy credential-provider set is partial or mismatched; expected 2, found 1. " +
+        "Recovery: " +
+        `run \`nemoclaw ${sandboxName} channels add slack\` to replace the channel credentials, ` +
+        "then rebuild the sandbox before retrying.",
     );
   });
 

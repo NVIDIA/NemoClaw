@@ -3400,6 +3400,13 @@ function applyPermissivePolicy(sandboxName: string): void {
     sandboxName,
     messagingAgent,
     messagingPlan,
+    (omission) => {
+      console.error(
+        `  Warning: omitted the credential-bound messaging route for sandbox '${sandboxName}', ` +
+          `channel '${omission.channelId}': ${omission.reason}. ` +
+          `Recovery: ${omission.recoveryAction}.`,
+      );
+    },
   );
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
   setPolicyDocument(sandboxName, composedPolicy, { gatewayName: authority.gatewayName });

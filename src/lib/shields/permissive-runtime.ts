@@ -21,6 +21,7 @@ import type {
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
 import { composeCredentialBoundMessagingPolicies } from "../messaging/channels/policy";
+import type { CredentialBoundMessagingPolicyOmissionReporter } from "../messaging/channels/policy";
 import type { MessagingAgentId } from "../messaging/manifest";
 import type { EnabledPlanSelection } from "../messaging/post-agent-install-selection";
 
@@ -132,6 +133,8 @@ export interface PermissiveRuntimeDeps {
   messagingAgent?: MessagingAgentId;
   // The registry plan owns which configured channels are currently active.
   messagingPlan?: EnabledPlanSelection | null;
+  // The caller owns user-facing diagnostics before policy submission.
+  reportMessagingPolicyOmission?: CredentialBoundMessagingPolicyOmissionReporter;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -194,6 +197,7 @@ export function buildRuntimePermissivePolicy(
       deps.sandboxName,
       deps.messagingAgent,
       deps.messagingPlan ?? null,
+      deps.reportMessagingPolicyOmission,
     );
     base = safeYamlObject(materialized);
     if (!base) {
