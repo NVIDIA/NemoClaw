@@ -316,7 +316,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -329,6 +328,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
+  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
+    errors.push("Manual PR authentication must use the public read-only metadata endpoint");
+  }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == refs/heads/*',
@@ -390,6 +392,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
   ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
+  }
+  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
+    errors.push("Manual PR checkout validation must use the public read-only metadata endpoint");
   }
   for (const fragment of [
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
