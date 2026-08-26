@@ -20,6 +20,7 @@ const dockerSpawn = vi.fn();
 interface MockProcess extends EventEmitter {
   readonly stderr: EventEmitter;
   readonly stdout: EventEmitter;
+  readonly kill: ReturnType<typeof vi.fn>;
 }
 
 function mockProcess(): MockProcess {
@@ -27,6 +28,7 @@ function mockProcess(): MockProcess {
   Object.defineProperties(proc, {
     stderr: { value: new EventEmitter() },
     stdout: { value: new EventEmitter() },
+    kill: { value: vi.fn() },
   });
   return proc;
 }
@@ -352,6 +354,55 @@ describe("Hugging Face model acquisition", () => {
     expect(events.logLine).toHaveBeenCalledTimes(1);
     expect(events.onRateLimit).not.toHaveBeenCalled();
     expect(stderrWrite.mock.calls.flat().join("\n")).not.toContain("hf output lines");
+  });
+
+  it("aborts a stalled download instead of waiting forever (#10346)", async () => {
+    vi.useFakeTimers();
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const events = observer();
+    const resultPromise = acquireHuggingFaceModel(request(), events);
+
+    // Real progress keeps the download alive through several heartbeat ticks.
+    await vi.advanceTimersByTimeAsync(30_000);
+    proc.stdout.emit("data", Buffer.from("Downloading (incomplete total...): 10%\n"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    // Then output stops entirely for the full stall window.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("hf download stalled"),
+    });
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("stalled"));
+
+    // A late exit event after the stall already resolved must not resolve again.
+    proc.emit("exit", 0);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("hf download stalled"),
+    });
+  });
+
+  it("honors NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT for a shorter stall window (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "90");
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const events = observer();
+    const resultPromise = acquireHuggingFaceModel(request(), events);
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("hf download stalled"),
+    });
+    vi.unstubAllEnvs();
   });
 
   it("keeps token selection and metadata behavior independent of the serving provider (#8279)", () => {

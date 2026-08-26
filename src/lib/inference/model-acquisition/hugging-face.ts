@@ -10,6 +10,8 @@ import { redactFull } from "../../security/redact";
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
+const DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS = 10 * 60 * 1000;
+const MODEL_DOWNLOAD_STALL_TIMEOUT_ENV = "NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT";
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_REPOSITORY_ID_MAX_LENGTH = 96;
 const HF_PENDING_OUTPUT_MAX_CHARS = 64 * 1024;
@@ -165,6 +167,19 @@ export function buildHuggingFaceModelDownloadArgv(
   ];
 }
 
+/**
+ * How long the download may run with zero new hf output before NemoClaw
+ * treats it as stalled and aborts, rather than waiting indefinitely for an
+ * external wrapper timeout to kill the process (#10346).
+ */
+function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[MODEL_DOWNLOAD_STALL_TIMEOUT_ENV];
+  if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  const seconds = Number(raw.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  return Math.floor(seconds * 1000);
+}
+
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -276,16 +291,25 @@ export function acquireHuggingFaceModel(
     const start = Date.now();
     let lastOutputAt = start;
     let lastOutputEndedCleanly = true;
+    const stallTimeoutMs = modelDownloadStallTimeoutMs();
     const heartbeat = setInterval(() => {
       const now = Date.now();
-      if (now - lastOutputAt >= MODEL_DOWNLOAD_HEARTBEAT_MS) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
+      const idleMs = now - lastOutputAt;
+      if (idleMs < MODEL_DOWNLOAD_HEARTBEAT_MS) return;
+      if (!lastOutputEndedCleanly) process.stdout.write("\n");
+      if (idleMs >= stallTimeoutMs) {
         observer.logLine(
-          `Model download still running (${formatElapsed(now - start)} elapsed; no new output)`,
+          `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
         );
-        lastOutputAt = now;
-        lastOutputEndedCleanly = true;
+        proc.kill();
+        finalizeOutputDecoders();
+        done({ ok: false, reason: `hf download stalled: no output for ${formatElapsed(idleMs)}` });
+        return;
       }
+      observer.logLine(
+        `Model download still running (${formatElapsed(now - start)} elapsed; no new output)`,
+      );
+      lastOutputEndedCleanly = true;
     }, MODEL_DOWNLOAD_HEARTBEAT_MS);
     heartbeat.unref?.();
 
