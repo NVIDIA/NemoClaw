@@ -196,9 +196,9 @@ Legacy and custom-image snapshots retain their state-only backup and restore pat
 The managed authority path backs ordinary Docker onboarding and recreation for the shipped managed agents without activating another runtime provider.
 The raw state layer still rejects a managed manifest unless both content authority and a runtime-validation fence are present.
 Cross-provider clone and rebind, durable interrupted-restore recovery, and provider expansion remain separately reviewable units tracked by the [incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744).
-If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the snapshot after the runtime stabilizes.
+If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the same selected snapshot after the runtime stabilizes.
 
-## Dormant Podman managed bootstrap authority
+## Dormant Podman managed-bootstrap authority
 
 The Podman candidate owns a separate `managed-bootstrap` command scope bound
 to one rootless engine authority. Before a bootstrap mutation, it

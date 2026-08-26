@@ -18,7 +18,7 @@ Reviewer selection can come from these repository-owned sources:
 
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
-- The current user names the reviewer.
+- The current user names a reviewer, and you resolve that name to one GitHub user or team login. Reject unresolved or ambiguous names and pass only the resolved login to the write.
 - You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the reviewer-request write.
 
 Otherwise, do not use any of these reviewer-request writes:
