@@ -4,6 +4,7 @@
 import os from "node:os";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { stopCuaServiceRelay } from "../../cua/service-relay";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
@@ -25,6 +26,8 @@ import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./dest
 import { classifyDestroySandboxPresence } from "./destroy-presence";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
+
+export { stopCuaServiceRelay };
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
