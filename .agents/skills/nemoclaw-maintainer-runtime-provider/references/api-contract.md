@@ -69,7 +69,7 @@ decision. Do not put the provider behavior in generic gateway code.
 
 The workload profile declares the accepted immutable workload identity. `acceptsReceipt()` must
 validate the receipt kind, platform, and contract versions. Do not accept a tag when the active
-contract requires an digest.
+contract requires a digest.
 
 A supported host-local inference surface lists unique accepted services. `createOperation()`
 returns a provider-owned `HostLocalInferenceOperation`. Keep credentials out of runtime receipts

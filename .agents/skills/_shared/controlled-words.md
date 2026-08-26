@@ -375,7 +375,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `target version` | Technical noun | The release version to which work is assigned. | next release, current version |
 | `test` | Technical noun or verb | A repeatable executable evaluation of specified behavior, or the act of running it. | check when no behavior executes, validation when input conformance is intended |
 | `test title` | Technical noun | The behavior-oriented name of a test, with any issue reference in a final suffix. | test name when title conventions are intended |
-| `tested` | Adjective | Has named test evidence for an revision, setup, and environment. Testing alone does not establish product support. | supported, works |
+| `tested` | Adjective | Has named test evidence for a revision, setup, and environment. Testing alone does not establish product support. | supported, works |
 | `unit test` | Technical noun | A test of one source unit with external dependencies isolated. | integration test, source test when import origin is intended |
 | `user approval` | Technical noun | Explicit consent from the affected user for a named action and scope. It does not establish product support, and product approval does not replace it. | accepted issue, accepted design decision, implied consent |
 | `user-visible change` | Technical noun | A change to a command, output, configuration, workflow, or supported behavior. | improvement without the changed behavior |
@@ -399,7 +399,7 @@ A result can support more than one claim only when its evidence meets each defin
 | Technical | `compatible` | The named technical contract is satisfied. | Product support. |
 | Product | `supported` | The product surface has accepted ownership, lifecycle, compatibility, security, and validation expectations. | User approval for a specific action. |
 
-product states remain valid technical terms. For example, use the OpenShell sandbox phase
+Product states remain valid technical terms. For example, use the OpenShell sandbox phase
 `Ready` with its documented capitalization. Do not use `ready` as a general approval judgment.
 
 ## Maintain the List
@@ -412,7 +412,7 @@ Add or change an entry only when it does at least one of these things:
 
 - Resolves a recurring ambiguity across repository surfaces.
 - Separates concepts whose difference affects behavior, security, support, or evidence.
-- Preserves an product name or text form.
+- Preserves a product name or text form.
 
 For each entry:
 

@@ -155,7 +155,7 @@ instead of reducing the run to one passing/failing label:
 - workflow URL and `Release qualification` job URL; and
 - any failed, cancelled, skipped, queued, or still-running results.
 
-Offer these choices:
+Offer exactly these three choices:
 
 1. Run focused tests selected by the maintainer.
 2. Run the full suite.

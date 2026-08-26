@@ -323,7 +323,7 @@ The previous design used a 25-minute default and a 60-minute extension for time-
 Two-pass design.
 
 - **Reported-release pass (8a–8c):** install the reported release, run the reproducer, and confirm that it exposes the reported symptom.
-- **Newest-release pass (8d):** install `$LATEST` as an release tag and run the validated reproducer.
+- **Newest-release pass (8d):** install `$LATEST` as a release tag and run the validated reproducer.
 
 Without the reported-release result, a newest-release result without the symptom is inconclusive. The reproducer might never have exposed the reported symptom.
 

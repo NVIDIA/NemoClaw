@@ -33,7 +33,7 @@ infrastructure. NemoClaw has no build-time dependency on that implementation.
 ## HTTP Contract 2.0.0
 
 Contract version `2.0.0` uses JSON with `schemaVersion: 2`. The controller sends
-a request body with these fields:
+a request body with these exact fields:
 
 ```json
 {

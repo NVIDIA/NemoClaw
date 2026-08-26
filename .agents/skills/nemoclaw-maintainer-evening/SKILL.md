@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff and optionally cuts an release tag. Use for evening, handoff, wrap-up, or ship requests.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts a release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 

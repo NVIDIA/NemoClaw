@@ -94,7 +94,7 @@ invalid even if acknowledgement of the first finalization is lost. Its private
 state root retains versioned, identity-addressed transaction records containing
 the provider and sandbox identities, plan and profile
 fingerprints, original and replacement IDs, rollback target, and phase.
-commit and cleanup receipts are durable terminal records, so adapter
+Commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
 Rollback retains an `owner-cleanup-required` phase after image-owned shared
 state is restored and the replacement is absent. If
