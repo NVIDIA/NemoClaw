@@ -191,6 +191,21 @@ The workflow sets these credentials only for the live steps, but candidate code 
 GitHub invalidates `GITHUB_TOKEN` after the job.
 `NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
 
+### Hermes managed-image GPU fallback
+
+The `hermes-gpu-startup` fallback cell covers an exact native `--gpu` parser
+rejection before create progress, stable proof that no sandbox or labeled
+container exists, and one managed-image compatibility create. The post-create
+combination—native GPU proof fails while the exact Docker runtime proves that
+GPU attachment is absent—remains a combinatorial gap. Unit tests retain the
+exact managed-bootstrap owner-cleanup handoff and reject mutable-name deletion,
+while the live target covers the nearest executable fallback route. OpenShell
+v0.0.106 deletes sandboxes only by mutable name, so a live post-create retry
+would either duplicate the retained fail-closed tests or overreach their
+identity boundary. Issue #10155 records this gap until an accepted
+identity-bound OpenShell deletion contract makes the combination testable. The
+gap does not change release judgment by itself.
+
 ## Retired Brev source-install coverage
 
 Issue #7490 retired the generic Brev source-install lane. The unified workflow

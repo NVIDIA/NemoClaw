@@ -423,7 +423,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "create real native state while dropping GPU attachment, reject exactly the first post-create nvidia-smi proof, then delegate compatibility retry",
+          "reject the exact native --gpu create before progress, then delegate one compatibility create and GPU proof",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -462,10 +462,9 @@ test(
       const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
       await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
       expect(fallbackEvents).toEqual([
-        HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
-        HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
+        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>

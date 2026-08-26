@@ -60,6 +60,66 @@ function scenario({
 }
 
 describe("cleanupNativeGpuAttemptForFallback", () => {
+  it("proves a strict pre-progress rejection absent without deleting a mutable name (#10155)", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "" }));
+    const queryContainers = vi.fn(() => ABSENT);
+
+    const result = cleanupNativeGpuFailureForFallback(
+      "alpha",
+      {
+        ok: false,
+        route: "native",
+        stage: "create",
+        error: new Error("native --gpu parser rejection"),
+        fallbackEligible: true,
+        nativeCreateRejectedBeforeProgress: true,
+      },
+      { runOpenshell, queryContainers },
+    );
+
+    expect(result).toEqual({
+      safe: true,
+      reason: null,
+      deleteStatus: null,
+      sandboxPresent: false,
+      containerIds: [],
+    });
+    expect(runOpenshell).toHaveBeenCalledTimes(STABLE_ABSENCE_CHECKS);
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(queryContainers).toHaveBeenCalledTimes(STABLE_ABSENCE_CHECKS);
+  });
+
+  it("blocks a pre-progress retry when a same-name sandbox appears without deleting it (#10155)", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "alpha Ready" }));
+
+    const result = cleanupNativeGpuFailureForFallback(
+      "alpha",
+      {
+        ok: false,
+        route: "native",
+        stage: "create",
+        error: new Error("native --gpu parser rejection"),
+        fallbackEligible: true,
+        nativeCreateRejectedBeforeProgress: true,
+      },
+      { runOpenshell, queryContainers: () => ABSENT },
+    );
+
+    expect(result).toMatchObject({
+      safe: false,
+      reason: "sandbox 'alpha' is still present",
+      deleteStatus: null,
+      sandboxPresent: true,
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("never turns an exact owner-cleanup handoff into a mutable-name delete", () => {
     const runOpenshell = vi.fn();
 
