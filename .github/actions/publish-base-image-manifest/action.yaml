@@ -66,17 +66,14 @@ runs:
         username: ${{ inputs.registry-username }}
         password: ${{ inputs.registry-password }}
 
-    - name: Extract metadata
+    - name: Generate manifest tags
       id: meta
-      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      shell: bash
       env:
-        DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-      with:
-        images: ${{ inputs.registry }}/${{ inputs.image }}
-        tags: |
-          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-          type=ref,event=tag
-          type=sha,prefix=,format=short
+        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+        REF: ${{ github.ref }}
+        REVISION: ${{ github.sha }}
+      run: bash "$GITHUB_ACTION_PATH/tags.sh"
 
     - name: Create and verify multi-platform manifest
       id: manifest

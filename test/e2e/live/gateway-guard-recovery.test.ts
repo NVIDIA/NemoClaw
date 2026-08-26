@@ -574,6 +574,10 @@ test(
       },
     );
     expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
+    const handoffReceipt = JSON.parse(createLegacyKeepalive.stdout) as {
+      newContainerId?: unknown;
+    };
+    expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
     // Do not overlap the fixture's recreation with the restart below. The
     // fixture runs in its own process, so the host must observe the replacement
     // through OpenShell before starting the next container lifecycle transition.
@@ -585,6 +589,7 @@ test(
     );
 
     const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
+    expect(legacyContainerId).toBe(handoffReceipt.newContainerId);
     expect(legacyContainerId).not.toBe(recoveredContainerId);
     expect(
       await inspectStartupCommand(host, legacyContainerId, "legacy-restart-command-before"),

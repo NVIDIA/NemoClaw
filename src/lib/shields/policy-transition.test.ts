@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import YAML from "yaml";
 import {
   createShieldsFlowHarness,
+  externalPolicyAuthorityInspection,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -31,11 +32,52 @@ function sandboxCommandFailure(
 }
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
+function mockManagedPolicyAuthority(sandboxName: string): void {
+  const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
+  const policyAuthority = requireSource(
+    "../adapters/openshell/policy-authority.js",
+  ) as typeof import("../adapters/openshell/policy-authority.js");
+  const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+  vi.spyOn(registry, "getSandbox").mockReturnValue({
+    name: sandboxName,
+    openshellDriver: "docker",
+    policyAuthority: "nemoclaw-managed",
+  });
+  vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: { version: 1, network_policies: {} },
+  });
+  const receipt = {
+    authority: "nemoclaw-managed" as const,
+    authorityRecordedNow: false,
+    gatewayName: "nemoclaw",
+    inspection: {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: { version: 1, network_policies: {} },
+    },
+  };
+  vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(receipt);
+}
+
 describe("shields policy transition", () => {
   let homeDir: string;
   let runSpy: MockInstance;
   let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
+
+  function writePolicySnapshot(sandboxName: string, fileName: string): string {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, fileName);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath }),
+    );
+    return snapshotPath;
+  }
 
   beforeEach(() => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-policy-transition-"));
@@ -72,6 +114,7 @@ describe("shields policy transition", () => {
       (_sandboxName: unknown, cmd: unknown) => cmd as string[],
     );
     vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
+    mockManagedPolicyAuthority("openclaw");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -83,6 +126,61 @@ describe("shields policy transition", () => {
     delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
     delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
     fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("rechecks policy authority immediately before direct snapshot restore (#9833)", () => {
+    const sandboxName = "openclaw";
+    const snapshotPath = writePolicySnapshot(sandboxName, "policy-snapshot-authority-race.yaml");
+    const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+    vi.mocked(policy.recheckPolicyMutationAuthority).mockImplementation(() => {
+      throw new Error("OpenShell policy authority changed during snapshot restore");
+    });
+
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /policy authority changed/,
+    );
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses external authority before Shields snapshot recovery (#9833)", () => {
+    const sandboxName = "openclaw";
+    const snapshotPath = writePolicySnapshot(sandboxName, "policy-snapshot-external.yaml");
+    const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+    vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue({
+      authority: "externally-managed",
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "externally-managed",
+        effectivePolicy: { version: 1, network_policies: {} },
+      },
+    });
+
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /does not match.*canonical JSON SHA-256 [a-f0-9]{64}; network policy keys: "test"/su,
+    );
+    expect(runSpy).not.toHaveBeenCalled();
+
+    const matchingExternalAuthority = {
+      authority: "externally-managed" as const,
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "externally-managed" as const,
+        effectivePolicy: { version: 1, network_policies: { test: {} } },
+      },
+    };
+    vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue(matchingExternalAuthority);
+    vi.spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValueOnce(matchingExternalAuthority)
+      .mockReturnValue({
+        ...matchingExternalAuthority,
+        authority: "nemoclaw-managed",
+        inspection: { ...matchingExternalAuthority.inspection, authority: "nemoclaw-managed" },
+      });
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /Policy authority changed.*canonical JSON SHA-256 [a-f0-9]{64}.*Stop without applying.*Restore the recorded externally managed authority.*NemoClaw will not change policy authority/su,
+    );
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
@@ -137,6 +235,46 @@ describe("shields down policy rejection", () => {
       }),
     });
   }
+
+  it("stops Shields down before mutation when policy is externally managed (#9833)", () => {
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      policyAuthorityInspection: externalPolicyAuthorityInspection,
+      sandboxEntry: {
+        name: "openclaw",
+        openshellDriver: "docker",
+        policyAuthority: "externally-managed",
+      },
+    });
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
+      "externally managed",
+    );
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.dockerSpawnCalls).toEqual([]);
+  });
+
+  it("pins Shields policy inspection, reads, and writes to the recorded gateway (#9833)", () => {
+    const gatewayName = "nemoclaw-18080";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+      sandboxEntry: {
+        name: "openclaw",
+        gatewayName,
+        gatewayPort: 18080,
+        openshellDriver: "docker",
+        policyAuthority: "nemoclaw-managed",
+      },
+    });
+
+    harness.shieldsDown("openclaw", { throwOnError: true });
+
+    expect(harness.policyAuthoritySpy).toHaveBeenCalledWith("openclaw", "lower Shields");
+    const policyCommands = [...harness.runCaptureSpy.mock.calls, ...harness.runSpy.mock.calls]
+      .map(([command]) => command)
+      .filter((command) => Array.isArray(command) && command.includes("policy"));
+    expect(policyCommands.length).toBeGreaterThan(0);
+    expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
+  });
 
   it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
     const harness = createRejectedPolicyHarness();
@@ -589,6 +727,7 @@ describe("shields config lock without a shipped config hash", () => {
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
     restoreStateDirLockPostureSpy = vi.spyOn(stateDirLock, "restoreStateDirLockPosture");
+    mockManagedPolicyAuthority("dcode-safety");
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -629,26 +768,31 @@ describe("shields config lock without a shipped config hash", () => {
       "rollback-failed",
       "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
     ],
-  ] as const)("maps the anchored %s child protocol to exact bounded guidance (#7995)", (status, expectedGuidance) => {
-    const stderr =
-      status === "sandbox-parent" ? Buffer.from(lockFailure(status), "utf8") : lockFailure(status);
-    commandHandlers.set(
-      "python3",
-      rejectConfigLock(
-        sandboxCommandFailure(
-          stderr,
-          `hostile argv marker ${lockFailure("incomplete")}`,
-          lockFailure("config-root"),
+  ] as const)(
+    "maps the anchored %s child protocol to exact bounded guidance (#7995)",
+    (status, expectedGuidance) => {
+      const stderr =
+        status === "sandbox-parent"
+          ? Buffer.from(lockFailure(status), "utf8")
+          : lockFailure(status);
+      commandHandlers.set(
+        "python3",
+        rejectConfigLock(
+          sandboxCommandFailure(
+            stderr,
+            `hostile argv marker ${lockFailure("incomplete")}`,
+            lockFailure("config-root"),
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
-      DEEP_AGENTS_LOCK_GENERIC_ERROR,
-    );
-    expect(errorSpy).toHaveBeenCalledWith(expectedGuidance);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-  });
+      expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
+        DEEP_AGENTS_LOCK_GENERIC_ERROR,
+      );
+      expect(errorSpy).toHaveBeenCalledWith(expectedGuidance);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("accepts transaction-failed without inventing a containment or rollback claim (#7995)", () => {
     commandHandlers.set(
@@ -758,54 +902,57 @@ describe("shields config lock without a shipped config hash", () => {
         format: "json",
       }),
     ],
-  ])("pins expired inline recovery to Deep Agents when the registry %s (#7995)", (_scenario, resolveTarget) => {
-    const sandboxName = "dcode-safety";
-    const stateDir = path.join(homeDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-inline-recovery.yaml");
-    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
-    fs.writeFileSync(
-      path.join(stateDir, `shields-${sandboxName}.json`),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-        shieldsDownTimeout: 60,
-        shieldsDownReason: "identity coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      markerPath,
-      JSON.stringify({
-        pid: 4242,
-        sandboxName,
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 30_000).toISOString(),
-        processToken: "7".repeat(32),
-        agentName: "langchain-deepagents-code",
-        configPath: CONFIG_PATH,
-        configDir: CONFIG_DIR,
-      }),
-      { mode: 0o600 },
-    );
-    vi.spyOn(process, "kill").mockImplementation(reportMissingTimerProcess);
-    resolveAgentConfigSpy.mockImplementation(resolveTarget);
+  ])(
+    "pins expired inline recovery to Deep Agents when the registry %s (#7995)",
+    (_scenario, resolveTarget) => {
+      const sandboxName = "dcode-safety";
+      const stateDir = path.join(homeDir, ".nemoclaw", "state");
+      const snapshotPath = path.join(stateDir, "policy-snapshot-inline-recovery.yaml");
+      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, `shields-${sandboxName}.json`),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+          shieldsDownTimeout: 60,
+          shieldsDownReason: "identity coverage",
+          shieldsDownPolicy: "permissive",
+          shieldsPolicySnapshotPath: snapshotPath,
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        markerPath,
+        JSON.stringify({
+          pid: 4242,
+          sandboxName,
+          snapshotPath,
+          restoreAt: new Date(Date.now() - 30_000).toISOString(),
+          processToken: "7".repeat(32),
+          agentName: "langchain-deepagents-code",
+          configPath: CONFIG_PATH,
+          configDir: CONFIG_DIR,
+        }),
+        { mode: 0o600 },
+      );
+      vi.spyOn(process, "kill").mockImplementation(reportMissingTimerProcess);
+      resolveAgentConfigSpy.mockImplementation(resolveTarget);
 
-    const posture = shields.getShieldsPosture(sandboxName, true);
-    const state = JSON.parse(
-      fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf-8"),
-    );
+      const posture = shields.getShieldsPosture(sandboxName, true);
+      const state = JSON.parse(
+        fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf-8"),
+      );
 
-    expect(posture.mode).toBe("locked");
-    expect(lockCalls).toHaveLength(2);
-    expect(lockCalls.every((command) => command[4] === CONFIG_DIR)).toBe(true);
-    expect(lockCalls.every((command) => command[5] === CONFIG_PATH)).toBe(true);
-    expect(Object.keys(state.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
-    expect(fs.existsSync(markerPath)).toBe(false);
-  });
+      expect(posture.mode).toBe("locked");
+      expect(lockCalls).toHaveLength(2);
+      expect(lockCalls.every((command) => command[4] === CONFIG_DIR)).toBe(true);
+      expect(lockCalls.every((command) => command[5] === CONFIG_PATH)).toBe(true);
+      expect(Object.keys(state.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    },
+  );
 
   it("restores the managed sandbox parent when the config is unlocked", () => {
     entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
@@ -839,6 +986,9 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     const runner = requireSource("../runner.js") as typeof import("../runner.js");
     const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
     const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../adapters/openshell/policy-authority.js");
     const policySetBodies: string[] = [];
 
     vi.spyOn(runner, "runCapture").mockReturnValue(
@@ -854,7 +1004,24 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "openclaw",
       openshellDriver: "docker",
+      policyAuthority: "nemoclaw-managed",
     });
+    vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: { version: 1, network_policies: {} },
+    });
+    const authorityReceipt = {
+      authority: "nemoclaw-managed" as const,
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "nemoclaw-managed" as const,
+        effectivePolicy: { version: 1, network_policies: {} },
+      },
+    };
+    vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(authorityReceipt);
+    vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(authorityReceipt);
 
     const shields = requireSource(SHIELDS_MODULE) as typeof import("./index.js");
     return { applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot, policySetBodies };

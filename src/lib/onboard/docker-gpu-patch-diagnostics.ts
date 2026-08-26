@@ -243,6 +243,8 @@ export function collectDockerGpuPatchDiagnostics(
     `old_container_id=${redactor.redactText(context?.oldContainerId ?? "unknown")}`,
     `new_container_id=${redactor.redactText(context?.newContainerId ?? "unknown")}`,
     `backup_container_name=${redactor.redactText(context?.backupContainerName ?? "none")}`,
+    `backup_removed=${confirmationValue(context?.backupRemoved)}`,
+    `last_openshell_phase=${redactor.redactText(context?.lastSandboxPhase ?? "unknown")}`,
     `rolled_back=${cleanupPendingRollback ? "pending" : context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     ...(context?.replacementStopConfirmed !== undefined
       ? [`replacement_stop_confirmed=${confirmationValue(context.replacementStopConfirmed)}`]
