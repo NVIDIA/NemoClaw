@@ -1045,7 +1045,7 @@ jobs:
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
           node --experimental-strip-types --no-warnings \
-            tools/e2e/pr-managed-image-publication.mts assemble \
+            tools/e2e/pr-managed-image-source.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
@@ -1147,7 +1147,7 @@ jobs:
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
           node --experimental-strip-types --no-warnings \
-            tools/e2e/pr-managed-image-publication.mts assemble \
+            tools/e2e/pr-managed-image-source.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
             "${contracts[@]}"

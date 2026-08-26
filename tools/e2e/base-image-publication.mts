@@ -21,6 +21,7 @@ const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
+const MAX_CHANGED_PATHS = 6_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
@@ -157,6 +158,19 @@ function sha(value: unknown, label: string): string {
   return value;
 }
 
+function isSafeLiteralPath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 4_096 &&
+    SAFE_PATH_PATTERN.test(value) &&
+    !value.startsWith("/") &&
+    !value.startsWith("-") &&
+    !value.startsWith(":") &&
+    !value.includes("//") &&
+    !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  );
+}
+
 function parseQuotedPath(raw: string, lineNumber: number): string {
   let value: unknown;
   try {
@@ -174,14 +188,7 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
     throw new Error(`base-image push path on line ${lineNumber} must be a non-empty exact path`);
   }
   if (REVIEWED_PATH_GLOBS.has(value)) return value;
-  if (
-    !SAFE_PATH_PATTERN.test(value) ||
-    value.startsWith("/") ||
-    value.startsWith("-") ||
-    value.startsWith(":") ||
-    value.includes("//") ||
-    value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
+  if (!isSafeLiteralPath(value)) {
     throw new Error(`base-image push path on line ${lineNumber} is not a safe literal path`);
   }
   return value;
@@ -278,6 +285,27 @@ export function expandBaseImagePushPaths(expectedSha: string, paths: readonly st
   return [
     ...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path))),
   ].sort();
+}
+
+/** Determine whether reviewed base-image inputs contain a changed repository path. */
+export function baseImageInputsChanged(
+  changedFiles: readonly string[],
+  reviewedPaths: readonly string[],
+): boolean {
+  if (changedFiles.length > MAX_CHANGED_PATHS) {
+    throw new Error(`PR changed-path count exceeds ${MAX_CHANGED_PATHS}`);
+  }
+  const matchers = reviewedPaths.map((reviewedPath) => {
+    const reviewedGlob = REVIEWED_PATH_GLOBS.get(reviewedPath);
+    if (reviewedGlob) return (changedPath: string) => reviewedGlob.test(changedPath);
+    if (!isSafeLiteralPath(reviewedPath)) throw new Error("base-image input path is invalid");
+    return (changedPath: string) => changedPath === reviewedPath;
+  });
+  for (const changedPath of changedFiles) {
+    if (!isSafeLiteralPath(changedPath)) throw new Error("PR changed-file path is invalid");
+    if (matchers.some((matches) => matches(changedPath))) return true;
+  }
+  return false;
 }
 
 export function resolveFirstParentHistory(

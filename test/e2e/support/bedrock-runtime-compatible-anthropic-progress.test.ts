@@ -66,7 +66,7 @@ describe("Bedrock raw-command progress", () => {
         artifacts,
         env: {
           E2E_TARGET_ID: "inference-routing",
-          E2E_WORKLOAD_SOURCE: "legacy-dockerfile",
+          E2E_WORKLOAD_SOURCE: "local-dockerfile",
           NEMOCLAW_AGENT: "langchain-deepagents-code",
         },
         progress: observation.progress,
