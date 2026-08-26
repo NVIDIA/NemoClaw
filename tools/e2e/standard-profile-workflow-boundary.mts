@@ -132,7 +132,17 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
-    if (job.name !== "${{ matrix.display_name }}") {
+    const displayProfile =
+      profile === "standard"
+        ? "Standard"
+        : profile === "nvidia-api"
+          ? "NVIDIA API"
+          : profile === "nvidia-inference"
+            ? "NVIDIA Inference"
+            : profile === "github-read"
+              ? "GitHub Read"
+              : "Brave and NVIDIA Inference";
+    if (job.name !== `Catalogue / ${displayProfile} / \${{ matrix.display_name }}`) {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
@@ -265,7 +275,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
   }
-  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+  if (runJob.name !== "Run / ${{ inputs.credential_boundary }}") {
     errors.push("standard E2E profile must show the planned credential boundary");
   }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
