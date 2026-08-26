@@ -355,6 +355,8 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
+const SKIP_BIND_PROBE_ENV = "NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE";
+
 // The proxy process reads its own env (see assertBackendBoundToLoopback in
 // ollama-auth-proxy.mts), but it is spawned with an explicit allowlisted env
 // rather than inheriting the parent's — so an override the operator sets on
@@ -367,10 +369,28 @@ function buildOllamaAuthProxySpawnEnv(token: string, url: string | null): Record
     OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
     [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
     ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
-    ...(process.env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE === "1"
-      ? { NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE: "1" }
-      : {}),
+    ...(process.env[SKIP_BIND_PROBE_ENV] === "1" ? { [SKIP_BIND_PROBE_ENV]: "1" } : {}),
   };
+}
+
+/**
+ * Print the audit warning for a forwarded bind-probe override.
+ *
+ * The proxy emits its own `SECURITY PROBE SKIPPED` warning, but the managed
+ * launch spawns it with `stdio: "ignore"`, so that copy reaches nobody. Until
+ * a durable record exists (#9846), the host is the only surface an operator
+ * can see, so print it here whenever the override is actually forwarded.
+ */
+function printBindProbeSkipWarning(): void {
+  console.error("");
+  console.error(`  ⚠ SECURITY PROBE SKIPPED: ${SKIP_BIND_PROBE_ENV}=1 disabled the Ollama auth`);
+  console.error("    proxy's loopback bind check for this run.");
+  console.error(
+    "    Any Ollama daemon on this host reachable on a non-loopback interface bypasses",
+  );
+  console.error("    the proxy's token check entirely.");
+  console.error(`    Unset ${SKIP_BIND_PROBE_ENV} to restore enforcement.`);
+  console.error("");
 }
 
 function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
@@ -378,9 +398,11 @@ function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null
   // proxy's exit reason (or finds no file when the proxy starts cleanly).
   clearStaleProxyStatus(PROXY_STATUS_PATH);
   const url = backendUrl || readProxyStateFile(PROXY_BACKEND_PATH);
+  const env = buildOllamaAuthProxySpawnEnv(token, url);
+  if (env[SKIP_BIND_PROBE_ENV] === "1") printBindProbeSkipWarning();
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
-    env: buildOllamaAuthProxySpawnEnv(token, url),
+    env,
     buildEnv: buildSubprocessEnv,
   });
   persistProxyPid(child.pid);

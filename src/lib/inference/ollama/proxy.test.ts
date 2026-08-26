@@ -515,6 +515,10 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
   });
 });
 
+type SpawnAdapterOptions = Parameters<
+  typeof import("../local-adapter-lifecycle").spawnDetachedNodeAdapter
+>[0];
+
 describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
   const OVERRIDE = "NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE";
   const tempHomes: string[] = [];
@@ -575,22 +579,21 @@ describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
     expect(env[PROXY_STATUS_ENV]).toBeTruthy();
   });
 
-  // The helper above only proves the map and the filter agree. Pin the spawn
-  // itself too: re-inlining the env object at the call site is the exact shape
+  // The helper above only proves the map and the filter agree. Drive the real
+  // spawn too: re-inlining the env object at the call site is the exact shape
   // #10240 reported, and it would leave every assertion above green.
-  it("reaches the real spawn call, not just the helper", () => {
-    vi.stubEnv(OVERRIDE, "1");
+  function startProxyCapturingSpawn(): { spawned: SpawnAdapterOptions | null; stderr: string } {
     const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-proxy-spawn-"));
     tempHomes.push(home);
     vi.stubEnv("HOME", home);
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     delete require.cache[LIFECYCLE_DIST];
     delete require.cache[PROXY_DIST];
     const lifecycle = require(LIFECYCLE_DIST) as typeof import("../local-adapter-lifecycle");
     const runner = require(RUNNER_DIST);
     const originalSpawn = lifecycle.spawnDetachedNodeAdapter;
     const originalRunCapture = runner.runCapture;
-    let spawned: Parameters<typeof lifecycle.spawnDetachedNodeAdapter>[0] | null = null;
+    let spawned: SpawnAdapterOptions | null = null;
 
     try {
       // An unowned PID makes the readiness poll fail on its first attempt, so
@@ -608,8 +611,38 @@ describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
       runner.runCapture = originalRunCapture;
     }
 
+    return { spawned, stderr: errorSpy.mock.calls.map(([message]) => String(message)).join("\n") };
+  }
+
+  it("reaches the real spawn call, not just the helper", () => {
+    vi.stubEnv(OVERRIDE, "1");
+
+    const { spawned } = startProxyCapturingSpawn();
+
     expect(spawned).not.toBeNull();
     const childEnv = spawned!.buildEnv(spawned!.env);
     expect(childEnv[OVERRIDE]).toBe("1");
+  });
+
+  // The proxy writes its own SECURITY PROBE SKIPPED warning, but the managed
+  // launch discards its stdio, so the host has to say it (#9846 owns the
+  // durable record). Without this the operator sees an ordinary success.
+  it("warns on the host that the loopback bind check was disabled", () => {
+    vi.stubEnv(OVERRIDE, "1");
+
+    const { stderr } = startProxyCapturingSpawn();
+
+    expect(stderr).toContain("SECURITY PROBE SKIPPED");
+    expect(stderr).toContain(OVERRIDE);
+    expect(stderr).toContain("bypasses");
+  });
+
+  it("prints no skip warning when the override is absent", () => {
+    vi.stubEnv(OVERRIDE, undefined);
+
+    const { spawned, stderr } = startProxyCapturingSpawn();
+
+    expect(spawned!.env).not.toHaveProperty(OVERRIDE);
+    expect(stderr).not.toContain("SECURITY PROBE SKIPPED");
   });
 });
