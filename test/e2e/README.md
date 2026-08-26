@@ -91,7 +91,7 @@ If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
+requires one successful `Images / Managed Images` run for the candidate commit. Before candidate
 checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
 It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
 missing, incomplete, or mixed all-agent publication before E2E jobs start.
@@ -101,7 +101,7 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
+The same-repository `Images / Managed Images` PR workflow also runs the OpenClaw managed-image MCP
 discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
 catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
 authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
@@ -451,9 +451,13 @@ the operator's exact host-preparation declaration. It observes whether the test
 process is elevated but does not change host ACLs or elevation. Compute the
 canonical artifact-tree digest after staging:
 
-The share and host-state directories are fresh siblings directly beneath the
-declared drive root. This matches the current package's shallow-share
-requirement and keeps host-only configuration outside the sandbox share.
+The OpenClaw artifact, share, and host-state directories must be fresh siblings
+directly beneath the declared drive root. This matches the current package's
+shallow-share requirement and the qualified workaround for MXC parent-path
+traversal. The generated agent environment redirects `TEMP` and `TMP` into a
+test-owned directory beneath the writable share; it does not expose the host
+temporary directory to the sandbox. Host-only configuration remains outside
+the sandbox share.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -478,7 +482,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | Exact declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
 | `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
-| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION` | Expected OpenClaw version |
@@ -487,8 +491,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256` | Expected OpenClaw entrypoint SHA-256 |
 
 The target creates a random OpenClaw gateway token for readiness, forwarding,
-and chat checks. It
-passes that token through the MXC agent environment; current OpenShell
+and chat checks. It passes that token through the MXC agent environment. Current OpenShell
 `process_container` packaging can therefore expose its encoded configuration,
 including the token, to privileged host process inspection while `wxc-exec.exe`
 starts the sandbox. The token is never written to the receipt or supplied in
@@ -496,7 +499,8 @@ the OpenClaw command arguments, is not reused, and is useful only for the
 temporary loopback OpenClaw gateway. The host client uses a temporary config
 file that is deleted before a passing receipt is written. Cleanup attempts sandbox deletion, stops
 the recorded OpenClaw process, clears the in-memory environment value, and
-removes the runtime home, state, configuration, and gateway logs. A direct
+removes both test-owned run directories, including the MXC agent environment
+file, runtime home, state, configuration, and gateway logs. A direct
 process-tree termination is an emergency cleanup fallback only. The host-side
 OpenShell processes receive an allowlist of Windows runtime variables rather
 than the complete caller environment. Before using a termination fallback,
@@ -521,22 +525,44 @@ npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-con
 
 The target verifies OpenClaw startup and in-sandbox health, read-write and denied
 filesystem behavior, an authenticated host-loopback forward, and one
-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
+provider-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
 the forward active while deleting the sandbox and requires the listener,
 forward process, sandbox registry entry, and recorded OpenClaw process to stop.
+The target starts forwarding only after in-sandbox OpenClaw health, the exact
+OpenClaw process identity, filesystem enforcement, and the sandbox registry
+entry pass. After the owned host listener appears, the target makes at most 12
+authenticated health observations at one-second intervals. It observes again
+only while the owned forward process remains active and OpenClaw reports a
+nonzero structured transport error with kind `closed`, code `1006`, and reason
+`no close reason`. Authentication, authorization, policy, timeout,
+malformed-output, forward-process exit, and all other failures stop the qualification. The
+target writes a secret-free `windows-mxc-forward-health-readiness-<run-id>.json`
+artifact with the bound, delay, sanitized attempt outcomes, and final result.
+It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. When that cleanup succeeds, a failed run retains
-only non-sensitive probe files for diagnosis.
+runtime artifacts were removed. Receipt schema version 3 also classifies startup
+as not observed, spawn failed, exited before readiness, health timeout, or ready.
+The ready outcome means that the in-sandbox health probe succeeded.
+It does not mean that the qualification passed.
+Use `verdict` and `startup.versionExitCode` to diagnose the result.
+A nonzero version exit code produces a failed qualification.
+It retains only bounded numeric child and version exit codes; it does not retain
+child output, error text, command arguments, paths, or credentials. Cleanup
+removes both test-owned run directories for every verdict because MXC can write
+the temporary gateway token to its agent environment file. A failed run retains
+the secret-free receipt and any secret-free forward-readiness artifact written
+before the failure.
 The host-preparation declaration is operator evidence, not an ACL attestation.
 Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation
 remain outside this target.
 
 If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
-not confirm removal of that exact sandbox. Inspect the registry and delete only
-the recorded name:
+not confirm removal of that exact sandbox. The retained process environment can
+hold the temporary gateway token until sandbox deletion is confirmed. Inspect
+the registry and delete only the recorded name:
 
 ```powershell
 $receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
@@ -940,7 +966,7 @@ qualification set.
 
 ### Hosted-Runner Recovery
 
-`Automation / Recover Platform CI Runner` can request one full rerun for an eligible `CI / Platform Compatibility` push.
+`Automation / Platform CI Runner` can request one full rerun for an eligible `CI / Platform Compatibility` push.
 It does not handle `E2E main`.
 The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
 An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
@@ -950,16 +976,16 @@ A failed job can represent a deterministic product assertion, authentication or 
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
 External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
-Hosted runner loss remains owned by `Automation / Recover Platform CI Runner`.
+Hosted runner loss remains owned by `Automation / Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
 The runner-allocation and internal-error failures handled by
-`Automation / Recover Platform CI Runner` originate in GitHub Actions, outside
+`Automation / Platform CI Runner` originate in GitHub Actions, outside
 repository-controlled workflow code. The workflow contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
 controller only after the platform-evidence workflow records 30 consecutive days
 with no first-attempt failure accepted by the recovery classifier, or after that
-workflow stops using GitHub-hosted runners. Each accepted `Automation / Recover Platform CI Runner`
+workflow stops using GitHub-hosted runners. Each accepted `Automation / Platform CI Runner`
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -1082,7 +1108,7 @@ to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
-`E2E / Main Retry Evidence` decisions. `Automation / Recover Platform CI Runner` remains limited to
+`E2E / Main Retry Evidence` decisions. `Automation / Platform CI Runner` remains limited to
 authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A

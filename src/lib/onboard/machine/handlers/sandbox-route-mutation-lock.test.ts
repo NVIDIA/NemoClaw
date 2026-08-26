@@ -80,6 +80,10 @@ describe("sandbox registration route transaction", () => {
         events.push("create");
         return "my-assistant";
       },
+      finalizeSandboxRouteReservation: () => {
+        events.push("publish");
+        return true;
+      },
       updateSandboxRegistry: () => {
         events.push("registry");
       },

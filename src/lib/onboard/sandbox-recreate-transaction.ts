@@ -344,23 +344,27 @@ export function createCreatedSandboxLifecycle(
   runtime: SandboxRecreateRuntime,
   target: CreatedSandboxLifecycleTarget,
   observe: ObserveCreatedSandbox,
+  generationOverride?: string,
 ): CreatedSandboxLifecycle {
-  const generation = runtime.targetGeneration ?? randomUUID();
+  const generation = runtime.targetGeneration ?? generationOverride ?? randomUUID();
+  requireLifecycleGeneration(target.sandboxName, generation);
   return {
     generation,
-    capture: (lifecycleRegistrationFields) =>
-      captureCreatedSandboxLifecycleRegistration(
+    capture: (lifecycleRegistrationFields) => {
+      const captured = captureCreatedSandboxLifecycleRegistration(
         target,
         generation,
         lifecycleRegistrationFields,
         observe,
-      ),
-    revalidate: (registration) => {
-      const verified = revalidateCreatedSandboxLifecycleRegistration(
-        target,
-        registration,
-        observe,
       );
+      runtime.recordCreated({
+        state: "ready",
+        liveIdentityFingerprint: captured.lifecycleLiveIdentityFingerprint,
+      });
+      return captured;
+    },
+    revalidate: (registration) => {
+      const verified = revalidateCreatedSandboxLifecycleRegistration(target, registration, observe);
       runtime.recordCreated({
         state: "ready",
         liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,
@@ -464,6 +468,16 @@ function activeTransaction(session: Session): CheckpointSandboxRecreateTransacti
   return baseCheckpoint(session).sandboxRecreate;
 }
 
+export function selectSandboxRecreateTargetIntentFingerprint(
+  transaction: CheckpointSandboxRecreateTransaction | null,
+  requestedTargetIntentFingerprint: string,
+  handedOffTargetIntentFingerprint: string | null | undefined,
+): string {
+  return transaction && transaction.targetIntentFingerprint === handedOffTargetIntentFingerprint
+    ? transaction.targetIntentFingerprint
+    : requestedTargetIntentFingerprint;
+}
+
 function assertSameTransaction(
   transaction: CheckpointSandboxRecreateTransaction,
   input: BeginSandboxRecreateTransactionInput,
@@ -508,9 +522,9 @@ export function beginSandboxRecreateTransaction(
   }
   const checkpoint = baseCheckpoint(session);
   const now = input.now ?? new Date().toISOString();
-  if (!input.sourceEntry) {
+  if (!input.sourceEntry && input.observation.state !== "missing") {
     throw new Error(
-      `Cannot start sandbox '${input.sandboxName}' recreate transaction without its source registry row.`,
+      `Cannot start sandbox '${input.sandboxName}' lifecycle journal without its source registry row while OpenShell reports a same-name sandbox.`,
     );
   }
   const transaction: CheckpointSandboxRecreateTransaction = {
@@ -520,9 +534,11 @@ export function beginSandboxRecreateTransaction(
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
-    sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(input.sourceEntry),
+    sourceRegistryFingerprint: input.sourceEntry
+      ? fingerprintSandboxRegistryEntry(input.sourceEntry)
+      : fingerprintSandboxRecreateValue(null),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
-    sourceWorkload: checkpointSourceWorkload(input.sourceEntry),
+    sourceWorkload: input.sourceEntry ? checkpointSourceWorkload(input.sourceEntry) : null,
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,
@@ -707,14 +723,14 @@ export function planSandboxRecreateRecovery(
     return { action: "accept_target" };
   }
 
-  const sourceRegistered =
-    registryEntry !== null &&
-    fingerprintSandboxRegistryEntry(registryEntry) === transaction.sourceRegistryFingerprint;
+  const sourceStateUnchanged = registryEntry
+    ? fingerprintSandboxRegistryEntry(registryEntry) === transaction.sourceRegistryFingerprint
+    : transaction.sourceRegistryFingerprint === fingerprintSandboxRecreateValue(null);
   if (transaction.phase === "completed") {
     return reject("the completed transaction no longer matches its replacement registry row");
   }
   if (transaction.phase === "planned" || transaction.phase === "deleting") {
-    if (!sourceRegistered) return reject("the source registry row changed before deletion");
+    if (!sourceStateUnchanged) return reject("the source registry row changed before deletion");
     if (observation.state === "missing") return { action: "continue_create" };
     if (
       !transaction.sourceLiveIdentityFingerprint ||
@@ -725,10 +741,25 @@ export function planSandboxRecreateRecovery(
     return { action: "continue_delete" };
   }
   if (transaction.phase === "deleted" || transaction.phase === "creating") {
-    if (!sourceRegistered) return reject("the preserved source registry row changed");
+    if (!sourceStateUnchanged) return reject("the preserved source registry row changed");
     return observation.state === "missing"
       ? { action: "continue_create" }
       : reject("a live same-name sandbox appeared before replacement registration committed");
+  }
+  if (
+    (transaction.phase === "created" || transaction.phase === "registry_committing") &&
+    transaction.sourceRegistryFingerprint === fingerprintSandboxRecreateValue(null)
+  ) {
+    if (!transaction.targetLiveIdentityFingerprint) {
+      return reject("the journal did not record the created sandbox live identity");
+    }
+    if (observation.state !== "ready") {
+      return reject("the journaled created sandbox is not ready");
+    }
+    if (observation.liveIdentityFingerprint !== transaction.targetLiveIdentityFingerprint) {
+      return reject("the ready same-name sandbox is not the journaled created sandbox");
+    }
+    return reject("the journaled created sandbox has no matching registry row");
   }
   return reject("the replacement registration did not commit the journaled generation");
 }
