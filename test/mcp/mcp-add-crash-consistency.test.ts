@@ -43,10 +43,9 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
-if (
-  crashAfter === "credential-projection-coalesced" ||
-  crashAfter === "credential-projection-delayed-hostless"
-) {
+if (crashAfter === "credential-projection-coalesced") {
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "3";
+} else if (crashAfter === "credential-projection-delayed-hostless") {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
 }
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
@@ -70,6 +69,7 @@ let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
 let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
+let credentialObservationAfterRepublishCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -241,13 +241,23 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (credentialRepublishBeforeObservationCountThisProcess === 0) {
+    const credentialRepublishCount =
+      credentialRepublishBeforeObservationCountThisProcess +
+      credentialRepublishAfterAbsenceCountThisProcess;
+    if (credentialRepublishCount === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
+    } else {
+      credentialObservationAfterRepublishCountThisProcess += 1;
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess + credentialRepublishAfterAbsenceCountThisProcess > 0 ? childCredentialRevision() : "absent",
+      stdout:
+        credentialRepublishCount === 0
+          ? "absent"
+          : credentialObservationAfterRepublishCountThisProcess === 1
+            ? "v4067750153477477214"
+            : childCredentialRevision(),
       stderr: "",
     };
   }
@@ -273,6 +283,10 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
+    const adapterRevision = command.match(/openshell:resolve:env:(v[0-9]+)_FAKE_MCP_SECRET/)?.[1];
+    if (adapterRevision) {
+      fs.writeFileSync(marker("adapter-revision"), adapterRevision, { mode: 0o600 });
+    }
     mark("adapter");
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
@@ -618,7 +632,7 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
-  it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
+  it("commits one bridge at the stable credential revision and rejects one duplicate (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
       // Create the fixture before either process loads the registry. The
@@ -643,6 +657,9 @@ describe("MCP add crash consistency", () => {
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);
+      expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).toBe(
+        "v4067750153477477215",
+      );
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
