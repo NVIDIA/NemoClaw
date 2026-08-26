@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
+  assertExternalPolicyRequirementContainment,
+  assertMatchingPolicyAuthority,
+  assertPolicyRequirementContainment,
   parseOpenShellPolicy,
+  parseSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./openshell-policy-boundary.cjs";
@@ -80,6 +84,118 @@ const POLICY_CASES = [
     decision: "rejected",
   },
 ] as const;
+
+describe("sandbox policy authority boundary", () => {
+  const policy = { version: 1, network_policies: { required: { allow: true } } };
+
+  it.each([
+    ["sandbox", "nemoclaw-managed"],
+    ["global", "externally-managed"],
+  ] as const)("classifies the %s policy source as %s", (policySource, authority) => {
+    expect(
+      parseSandboxPolicyAuthorityMetadata(
+        JSON.stringify({
+          scope: "sandbox",
+          sandbox: "alpha",
+          status: "effective",
+          policy_source: policySource,
+          policy,
+        }),
+        "alpha",
+      ),
+    ).toEqual({ authority, effectivePolicy: policy });
+  });
+
+  it.each([
+    ["empty", " \n\t", /empty sandbox policy authority metadata/u],
+    ["malformed", "{", /malformed sandbox policy authority metadata/u],
+    ["non-object", "[]", /malformed sandbox policy authority metadata/u],
+    [
+      "mismatched",
+      JSON.stringify({
+        scope: "sandbox",
+        sandbox: "beta",
+        status: "effective",
+        policy_source: "sandbox",
+        policy,
+      }),
+      /invalid sandbox policy authority metadata/u,
+    ],
+  ])("rejects %s sandbox authority metadata", (_caseName, raw, expected) => {
+    expect(() => parseSandboxPolicyAuthorityMetadata(raw, "alpha")).toThrow(expected);
+  });
+
+  it("accepts matching authority and rejects invalid or changed authority", () => {
+    expect(() =>
+      assertMatchingPolicyAuthority("externally-managed", "externally-managed"),
+    ).not.toThrow();
+    expect(() => assertMatchingPolicyAuthority(undefined, "externally-managed")).toThrow(
+      /recorded policy authority is unavailable/u,
+    );
+    expect(() => assertMatchingPolicyAuthority("externally-managed", "unknown")).toThrow(
+      /observed OpenShell policy authority is unavailable/u,
+    );
+    expect(() => assertMatchingPolicyAuthority("nemoclaw-managed", "externally-managed")).toThrow(
+      /changed from nemoclaw-managed to externally-managed/u,
+    );
+  });
+
+  it("requires external entries and sections while allowing unrelated content", () => {
+    const inspection = {
+      authority: "externally-managed" as const,
+      effectivePolicy: {
+        version: 9,
+        filesystem_policy: { read_only: true },
+        extra_section: { keep: true },
+        network_policies: { required: { allow: true }, extra: { allow: true } },
+      },
+    };
+    expect(() =>
+      assertExternalPolicyRequirementContainment(inspection, {
+        version: 1,
+        filesystem_policy: { read_only: true },
+        network_policies: { required: { allow: true } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertExternalPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: false },
+        process: { user: 1000 },
+        network_policies: { required: { allow: false }, missing: {} },
+      }),
+    ).toThrow(
+      /missing entries "missing"; drifted entries "required"; missing sections "process"; drifted sections "filesystem_policy"/u,
+    );
+    expect(() =>
+      assertExternalPolicyRequirementContainment(
+        { authority: "unknown" as never, effectivePolicy: {} },
+        {},
+      ),
+    ).toThrow(/observed OpenShell policy authority is invalid/u);
+    expect(() =>
+      assertExternalPolicyRequirementContainment(inspection, {
+        network_policies: [] as never,
+      }),
+    ).toThrow(/required network policy input is invalid/u);
+  });
+
+  it("requires recorded entries in a NemoClaw-managed policy", () => {
+    const inspection = {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: { network_policies: { required: { allow: true } } },
+    };
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { required: { allow: true } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { missing: { allow: true } },
+      }),
+    ).toThrow(/missing entries "missing"/u);
+  });
+});
 
 describe("canonical OpenShell policy boundary", () => {
   it("parses marked output and versionless network policies", () => {

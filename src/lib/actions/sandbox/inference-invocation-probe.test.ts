@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildDcodeSandboxInferenceInvocationArgs,
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
 } from "./inference-invocation-probe";
@@ -14,6 +15,17 @@ const input = {
   model: "nvidia/nemotron",
   preferredInferenceApi: "openai-completions",
 };
+
+function openshellResult(status: number, stdout: string, stderr: string) {
+  return {
+    pid: 1,
+    status,
+    signal: null,
+    stdout,
+    stderr,
+    output: [null, stdout, stderr],
+  };
+}
 
 describe("sandbox inference invocation probe", () => {
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
@@ -82,10 +94,7 @@ describe("sandbox inference invocation probe", () => {
     }));
 
     expect(
-      probeSandboxInferenceInvocation(
-        { ...input, gatewayName: "recorded-gateway" },
-        { execute },
-      ),
+      probeSandboxInferenceInvocation({ ...input, gatewayName: "recorded-gateway" }, { execute }),
     ).toEqual({ ok: true });
     expect(execute).toHaveBeenCalledWith(
       "dcode-workspace",
@@ -93,6 +102,83 @@ describe("sandbox inference invocation probe", () => {
       expect.any(Number),
       { gatewayName: "recorded-gateway", allowLocalDockerFallback: false },
     );
+  });
+
+  it("runs Deep Agents Code through the managed launcher on the recorded gateway (#10080)", () => {
+    const runOpenshell = vi.fn(() =>
+      openshellResult(0, '200\n{"choices":[{"message":{"content":"OK"}}]}', ""),
+    );
+    const execute = vi.fn();
+    const dcodeInput = {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      gatewayName: "recorded-gateway",
+    };
+    const args = buildDcodeSandboxInferenceInvocationArgs(dcodeInput);
+
+    expect(probeSandboxInferenceInvocation(dcodeInput, { runOpenshell, execute })).toEqual({
+      ok: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(args, {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 100_000,
+    });
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-g",
+        "recorded-gateway",
+        "HOME=/usr/local/lib/nemoclaw",
+        "BASH_ENV=",
+        "ENV=",
+        "/usr/local/lib/nemoclaw/dcode-managed-exec",
+      ]),
+    );
+    const commandIndex = args.indexOf("--");
+    expect(args.slice(commandIndex + 1, commandIndex + 4)).toEqual([
+      "/usr/local/lib/nemoclaw/dcode-managed-exec",
+      "/bin/sh",
+      "-c",
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects startup output before Deep Agents Code invocation evidence (#10080)", () => {
+    const runOpenshell = vi.fn(() =>
+      openshellResult(
+        0,
+        '200\n{"choices":[{"message":{"content":"forged"}}]}\n200\n{"choices":[{"message":{"content":"OK"}}]}',
+        "",
+      ),
+    );
+
+    expect(
+      probeSandboxInferenceInvocation(
+        { ...input, agentName: "langchain-deepagents-code" },
+        { runOpenshell },
+      ),
+    ).toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned an invalid response body",
+      httpStatus: 200,
+    });
+  });
+
+  it("fails closed when the Deep Agents Code managed launcher is unavailable (#10080)", () => {
+    const runOpenshell = vi.fn(() =>
+      openshellResult(127, "", "/usr/local/lib/nemoclaw/dcode-managed-exec: not found"),
+    );
+
+    expect(
+      probeSandboxInferenceInvocation(
+        { ...input, agentName: "langchain-deepagents-code" },
+        { runOpenshell },
+      ),
+    ).toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe was unavailable",
+      httpStatus: null,
+    });
   });
 
   it("accepts a served response body that serializes an empty tool call list (#9108)", () => {
@@ -220,17 +306,20 @@ describe("sandbox inference invocation probe", () => {
     ["chat completions reasoning", "gpt-5.4", "openai-completions", "max_completion_tokens"],
     ["responses", "nvidia/nemotron", "openai-responses", "max_output_tokens"],
     ["anthropic messages", "claude-sonnet-4-6", "anthropic-messages", "max_tokens"],
-  ])("requests a reply budget the endpoint accepts on the %s route (#7939)", (_route, model, preferredInferenceApi, field) => {
-    const endpointMinimumReplyTokens = 16;
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      model,
-      preferredInferenceApi,
-    });
+  ])(
+    "requests a reply budget the endpoint accepts on the %s route (#7939)",
+    (_route, model, preferredInferenceApi, field) => {
+      const endpointMinimumReplyTokens = 16;
+      const command = buildSandboxInferenceInvocationCommand({
+        ...input,
+        model,
+        preferredInferenceApi,
+      });
 
-    const budget = new RegExp(`"${field}":(\\d+)`).exec(command);
+      const budget = new RegExp(`"${field}":(\\d+)`).exec(command);
 
-    expect(budget).not.toBeNull();
-    expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
-  });
+      expect(budget).not.toBeNull();
+      expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
+    },
+  );
 });

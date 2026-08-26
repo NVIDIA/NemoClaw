@@ -686,7 +686,7 @@ describe("shields command flow", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100);
     expect(fs.existsSync(transitionPath)).toBe(true);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -946,7 +946,7 @@ describe("shields command flow", () => {
       });
       expect(fs.existsSync(markerPath)).toBe(false);
       expect(harness.runSpy).toHaveBeenCalledWith(
-        ["openshell", "policy", "set"],
+        ["openshell", "policy", "set", "-g", "nemoclaw"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
@@ -1211,7 +1211,7 @@ describe("shields command flow", () => {
     ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
@@ -1246,7 +1246,7 @@ describe("shields command flow", () => {
     ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -1332,7 +1332,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
     expect(harness.runSpy).not.toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.anything(),
     );
   });
@@ -1385,7 +1385,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(timerMarkerPath)).toBe(true);
     expect(fs.existsSync(transitionLockPath)).toBe(true);
     expect(harness.runSpy).not.toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.anything(),
     );
   });

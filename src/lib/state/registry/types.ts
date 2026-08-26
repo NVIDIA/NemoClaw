@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import type { InferenceSelection } from "../../inference/selection";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
@@ -105,7 +106,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
-  /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
+  /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
   reservationSessionId?: string;
   createdAt?: string;
   /** Immutable catalog provenance for an explicitly selected serving profile. */
@@ -119,6 +120,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
+  /** Policy authority for a completed sandbox; absence means unknown. */
+  policyAuthority?: SandboxPolicyAuthority;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
