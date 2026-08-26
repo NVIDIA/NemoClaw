@@ -41,6 +41,7 @@ const {
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
+  finalizePolicyMutationReceipt,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
   assertNemoClawManagedPolicy,
@@ -4673,6 +4674,11 @@ function applyShieldsPolicySnapshot(
         },
       );
       rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+      finalizePolicyMutationReceipt(
+        sandboxName,
+        fs.readFileSync(snapshotPath, "utf-8"),
+        policyAuthority,
+      );
       return result;
     } else {
       assertLegacyMcpPolicyRestoreSafe(
@@ -4767,6 +4773,11 @@ function applyShieldsPolicySnapshot(
       },
     );
     rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+    finalizePolicyMutationReceipt(
+      sandboxName,
+      fs.readFileSync(runtimePolicyPath, "utf-8"),
+      policyAuthority,
+    );
     return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
   } finally {
     if (runtimePolicyIsTemp) {
@@ -5270,6 +5281,7 @@ function applyRecoveredShieldsDownForwardPolicy(
   if (result.status !== 0) {
     throw new Error("Interrupted Shields down forward policy could not be reapplied");
   }
+  finalizePolicyMutationReceipt(sandboxName, fs.readFileSync(policyPath, "utf-8"), policyAuthority);
   requireShieldsDownForwardPolicy(completion.authority);
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
 }
@@ -5924,6 +5936,7 @@ function shieldsDownWithoutHostLock(
   }
 
   console.log(`  Applying ${policyName} policy...`);
+  const appliedPolicyDocument = fs.readFileSync(policyPathForApply, "utf-8");
   let policySetResult: ReturnType<typeof run>;
   try {
     assertShieldsPolicyMutationAuthority(
@@ -6011,6 +6024,7 @@ function shieldsDownWithoutHostLock(
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
   try {
+    finalizePolicyMutationReceipt(sandboxName, appliedPolicyDocument, policyAuthority);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }

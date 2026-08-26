@@ -9,6 +9,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  managedPolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "./managed-policy-receipt-fixture";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
@@ -50,63 +56,47 @@ function runPermissivePolicy(options: {
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const policyOut = path.join(tmpDir, "policy.yaml");
   const livePolicyPath = path.join(tmpDir, "live-policy.yaml");
-  const livePolicyResponsePath = path.join(tmpDir, "live-policy-response.json");
   const stagedRecord = path.join(tmpDir, "staged.txt");
   fs.writeFileSync(
     livePolicyPath,
     options.livePolicy ?? YAML.stringify({ version: 1, network_policies: {} }),
   );
-  fs.writeFileSync(
-    livePolicyResponsePath,
-    JSON.stringify({
-      scope: "sandbox",
-      sandbox: options.sandboxName,
-      status: "effective",
-      policy_source: "sandbox",
-      policy: YAML.parse(fs.readFileSync(livePolicyPath, "utf-8")),
-    }),
-  );
-  const registration = options.agent
-    ? `registry.registerSandbox(${JSON.stringify({
-        name: options.sandboxName,
-        agent: options.agent,
-        policies: [],
-        ...(options.enabledChannels !== undefined || options.disabledChannels !== undefined
-          ? {
-              messaging: {
-                schemaVersion: 1,
-                plan: {
-                  schemaVersion: 1,
-                  sandboxName: options.sandboxName,
-                  agent: options.agent,
-                  workflow: "onboard",
-                  channels: [
-                    ...(options.enabledChannels ?? []).map((channelId) => ({
-                      channelId,
-                      configured: true,
-                      active: true,
-                      disabled: false,
-                    })),
-                    ...(options.disabledChannels ?? []).map((channelId) => ({
-                      channelId,
-                      configured: true,
-                      active: false,
-                      disabled: true,
-                    })),
-                  ],
-                  disabledChannels: options.disabledChannels ?? [],
-                  credentialBindings: [],
-                  networkPolicy: { presets: [], entries: [] },
-                  agentRender: [],
-                  buildSteps: [],
-                  stateUpdates: [],
-                  healthChecks: [],
-                },
-              },
-            }
-          : {}),
-      })});`
-    : "";
+  const sandboxEntry = managedSandboxEntry(options.sandboxName, options.agent ?? "openclaw");
+  if (options.enabledChannels !== undefined || options.disabledChannels !== undefined) {
+    Object.assign(sandboxEntry, {
+      messaging: {
+        schemaVersion: 1,
+        plan: {
+          schemaVersion: 1,
+          sandboxName: options.sandboxName,
+          agent: options.agent ?? "openclaw",
+          workflow: "onboard",
+          channels: [
+            ...(options.enabledChannels ?? []).map((channelId) => ({
+              channelId,
+              configured: true,
+              active: true,
+              disabled: false,
+            })),
+            ...(options.disabledChannels ?? []).map((channelId) => ({
+              channelId,
+              configured: true,
+              active: false,
+              disabled: true,
+            })),
+          ],
+          disabledChannels: options.disabledChannels ?? [],
+          credentialBindings: [],
+          networkPolicy: { presets: [], entries: [] },
+          agentRender: [],
+          buildSteps: [],
+          stateUpdates: [],
+          healthChecks: [],
+        },
+      },
+    });
+  }
+  const registration = `registry.registerSandbox(${JSON.stringify(sandboxEntry)});`;
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
@@ -117,9 +107,17 @@ policies.applyPermissivePolicy(${JSON.stringify(options.sandboxName)});
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: ${options.sandboxName}\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    cat ${JSON.stringify(livePolicyResponsePath)}
+    printf '%s\n' ${JSON.stringify(managedPolicyMetadata(options.sandboxName))}
+    exit 0
+  fi
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
   else
     if [ "${options.livePolicyStatus ?? 0}" -ne 0 ]; then
       printf 'message: fixture live policy read failure\n' >&2

@@ -5,6 +5,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { runHermesPortableUninstallOpenShell } from "../../adapters/openshell/hermes-portable-uninstall";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { GatewayRegistryDocument } from "../../state/gateway-registry";
 import {
   hermesPortableInferenceStateDirectory as inferenceDirectory,
@@ -205,9 +206,9 @@ function requireSandboxRow(row: SandboxEntry, receipt: HermesPortableConfiguredR
     row.lifecycleGeneration !== receipt.lifecycleGeneration ||
     row.provider !== "ollama-local" ||
     typeof row.model !== "string" ||
-    typeof row.credentialEnv !== "string" ||
+    row.credentialEnv !== null ||
     typeof row.hostLocalInferenceReceipt !== "string" ||
-    !row.hostLocalInferenceProvenance
+    row.hostLocalInferenceProvenance !== undefined
   ) {
     throw new Error(
       `Hermes Portable uninstall registry row '${receipt.sandboxName}' is incomplete`,
@@ -420,7 +421,7 @@ function loadAuthority(
       targetSha256: inference.receipt.publication.targetSha256,
       sandboxName,
       model: row.model!,
-      credentialEnv: row.credentialEnv!,
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
       runGatewayOpenshell: gatewayRunner(receipt, input, deps),
       allowAbsent: admittedAbsence.provider,
     });

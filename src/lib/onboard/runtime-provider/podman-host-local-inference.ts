@@ -182,6 +182,7 @@ interface ManagedSpec {
   readonly imageRef: string;
   readonly gpuDevices: readonly string[];
   readonly environment: readonly string[];
+  readonly ollamaContextLength: number | null;
   readonly mounts: readonly Required<HostLocalInferenceMount>[];
   readonly sharedMemory: string;
   readonly ipc: "private";
@@ -233,6 +234,7 @@ interface ManagedContainer {
   readonly status: string;
   readonly createArguments: readonly string[];
   readonly environmentNames: readonly string[];
+  readonly ollamaContextLength: number | null;
   readonly ipcMode: string;
   readonly networkId: string;
   readonly networkName: string;
@@ -257,7 +259,7 @@ interface ProbeSpec {
 
 interface ProbeSpecSet {
   readonly current: ProbeSpec;
-  readonly legacy: ProbeSpec;
+  readonly legacy: readonly ProbeSpec[];
 }
 
 interface OllamaModelPlacementAuthority {
@@ -511,6 +513,17 @@ function normalizedEnvironment(values: readonly string[] | undefined): readonly 
   return Object.freeze([...environment].sort());
 }
 
+function normalizedOllamaContextLength(
+  service: HostLocalManagedInferenceInput["service"],
+  value: number | undefined,
+): number | null {
+  if (value === undefined) return null;
+  if (service !== "ollama" || value !== 64_000) {
+    throw new Error("Podman managed Ollama context length is invalid.");
+  }
+  return value;
+}
+
 function normalizedMounts(
   values: readonly HostLocalInferenceMount[] | undefined,
 ): readonly Required<HostLocalInferenceMount>[] {
@@ -538,8 +551,8 @@ function requireSecretFreeCommand(
   }
 }
 
-function managedSecretEnvironment(
-  spec: Pick<ManagedSpec, "environment" | "service">,
+function managedOperationEnvironment(
+  spec: Pick<ManagedSpec, "environment" | "ollamaContextLength" | "service">,
   operationEnv: NodeJS.ProcessEnv,
 ): Readonly<Record<string, string>> {
   if (spec.service === "vllm" && spec.environment.length > 0) {
@@ -563,6 +576,9 @@ function managedSecretEnvironment(
       throw new Error(`Podman ${spec.service} inference requires environment '${name}'.`);
     }
     resolved[name] = value;
+  }
+  if (spec.ollamaContextLength !== null) {
+    resolved.OLLAMA_CONTEXT_LENGTH = String(spec.ollamaContextLength);
   }
   return Object.freeze(resolved);
 }
@@ -857,6 +873,10 @@ function normalizeManagedSpec(
   }
   const gpuDevices = Object.freeze([...requestedDevices].sort());
   const environment = normalizedEnvironment(input.environment);
+  const ollamaContextLength = normalizedOllamaContextLength(
+    input.service,
+    input.ollamaContextLength,
+  );
   const mounts = normalizedMounts(input.mounts);
   const sharedMemory = exactText(
     input.sharedMemory ?? "64m",
@@ -891,6 +911,7 @@ function normalizeManagedSpec(
     imageRef,
     gpuDevices,
     environment,
+    ollamaContextLength,
     mounts,
     sharedMemory,
     ipc,
@@ -1098,6 +1119,21 @@ function inspectedEnvironmentNames(value: unknown): readonly string[] {
   );
 }
 
+function inspectedOllamaContextLength(value: unknown): number | null {
+  const entries = exactStringArray(value ?? [], "Podman inference environment", 1024).filter(
+    (entry) => entry.startsWith("OLLAMA_CONTEXT_LENGTH="),
+  );
+  if (entries.length === 0) return null;
+  if (entries.length !== 1) {
+    throw new Error("Podman managed Ollama context length authority is ambiguous.");
+  }
+  const parsed = Number(entries[0]!.slice("OLLAMA_CONTEXT_LENGTH=".length));
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 1_048_576) {
+    throw new Error("Podman managed Ollama context length authority is invalid.");
+  }
+  return parsed;
+}
+
 function inspectedPortBindings(value: unknown): readonly string[] {
   const bindings = record(value, "Podman inference port bindings");
   const normalized: string[] = [];
@@ -1158,6 +1194,7 @@ function inspectContainer(engine: ContainerEngine, runtimeId: string): ManagedCo
     status: exactText(state.Status, SAFE_NAME, "Podman inference container state").toLowerCase(),
     createArguments: inspectedCreateArguments(config.CreateCommand),
     environmentNames: inspectedEnvironmentNames(config.Env),
+    ollamaContextLength: inspectedOllamaContextLength(config.Env),
     ipcMode: exactText(hostConfig.IpcMode, SAFE_NAME, "Podman inference IPC mode"),
     networkId: exactText(
       attachedNetwork.NetworkID ?? attachedNetwork.NetworkId,
@@ -1506,6 +1543,9 @@ function runArguments(spec: ManagedSpec): readonly string[] {
   ];
   for (const device of spec.gpuDevices) args.push("--device", device);
   for (const name of spec.environment) args.push("--env", name);
+  if (spec.ollamaContextLength !== null) {
+    args.push("--env", "OLLAMA_CONTEXT_LENGTH");
+  }
   args.push("--shm-size", spec.sharedMemory);
   args.push("--ipc", spec.ipc);
   args.push(spec.imageRef, ...spec.command);
@@ -1597,6 +1637,15 @@ function requireLaunchIdentity(
   const actualEnvironmentNames = container.environmentNames
     .filter((name) => controlledEnvironmentNames.has(name))
     .sort();
+  const ollamaContextArguments = repeatedOptionValues(container.createArguments, "--env").filter(
+    (name) => name === "OLLAMA_CONTEXT_LENGTH",
+  );
+  const expectedOllamaContextLength =
+    ollamaContextArguments.length === 0
+      ? null
+      : ollamaContextArguments.length === 1
+        ? 64_000
+        : Number.NaN;
   const sharedMemory = repeatedOptionValues(container.createArguments, "--shm-size");
   if (
     container.networkId !== endpoint.networkId ||
@@ -1605,6 +1654,7 @@ function requireLaunchIdentity(
     container.restartPolicy !== "unless-stopped" ||
     container.ipcMode !== "private" ||
     expectedEnvironmentNames.join("\n") !== actualEnvironmentNames.join("\n") ||
+    container.ollamaContextLength !== expectedOllamaContextLength ||
     sharedMemory.length !== 1 ||
     container.sharedMemoryBytes !== sharedMemoryBytes(sharedMemory[0] ?? "")
   ) {
@@ -1655,6 +1705,7 @@ function createProbeSpec(
   parent: ProbeParentAuthority,
   request: readonly string[],
   authority: PodmanInferenceAuthorityReceipt,
+  legacyRequests: readonly (readonly string[])[] = [],
 ): ProbeSpecSet {
   const curlMaxTimeSeconds =
     phase === "inference" ? INFERENCE_PROBE_CURL_MAX_TIME_SECONDS : PROBE_CURL_MAX_TIME_SECONDS;
@@ -1677,17 +1728,18 @@ function createProbeSpec(
   );
   // Temporary compatibility for retained probes from pre-fix PR #9906 qualification runs.
   // Remove when no preserved qualification host can resume a pre-timeout probe.
-  const legacyCanonical = Object.freeze({
-    providerId: PROVIDER_ID,
-    service,
-    phase,
-    endpoint,
-    probeImageRef: normalizedImage,
-    transactionId,
-    receiptTargetSha256,
-    parentAuthoritySha256,
-    request: normalizedRequest,
-  });
+  const legacyCanonical = (legacyRequest: readonly string[]) =>
+    Object.freeze({
+      providerId: PROVIDER_ID,
+      service,
+      phase,
+      endpoint,
+      probeImageRef: normalizedImage,
+      transactionId,
+      receiptTargetSha256,
+      parentAuthoritySha256,
+      request: legacyRequest,
+    });
   const canonical = Object.freeze({
     providerId: PROVIDER_ID,
     service,
@@ -1700,7 +1752,9 @@ function createProbeSpec(
     curlMaxTimeSeconds,
     request: normalizedRequest,
   });
-  const buildSpec = (identity: typeof canonical | typeof legacyCanonical): ProbeSpec => {
+  const buildSpec = (
+    identity: typeof canonical | ReturnType<typeof legacyCanonical>,
+  ): ProbeSpec => {
     const maxTimeSeconds =
       "curlMaxTimeSeconds" in identity ? identity.curlMaxTimeSeconds : PROBE_CURL_MAX_TIME_SECONDS;
     const specSha256 = digest(identity);
@@ -1756,9 +1810,23 @@ function createProbeSpec(
       launchArguments: translatePodmanLocalInferenceArgs(source, authority),
     });
   };
+  const normalizedLegacyRequests = legacyRequests.map((legacyRequest) =>
+    normalizedArguments(legacyRequest, "Podman inference legacy probe request"),
+  );
+  const legacy = [
+    buildSpec(legacyCanonical(normalizedRequest)),
+    ...normalizedLegacyRequests.flatMap((legacyRequest) => [
+      buildSpec(Object.freeze({ ...canonical, request: legacyRequest })),
+      buildSpec(legacyCanonical(legacyRequest)),
+    ]),
+  ].filter(
+    (spec, index, specs) =>
+      spec.name !== buildSpec(canonical).name &&
+      specs.findIndex((candidate) => candidate.name === spec.name) === index,
+  );
   return Object.freeze({
     current: buildSpec(canonical),
-    legacy: buildSpec(legacyCanonical),
+    legacy: Object.freeze(legacy),
   });
 }
 
@@ -1894,26 +1962,28 @@ function executeExactProbe(
   const captureFailure = (error: unknown) =>
     emitProviderFailure(phase, errorEvidence(redactor, error), onFailureEvidence, redactor);
   assertAuthority();
-  let legacyId: string | null;
-  try {
-    legacyId = lookupContainerId(engine, specs.legacy.name);
-  } catch (error) {
-    captureFailure(error);
-    throw new PodmanInferenceIndeterminateCleanupError(
-      "Podman inference legacy probe name lookup is indeterminate.",
-    );
-  }
-  if (legacyId !== null) {
-    cleanupExactProbe(
-      engine,
-      { runtimeId: legacyId },
-      specs.legacy,
-      phase,
-      onFailureEvidence,
-      redactor,
-      "retained-legacy",
-    );
-    assertAuthority();
+  for (const legacy of specs.legacy) {
+    let legacyId: string | null;
+    try {
+      legacyId = lookupContainerId(engine, legacy.name);
+    } catch (error) {
+      captureFailure(error);
+      throw new PodmanInferenceIndeterminateCleanupError(
+        "Podman inference legacy probe name lookup is indeterminate.",
+      );
+    }
+    if (legacyId !== null) {
+      cleanupExactProbe(
+        engine,
+        { runtimeId: legacyId },
+        legacy,
+        phase,
+        onFailureEvidence,
+        redactor,
+        "retained-legacy",
+      );
+      assertAuthority();
+    }
   }
   let existingId: string | null;
   try {
@@ -2349,10 +2419,10 @@ function probeOpenAiInference(
   onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void,
   redactor: PodmanInferenceRedactor,
 ): void {
-  const body = JSON.stringify({
+  const completionRequest = (maxTokens: number, deterministic: boolean) => ({
     model,
     messages: [{ role: "user", content: "Use the probe tool when it is available." }],
-    max_tokens: 512,
+    max_tokens: maxTokens,
     stream: false,
     ...(requireToolCalling
       ? {
@@ -2367,24 +2437,29 @@ function probeOpenAiInference(
             },
           ],
           tool_choice: "required",
+          ...(deterministic ? { temperature: 0 } : {}),
         }
       : {}),
   });
+  const body = JSON.stringify(completionRequest(requireToolCalling ? 4096 : 512, true));
   const proofEndpoint = requireProofEndpoint(endpoint);
+  const requestEndpoint = `http://${proofEndpoint.networkListenerIp ?? proofEndpoint.networkGatewayIp}:${String(proofEndpoint.port)}/v1/chat/completions`;
+  const requestArguments = (payload: string) => [
+    "--header",
+    "Content-Type: application/json",
+    "--data-binary",
+    payload,
+    requestEndpoint,
+  ];
   const probe = createProbeSpec(
     service,
     "inference",
     proofEndpoint,
     probeImageRef,
     parent,
-    [
-      "--header",
-      "Content-Type: application/json",
-      "--data-binary",
-      body,
-      `http://${proofEndpoint.networkListenerIp ?? proofEndpoint.networkGatewayIp}:${String(proofEndpoint.port)}/v1/chat/completions`,
-    ],
+    requestArguments(body),
     authorityReceipt,
+    requireToolCalling ? [requestArguments(JSON.stringify(completionRequest(512, false)))] : [],
   );
   executeExactProbe(
     engine,
@@ -3078,8 +3153,8 @@ export function createPodmanHostLocalInferenceRuntime(
       assertAuthority();
       inspectNetwork(spec.endpoint);
     };
-    const secretEnvironment = managedSecretEnvironment(spec, operationEnv);
-    requireSecretFreeCommand(spec.command, secretEnvironment, sensitiveRedactor);
+    const operationEnvironment = managedOperationEnvironment(spec, operationEnv);
+    requireSecretFreeCommand(spec.command, operationEnvironment, sensitiveRedactor);
     let phase: PodmanInferenceFailureEvidence["phase"] = "start";
     if (existingId !== null) {
       let container = requireSpecIdentity(inspectContainer(engine, existingId), spec);
@@ -3215,11 +3290,11 @@ export function createPodmanHostLocalInferenceRuntime(
         assertSpecAuthority();
         const translatedArgs = translatedRunArguments(spec, authority);
         const result =
-          spec.environment.length === 0
+          spec.environment.length === 0 && spec.ollamaContextLength === null
             ? engine.capture(translatedArgs, MUTATION_TIMEOUT_MS)
             : (engine.captureWithEnvironment?.(
                 translatedArgs,
-                secretEnvironment,
+                operationEnvironment,
                 MUTATION_TIMEOUT_MS,
               ) ??
               (() => {

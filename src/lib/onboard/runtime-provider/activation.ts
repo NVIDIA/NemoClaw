@@ -425,6 +425,11 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
       `provider '${providerId}' does not declare the complete lifecycle capability set`,
     );
   }
+  if (bundle.bootstrap.supported !== true || bundle.bootstrap.bootstrapKind !== "managed-image") {
+    throw new RuntimeProviderActivationError(
+      `provider '${providerId}' does not provide managed-image bootstrap authority`,
+    );
+  }
   const workload = bundle.workload.profile;
   const managedImages = workload.support;
   if (

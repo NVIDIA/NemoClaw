@@ -127,16 +127,12 @@ function runSandboxWarmupScript(
   try {
     const openshellBinary = resolveOpenshell();
     if (!openshellBinary) return;
-    spawnSync(
-      openshellBinary,
-      sandboxWarmupExecArgs(sandboxName, gatewayName, script),
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: WARMUP_TIMEOUT_MS,
-      },
-    );
+    spawnSync(openshellBinary, sandboxWarmupExecArgs(sandboxName, gatewayName, script), {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: WARMUP_TIMEOUT_MS,
+    });
   } catch {
     /* defense-in-depth — never throw from a warm-up path */
   }
