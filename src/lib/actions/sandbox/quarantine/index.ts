@@ -803,6 +803,22 @@ export function releaseSandboxQuarantine(
         "Sandbox quarantine target authority changed before release; the fence remains active.",
       );
     }
+    let releaseObservation;
+    try {
+      releaseObservation = providerQuarantine.observe(releaseInput, currentAuthority);
+    } catch {
+      return failed(
+        "Sandbox quarantine release could not confirm that the exact runtime is stopped and sandbox access is unavailable; the fence remains active.",
+      );
+    }
+    if (
+      releaseObservation.execution.outcome !== "succeeded" ||
+      releaseObservation.sandboxAccess.outcome !== "succeeded"
+    ) {
+      return failed(
+        "Sandbox quarantine release requires the exact runtime to be stopped and sandbox access to be unavailable; the fence remains active.",
+      );
+    }
     const receiptPath = sandboxQuarantineReceiptPath(
       sandboxName,
       fence.target.gatewayPort,
