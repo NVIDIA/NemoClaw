@@ -258,6 +258,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
+    [
+      "publication dependency cycle",
+      (value) => (value.jobs["base-image-publication"].needs = "generate-matrix"),
+    ],
     ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     [
       "matrix workload source",

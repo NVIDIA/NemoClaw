@@ -596,7 +596,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
-    needs: "generate-matrix",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
