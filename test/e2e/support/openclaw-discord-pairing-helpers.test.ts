@@ -287,12 +287,15 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
   });
 
-  it("uses distinct policy hosts for Slack REST and websocket traffic", () => {
+  it("uses distinct ports on the OpenShell host for Slack REST and websocket traffic", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain(
-      'function receiveSlackSocketEvent() {\n  const host = "host.docker.internal";',
+      'function receiveSlackSocketEvent() {\n  const host = "host.openshell.internal";',
     );
     expect(SLACK_PAIRING_SCRIPT).toContain(
       'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
     );
   });
 
