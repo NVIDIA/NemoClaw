@@ -78,6 +78,14 @@ export const REQUIRED_PUBLISHER_JOBS = [
   "Build and push Hermes base image",
   "Build and push Deep Agents Code base image",
 ] as const;
+const PUBLISHER_JOB_ALIASES = new Map<string, (typeof REQUIRED_PUBLISHER_JOBS)[number]>([
+  ["Build and push OpenClaw base image", "Build and push OpenClaw base image"],
+  ["Manifests / OpenClaw", "Build and push OpenClaw base image"],
+  ["Build and push Hermes base image", "Build and push Hermes base image"],
+  ["Manifests / Hermes", "Build and push Hermes base image"],
+  ["Build and push Deep Agents Code base image", "Build and push Deep Agents Code base image"],
+  ["Manifests / Deep Agents Code", "Build and push Deep Agents Code base image"],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -479,7 +487,7 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     if (typeof job.name !== "string" || job.name.length === 0) {
       throw new Error(`publisher job ${index} name is invalid`);
     }
-    const requiredName = REQUIRED_PUBLISHER_JOBS.find((name) => name === job.name);
+    const requiredName = PUBLISHER_JOB_ALIASES.get(job.name);
     if (!requiredName) continue;
     if (typeof job.status !== "string") {
       throw new Error(`publisher job ${requiredName} status is invalid; ${run.url}`);

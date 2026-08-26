@@ -633,6 +633,16 @@ describe("base-image publication evidence", () => {
     ).toThrow(/provenance does not match/u);
   });
 
+  it("accepts the renamed trusted publisher jobs", () => {
+    const jobs = [
+      publisherJob("Manifests / OpenClaw", { id: 1 }),
+      publisherJob("Manifests / Hermes", { id: 2 }),
+      publisherJob("Manifests / Deep Agents Code", { id: 3 }),
+    ];
+
+    expect(validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toBe("ready");
+  });
+
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
     const jobs = successfulJobs().map((job) =>
       job.name === "Build and push Hermes base image"
