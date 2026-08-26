@@ -281,6 +281,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
     const revision = command.match(/openshell:resolve:env:(v[0-9]{1,20})_FAKE_MCP_SECRET/)?.[1];
+    fs.appendFileSync(marker("adapter-write-log"), (revision || "missing") + "\n", { mode: 0o600 });
     fs.writeFileSync(marker("adapter"), (revision || "missing") + "\n", { mode: 0o600 });
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
@@ -718,6 +719,15 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+      const finalProviderRevision = `v${fs.readFileSync(
+        path.join(home, "provider-version.marker"),
+        "utf8",
+      )}`;
+      const adapterWrites = fs
+        .readFileSync(path.join(home, "adapter-write-log.marker"), "utf8")
+        .trim()
+        .split("\n");
+      expect(adapterWrites).toEqual([finalProviderRevision]);
       expect(readBridge(home).addState).toBeUndefined();
       const status = runCommittedStatusProcess(home);
       expect(status.status, `${status.stdout}\n${status.stderr}`).toBe(0);
