@@ -39,7 +39,10 @@ const testState = vi.hoisted(() => {
     originalEnv,
     policyApplyCalls: 0,
     removedPolicyKeys: new Set<string>(),
-    providers: new Map<string, { credential: string; id: string; resourceVersion?: number }>(),
+    providers: new Map<
+      string,
+      { credential: string; credentialRevision?: string; id: string; resourceVersion?: number }
+    >(),
     resolveHostAddresses: vi.fn(),
     attachedProviders: new Set<string>(),
     recoverNamedGatewayRuntime: vi.fn(),
@@ -1336,22 +1339,22 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       });
       registry.addCustomPolicy("alpha", ownedPolicy("github"));
       registry.addCustomPolicy("alpha", ownedPolicy("slack"));
-      // Simulate a prior process dying after the first detach but before a durable
-      // prepared marker. The retry must own rollback of this already-absent binding.
+      const opaqueRevision = "v4067750153477477215";
+      testState.providers.get("alpha-mcp-github")!.credentialRevision = opaqueRevision;
+      // The prior process died after the first detach; retry owns rollback of the absent binding.
       testState.attachedProviders.delete("alpha-mcp-github");
       testState.failProviderDetach = "alpha-mcp-slack";
 
       const message = await captureMessage(() => bridge[prepareFunction]("alpha"));
-
       expect(message).toContain("provider detach failed");
-      expect([...testState.attachedProviders].sort()).toEqual([
-        "alpha-mcp-github",
-        "alpha-mcp-slack",
-      ]);
+      expect([...testState.attachedProviders].sort()).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
       expect(
         testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
       ).toBe(true);
       expect(testState.adapterRegistered).toBe(true);
+      expect(testState.adapterCalls.join("\n")).toContain(
+        `openshell:resolve:env:${opaqueRevision}_GITHUB_TOKEN`,
+      );
     },
   );
 
