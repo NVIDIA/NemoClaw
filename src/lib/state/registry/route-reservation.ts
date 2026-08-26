@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { isWebSearchProvider } from "../../inference/web-search/provider";
 import type { SandboxEntry } from "./types";
 
 const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
@@ -72,8 +73,7 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   return (
     entry.webSearchProvider === undefined ||
     entry.webSearchProvider === null ||
-    entry.webSearchProvider === "brave" ||
-    entry.webSearchProvider === "tavily"
+    isWebSearchProvider(entry.webSearchProvider)
   );
 }
 

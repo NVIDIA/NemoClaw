@@ -346,7 +346,7 @@ export function createCreatedSandboxLifecycle(
   observe: ObserveCreatedSandbox,
   generationOverride?: string,
 ): CreatedSandboxLifecycle {
-  const generation = generationOverride ?? runtime.targetGeneration ?? randomUUID();
+  const generation = runtime.targetGeneration ?? generationOverride ?? randomUUID();
   requireLifecycleGeneration(target.sandboxName, generation);
   return {
     generation,

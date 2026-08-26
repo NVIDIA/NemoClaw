@@ -170,10 +170,15 @@ describe("Hermes portable policy authority", () => {
   });
 
   it.each([
-    ["a missing tier preset", { ...PERSONAL_REGISTRY, policies: [] }],
+    [
+      "a missing tier preset",
+      { ...PERSONAL_REGISTRY, policies: [] },
+      "finalized policy tier disagrees with preset authority",
+    ],
     [
       "an unknown preset",
       { ...PERSONAL_REGISTRY, policyTier: "restricted", policies: ["not-a-real-preset"] },
+      "cannot compose finalized registry preset authority",
     ],
     [
       "a duplicate preset",
@@ -181,6 +186,7 @@ describe("Hermes portable policy authority", () => {
         ...PERSONAL_REGISTRY,
         policies: ["personal-open-internet", "personal-open-internet"],
       },
+      "finalized registry preset authority is invalid",
     ],
     [
       "a custom policy",
@@ -188,12 +194,16 @@ describe("Hermes portable policy authority", () => {
         ...PERSONAL_REGISTRY,
         customPolicies: [{ name: "custom", content: "network_policies: {}\n" }],
       },
+      "finalized custom policy authority is not supported",
     ],
-  ])("rejects finalized registry authority with %s (#9211)", (_label, entry) => {
-    expect(() =>
-      resolveHermesPortableExpectedPolicyBytes(CREATE, entry satisfies SandboxEntry),
-    ).toThrow("Hermes portable policy authority");
-  });
+  ])(
+    "rejects finalized registry authority with %s (#9211)",
+    (_label, entry, expectedMessage) => {
+      expect(() =>
+        resolveHermesPortableExpectedPolicyBytes(CREATE, entry satisfies SandboxEntry),
+      ).toThrow(`Hermes portable policy authority ${expectedMessage}`);
+    },
+  );
 
   it.each([
     {

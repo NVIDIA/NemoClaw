@@ -875,9 +875,10 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
       ...updates,
     } as Parameters<typeof classifySandboxInferenceRouteReservation>[1];
 
-    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry).kind).toBe(
-      "conflict",
-    );
+    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry)).toMatchObject({
+      kind: "conflict",
+      detail: "the inference route reservation carry metadata is malformed",
+    });
   });
 
   it.each([
@@ -898,9 +899,10 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
         ...updates,
       } as Parameters<typeof classifySandboxInferenceRouteReservation>[1];
 
-      expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry).kind).toBe(
-        "conflict",
-      );
+      expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry)).toMatchObject({
+        kind: "conflict",
+        detail: "the inference route reservation has sandbox authority",
+      });
     },
   );
 });

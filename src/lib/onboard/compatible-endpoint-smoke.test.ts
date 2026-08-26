@@ -468,7 +468,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
   it.each(
     allAgentProofAuthorities,
-  )("accepts exact connection refusal as a direct-host deny proof for $agentName", ({
+  )("accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)", ({
     authority,
   }) => {
     const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
@@ -478,7 +478,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   });
 
   it.each(["dns", "timeout"] as const)(
-    "does not accept a %s transport error as a direct-host deny proof",
+    "does not accept a %s transport error as a direct-host deny proof (#9211)",
     (directError) => {
       const result = runProviderNeutralScript({
         authority: allAgentProofAuthorities[0].authority,

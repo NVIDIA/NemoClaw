@@ -151,7 +151,7 @@ describe("decideSandboxResume", () => {
   });
 
   it.each(["missing", "not_ready"])(
-    "continues an owned recreate when the outer transaction leaves the source %s",
+    "continues an owned recreate when the outer transaction leaves the source %s (#10056)",
     (sandboxReuseState) => {
       expect(
         decideSandboxResume(
@@ -189,7 +189,7 @@ describe("decideSandboxResume", () => {
     },
   );
 
-  it("does not continue an active recreate when source state is unknown", () => {
+  it("does not continue an active recreate when source state is unknown (#10056)", () => {
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -274,7 +274,7 @@ describe("decideSandboxResume", () => {
       "Hermes inference route configuration changed",
     ],
   ] as const)(
-    "uses compatibility recreate for %s drift even when not-ready",
+    "uses compatibility recreate for %s drift even when not-ready (#10056)",
     (_label, drift, expectedNoteFragment) => {
       expect(
         decideSandboxResume(
@@ -323,7 +323,7 @@ describe("decideSandboxResume", () => {
       false,
     ],
   ] as const)(
-    "uses runtime-configuration recreate for %s even when not-ready",
+    "uses runtime-configuration recreate for %s even when not-ready (#10056)",
     (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
       expect(
         decideSandboxResume(
@@ -349,7 +349,7 @@ describe("decideSandboxResume", () => {
     ],
     ["tool disclosure change", { toolDisclosureChanged: true }, "configuration changed", false],
   ] as const)(
-    "uses tool-disclosure recreate for %s even when not-ready",
+    "uses tool-disclosure recreate for %s even when not-ready (#10056)",
     (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
       expect(
         decideSandboxResume(

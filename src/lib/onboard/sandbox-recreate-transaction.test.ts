@@ -122,7 +122,7 @@ function transactionAt(
   };
 }
 
-function creatingLifecycleFixture() {
+function creatingLifecycleFixture(generationOverride?: string) {
   const session = createSession({ sandboxName: "alpha" });
   beginSandboxRecreateTransaction(
     session,
@@ -156,7 +156,12 @@ function creatingLifecycleFixture() {
   runtime.confirmDeleted();
   runtime.advance("creating");
   return {
-    lifecycle: createCreatedSandboxLifecycle(runtime, CREATED_TARGET, () => observation),
+    lifecycle: createCreatedSandboxLifecycle(
+      runtime,
+      CREATED_TARGET,
+      () => observation,
+      generationOverride,
+    ),
     session,
     setObservation: (next: SandboxRecreateObservation) => {
       observation = next;
@@ -1078,6 +1083,12 @@ describe("journal-bound source proof", () => {
 });
 
 describe("created sandbox lifecycle registration", () => {
+  it("keeps the active recreate target ahead of an older recovered generation (#10056)", () => {
+    const fixture = creatingLifecycleFixture("33333333-3333-4333-8333-333333333333");
+
+    expect(fixture.lifecycle.generation).toBe(TARGET_GENERATION);
+  });
+
   it.each([
     ["not Ready", { state: "not_ready" as const, liveIdentityFingerprint: null }, /Ready/u],
     [
