@@ -366,7 +366,17 @@ The collector checks that the approval was recorded after baseline collection; i
 Bind documentation evidence to the commit recorded in `snapshot.json`:
 
 ```bash
-FROZEN_COMMIT="$(jq -er '.repository.commitSha' "$SLIDE_RUN/snapshot.json")"
+FROZEN_COMMIT="$(
+  node -e '
+    const snapshot = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+    const commitSha = snapshot.repository?.commitSha;
+    if (typeof commitSha !== "string" || commitSha.length === 0) {
+      process.stderr.write("Snapshot repository.commitSha must be a non-empty string\n");
+      process.exit(1);
+    }
+    process.stdout.write(commitSha);
+  ' "$SLIDE_RUN/snapshot.json"
+)" &&
 
 node --import tsx "$SLIDE_SKILL/scripts/collect-doc-evidence.mts" \
   --repo-root "$SLIDE_REPO" \
@@ -404,12 +414,22 @@ Verify those local prerequisites without network access:
 
 ```bash
 OFFLINE_SNAPSHOT="/absolute/path/to/the-explicit-snapshot.json"
-FROZEN_COMMIT="$(jq -er '.repository.commitSha' "$OFFLINE_SNAPSHOT")"
+FROZEN_COMMIT="$(
+  node -e '
+    const snapshot = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+    const commitSha = snapshot.repository?.commitSha;
+    if (typeof commitSha !== "string" || commitSha.length === 0) {
+      process.stderr.write("Snapshot repository.commitSha must be a non-empty string\n");
+      process.exit(1);
+    }
+    process.stdout.write(commitSha);
+  ' "$OFFLINE_SNAPSHOT"
+)" &&
 
-git -C "$SLIDE_REPO" remote get-url origin
-git -C "$SLIDE_REPO" cat-file -e "${FROZEN_COMMIT}^{commit}"
+git -C "$SLIDE_REPO" remote get-url origin &&
+git -C "$SLIDE_REPO" cat-file -e "${FROZEN_COMMIT}^{commit}" &&
 git -C "$SLIDE_REPO" merge-base --is-ancestor \
-  "$FROZEN_COMMIT" refs/remotes/origin/main
+  "$FROZEN_COMMIT" refs/remotes/origin/main &&
 cp "$OFFLINE_SNAPSHOT" "$SLIDE_RUN/snapshot.json"
 ```
 

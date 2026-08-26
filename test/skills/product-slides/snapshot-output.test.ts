@@ -11,16 +11,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  waitForSnapshotWorker,
-  writeGitHubSnapshotOutput,
-  type SnapshotOutputOperations,
-} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/collect-github-snapshot.mts";
-import {
-  canonicalJson,
-  canonicalSha256,
-  withoutTopLevelKey,
-} from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/validate-slide-model.mts";
+import { waitForSnapshotWorker } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/collect-github-snapshot.mts";
+import { canonicalJson } from "../../../.agents/skills/nemoclaw-maintainer-product-slides/scripts/validate-slide-model.mts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const COLLECTOR = path.join(
@@ -28,27 +20,8 @@ const COLLECTOR = path.join(
   ".agents/skills/nemoclaw-maintainer-product-slides/scripts/collect-github-snapshot.mts",
 );
 
-function snapshotFixture(): Record<string, unknown> {
-  const snapshot: Record<string, unknown> = {
-    asOf: "2026-08-26T12:00:00.000Z",
-    collection: { complete: true },
-    repository: { nameWithOwner: "NVIDIA/NemoClaw" },
-  };
-  snapshot.snapshotSha256 = canonicalSha256(withoutTopLevelKey(snapshot, "snapshotSha256"));
-  return snapshot;
-}
-
 function injectedFailure(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
-}
-
-function captureError(run: () => void): Error {
-  try {
-    run();
-  } catch (error) {
-    return error as Error;
-  }
-  throw new Error("Expected the operation to fail");
 }
 
 async function withTemporaryDirectory(
@@ -150,9 +123,12 @@ function installFixtureGh(directory: string): string {
 
 type CollectorFixtureMode =
   | "normal"
+  | "ambiguous-link"
   | "cleanup-failure"
+  | "competing-output"
   | "termination-failure"
   | "parent-replacement"
+  | "staging-write-failure"
   | "staging-replacement";
 
 type CollectorInvocation = {
@@ -202,11 +178,22 @@ function installCollectorDriver(
       "    unlink: (temporaryPath) => {",
       '      throw Object.assign(new Error(`unsafe raw path: ${temporaryPath}`), { code: "EACCES", syscall: "unlink", path: temporaryPath });',
       "    },",
+      '  } : mode === "staging-write-failure" ? {',
+      "    write: () => {",
+      '      throw Object.assign(new Error("injected staging write failure"), { code: "ENOSPC" });',
+      "    },",
+      '  } : mode === "ambiguous-link" ? {',
+      "    link: (temporaryPath, outputPath) => {",
+      "      fs.linkSync(temporaryPath, outputPath);",
+      '      throw Object.assign(new Error("injected ambiguous link result"), { code: "EIO" });',
+      "    },",
       "  } : undefined,",
       '  terminateWorkerTree: mode === "termination-failure" ? () => new Promise(() => undefined) : undefined,',
       '  treeTerminationTimeoutMilliseconds: mode === "termination-failure" ? 50 : undefined,',
       '  workerCloseTimeoutMilliseconds: mode === "termination-failure" ? 50 : undefined,',
-      '  beforePublish: mode === "parent-replacement" ? (_temporaryPath, outputPath) => {',
+      '  beforePublish: mode === "competing-output" ? (_temporaryPath, outputPath) => {',
+      '    fs.writeFileSync(outputPath, "competing snapshot bytes\\n", { mode: 0o600 });',
+      '  } : mode === "parent-replacement" ? (_temporaryPath, outputPath) => {',
       "    const outputParentPath = path.dirname(outputPath);",
       "    fs.renameSync(outputParentPath, process.env.SNAPSHOT_MOVED_PARENT);",
       "    fs.mkdirSync(outputParentPath, { mode: 0o700 });",
@@ -527,39 +514,6 @@ async function waitForBlockedCollector(
 }
 
 describe("GitHub snapshot output", () => {
-  it("publishes private canonical bytes after write, fsync, and close", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot.json");
-      const snapshot = snapshotFixture();
-      const events: string[] = [];
-      const operations: Partial<SnapshotOutputOperations> = {
-        write: (descriptor, value) => {
-          events.push("write");
-          fs.writeFileSync(descriptor, value, "utf8");
-        },
-        fsync: (descriptor) => {
-          events.push("fsync");
-          fs.fsyncSync(descriptor);
-        },
-        close: (descriptor) => {
-          events.push("close");
-          fs.closeSync(descriptor);
-        },
-        link: (temporaryPath, targetPath) => {
-          events.push("link");
-          fs.linkSync(temporaryPath, targetPath);
-        },
-      };
-
-      writeGitHubSnapshotOutput(snapshot, outputPath, { operations });
-
-      expect(events).toEqual(["write", "fsync", "close", "link"]);
-      expect(fs.readFileSync(outputPath, "utf8")).toBe(canonicalJson(snapshot));
-      expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
-      expect(fs.readdirSync(directory)).toEqual(["snapshot.json"]);
-    });
-  });
-
   it.skipIf(process.platform === "win32")(
     "publishes one canonical snapshot through the offline POSIX worker and parent finalization path",
     async () => {
@@ -1006,173 +960,158 @@ describe("GitHub snapshot output", () => {
     30_000,
   );
 
-  it("removes the quoted temporary path when staging fails", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot [staging]\n#.json");
-      const operations: Partial<SnapshotOutputOperations> = {
-        write: () => {
-          throw injectedFailure("injected staging failure", "ENOSPC");
-        },
-      };
-
-      const failure = captureError(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          operations,
-        }),
-      );
-
-      expect(failure.message).toContain(
-        `staging failed for ${JSON.stringify(canonicalPathInExistingParent(outputPath))}`,
-      );
-      expect(failure.message).toContain("injected staging failure");
-      expect(failure.message).toMatch(/Removed invocation-created temporary path ".*\\n.*"/u);
-      expect(fs.existsSync(outputPath)).toBe(false);
-      expect(fs.readdirSync(directory)).toEqual([]);
-    });
-  });
-
-  it("removes the witness when finalization fails with no target", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot.json");
-      const operations: Partial<SnapshotOutputOperations> = {
-        link: () => {
-          throw injectedFailure("injected finalization failure", "EIO");
-        },
-      };
-
-      expect(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          operations,
-        }),
-      ).toThrow(/This invocation did not publish the snapshot.*Removed invocation-created/u);
-      expect(fs.existsSync(outputPath)).toBe(false);
-      expect(fs.readdirSync(directory)).toEqual([]);
-    });
-  });
-
-  it("preserves competing bytes when a pre-link race makes real linkSync return EEXIST", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot.json");
-      const sentinel = Buffer.from("competing trusted snapshot bytes\n");
-
-      expect(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          beforeLink: (_temporaryPath, targetPath) => {
-            fs.writeFileSync(targetPath, sentinel);
+  it.skipIf(process.platform === "win32")(
+    "removes the worker stage when snapshot writing fails",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputPath = path.join(directory, "staging-write-failure.json");
+        const binDirectory = installFixtureGh(directory);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "staging-write-fixture-gh-marker"),
+          outputPath,
+          mode: "staging-write-failure",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
           },
-        }),
-      ).toThrow(/already exists and was not changed.*Removed invocation-created/u);
-      expect(fs.readFileSync(outputPath)).toEqual(sentinel);
-      expect(fs.readdirSync(directory)).toEqual(["snapshot.json"]);
-    });
-  });
+        });
 
-  it("preserves the target and witness when link completion is ambiguous", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot.json");
-      let temporaryPath = "";
-      const operations: Partial<SnapshotOutputOperations> = {
-        link: (sourcePath, targetPath) => {
-          fs.linkSync(sourcePath, targetPath);
-          throw injectedFailure("injected ambiguous link result", "EIO");
-        },
-      };
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain("injected staging write failure");
+          expect(fs.existsSync(outputPath)).toBe(false);
+          expect(
+            fs.readdirSync(directory).filter((name) => name.includes(".nemoclaw-stage-")),
+          ).toEqual([]);
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
 
-      const failure = captureError(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          operations,
-          beforeLink: (sourcePath) => {
-            temporaryPath = sourcePath;
+  it.skipIf(process.platform === "win32")(
+    "preserves competing output and removes the worker stage",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputPath = path.join(directory, "competing-output.json");
+        const binDirectory = installFixtureGh(directory);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "competing-output-fixture-gh-marker"),
+          outputPath,
+          mode: "competing-output",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
           },
-        }),
-      );
+        });
 
-      expect(failure.message).toContain(
-        `Preserved possible snapshot target ${JSON.stringify(canonicalPathInExistingParent(outputPath))}. Preserved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
-      );
-      expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(temporaryPath));
-      expect(fs.statSync(outputPath).ino).toBe(fs.statSync(temporaryPath).ino);
-    });
-  });
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain(
+            "Snapshot output already exists and was not changed",
+          );
+          expect(fs.readFileSync(outputPath, "utf8")).toBe("competing snapshot bytes\n");
+          expect(
+            fs.readdirSync(directory).filter((name) => name.includes(".nemoclaw-stage-")),
+          ).toEqual([]);
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
 
-  it("preserves the published target when post-link witness cleanup fails", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, "snapshot [published]\n#.json");
-      let temporaryPath = "";
-      const operations: Partial<SnapshotOutputOperations> = {
-        unlink: () => {
-          throw injectedFailure("injected cleanup failure", "EACCES");
-        },
-      };
-
-      const failure = captureError(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          operations,
-          beforeLink: (sourcePath) => {
-            temporaryPath = sourcePath;
+  it.skipIf(process.platform === "win32")(
+    "preserves the worker target and witness after ambiguous link completion",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputPath = path.join(directory, "ambiguous-output.json");
+        const binDirectory = installFixtureGh(directory);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "ambiguous-output-fixture-gh-marker"),
+          outputPath,
+          mode: "ambiguous-link",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
           },
-        }),
-      );
+        });
 
-      expect(failure.message).toContain(
-        `Preserved published snapshot target ${JSON.stringify(canonicalPathInExistingParent(outputPath))}. Unresolved invocation-created temporary path ${JSON.stringify(temporaryPath)}`,
-      );
-      expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(temporaryPath));
-      expect(fs.statSync(outputPath).ino).toBe(fs.statSync(temporaryPath).ino);
-    });
-  });
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain("Target ownership is ambiguous");
+          const stagingDirectories = fs
+            .readdirSync(directory)
+            .filter((name) => name.includes(".nemoclaw-stage-"));
+          expect(stagingDirectories).toHaveLength(1);
+          const witnessPath = path.join(directory, stagingDirectories[0], "snapshot.json");
+          expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(witnessPath));
+          expect(fs.statSync(outputPath).ino).toBe(fs.statSync(witnessPath).ino);
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
 
-  it("quotes newline-bearing paths without repeating raw filesystem error paths", async () => {
-    await withTemporaryDirectory((directory) => {
-      const outputPath = path.join(directory, 'snapshot [quoted] "value"\n#.json');
-      let temporaryPath = "";
-      const failure = captureError(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          beforeLink: (sourcePath, targetPath) => {
-            temporaryPath = sourcePath;
-            throw Object.assign(new Error(`unsafe ${sourcePath} ${targetPath}`), {
-              code: "EIO",
-              syscall: "link",
-              path: sourcePath,
-              dest: targetPath,
-            });
+  it.skipIf(process.platform === "win32")(
+    "preserves the published worker target when witness cleanup fails",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const outputPath = path.join(directory, "cleanup-failure.json");
+        const binDirectory = installFixtureGh(directory);
+        const invocation = startCollectorInvocation({
+          directory,
+          binDirectory,
+          markerPath: path.join(directory, "cleanup-failure-fixture-gh-marker"),
+          outputPath,
+          mode: "cleanup-failure",
+          arguments: ["--release-count", "1"],
+          environment: {
+            FAKE_NODE: process.execPath,
+            FAKE_GH_DRIVER: path.join(directory, "fixture-gh.mts"),
           },
-        }),
-      );
+        });
 
-      const canonicalOutputPath = canonicalPathInExistingParent(outputPath);
-      expect(failure.message).toContain(JSON.stringify(canonicalOutputPath));
-      expect(failure.message).toContain(JSON.stringify(temporaryPath));
-      expect(failure.message).toContain("EIO during link");
-      expect(failure.message).not.toContain(canonicalOutputPath);
-      expect(failure.message).not.toContain(temporaryPath);
-      expect(failure.message.split("\n")).toHaveLength(1);
-    });
-  });
-
-  it("escapes C1 and Unicode line-separator controls into one physical diagnostic line", async () => {
-    await withTemporaryDirectory((directory) => {
-      const diagnosticControls = "\u0080\u0085\u009f\u2028\u2029";
-      const outputPath = path.join(directory, `snapshot-${diagnosticControls}.json`);
-
-      const failure = captureError(() =>
-        writeGitHubSnapshotOutput(snapshotFixture(), outputPath, {
-          beforeLink: () => {
-            throw Object.assign(new Error(`unsafe diagnostic ${diagnosticControls}`), {
-              code: "EIO",
-              syscall: "link",
-            });
-          },
-        }),
-      );
-
-      expect(failure.message).toContain("\\u0080\\u0085\\u009f\\u2028\\u2029");
-      expect(failure.message).not.toMatch(/[\u0080-\u009f\u2028\u2029]/u);
-      expect(failure.message).not.toMatch(/[\r\n]/u);
-      expect(fs.existsSync(outputPath)).toBe(false);
-      expect(fs.readdirSync(directory)).toEqual([]);
-    });
-  });
+        try {
+          const [code, terminatingSignal] = await waitForClose(invocation.child, 30_000);
+          expect(code).toBe(1);
+          expect(terminatingSignal).toBeNull();
+          expect(invocation.stderr()).toContain("GitHub snapshot was published");
+          expect(invocation.stderr()).toContain("temporary cleanup failed");
+          const stagingDirectories = fs
+            .readdirSync(directory)
+            .filter((name) => name.includes(".nemoclaw-stage-"));
+          expect(stagingDirectories).toHaveLength(1);
+          const witnessPath = path.join(directory, stagingDirectories[0], "snapshot.json");
+          expect(fs.readFileSync(outputPath)).toEqual(fs.readFileSync(witnessPath));
+          expect(fs.statSync(outputPath).ino).toBe(fs.statSync(witnessPath).ino);
+        } finally {
+          await stopCollectorFixture(invocation);
+        }
+      });
+    },
+    40_000,
+  );
 
   describe.skipIf(process.platform === "win32")("POSIX worker process-group cancellation", () => {
     it.each([

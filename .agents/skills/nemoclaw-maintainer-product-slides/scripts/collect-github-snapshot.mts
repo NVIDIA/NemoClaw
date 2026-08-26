@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import {
   closeSync,
   constants as fsConstants,
@@ -545,11 +544,6 @@ export type SnapshotOutputOperations = {
   unlink: (filePath: string) => void;
 };
 
-type SnapshotOutputOptions = {
-  operations?: Partial<SnapshotOutputOperations>;
-  beforeLink?: (temporaryPath: string, outputPath: string) => void;
-};
-
 const DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS: SnapshotOutputOperations = {
   open: (filePath, flags, mode) => openSync(filePath, flags, mode),
   fchmod: (descriptor, mode) => fchmodSync(descriptor, mode),
@@ -619,29 +613,6 @@ function errorMessage(error: unknown): string {
 
 function quotePath(filePath: string): string {
   return escapeDiagnosticControls(JSON.stringify(filePath));
-}
-
-function createPrivateSnapshotStage(
-  outputPath: string,
-  operations: SnapshotOutputOperations,
-): { descriptor: number; temporaryPath: string } {
-  const parent = path.dirname(outputPath);
-  const base = path.basename(outputPath);
-  const flags =
-    fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0);
-  for (let attempt = 0; attempt < 32; attempt += 1) {
-    const temporaryPath = path.join(
-      parent,
-      `.${base}.nemoclaw-stage-${process.pid}-${randomBytes(12).toString("hex")}`,
-    );
-    try {
-      const descriptor = operations.open(temporaryPath, flags, 0o600);
-      return { descriptor, temporaryPath };
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-    }
-  }
-  throw new Error(`Could not allocate a unique snapshot staging path for ${quotePath(outputPath)}`);
 }
 
 function sameFile(
@@ -777,7 +748,7 @@ function reconcileLinkFailure(
 }
 
 type SnapshotFinalizationOptions = {
-  beforeLink?: SnapshotOutputOptions["beforeLink"];
+  beforeLink?: (temporaryPath: string, outputPath: string) => void;
   assertBoundary?: () => void;
   confirmPublication?: () => void;
 };
@@ -806,49 +777,6 @@ function finalizeSnapshotStage(
       `GitHub snapshot was published at ${quotePath(outputPath)}, but temporary cleanup failed. Preserved published snapshot target ${quotePath(outputPath)}. ${cleanup.detail}.`,
     );
   }
-}
-
-export function writeGitHubSnapshotOutput(
-  snapshot: Record<string, unknown>,
-  requestedOutputPath: string,
-  options: SnapshotOutputOptions = {},
-): void {
-  const outputBoundary = prepareProtectedOutputBoundary(requestedOutputPath, "Snapshot");
-  const outputPath = outputBoundary.outputPath;
-
-  const operations = {
-    ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
-    ...options.operations,
-  };
-  let stage: { descriptor: number; temporaryPath: string };
-  try {
-    stage = createPrivateSnapshotStage(outputPath, operations);
-  } catch (error) {
-    throw new Error(
-      `GitHub snapshot staging allocation failed for ${quotePath(outputPath)}: ${errorMessage(error)}`,
-      { cause: error },
-    );
-  }
-  try {
-    writeSnapshotToDescriptor(snapshot, stage.descriptor, operations);
-  } catch (error) {
-    const cleanup = removeTemporaryPath(stage.temporaryPath, operations);
-    throw new Error(
-      `GitHub snapshot staging failed for ${quotePath(outputPath)}: ${errorMessage(error)}. This invocation did not publish the snapshot. ${cleanup.detail}.`,
-      { cause: error },
-    );
-  }
-  finalizeSnapshotStage(stage.temporaryPath, outputPath, operations, {
-    beforeLink: options.beforeLink,
-    assertBoundary: () => {
-      const boundaryFailure = protectedOutputBoundaryFailure(outputBoundary);
-      if (boundaryFailure) {
-        throw new SnapshotPublicationBoundaryError(
-          `${boundaryFailure}. Preserved invocation-created temporary path ${quotePath(stage.temporaryPath)}`,
-        );
-      }
-    },
-  });
 }
 
 function validUtcDateTime(value: unknown): value is string {
@@ -3046,7 +2974,10 @@ function terminateWindowsSnapshotWorkerTree(child: ChildProcess): Promise<boolea
   });
 }
 
-function runSnapshotWorker(options: CliOptions): void {
+function runSnapshotWorker(
+  options: CliOptions,
+  outputOperations: Partial<SnapshotOutputOperations> = {},
+): void {
   if (process.env.NEMOCLAW_SNAPSHOT_WORKER !== "1" || !options.snapshotWorkerPath) {
     throw new Error("The snapshot worker requires its supervised staging path");
   }
@@ -3057,15 +2988,19 @@ function runSnapshotWorker(options: CliOptions): void {
     options.snapshotWorkerPath,
     "GitHub snapshot staging",
   );
+  const operations = {
+    ...DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS,
+    ...outputOperations,
+  };
   const snapshot = collectGitHubSnapshot(options);
   const boundaryFailure = protectedOutputBoundaryFailure(stagingBoundary);
   if (boundaryFailure) throw new SnapshotPublicationBoundaryError(boundaryFailure);
-  const descriptor = DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS.open(
+  const descriptor = operations.open(
     stagingBoundary.outputPath,
     fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0),
     0o600,
   );
-  writeSnapshotToDescriptor(snapshot, descriptor, DEFAULT_SNAPSHOT_OUTPUT_OPERATIONS);
+  writeSnapshotToDescriptor(snapshot, descriptor, operations);
   const collection = snapshot.collection as { complete: boolean };
   process.stdout.write(`${JSON.stringify({ complete: collection.complete })}\n`);
 }
@@ -3076,7 +3011,7 @@ export async function runGitHubSnapshotCollector(
 ): Promise<void> {
   const options = parseArgs(argv);
   if (options.snapshotWorkerPath !== undefined) {
-    runSnapshotWorker(options);
+    runSnapshotWorker(options, runtime.outputOperations);
     return;
   }
   if (!options.output) throw new Error("--output is required");
