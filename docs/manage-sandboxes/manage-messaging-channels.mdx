@@ -143,6 +143,11 @@ $$nemoclaw <sandbox> rebuild
 
 Retry `shields down` after the rebuild.
 
+When the saved plan is available, `shields down` can continue without an affected credential-bound route.
+NemoClaw omits the route when its channel policy cannot be materialized or the live policy has an absent, partial, or mismatched credential provider set.
+The command prints the affected channel and its add and rebuild steps.
+Re-add each affected channel, rebuild the sandbox, and retry `shields down` before you rely on that channel during the maintenance window.
+
 <AgentOnly variant="hermes">
 The Hermes Telegram policy route must bind the exact `<sandbox>-telegram-bridge` provider.
 If the live route has no binding or names another provider, NemoClaw omits Telegram from the relaxed policy and prints the add and rebuild steps.
