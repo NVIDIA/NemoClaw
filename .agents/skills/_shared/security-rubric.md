@@ -35,7 +35,7 @@ Keep credentials and sensitive authentication material inside the named credenti
 ### Meaning
 
 Treat external, user-controlled, model-controlled, repository-controlled, and cross-boundary data as
-untrusted until it is constrained for its exact use.
+untrusted until it is constrained for its use.
 
 ### Questions
 
@@ -59,7 +59,7 @@ Verify identity and permission at the trusted boundary before allowing an action
 ### Questions
 
 - Is authentication required before processing, and are signature, expiry, audience, issuer, and scope checked?
-- Is authorization enforced for the exact resource and action rather than inferred from client behavior?
+- Is authorization enforced for the resource and action rather than inferred from client behavior?
 - Can horizontal or vertical privilege escalation bypass ownership, role, tenant, sandbox, or workflow checks?
 
 ### Expected evidence

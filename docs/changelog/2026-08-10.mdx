@@ -32,7 +32,7 @@ It also improves update safety, image defaults, and installation failure reporti
 - Gemini 3.x managed routes now load compatibility metadata so OpenClaw preserves thought signatures across tool calls.
   `NEMOCLAW_AGENT_TIMEOUT` now controls both the agent and provider request deadlines, while `status` waits for route convergence after automatic gateway recovery.
   For more information, refer to [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
-- Trusted-private endpoints now keep the normalized hostname and exact address pins bound from admission through policy replay.
+- Trusted-private endpoints now keep the normalized hostname and address pins bound from admission through policy replay.
   Managed MCP rejects mixed public and private address answers before mutation, and managed startup rejects a symlinked corporate CA before reading it.
   The OpenClaw image also defaults to the non-root `sandbox` user, while OpenClaw v2026.7.1 gateway self-dialback stays on loopback inside OpenShell.
   For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust), and [Security Best Practices](/user-guide/openclaw/security/best-practices).

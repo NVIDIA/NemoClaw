@@ -18,8 +18,8 @@ Reviewer selection can come from these repository-owned sources:
 
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+- The current user names the reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the reviewer-request write.
 
 Otherwise, do not use any of these reviewer-request writes:
 
@@ -42,7 +42,7 @@ Triage each signal according to this workflow.
 
 If a repository-owned workflow dispatch performs no reviewer-request write, do not treat the dispatch as reviewer selection.
 A documented PR Review Advisor refresh is one such dispatch.
-Follow the exact NemoClaw skill instructions for the dispatch.
+Follow the NemoClaw skill instructions for the dispatch.
 
 GitHub can create an automatic review-request event when a contributor or agent pushes.
 GitHub can attribute the event to the pushing account.
@@ -81,7 +81,7 @@ Report the collection as `blocked` if the host cannot establish every condition 
 
 Re-evaluate findings from an earlier review against the local candidate `HEAD`. Record whether each finding remains in that commit. Apply reviewer or bot filters only after collection is complete.
 
-Record whether the host retains collection evidence. If the host returns an artifact path or identifier, record it, remove that exact artifact after classification, and verify its absence. If the host retains no artifact, record `retained evidence: none`. Report the collection as `blocked` when the host retains evidence but cannot remove it or verify its absence.
+Record whether the host retains collection evidence. If the host returns an artifact path or identifier, record it, remove that artifact after classification, and verify its absence. If the host retains no artifact, record `retained evidence: none`. Report the collection as `blocked` when the host retains evidence but cannot remove it or verify its absence.
 
 ## Collect One Complete Review Cycle
 
@@ -93,7 +93,7 @@ Before editing, collect and classify all review signals for the latest PR commit
 4. Decide which groups are valid, false positives, design-changing, or blocked.
 5. Apply the shared [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md), starting from the change set that the valid groups imply. Record the sibling paths checked, the operation and failure class each group belongs to, and the sensitive-workflow state outcomes.
 
-Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding collected for the unchanged latest PR commit before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
+Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding collected for the unchanged latest PR commit before beginning that change set. If the user tells you to stop, remove retained collection evidence by its artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
 
 ## Handle results
 
@@ -127,7 +127,7 @@ Run this ordered remediation sequence:
    `headRefOid` changes.
 7. Classify every finding in that collection.
 8. If any unresolved finding requires a change, return to step 1 without pushing.
-9. After no unresolved finding requires a change, remove retained collection evidence by its exact
+9. After no unresolved finding requires a change, remove retained collection evidence by its
    artifact path or identifier and verify its absence.
 10. Push once.
 11. Monitor the latest PR commit for new findings that require a change. When a new finding requires

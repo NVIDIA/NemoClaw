@@ -79,7 +79,7 @@ If your plugin does not have a lockfile yet, create one in the plugin project wi
 
 OpenClaw `2026.5.27` also requires the plugin manifest to declare each registered tool in `contracts.tools`; for example, a weather plugin that registers `get_weather` must declare `"tools": ["get_weather"]`.
 
-Declare OpenClaw as both a runtime peer and an exact, release-matched development dependency.
+Declare OpenClaw as both a runtime peer and a release-matched development dependency.
 The peer range expresses runtime compatibility, while the development dependency provides the plugin SDK during the build:
 
 ```json
@@ -213,7 +213,7 @@ To rely on them, use NemoClaw `v0.0.76` or later and match its CLI, source check
 ## Preserve Plugin Provenance During Rebuild
 
 Starting with `v0.0.76`, custom-image onboarding records validated plugin IDs and canonical install paths from OpenClaw's install index.
-It derives direct extension-directory ownership from those paths and records exact configured load paths owned by linked `path` installs.
+It derives direct extension-directory ownership from those paths and records configured load paths owned by linked `path` installs.
 
 Use `openclaw plugins install` as shown above; manually copied, unregistered extension directories are outside this provenance contract.
 During rebuild or warm recreation, the new image remains authoritative for those image-owned plugins: updated plugins keep the fresh image copy, removed plugins stay removed, and renamed plugins do not restore their old IDs.

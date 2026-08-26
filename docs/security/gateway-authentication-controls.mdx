@@ -99,7 +99,7 @@ For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables dev
 Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
 
 In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
-The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
+The generated configuration uses audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 
 The audit also reports that suppressions are active so you can review the accepted risk.
 These suppressions change audit reporting only.
@@ -136,14 +136,14 @@ From the host, open the prepared connect shell:
 $$nemoclaw <name> connect
 ```
 
-In that shell, run the administrative command once to create the pending request, and note the exact `requestId` in the failure.
+In that shell, run the administrative command once to create the pending request, and note the `requestId` in the failure.
 Then inspect the pending requests:
 
 ```bash
 openclaw devices list --json
 ```
 
-Find that exact `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
+Find that `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
 Approve that request by its `requestId`:
 
 ```bash
@@ -153,7 +153,7 @@ openclaw devices approve <requestId>
 Retry the original administrative command after the approval succeeds.
 
 <Warning>
-Approve only the exact `requestId` emitted by your command and only the client, device, and scopes you expect.
+Approve only the `requestId` emitted by your command and only the client, device, and scopes you expect.
 Do not approve an unexpected client or an unrelated `operator.admin` request.
 </Warning>
 

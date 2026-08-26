@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff and optionally cuts an exact release tag. Use for evening, handoff, wrap-up, or ship requests.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts an release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 
@@ -18,7 +18,7 @@ for release rules.
 
 ## 1. Select the Target Version
 
-Use the maintainer's exact `vX.Y.Z` when supplied. Otherwise, read the current target and show its
+Use the maintainer's `vX.Y.Z` when supplied. Otherwise, read the current target and show its
 merged and open work:
 
 ```bash
@@ -52,7 +52,7 @@ release. When it does, update the cumulative documentation change first. When it
 skill may keep an earlier planned candidate that remains on `main`; later managed documentation work
 does not invalidate that candidate.
 
-When an included merge changes the candidate after planning, generate a new exact-version plan after
+When an included merge changes the candidate after planning, generate a new version plan after
 its documentation merges.
 
 ## 3. Show the Release Handoff
@@ -71,13 +71,13 @@ move to the next target, but do not perform label writes here.
 
 ## 4. Cut the Tag When Requested
 
-Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
+Load `nemoclaw-maintainer-cut-release-tag` and pass the version. That skill owns:
 
-- the exact-version plan and candidate;
+- the version plan and candidate;
 - the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
-- the exact confirmation phrase; and
+- the confirmation phrase; and
 - signed tag creation and remote readback.
 
 Do not run a full E2E suite automatically. Do not ask for confirmation until the release brief is
@@ -97,7 +97,7 @@ Announcement, and report `lkg` state. A post-tag failure does not change tag suc
 
 ## Hard Rules
 
-- Never cut a tag without the maintainer's exact confirmation phrase.
+- Never cut a tag without the maintainer's confirmation phrase.
 - Never bypass the release entry, documentation coverage decision, or applicable GHCR evidence.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
 - Never delay the tag-cut report for post-tag work. Continue the same task after that report.

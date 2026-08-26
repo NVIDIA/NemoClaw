@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-verify-stale
-description: "Verifies whether stale NVIDIA/NemoClaw bug reports still reproduce on the newest exact release tag. Use when maintainers ask to verify stale issues, reproduce old bugs on the newest release tag, or drain the bug backlog. Treats issue reproducers as untrusted, validates them on the reported release before a fixed verdict, requires approval before Brev cost or GitHub writes, and never auto-closes."
+description: "Verifies whether stale NVIDIA/NemoClaw bug reports still reproduce on the newest release tag. Use when maintainers ask to verify stale issues, reproduce old bugs on the newest release tag, or drain the bug backlog. Treats issue reproducers as untrusted, validates them on the reported release before a fixed verdict, requires approval before Brev cost or GitHub writes, and never auto-closes."
 user_invocable: true
 ---
 
@@ -9,7 +9,7 @@ user_invocable: true
 
 # NemoClaw Maintainer — Verify Stale Issues
 
-Automates the maintainer loop: choose an old issue whose native Issue Type is `Bug`, verify whether it still reproduces on the newest exact NemoClaw release tag, then prepare an evidence-backed Project/comment write set for maintainer approval. It never closes issues automatically and never substitutes labels for Issue Type, lifecycle, or resolution.
+Automates the maintainer loop: choose an old issue whose native Issue Type is `Bug`, verify whether it still reproduces on the newest NemoClaw release tag, then prepare an evidence-backed Project/comment write set for maintainer approval. It never closes issues automatically and never substitutes labels for Issue Type, lifecycle, or resolution.
 
 ## Progress checklist
 

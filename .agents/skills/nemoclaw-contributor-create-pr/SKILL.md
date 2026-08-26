@@ -80,7 +80,7 @@ Apply these push conditions:
 
 - Do not push while any finding is unclassified.
 - Do not push while any unresolved finding requires a change.
-- After classification, remove retained collection evidence by its exact artifact path or identifier.
+- After classification, remove retained collection evidence by its artifact path or identifier.
 - Verify that the artifact is absent.
 - If the host retained no artifact, record `retained evidence: none`.
 - If the user tells you to stop, stop without pushing.
@@ -298,8 +298,8 @@ Leave label selection and application to the repository triage workflow.
 
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+- The current user names the reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the reviewer-request write.
 
 Otherwise, do not add `--reviewer` or make a separate reviewer-request write.
 Reviewer routing belongs to repository-owned sources and the shared PR follow-up workflow.

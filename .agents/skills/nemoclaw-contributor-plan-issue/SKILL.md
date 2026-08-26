@@ -53,7 +53,7 @@ Name both forms of current ownership when evidence exists:
 - the person or agent explicitly assigned to implement the issue.
 
 If no implementation owner is assigned, state that explicitly. List an active implementation PR under
-related work. Do not assign an owner through GitHub unless the user authorizes that exact write.
+related work. Do not assign an owner through GitHub unless the user authorizes that write.
 
 ## Discover the current implementation
 
@@ -116,7 +116,7 @@ relationship, assign an owner, add a label, or post a comment without explicit u
 
 When the user authorizes GitHub writes:
 
-1. Show the exact proposed issues, relationships, fields, or comments.
+1. Show the proposed issues, relationships, fields, or comments.
 2. Perform only the named writes.
 3. Report each resulting URL and any write that failed.
 
@@ -125,7 +125,7 @@ implementation or pull request publication.
 
 ## Report the plan
 
-Use this structure exactly. Keep the headings unchanged so users and automated checks can identify
+Use this structure. Keep the headings unchanged so users and automated checks can identify
 the planning result reliably:
 
 ```markdown

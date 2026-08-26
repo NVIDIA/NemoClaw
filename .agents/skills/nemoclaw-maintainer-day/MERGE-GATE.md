@@ -90,7 +90,7 @@ Leave job and target selectors empty and keep Launchable disabled.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If the DGX Spark flag is `true`, GitHub can pause `llama-cpp-dgx-spark-qualification` for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
-The trusted pre-checkout step requires current `maintain` or `admin` access and validates the exact open PR before candidate code runs.
+The trusted pre-checkout step requires current `maintain` or `admin` access and validates the open PR before candidate code runs.
 
 The manual run is advisory.
 Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, head repository, head SHA, base SHA, and workflow SHA.

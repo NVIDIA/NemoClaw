@@ -44,9 +44,9 @@ For each group, retain:
 
 Do not paste secrets or unredacted credential-bearing logs into the queue or PR.
 
-When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository. Set its mode to `0700` before download. Record the exact directory path. Do not put that path or unredacted contents in the shared queue, a PR, or other public GitHub text. Share the path only in a private continuity handoff with the agent responsible for cleanup.
+When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository. Set its mode to `0700` before download. Record the directory path. Do not put that path or unredacted contents in the shared queue, a PR, or other public GitHub text. Share the path only in a private continuity handoff with the agent responsible for cleanup.
 
-Delete the directory immediately after extracting the redacted failure evidence, and before transferring ownership. Before deletion, confirm that the exact path belongs to this loop session and is outside the repository. After deletion, verify that the path does not exist. If access restriction or removal fails, stop using the artifact. Record the exact path and required action only in the private continuity handoff without copying its contents.
+Delete the directory immediately after extracting the redacted failure evidence, and before transferring ownership. Before deletion, confirm that the path belongs to this loop session and is outside the repository. After deletion, verify that the path does not exist. If access restriction or removal fails, stop using the artifact. Record the path and required action only in the private continuity handoff without copying its contents.
 
 ## Search Before Editing
 
@@ -64,7 +64,7 @@ gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
   --json number,title,body,author,assignees,headRefOid,isDraft,url
 ```
 
-Read every plausible match. Search exact run and job IDs first, then the stable signature, component, failing phase, and likely changed file.
+Read every plausible match. Search run and job IDs first, then the stable signature, component, failing phase, and likely changed file.
 
 Treat an open PR as ownership when its body or diff addresses the same root cause, even if it names another affected run. Do not take ownership based only on a broad component word.
 

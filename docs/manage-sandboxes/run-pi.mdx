@@ -88,7 +88,7 @@ nemoclaw <sandbox-name> snapshot list
 
 Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, project trust decisions, or executable tool and extension state.
 
-Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, an exact snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
+Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, a snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
 
 ```bash
 nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
@@ -96,7 +96,7 @@ nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
 
 ## Rebuild and Recover
 
-Rebuild validates the recorded workload authority, resolves the current release's exact Pi image, and preserves declared Pi state.
+Rebuild validates the recorded workload authority, resolves the current release's Pi image, and preserves declared Pi state.
 
 ```bash
 nemoclaw <sandbox-name> rebuild --yes
@@ -109,7 +109,7 @@ nemoclaw <sandbox-name> recover
 nemoclaw <sandbox-name> status
 ```
 
-After a NemoClaw update, rebuild the sandbox to consume a newer reviewed Pi package and image. Each Pi update requires a new exact package integrity, dependency review, image digest, and qualification result.
+After a NemoClaw update, rebuild the sandbox to consume a newer reviewed Pi package and image. Each Pi update requires a new package integrity, dependency review, image digest, and qualification result.
 
 ## Stop, Start, and Destroy
 

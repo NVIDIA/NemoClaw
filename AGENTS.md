@@ -250,7 +250,7 @@ evidence.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
 - Follow the [NemoClaw Writing Guide](WRITING.md) for every agent response, progress update, tool-call label or description, text published on GitHub, and changed explanatory text.
   An agent must correct its text before it sends a message, publishes GitHub text, or starts a tool call with a visible label or description. The guide's review policy defines which findings can block changes to existing text.
-- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
+- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.
@@ -274,8 +274,8 @@ Reviewer selection can come from these sources:
 
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+- The current user names the reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires that reviewer-request write.
 
 Otherwise, do not use any of these reviewer-request writes:
 

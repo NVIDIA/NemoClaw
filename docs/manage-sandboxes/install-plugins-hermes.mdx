@@ -31,7 +31,7 @@ Hermes installs the bundled Hindsight plugin dependency in this directory as the
 The dependency does not modify the root virtual environment, and the managed target is not declared in the sealed `.env` file.
 
 NemoClaw supports `hindsight-client==0.6.1` for this workflow.
-Hermes checks this exact version before it loads the plugin.
+Hermes checks this version before it loads the plugin.
 This version uses the OpenShell proxy path.
 Do not replace it with a `0.8.x` client because those releases do not use the proxy environment.
 
@@ -110,7 +110,7 @@ Do not install the dependency into `/opt/hermes/.venv`.
 Both paths change sealed inputs and can make gateway reconciliation fail.
 
 The preset permits one local host route only.
-To use another approved Hindsight host or port, create a custom preset and name the exact endpoint.
+To use another approved Hindsight host or port, create a custom preset and name the endpoint.
 The `--from-file` and `--from-dir` paths accept `--trusted-private-host` for a private host.
 Refer to [Create Custom Policy Presets](../network-policy/configure-policies/create-custom-policy-presets) for that procedure.
 

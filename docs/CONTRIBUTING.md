@@ -171,7 +171,7 @@ OpenClaw-only, Hermes-only, Deep Agents-only, or Pi-only pages stay as source pa
 Determine page applicability from the implementation, tests, or accepted product scope before adding or moving navigation entries.
 Do not use the current navigation tree as evidence that a page is agent-specific.
 Publish a shared source page through generated navigation targets in every applicable variant.
-The established shared scope is OpenClaw, Hermes, and Deep Agents. A page in that complete scope can omit `agent-variants`. When a page has a narrower scope or appears in the Pi guide, declare the exact subset in frontmatter, for example `agent-variants: ["openclaw", "hermes"]` or `agent-variants: ["pi"]`.
+The established shared scope is OpenClaw, Hermes, and Deep Agents. A page in that complete scope can omit `agent-variants`. When a page has a narrower scope or appears in the Pi guide, declare the subset in frontmatter, for example `agent-variants: ["openclaw", "hermes"]` or `agent-variants: ["pi"]`.
 The sync command fails when a subset declaration is missing or differs from navigation membership.
 
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
@@ -255,7 +255,7 @@ position: 1
 ---
 ```
 
-When the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents, or when it appears in the Pi guide, add the exact subset to frontmatter:
+When the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents, or when it appears in the Pi guide, add the subset to frontmatter:
 
 ```yaml
 agent-variants: ["openclaw", "hermes"]

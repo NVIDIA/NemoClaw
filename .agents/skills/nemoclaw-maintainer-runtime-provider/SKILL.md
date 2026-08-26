@@ -80,7 +80,7 @@ Run the current type, repository, contract, activation, provider, and architectu
 diff affects.
 
 Local and CI checks establish contract behavior. They do not replace protected qualification or
-the complete supported live E2E matrix against the exact commit under review. Use
+the complete supported live E2E matrix against the commit under review. Use
 `nemoclaw-maintainer-e2e` when the maintainer requests the GitHub Actions run.
 
 ## Report
@@ -92,5 +92,5 @@ Return:
 - implemented, unsupported, and extended bundle surfaces;
 - remaining provider-name branches in generic orchestration;
 - focused validation tied to the commit under review;
-- protected qualification and full E2E evidence, or the exact missing gate; and
+- protected qualification and full E2E evidence, or the missing gate; and
 - credential, recovery, cleanup, and ownership obligations.

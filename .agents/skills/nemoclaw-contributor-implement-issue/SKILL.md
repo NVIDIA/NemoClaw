@@ -102,7 +102,7 @@ one-use test helper, parallel matrix, or second test file merely to shorten an i
 State why an evidence category does not apply when omission could hide risk. Use runtime or end-to-end
 evidence only when the real process, filesystem, network, container, hardware, workflow, or service
 boundary owns the behavior. Run focused tests after the final behavior-affecting edit and record the
-exact command and result.
+command and result.
 
 Keep owning repository guidance in the same change.
 This includes active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.

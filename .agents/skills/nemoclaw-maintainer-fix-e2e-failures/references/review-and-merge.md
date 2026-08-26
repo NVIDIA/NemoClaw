@@ -109,7 +109,7 @@ Do not leave an eligible first-time contributor run with an `action_required` co
 
 5. Re-read the run after the write. Record the approving maintainer and run URL only when GitHub reports the intended transition, then monitor the resulting checks.
 
-If the trust boundary is unclear, sensitive workflow code changed, the run is stale, or authorization is missing, record the exact blocker and take another queue item. Do not use another workflow, rerun, or privileged dispatch as a workaround.
+If the trust boundary is unclear, sensitive workflow code changed, the run is stale, or authorization is missing, record the blocker and take another queue item. Do not use another workflow, rerun, or privileged dispatch as a workaround.
 
 An environment deployment approval is not this operation. Follow the owning workflow skill for an environment gate, especially for credentialed or hardware E2E.
 

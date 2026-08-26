@@ -55,7 +55,7 @@ NemoClaw v0.0.94 strengthens sandbox restore and update behavior, adds machine-r
   For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
 - `sandbox doctor --json` now redacts token-shaped values at both machine-readable output boundaries while preserving the exit status from the original report.
   Reviewed npm audits now retain scanner, registry, timing, package, advisory, report-path, and failure provenance.
-  A read-only advisory correlation tool can identify exact npm package and range matches before a reviewed audit record appears, while ambiguous matches remain informational and do not block a release.
+  A read-only advisory correlation tool can identify npm package and range matches before a reviewed audit record appears, while ambiguous matches remain informational and do not block a release.
 - Hermes image assembly now groups repository payloads into five ownership-preserving BuildKit layers.
   The first hosted comparison reduced the production build step from 205 seconds to 101 seconds and the layer export from 178.8 seconds to 70.4 seconds.
   Build-time checks preserve file contents, modes, owners, scanner ordering, and cache boundaries.

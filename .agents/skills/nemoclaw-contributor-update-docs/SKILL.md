@@ -14,7 +14,7 @@ scope as behavior authority.
 ## Establish the range
 
 For `Docs / Post-Merge Catch-Up`, inspect changes from the latest reachable semver tag through the
-exact pushed `main` commit. Do not advance either boundary while authoring. For a direct
+pushed `main` commit. Do not advance either boundary while authoring. For a direct
 documentation task, use the commit range supplied by the user or current checkout context.
 
 Release-entry completion belongs to `nemoclaw-maintainer-evening`, not this workflow.

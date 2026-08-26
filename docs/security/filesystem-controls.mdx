@@ -78,7 +78,7 @@ After containment, when an agent directory has no `sessions` entry, lockdown cre
 An agent booting for the first time under an active lock can then write sessions.
 It validates the carve-out root but deliberately does not traverse or rewrite live session descendants.
 
-Cross-device entries, detected traversal races, or failures to remove or replace an unsafe entry make lockdown fail closed with the exact path and reason.
+Cross-device entries, detected traversal races, or failures to remove or replace an unsafe entry make lockdown fail closed with the path and reason.
 
 - **DAC permissions (default).**
   The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly.

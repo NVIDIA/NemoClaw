@@ -94,9 +94,10 @@ The changed-text scope does not apply to the assigned author-maintained sources 
 9. Name the object of relative terms such as `current`, `latest`, `previous`, and `next`.
 10. Replace `ready`, `clean`, `safe`, `small`, and similar judgments with the condition that makes them true.
 11. Remove `just`, `simply`, `obviously`, `clearly`, `easy`, `robust`, and other words that do not change the meaning.
-12. Avoid an idiom or phrasal verb that can have more than one meaning. Use a direct technical term when one is available.
-13. Use a vertical list for three or more conditions, actions, or results.
-14. In a code comment, explain a constraint, invariant, or reason that the code does not show. Do not restate the code.
+12. Remove `exact` and `exactly` when the noun or operation already defines identity or equality. Keep them for cardinality or a stated contrast.
+13. Avoid an idiom or phrasal verb that can have more than one meaning. Use a direct technical term when one is available.
+14. Use a vertical list for three or more conditions, actions, or results.
+15. In a code comment, explain a constraint, invariant, or reason that the code does not show. Do not restate the code.
 
 Sentence lengths are review targets, not mechanical limits. Do not make a sentence less accurate to
 meet a word count. Quoted user text, external text, code, identifiers, commands, URLs, and generated
@@ -129,8 +130,8 @@ These examples use recurring NemoClaw concepts. They show the required level of 
 | PR discussion | `Make this more robust.` | `Return a typed access error for EACCES and add a denial-path test.` |
 | PR discussion | `This is a small change.` | `This change updates one parser and does not change the policy schema.` |
 | PR discussion | `The PR is ready.` | `Required checks pass on 1a2b3c4, and GitHub reports MERGEABLE.` |
-| PR discussion | `The exact head changed.` | `The latest PR commit changed from 1a2b3c4 to 5d6e7f8.` |
-| Tool label | `Inspect exact-head delta` | `Compare latest PR commit 5d6e7f8 with commit 1a2b3c4 from the previous review` |
+| PR discussion | `The head changed.` | `The latest PR commit changed from 1a2b3c4 to 5d6e7f8.` |
+| Tool label | `Inspect head delta` | `Compare latest PR commit 5d6e7f8 with commit 1a2b3c4 from the previous review` |
 | Announcement | `Improved onboarding.` | `Onboarding now resumes after provider selection fails.` |
 | Announcement | `Added more robust E2E handling.` | `The PR gate now retries evidence download after a child run is cancelled.` |
 | Release entry | `Fixed various issues.` | `The CLI now rejects a provider configuration that has no endpoint.` |

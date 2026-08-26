@@ -40,13 +40,13 @@ Podman, macOS, Windows, WSL, messaging, dashboards, device pairing, managed MCP,
 
 ## Package and Image Identity
 
-NemoClaw pins one exact Pi package version and npm integrity value. Installation disables package lifecycle scripts. Runtime self-update, package auto-update, mutable image tags, and host-side stock Dockerfile builds are unsupported. The reviewed Dockerfile is used only by trusted CI to create the managed image.
+NemoClaw pins one Pi package version and npm integrity value. Installation disables package lifecycle scripts. Runtime self-update, package auto-update, mutable image tags, and host-side stock Dockerfile builds are unsupported. The reviewed Dockerfile is used only by trusted CI to create the managed image.
 
 Candidate image receipts bind each accepted platform to:
 
 - the canonical `ghcr.io/nvidia/nemoclaw/pi-sandbox` repository;
 - one immutable image digest;
-- the `NVIDIA/NemoClaw` source repository and exact source revision;
+- the `NVIDIA/NemoClaw` source repository and source revision;
 - one release and publication cohort;
 - managed-image, startup-profile, and capability contract version 1.
 
@@ -86,7 +86,7 @@ Pi starts with `umask 077`, so generated configuration and session files are pri
 
 The release gate runs one repository-owned target on native Linux AMD64 and Linux ARM64 runners. Each target records:
 
-- exact CLI, workflow, receipt, package, image, platform, and OpenShell identities;
+- CLI, workflow, receipt, package, image, platform, and OpenShell identities;
 - Docker as the compute runtime;
 - provider, model, API, route, and policy digest;
 - buildless onboarding through `nemoclaw onboard --agent pi`;
@@ -95,6 +95,6 @@ The release gate runs one repository-owned target on native Linux AMD64 and Linu
 - recovery after an OpenShell gateway restart;
 - denial of undeclared network and container-runtime access;
 - absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
-- exact cleanup after destroy.
+- cleanup after destroy.
 
 The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) receipts. Each trusted run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to passing results for both platforms and must not require manual sandbox repair.

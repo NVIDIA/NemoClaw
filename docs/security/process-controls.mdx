@@ -153,7 +153,7 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 Managed Deep Agents uses stricter enforcement than the best-effort entrypoint behavior described above.
 The managed Deep Agents image applies the 512-process and 65,536-file-descriptor caps to the long-running sandbox entrypoint tree and to direct managed `dcode` launches.
 
-During Docker-driver onboarding, NemoClaw also configures the container with exact `nproc=512:512` and `nofile=65536:65536` limits so the managed entrypoint and fresh exec or connect processes start under the same hard caps.
+During Docker-driver onboarding, NemoClaw also configures the container with `nproc=512:512` and `nofile=65536:65536` limits so the managed entrypoint and fresh exec or connect processes start under the same hard caps.
 The container-level limits and managed startup command remain in effect when you stop and start the sandbox or restart the OpenShell gateway.
 
 It also applies and verifies the caps in Bash login and interactive shells because fresh `openshell sandbox exec` and connect shells do not inherit the dcode entrypoint child's lowered limits.
@@ -291,7 +291,7 @@ A registry-side tag change cannot silently select another managed sandbox image.
 
 | Aspect | Detail |
 |---|---|
-| Default | NemoClaw selects the managed sandbox image by its exact digest. |
+| Default | NemoClaw selects the managed sandbox image by its digest. |
 | What you can change | Use the onboarding `--from` path when you need to build from a reviewed custom image. Locally built custom images do not use the managed registry digest. |
 | Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
 | Recommendation | Keep the managed digest-pinned image unless you need a reviewed custom image. Pin the custom image's base and dependencies before you build it. |

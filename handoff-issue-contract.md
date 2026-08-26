@@ -26,7 +26,7 @@ The required local reproduction uses the built worktree `./bin/nemoclaw.js`, Her
 - NemoClaw rejects an incomplete structural write with the missing field or path.
 - Rejection leaves the configuration file, managed `.env`, integrity hashes, gateway state, and quarantine state unchanged.
 - A valid complete structural write succeeds.
-- A successful rebuild leaves Hermes configuration writable. If the security model requires recovery, NemoClaw rejects the write before mutation and prints the exact recovery command; recovery then succeeds without another rebuild.
+- A successful rebuild leaves Hermes configuration writable. If the security model requires recovery, NemoClaw rejects the write before mutation and prints the recovery command; recovery then succeeds without another rebuild.
 - Hermes config output truthfully states possible or observed gateway restart effects and readiness or recovery state.
 - A failed Hermes restart reports a bounded, sanitized tail from `/tmp/gateway.log`.
 - Config output discloses managed `.env` effects without exposing values or secrets.
@@ -61,7 +61,7 @@ Acceptance paths:
 
 1. Incomplete `platforms.teams.home_channel` write: reject before persistence; preserve files and hashes; do not restart or quarantine Hermes.
 2. Complete `platforms.teams.home_channel` write: persist the valid candidate and report managed `.env` effects.
-3. Rebuild integrity lifecycle: a direct subsequent config write succeeds, or a pre-mutation gate prints the exact `recover` command and the write succeeds after one recovery without another rebuild.
+3. Rebuild integrity lifecycle: a direct subsequent config write succeeds, or a pre-mutation gate prints the `recover` command and the write succeeds after one recovery without another rebuild.
 4. Restart disclosure: output does not promise that Hermes remains running when the write can restart it; output reports readiness or the required recovery action.
 5. Restart failure: output includes useful, bounded, sanitized gateway diagnostics and excludes representative secrets.
 6. Private URL default: reject `browser.cdp_url` on a private host when the opt-in is absent or false.
@@ -74,7 +74,7 @@ Acceptance paths:
 - Do not add an unrestricted global SSRF bypass.
 - Do not duplicate the Hermes schema in NemoClaw when the bundled Hermes parser or schema can validate a candidate without side effects.
 - Do not expose configuration values, credentials, tokens, or an unbounded gateway log.
-- Do not claim an exact upstream restart-key matrix unless the implementation owns and verifies that matrix.
+- Do not claim an upstream restart-key matrix unless the implementation owns and verifies that matrix.
 - Do not change OpenClaw configuration behavior unless a shared owner requires the same correction.
 - Do not add Hermes behavior unrelated to this config lifecycle.
 - Do not use a rebuild as the normal repair for a rejected candidate configuration.
@@ -88,7 +88,7 @@ After the fix, capture real worktree CLI transcripts for Hermes sandbox `triage-
 
 - incomplete `home_channel` write rejected with no persistence, hash change, restart, or quarantine;
 - valid complete `home_channel` write accepted;
-- rebuild followed by config set succeeds, or exact pre-gate recovery ordering succeeds without another rebuild;
+- rebuild followed by config set succeeds, or pre-gate recovery ordering succeeds without another rebuild;
 - forced restart failure reports a bounded sanitized diagnostic tail;
 - private `browser.cdp_url` rejected by default;
 - the same private URL accepted end to end only after explicit opt-in;
