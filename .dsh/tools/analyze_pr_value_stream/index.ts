@@ -8,6 +8,7 @@ export default async function analyze_pr_value_stream(input: {
   targetMinutes?: number;
   maxRunPages?: Integer;
   maxCheckPages?: Integer;
+  maxAutomationRuns?: Integer;
 }): Promise<{
   measuredAt: string;
   repository: string;
@@ -48,6 +49,53 @@ export default async function analyze_pr_value_stream(input: {
     longestChecks: { name: string; workflow: string; seconds: number; completedAt: string }[];
     lastCheck: { name: string; workflow: string; completedAt: string } | null;
   };
+  waterfall: {
+    origin: string;
+    runsAvailable: Integer;
+    runsIncluded: Integer;
+    runsTruncated: boolean;
+    runs: {
+      id: Integer;
+      name: string;
+      event: string;
+      attempt: Integer;
+      status: string;
+      conclusion: string | null;
+      url: string;
+      createdAt: string;
+      startedAt: string;
+      completedAt: string | null;
+      offsetSeconds: number;
+      queueSeconds: number;
+      durationSeconds: number | null;
+      jobs: {
+        id: Integer;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        url: string;
+        runner: string | null;
+        runnerGroup: string | null;
+        labels: string[];
+        createdAt: string;
+        startedAt: string;
+        completedAt: string | null;
+        offsetSeconds: number;
+        queueSeconds: number | null;
+        durationSeconds: number | null;
+        steps: {
+          number: Integer;
+          name: string;
+          status: string;
+          conclusion: string | null;
+          startedAt: string;
+          completedAt: string | null;
+          offsetSeconds: number;
+          durationSeconds: number | null;
+        }[];
+      }[];
+    }[];
+  };
   bottlenecks: { name: string; seconds: number; owner: string }[];
   revisions: Integer;
   caveats: string[];
@@ -62,10 +110,13 @@ export default async function analyze_pr_value_stream(input: {
     throw new Error("targetMinutes must be greater than 0 and at most 1440");
   const maxRunPages = input.maxRunPages ?? 3;
   const maxCheckPages = input.maxCheckPages ?? 3;
+  const maxAutomationRuns = input.maxAutomationRuns ?? 50;
   if (!Number.isSafeInteger(maxRunPages) || maxRunPages < 1 || maxRunPages > 10)
     throw new Error("maxRunPages must be an integer from 1 through 10");
   if (!Number.isSafeInteger(maxCheckPages) || maxCheckPages < 1 || maxCheckPages > 10)
     throw new Error("maxCheckPages must be an integer from 1 through 10");
+  if (!Number.isSafeInteger(maxAutomationRuns) || maxAutomationRuns < 1 || maxAutomationRuns > 100)
+    throw new Error("maxAutomationRuns must be an integer from 1 through 100");
   const parseTime = (value: unknown, label: string): number => {
     if (typeof value !== "string") throw new Error(label + " was not a timestamp");
     const time = Date.parse(value);
@@ -75,6 +126,8 @@ export default async function analyze_pr_value_stream(input: {
   const iso = (time: number): string => new Date(time).toISOString();
   const seconds = (start: number, end: number): number =>
     Math.max(0, Math.round((end - start) / 1000));
+  const offsetSeconds = (origin: number, time: number): number =>
+    Math.round((time - origin) / 1000);
   const pullResult = await tools.run_github_cli({
     workdir: input.workdir,
     args: [
@@ -167,6 +220,125 @@ export default async function analyze_pr_value_stream(input: {
     : headAny
       ? "earliest exact-head workflow run"
       : "head commit committedDate fallback";
+  const exactHeadRuns = headRuns
+    .filter((run: any) => Number.isSafeInteger(run?.id))
+    .sort((a: any, b: any) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  const waterfallRuns = exactHeadRuns.slice(0, maxAutomationRuns);
+  const waterfall = await Promise.all(
+    waterfallRuns.map(async (run: any) => {
+      const runResult = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          "repos/" + repository + "/actions/runs/" + run.id,
+          "--jq",
+          "{id,name,event,run_attempt,head_sha,status,conclusion,created_at,run_started_at,updated_at,html_url}",
+        ],
+      });
+      const runDetails = JSON.parse(runResult.stdout);
+      if (
+        runDetails?.id !== run.id ||
+        runDetails?.head_sha !== pull.headRefOid ||
+        !Number.isSafeInteger(runDetails?.run_attempt)
+      )
+        throw new Error("workflow run did not match the exact-head waterfall contract");
+      const jobsResult = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          "repos/" + repository + "/actions/runs/" + run.id + "/jobs?filter=latest&per_page=100",
+          "--jq",
+          "{total_count,jobs:[.jobs[] | {id,name,status,conclusion,created_at,started_at,completed_at,runner_name,runner_group_name,labels,html_url,steps}]}",
+        ],
+      });
+      const jobsPayload = JSON.parse(jobsResult.stdout);
+      if (
+        !Number.isSafeInteger(jobsPayload?.total_count) ||
+        !Array.isArray(jobsPayload?.jobs) ||
+        jobsPayload.total_count > 100 ||
+        jobsPayload.jobs.length !== jobsPayload.total_count
+      )
+        throw new Error("workflow job list exceeded the complete bounded waterfall contract");
+      const runCreated = parseTime(run.created_at, "workflow createdAt");
+      const jobs = jobsPayload.jobs.map((job: any) => {
+        if (!Number.isSafeInteger(job?.id) || !Array.isArray(job?.steps))
+          throw new Error("workflow job did not match the waterfall contract");
+        const jobCreated = parseTime(job.created_at, "job createdAt");
+        const jobStarted = parseTime(job.started_at, "job startedAt");
+        const jobCompleted =
+          job.completed_at === null ? null : parseTime(job.completed_at, "job completedAt");
+        const steps = job.steps.map((step: any) => {
+          if (!Number.isSafeInteger(step?.number))
+            throw new Error("workflow step did not match the waterfall contract");
+          const stepStarted = parseTime(step.started_at, "step startedAt");
+          const stepCompleted =
+            step.completed_at === null ? null : parseTime(step.completed_at, "step completedAt");
+          return {
+            number: step.number,
+            name: String(step.name ?? "").slice(0, 200),
+            status: String(step.status ?? "").slice(0, 40),
+            conclusion:
+              step.conclusion === null ? null : String(step.conclusion ?? "").slice(0, 40),
+            startedAt: iso(stepStarted),
+            completedAt: stepCompleted === null ? null : iso(stepCompleted),
+            offsetSeconds: offsetSeconds(headObserved, stepStarted),
+            durationSeconds: stepCompleted === null ? null : seconds(stepStarted, stepCompleted),
+          };
+        });
+        return {
+          id: job.id,
+          name: String(job.name ?? "").slice(0, 200),
+          status: String(job.status ?? "").slice(0, 40),
+          conclusion: job.conclusion === null ? null : String(job.conclusion ?? "").slice(0, 40),
+          url: String(job.html_url ?? "").slice(0, 500),
+          runner: job.runner_name === null ? null : String(job.runner_name ?? "").slice(0, 200),
+          runnerGroup:
+            job.runner_group_name === null
+              ? null
+              : String(job.runner_group_name ?? "").slice(0, 200),
+          labels: job.labels.slice(0, 20).map((label: any) => String(label).slice(0, 100)),
+          createdAt: iso(jobCreated),
+          startedAt: iso(jobStarted),
+          completedAt: jobCompleted === null ? null : iso(jobCompleted),
+          offsetSeconds: offsetSeconds(headObserved, jobStarted),
+          queueSeconds: jobCreated <= jobStarted ? seconds(jobCreated, jobStarted) : null,
+          durationSeconds: jobCompleted === null ? null : seconds(jobStarted, jobCompleted),
+          steps,
+        };
+      });
+      const earliestJobStart =
+        jobs.length > 0
+          ? Math.min(
+              ...jobs.map((job: any) => parseTime(job.startedAt, "normalized job startedAt")),
+            )
+          : parseTime(runDetails.run_started_at, "workflow startedAt");
+      const runStarted = Math.min(
+        parseTime(runDetails.run_started_at, "workflow startedAt"),
+        earliestJobStart,
+      );
+      const runCompleted =
+        runDetails.status === "completed"
+          ? parseTime(runDetails.updated_at, "workflow completedAt")
+          : null;
+      return {
+        id: runDetails.id,
+        name: String(runDetails.name ?? "").slice(0, 200),
+        event: String(runDetails.event ?? "").slice(0, 60),
+        attempt: runDetails.run_attempt,
+        status: String(runDetails.status ?? "").slice(0, 40),
+        conclusion:
+          runDetails.conclusion === null ? null : String(runDetails.conclusion ?? "").slice(0, 40),
+        url: String(runDetails.html_url ?? "").slice(0, 500),
+        createdAt: iso(runCreated),
+        startedAt: iso(runStarted),
+        completedAt: runCompleted === null ? null : iso(runCompleted),
+        offsetSeconds: offsetSeconds(headObserved, runCreated),
+        queueSeconds: seconds(runCreated, runStarted),
+        durationSeconds: runCompleted === null ? null : seconds(runStarted, runCompleted),
+        jobs,
+      };
+    }),
+  );
   const checks: any[] = [];
   for (let page = 1; page <= maxCheckPages; page += 1) {
     const result = await tools.run_github_cli({
@@ -333,7 +505,9 @@ export default async function analyze_pr_value_stream(input: {
     "GitHub does not expose a canonical branch-created timestamp. The first branch push is the earliest retained push workflow run for a PR commit, with explicit lower-confidence fallbacks.",
     "The theoretical fastest value reuses the latest revision's observed automation span and observed merge lag. It assumes one push, an immediately opened PR, passing checks, and immediate approval.",
     "Approval delay is a counterfactual attribution, not a causal trace. Approval-triggered automation remains machine time.",
-    "The check-runs API does not expose runner assignment time. Trigger delay ends at the first selected check start, and runner queue is not estimated from check timestamps.",
+    "Check summaries do not expose runner assignment time. The waterfall uses each GitHub Actions job's created_at to started_at interval as its observed queue time.",
+    "Workflow completion uses updated_at because the workflow-run API does not return a separate completed_at timestamp. Rerun workflows begin at the earliest retained job start so reused jobs remain visible in one logical run.",
+    "GitHub can return a reused job with created_at later than started_at. Such jobs retain both timestamps but report queueSeconds as null; job offset begins at started_at.",
     readinessBasis.startsWith("required checks")
       ? "Required checks reflect current base-branch protection and may differ from the rules active when an older PR merged."
       : "Required-check configuration was not available, so successful exact-head checks are an upper-bound proxy for automation readiness.",
@@ -396,6 +570,13 @@ export default async function analyze_pr_value_stream(input: {
         last === null
           ? null
           : { name: last.name, workflow: last.workflow, completedAt: iso(last.completed) },
+    },
+    waterfall: {
+      origin: iso(headObserved),
+      runsAvailable: exactHeadRuns.length,
+      runsIncluded: waterfall.length,
+      runsTruncated: waterfall.length < exactHeadRuns.length,
+      runs: waterfall,
     },
     bottlenecks,
     revisions: commits.length,

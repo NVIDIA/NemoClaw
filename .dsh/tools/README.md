@@ -102,6 +102,13 @@ The report separates these intervals:
 - Approval delay after automation.
 - Ready-to-merge lag.
 
+The `waterfall` field contains chart-ready timing data for each retained exact-head
+GitHub Actions run, its jobs, and each job's steps. Every row includes absolute
+timestamps and an offset from the latest-revision origin. Workflow and job rows
+also separate observed queue time from execution time. Use `maxAutomationRuns`
+to lower the default 50-run bound; the report states when it truncates runs and
+rejects workflows with more than 100 jobs rather than returning a partial graph.
+
 The target result models a one-push pull request with immediate opening and
 approval. It uses the latest revision's observed automation time plus the
 observed ready-to-merge lag. GitHub does not expose a canonical branch-created
