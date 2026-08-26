@@ -39,7 +39,12 @@ import {
   waitForOpenShellFinalHandoff,
   waitForOpenShellSandboxLifecycleRelease,
 } from "./docker-gpu-supervisor-reconnect";
-import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
+import {
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAMESPACE_LABEL,
+  queryOpenShellDockerSandboxContainers,
+} from "./openshell-docker-sandbox-containers";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
@@ -72,6 +77,45 @@ export type DockerGpuPatchFinalizeOutcome = {
   replacementPresence?: "absent" | "present" | "unknown";
 };
 
+function isExactOpenShellReplacement(
+  replacementContainerId: string,
+  dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
+  timeoutMs: number,
+): boolean {
+  const expectedContainerId = fullDockerContainerId(replacementContainerId);
+  if (!expectedContainerId || timeoutMs <= 0) return false;
+  try {
+    const query = dockerRun(
+      [
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        `id=${expectedContainerId}`,
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--format",
+        "{{.ID}}",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.max(1, Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, Math.floor(timeoutMs))),
+      },
+    );
+    if (!hasZeroDockerExitStatus(query)) return false;
+    const containerIds = String(query.stdout ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return (
+      containerIds.length === 1 && fullDockerContainerId(containerIds[0]) === expectedContainerId
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isExactRunningReplacement(
   sandboxName: string,
   replacementContainerId: string,
@@ -82,7 +126,36 @@ function isExactRunningReplacement(
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
     const deadline = Date.now() + timeoutMs;
-    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
+    const namespace = dockerRun(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, timeoutMs),
+      },
+    );
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      !hasZeroDockerExitStatus(namespace) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun },
+      remainingMs,
+      sandboxNamespace,
+    );
     if (
       !containers.ok ||
       containers.ids.length !== 1 ||
@@ -90,7 +163,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    const remainingMs = deadline - Date.now();
+    remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return false;
     const inspect = dockerRun(
       [
@@ -174,20 +247,12 @@ export function finalizeDockerGpuPatchBackup(
       {
         runOpenshell: deps.runOpenshell,
         sleep: deps.sleep,
-        soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) => {
-          const expectedContainerId = fullDockerContainerId(options.result.newContainerId);
-          if (!expectedContainerId || remainingMs <= 0) return false;
-          const containers = queryOpenShellDockerSandboxContainers(
-            options.sandboxName,
-            { dockerRun: resolved.dockerRun },
+        soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) =>
+          isExactOpenShellReplacement(
+            options.result.newContainerId,
+            resolved.dockerRun,
             remainingMs,
-          );
-          return (
-            containers.ok &&
-            containers.ids.length === 1 &&
-            fullDockerContainerId(containers.ids[0]) === expectedContainerId
-          );
-        },
+          ),
       },
     );
     if (!lifecycleReleaseObserved) {

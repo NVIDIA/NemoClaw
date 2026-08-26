@@ -4,7 +4,7 @@
 # Dedicated security reporting workflow for NemoClaw.
 # CodeQL and ShellCheck publish findings to GitHub code scanning while the
 # existing PR and main workflows remain the merge-gating CI path.
-name: Security / Scanning
+name: Security / Code Scanning
 
 on:
   pull_request:
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   codeql:
-    name: CodeQL / ${{ matrix.language }}
+    name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -46,7 +46,7 @@ jobs:
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
 
   shellcheck:
-    name: ShellCheck
+    name: ShellCheck SARIF
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

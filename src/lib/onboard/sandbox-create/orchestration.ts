@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
-import { assertRecordedPolicyAuthority } from "../../adapters/openshell/policy-authority";
+import {
+  assertRecordedPolicyAuthority,
+  isPolicyAuthorityRefusalError,
+} from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -225,6 +228,10 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   };
   const refuseAfterCreate = (validationError: unknown): never => {
     const compensationErrors = cleanupTemporarySources();
+    const validationDetail =
+      validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
+      ? validationError.message
+      : null;
     const identityGuidance = exactIdentity
       ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create. Do not delete the sandbox by name, even after this comparison. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.`
       : " OpenShell did not return a durable identity for comparison. Do not delete the sandbox by name. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.";
@@ -235,7 +242,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     );
     throw new AggregateError(
       [validationError, ...compensationErrors],
-      "Sandbox policy authority validation failed after creation; automatic sandbox cleanup was not safe.",
+      `Sandbox policy authority validation failed after creation${validationDetail ? `: ${validationDetail}` : ""}; automatic sandbox cleanup was not safe.`,
     );
   };
   const verifyCreatedSandbox = async (created: Created): Promise<string> => {
@@ -442,7 +449,9 @@ export function createProviderEffectBoundary(input: {
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
-  readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
+  readonly activateDeferredProviderEffects:
+    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
   const validate = () =>
@@ -476,7 +485,8 @@ export function createProviderEffectBoundary(input: {
       context.revalidatePolicyRequirements(
         `activating deferred providers for sandbox '${input.sandboxName}'`,
       );
-      const providerNames = input.activateDeferredProviderEffects?.() ?? [];
+      const providerNames =
+        input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
       validate();
       context.revalidatePolicyRequirements(
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
@@ -1473,9 +1483,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   )
                 ).messagingTokenDefs;
               },
-              runProviderPreDeleteCleanup: () => {
-                revalidatePolicyAuthority(
-                  createIntent?.deferSandboxEffectsUntilPolicyVerification === true,
+              runProviderPreDeleteCleanup: (verifiedPolicyRevalidation) => {
+                (verifiedPolicyRevalidation ??
+                  ((operation) => revalidatePolicyAuthority(false, operation)))(
                   `cleaning up providers for sandbox '${sandboxName}'`,
                 );
                 runSandboxProviderPreDeleteCleanup(sandboxName, {
@@ -1488,8 +1498,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 upsertMessagingProviders(tokenDefs, {
                   ...options,
                   revalidatePolicyRequirements: (operation) =>
-                    revalidatePolicyAuthority(
-                      createIntent?.deferSandboxEffectsUntilPolicyVerification === true,
+                    (options.revalidatePolicyRequirements ??
+                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation)))(
                       operation,
                     ),
                 }),
