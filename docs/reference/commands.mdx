@@ -1851,6 +1851,12 @@ Before it reports success, every completion path verifies the authenticated prox
 
 <AgentOnly variant="hermes">
 
+For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
+It waits for the existing in-container `nemoclaw-start` supervisor to establish authenticated Hermes health and never launches another detached `nemoclaw-start` process.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
+It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
+If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
+
 `recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
 If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key.
 The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child.
@@ -1972,7 +1978,7 @@ $$nemoclaw my-assistant start
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `start` revalidates and recovers the exact receipt-owned Podman container and manifest-owned Hermes startup command without using Docker as a fallback.
+For an active Portable Hermes receipt, `start` follows the exact Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover); it does not fall back to Docker.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 
 </AgentOnly>
