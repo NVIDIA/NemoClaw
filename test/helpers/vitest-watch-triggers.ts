@@ -38,19 +38,15 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/workflow-plan.test.ts",
 ] as const;
 
-const PRODUCT_SLIDE_TESTS = [
-  "test/skills/product-slides/cleanup.test.ts",
-  "test/skills/product-slides/evidence.test.ts",
+const PRODUCT_SLIDE_MODEL_FIXTURE_TESTS = [
   "test/skills/product-slides/evidence-output-boundary.test.ts",
+  "test/skills/product-slides/evidence.test.ts",
   "test/skills/product-slides/model-evidence.test.ts",
   "test/skills/product-slides/model-presentation.test.ts",
   "test/skills/product-slides/roadmap-contracts.test.ts",
+  "test/skills/product-slides/unmilestoned-collection.test.ts",
   "test/skills/product-slides/parity.test.ts",
-  "test/skills/product-slides/pptx-template-artifact.test.ts",
-  "test/skills/product-slides/pptx-template-fidelity.test.ts",
-  "test/skills/product-slides/pptx-template-structure.test.ts",
   "test/skills/product-slides/publication.test.ts",
-  "test/skills/product-slides/template-fingerprint.test.ts",
 ] as const;
 
 function runTests(...tests: string[]): () => string[] {
@@ -379,10 +375,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern:
       /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/markitecture-claims\.json$/,
     testsToRun: runTests(
+      "test/skills/product-slides/evidence-output-boundary.test.ts",
       "test/skills/product-slides/evidence.test.ts",
       "test/skills/product-slides/model-evidence.test.ts",
       "test/skills/product-slides/model-presentation.test.ts",
       "test/skills/product-slides/roadmap-contracts.test.ts",
+      "test/skills/product-slides/unmilestoned-collection.test.ts",
       "test/skills/product-slides/parity.test.ts",
       "test/skills/product-slides/publication.test.ts",
     ),
@@ -391,6 +389,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern:
       /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/slide-model\.schema\.json$/,
     testsToRun: runTests(
+      "test/skills/product-slides/evidence-output-boundary.test.ts",
       "test/skills/product-slides/evidence.test.ts",
       "test/skills/product-slides/model-presentation.test.ts",
       "test/skills/product-slides/roadmap-contracts.test.ts",
@@ -399,8 +398,29 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/.*\.json$/,
-    testsToRun: runTests(...PRODUCT_SLIDE_TESTS),
+    pattern:
+      /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/(?:snapshot-base|presentation-map|narrative-input)\.json$/,
+    testsToRun: runTests(...PRODUCT_SLIDE_MODEL_FIXTURE_TESTS),
+  },
+  {
+    pattern: /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/docs-evidence\.json$/,
+    testsToRun: runTests("test/skills/product-slides/evidence.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/template\/baseline\.json$/,
+    testsToRun: runTests(
+      ...PRODUCT_SLIDE_MODEL_FIXTURE_TESTS,
+      "test/skills/product-slides/template-fingerprint.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/template\/(?:changed-object-type|unrelated-slide-added)\.json$/,
+    testsToRun: runTests(
+      "test/skills/product-slides/publication.test.ts",
+      "test/skills/product-slides/template-fingerprint.test.ts",
+    ),
   },
 ];
 export function resolveVitestWatchTests(file: string): string[] {

@@ -30,7 +30,6 @@ import {
   buildSyntheticModel,
   fixturePath,
   readJson,
-  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
 } from "../../helpers/nemoclaw-product-slides-fixture";
@@ -615,7 +614,6 @@ export {
   buildSyntheticModel,
   fixturePath,
   readJson,
-  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
 };

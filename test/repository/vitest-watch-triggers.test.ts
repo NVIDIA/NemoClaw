@@ -380,10 +380,12 @@ describe("Vitest opaque-input watch triggers", () => {
     [
       ".agents/skills/nemoclaw-maintainer-product-slides/references/markitecture-claims.json",
       [
+        "test/skills/product-slides/evidence-output-boundary.test.ts",
         "test/skills/product-slides/evidence.test.ts",
         "test/skills/product-slides/model-evidence.test.ts",
         "test/skills/product-slides/model-presentation.test.ts",
         "test/skills/product-slides/roadmap-contracts.test.ts",
+        "test/skills/product-slides/unmilestoned-collection.test.ts",
         "test/skills/product-slides/parity.test.ts",
         "test/skills/product-slides/publication.test.ts",
       ],
@@ -391,6 +393,7 @@ describe("Vitest opaque-input watch triggers", () => {
     [
       ".agents/skills/nemoclaw-maintainer-product-slides/references/slide-model.schema.json",
       [
+        "test/skills/product-slides/evidence-output-boundary.test.ts",
         "test/skills/product-slides/evidence.test.ts",
         "test/skills/product-slides/model-presentation.test.ts",
         "test/skills/product-slides/roadmap-contracts.test.ts",
@@ -402,23 +405,56 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(inputPath)).toEqual(tests);
   });
 
-  it("maps a product-slide fixture change to the complete product-slide test set", () => {
-    expect(
-      triggeredBy("test/fixtures/nemoclaw-maintainer-product-slides/snapshot-base.json"),
-    ).toEqual([
-      "test/skills/product-slides/cleanup.test.ts",
-      "test/skills/product-slides/evidence.test.ts",
-      "test/skills/product-slides/evidence-output-boundary.test.ts",
-      "test/skills/product-slides/model-evidence.test.ts",
-      "test/skills/product-slides/model-presentation.test.ts",
-      "test/skills/product-slides/roadmap-contracts.test.ts",
-      "test/skills/product-slides/parity.test.ts",
-      "test/skills/product-slides/pptx-template-artifact.test.ts",
-      "test/skills/product-slides/pptx-template-fidelity.test.ts",
-      "test/skills/product-slides/pptx-template-structure.test.ts",
-      "test/skills/product-slides/publication.test.ts",
-      "test/skills/product-slides/template-fingerprint.test.ts",
-    ]);
+  it.each(["snapshot-base.json", "presentation-map.json", "narrative-input.json"])(
+    "maps the product-slide model fixture %s to its concrete consumers",
+    (fixture) => {
+      expect(triggeredBy(`test/fixtures/nemoclaw-maintainer-product-slides/${fixture}`)).toEqual([
+        "test/skills/product-slides/evidence-output-boundary.test.ts",
+        "test/skills/product-slides/evidence.test.ts",
+        "test/skills/product-slides/model-evidence.test.ts",
+        "test/skills/product-slides/model-presentation.test.ts",
+        "test/skills/product-slides/roadmap-contracts.test.ts",
+        "test/skills/product-slides/unmilestoned-collection.test.ts",
+        "test/skills/product-slides/parity.test.ts",
+        "test/skills/product-slides/publication.test.ts",
+      ]);
+    },
+  );
+
+  it.each([
+    ["docs-evidence.json", ["test/skills/product-slides/evidence.test.ts"]],
+    [
+      "template/baseline.json",
+      [
+        "test/skills/product-slides/evidence-output-boundary.test.ts",
+        "test/skills/product-slides/evidence.test.ts",
+        "test/skills/product-slides/model-evidence.test.ts",
+        "test/skills/product-slides/model-presentation.test.ts",
+        "test/skills/product-slides/roadmap-contracts.test.ts",
+        "test/skills/product-slides/unmilestoned-collection.test.ts",
+        "test/skills/product-slides/parity.test.ts",
+        "test/skills/product-slides/publication.test.ts",
+        "test/skills/product-slides/template-fingerprint.test.ts",
+      ],
+    ],
+    [
+      "template/changed-object-type.json",
+      [
+        "test/skills/product-slides/publication.test.ts",
+        "test/skills/product-slides/template-fingerprint.test.ts",
+      ],
+    ],
+    [
+      "template/unrelated-slide-added.json",
+      [
+        "test/skills/product-slides/publication.test.ts",
+        "test/skills/product-slides/template-fingerprint.test.ts",
+      ],
+    ],
+  ])("maps the product-slide fixture %s to its concrete consumers", (fixture, tests) => {
+    expect(triggeredBy(`test/fixtures/nemoclaw-maintainer-product-slides/${fixture}`)).toEqual(
+      tests,
+    );
   });
 
   it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(

@@ -634,8 +634,3 @@ export function semanticReadback(model: Record<string, unknown>): Record<string,
 }
 
 export const slideModelSchemaPath = path.join(skillRoot, "references", "slide-model.schema.json");
-export const roadmapPresentationPath = path.join(
-  skillRoot,
-  "references",
-  "roadmap-presentation.json",
-);

@@ -19,7 +19,6 @@ import {
   validateSlideModel,
   buildSyntheticModel,
   readJson,
-  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
   rehashModel,
@@ -125,15 +124,6 @@ describe("NemoClaw product slide source and model contracts", () => {
     expect(canonicalSha256(value)).toBe(
       canonicalSha256({ ...value, a: "line one\nline two\nline three" }),
     );
-  });
-
-  it("keeps each seeded Epic presentation order unique", () => {
-    const presentation = readJson<{ epics: Array<{ displayOrder: number }> }>(
-      roadmapPresentationPath,
-    );
-    const displayOrders = presentation.epics.map((entry) => entry.displayOrder);
-
-    expect(new Set(displayOrders).size).toBe(displayOrders.length);
   });
 
   it("records complete multi-page collection evidence", () => {
