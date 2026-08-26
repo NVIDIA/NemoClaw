@@ -9,6 +9,8 @@ export default async function analyze_pr_value_stream(input: {
   maxRunPages?: Integer;
   maxCheckPages?: Integer;
   maxAutomationRuns?: Integer;
+  maxTestArtifacts?: Integer;
+  topTestsPerShard?: Integer;
 }): Promise<{
   measuredAt: string;
   repository: string;
@@ -83,6 +85,24 @@ export default async function analyze_pr_value_stream(input: {
         offsetSeconds: number;
         queueSeconds: number | null;
         durationSeconds: number | null;
+        testRun: {
+          artifact: string;
+          tests: Integer;
+          timedTests: Integer;
+          files: Integer;
+          startedAt: string;
+          completedAt: string;
+          offsetSeconds: number;
+          durationSeconds: number;
+          slowTests: {
+            file: string;
+            name: string;
+            state: string;
+            startedAt: string;
+            offsetSeconds: number;
+            durationSeconds: number;
+          }[];
+        } | null;
         steps: {
           number: Integer;
           name: string;
@@ -111,12 +131,18 @@ export default async function analyze_pr_value_stream(input: {
   const maxRunPages = input.maxRunPages ?? 3;
   const maxCheckPages = input.maxCheckPages ?? 3;
   const maxAutomationRuns = input.maxAutomationRuns ?? 50;
+  const maxTestArtifacts = input.maxTestArtifacts ?? 12;
+  const topTestsPerShard = input.topTestsPerShard ?? 10;
   if (!Number.isSafeInteger(maxRunPages) || maxRunPages < 1 || maxRunPages > 10)
     throw new Error("maxRunPages must be an integer from 1 through 10");
   if (!Number.isSafeInteger(maxCheckPages) || maxCheckPages < 1 || maxCheckPages > 10)
     throw new Error("maxCheckPages must be an integer from 1 through 10");
   if (!Number.isSafeInteger(maxAutomationRuns) || maxAutomationRuns < 1 || maxAutomationRuns > 100)
     throw new Error("maxAutomationRuns must be an integer from 1 through 100");
+  if (!Number.isSafeInteger(maxTestArtifacts) || maxTestArtifacts < 0 || maxTestArtifacts > 24)
+    throw new Error("maxTestArtifacts must be an integer from 0 through 24");
+  if (!Number.isSafeInteger(topTestsPerShard) || topTestsPerShard < 1 || topTestsPerShard > 25)
+    throw new Error("topTestsPerShard must be an integer from 1 through 25");
   const parseTime = (value: unknown, label: string): number => {
     if (typeof value !== "string") throw new Error(label + " was not a timestamp");
     const time = Date.parse(value);
@@ -223,7 +249,163 @@ export default async function analyze_pr_value_stream(input: {
   const exactHeadRuns = headRuns
     .filter((run: any) => Number.isSafeInteger(run?.id))
     .sort((a: any, b: any) => Date.parse(a.created_at) - Date.parse(b.created_at));
-  const waterfallRuns = exactHeadRuns.slice(0, maxAutomationRuns);
+  const waterfallRuns = exactHeadRuns
+    .slice(0, maxAutomationRuns)
+    .sort((a: any, b: any) =>
+      String(a?.name ?? "").startsWith("CI PR #") === String(b?.name ?? "").startsWith("CI PR #")
+        ? Date.parse(a.created_at) - Date.parse(b.created_at)
+        : String(a?.name ?? "").startsWith("CI PR #")
+          ? -1
+          : 1,
+    );
+  const shardJobName = /^cli-test-shards \(([1-9]|1[0-2])\)$/u;
+  const shellQuote = (value: string): string => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  const readTestRun = async (
+    runId: number,
+    headSha: string,
+    shard: number,
+    artifact: any,
+  ): Promise<any | null> => {
+    try {
+      if (
+        !Number.isSafeInteger(artifact?.id) ||
+        artifact?.name !== "cli-blob-report-" + shard ||
+        artifact?.expired !== false ||
+        !Number.isSafeInteger(artifact?.size_in_bytes) ||
+        artifact.size_in_bytes < 1 ||
+        artifact.size_in_bytes > 25_000_000 ||
+        artifact?.workflow_run_id !== runId ||
+        artifact?.workflow_run_head_sha !== headSha
+      )
+        return null;
+      const reporter = [
+        'import { writeFileSync } from "node:fs";',
+        "export default class ShardTimingReporter {",
+        "  rows = []; files = new Set(); tests = 0; timedTests = 0; start = Infinity; end = -Infinity;",
+        "  onTestCaseResult(test) {",
+        "    this.tests++; const result = test?.task?.result; const file = String(test?.module?.moduleId ?? ''); this.files.add(file);",
+        "    const duration = result?.duration; const startTime = result?.startTime;",
+        "    if (!Number.isFinite(duration) || duration < 0 || !Number.isFinite(startTime) || startTime < 0) return;",
+        "    this.timedTests++; this.start = Math.min(this.start, startTime); this.end = Math.max(this.end, startTime + duration);",
+        "    this.rows.push({ file, name: String(test?.fullName ?? ''), state: String(result?.state ?? ''), startTime, duration });",
+        "  }",
+        "  onTestRunEnd() { this.rows.sort((a, b) => b.duration - a.duration || a.name.localeCompare(b.name)); writeFileSync(process.env.DSH_TEST_SUMMARY, JSON.stringify({ tests: this.tests, timedTests: this.timedTests, files: this.files.size, start: this.start, end: this.end, rows: this.rows.slice(0, Number(process.env.DSH_TOP_TESTS)) })); }",
+        "}",
+      ].join("\n");
+      const script = [
+        "set -euo pipefail",
+        "umask 077",
+        "tmp=$(mktemp -d)",
+        'cleanup() { rm -rf -- "$tmp"; }',
+        "trap cleanup EXIT HUP INT TERM",
+        "zip=$tmp/artifact.zip",
+        "blobdir=$tmp/blobs",
+        'mkdir "$blobdir"',
+        "printf '%s\n' " + shellQuote(reporter) + ' > "$tmp/reporter.mjs"',
+        "gh api " +
+          shellQuote("repos/" + repository + "/actions/artifacts/" + artifact.id + "/zip") +
+          ' | { dd of="$zip" bs=1000000 count=25 iflag=fullblock status=none; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); [ -z "$extra" ]; }',
+        'compressed=$(stat -c %s "$zip")',
+        '[ "$compressed" -eq ' + String(artifact.size_in_bytes) + " ]",
+        'entry=$(zipinfo -1 "$zip")',
+        '[ "$(printf \'%s\\n\' "$entry" | wc -l)" -eq 1 ]',
+        "printf '%s\\n' \"$entry\" | grep -Eq '^blob-[A-Za-z0-9._-]+\\.json$'",
+        "line=$(zipinfo -l \"$zip\" | awk '/^-/{print; found++} END {if (found != 1) exit 1}')",
+        "mode=$(printf '%s\\n' \"$line\" | awk '{print $1}')",
+        "expanded=$(printf '%s\\n' \"$line\" | awk '{print $4}')",
+        'case "$mode" in -*) ;; *) exit 1 ;; esac',
+        "case \"$expanded\" in ''|*[!0-9]*) exit 1 ;; esac",
+        '[ "$expanded" -le 100000000 ]',
+        'unzip -p "$zip" "$entry" | { dd of="$blobdir/$entry" bs=1000000 count=100 iflag=fullblock status=none; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); [ -z "$extra" ]; }',
+        '[ "$(stat -c %s "$blobdir/$entry")" -eq "$expanded" ]',
+        "common=$(git rev-parse --path-format=absolute --git-common-dir)",
+        "primary=${common%/.git}",
+        "owner=$PWD",
+        'if [ ! -x "$owner/node_modules/.bin/vitest" ]; then owner=$primary; fi',
+        '[ -x "$owner/node_modules/.bin/vitest" ]',
+        "summary=$tmp/summary.json",
+        "set +e",
+        '(cd "$owner" && DSH_TEST_SUMMARY="$summary" DSH_TOP_TESTS=' +
+          String(topTestsPerShard) +
+          ' ./node_modules/.bin/vitest --merge-reports="$blobdir" --reporter="$tmp/reporter.mjs") >/dev/null 2>"$tmp/vitest.stderr"',
+        "set -e",
+        '[ -f "$summary" ]',
+        '[ "$(stat -c %s "$summary")" -le 5000000 ]',
+        'cat "$summary"',
+      ].join("\n");
+      const result = await tools.bash({
+        workdir: input.workdir,
+        command: script,
+        description: "Merge bounded Vitest shard artifact",
+        timeoutMs: 120_000,
+      });
+      if (
+        result.kind !== "foreground" ||
+        result.exitCode !== 0 ||
+        result.timedOut ||
+        result.stdout.truncated ||
+        result.stdout.text.length > 5_000_000
+      )
+        return null;
+      const summary = JSON.parse(result.stdout.text);
+      if (
+        !Number.isSafeInteger(summary?.tests) ||
+        !Number.isSafeInteger(summary?.timedTests) ||
+        !Number.isSafeInteger(summary?.files) ||
+        !Array.isArray(summary?.rows) ||
+        summary.rows.length > topTestsPerShard ||
+        !Number.isFinite(summary?.start) ||
+        !Number.isFinite(summary?.end) ||
+        summary.end < summary.start
+      )
+        return null;
+      const rows = summary.rows.map((record: any) => ({
+        file: String(record?.file ?? "")
+          .replace(/^.*\/NemoClaw\/NemoClaw\//u, "")
+          .slice(0, 500),
+        name: String(record?.name ?? "").slice(0, 500),
+        state: String(record?.state ?? "").slice(0, 40),
+        start:
+          typeof record?.startTime === "number" && Number.isFinite(record.startTime)
+            ? record.startTime
+            : null,
+        duration:
+          typeof record?.duration === "number" &&
+          Number.isFinite(record.duration) &&
+          record.duration >= 0
+            ? record.duration
+            : null,
+      }));
+      const timed = rows.filter((row: any) => row.start !== null && row.duration !== null);
+      const started = summary.start;
+      const completed = summary.end;
+      return {
+        artifact: artifact.name,
+        tests: summary.tests,
+        timedTests: summary.timedTests,
+        files: summary.files,
+        startedAt: iso(started),
+        completedAt: iso(completed),
+        offsetSeconds: offsetSeconds(headObserved, started),
+        durationSeconds: seconds(started, completed),
+        slowTests: timed
+          .slice()
+          .sort((a: any, b: any) => b.duration - a.duration || a.name.localeCompare(b.name))
+          .slice(0, topTestsPerShard)
+          .map((row: any) => ({
+            file: row.file,
+            name: row.name,
+            state: row.state,
+            startedAt: iso(row.start),
+            offsetSeconds: offsetSeconds(headObserved, row.start),
+            durationSeconds: Math.max(0, Math.round(row.duration / 1000)),
+          })),
+      };
+    } catch {
+      return null;
+    }
+  };
+  let testArtifactsRead = 0;
   const waterfall = await Promise.all(
     waterfallRuns.map(async (run: any) => {
       const runResult = await tools.run_github_cli({
@@ -260,13 +442,56 @@ export default async function analyze_pr_value_stream(input: {
       )
         throw new Error("workflow job list exceeded the complete bounded waterfall contract");
       const runCreated = parseTime(run.created_at, "workflow createdAt");
-      const jobs = jobsPayload.jobs.map((job: any) => {
+      const shardJobs = jobsPayload.jobs.filter((job: any) => shardJobName.test(job?.name));
+      let artifactsByName = new Map<string, any>();
+      if (shardJobs.length > 0 && maxTestArtifacts > 0) {
+        try {
+          const artifactsResult = await tools.run_github_cli({
+            workdir: input.workdir,
+            args: [
+              "api",
+              "repos/" + repository + "/actions/runs/" + run.id + "/artifacts?per_page=100",
+              "--jq",
+              "{total_count,artifacts:[.artifacts[] | {id,name,size_in_bytes,expired,workflow_run_id:.workflow_run.id,workflow_run_head_sha:.workflow_run.head_sha}]}",
+            ],
+          });
+          const payload = JSON.parse(artifactsResult.stdout);
+          if (
+            Number.isSafeInteger(payload?.total_count) &&
+            payload.total_count <= 100 &&
+            Array.isArray(payload?.artifacts) &&
+            payload.artifacts.length === payload.total_count
+          ) {
+            const counts = new Map<string, number>();
+            for (const artifact of payload.artifacts)
+              counts.set(artifact?.name, (counts.get(artifact?.name) ?? 0) + 1);
+            artifactsByName = new Map(
+              payload.artifacts
+                .filter((artifact: any) => counts.get(artifact?.name) === 1)
+                .map((artifact: any) => [artifact.name, artifact]),
+            );
+          }
+        } catch {
+          artifactsByName = new Map();
+        }
+      }
+      const jobs = [];
+      for (const job of jobsPayload.jobs) {
         if (!Number.isSafeInteger(job?.id) || !Array.isArray(job?.steps))
           throw new Error("workflow job did not match the waterfall contract");
         const jobCreated = parseTime(job.created_at, "job createdAt");
         const jobStarted = parseTime(job.started_at, "job startedAt");
         const jobCompleted =
           job.completed_at === null ? null : parseTime(job.completed_at, "job completedAt");
+        let testRun = null;
+        const match = shardJobName.exec(job.name);
+        if (match !== null && testArtifactsRead < maxTestArtifacts) {
+          const artifact = artifactsByName.get("cli-blob-report-" + match[1]);
+          if (artifact !== undefined) {
+            testArtifactsRead += 1;
+            testRun = await readTestRun(run.id, pull.headRefOid, Number(match[1]), artifact);
+          }
+        }
         const steps = job.steps.map((step: any) => {
           if (!Number.isSafeInteger(step?.number))
             throw new Error("workflow step did not match the waterfall contract");
@@ -285,7 +510,7 @@ export default async function analyze_pr_value_stream(input: {
             durationSeconds: stepCompleted === null ? null : seconds(stepStarted, stepCompleted),
           };
         });
-        return {
+        const normalizedJob = {
           id: job.id,
           name: String(job.name ?? "").slice(0, 200),
           status: String(job.status ?? "").slice(0, 40),
@@ -303,9 +528,11 @@ export default async function analyze_pr_value_stream(input: {
           offsetSeconds: offsetSeconds(headObserved, jobStarted),
           queueSeconds: jobCreated <= jobStarted ? seconds(jobCreated, jobStarted) : null,
           durationSeconds: jobCompleted === null ? null : seconds(jobStarted, jobCompleted),
+          testRun,
           steps,
         };
-      });
+        jobs.push(normalizedJob);
+      }
       const earliestJobStart =
         jobs.length > 0
           ? Math.min(
