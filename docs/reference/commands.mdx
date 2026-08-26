@@ -462,12 +462,14 @@ Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the s
 #### `--tool-disclosure <progressive|direct>`
 
 Choose how the selected agent presents its session-authorized tools to the model.
-`progressive` is the default: OpenClaw and Hermes use their native Tool Search implementations, while Deep Agents Code initially shows its core tools plus `search_tools` after at least one MCP tool loads successfully.
+Outside the Portable experimental profile, `progressive` is the default: OpenClaw and Hermes use their native Tool Search implementations, while Deep Agents Code initially shows its core tools plus `search_tools` after at least one MCP tool loads successfully.
 `direct` restores the previous behavior and presents all registered tools directly.
 This setting changes model context only; it does not bypass OpenShell policy, credentials, approvals, hooks, or sandbox controls.
 
 The flag takes precedence over `NEMOCLAW_TOOL_DISCLOSURE`.
-A new sandbox defaults to `progressive` when neither is set.
+A new non-Portable sandbox defaults to `progressive` when neither is set.
+Fresh Portable onboarding defaults to `direct` when the flag is absent, even when `NEMOCLAW_TOOL_DISCLOSURE` is set.
+Pass `--tool-disclosure progressive` explicitly to select progressive disclosure for a fresh Portable sandbox.
 NemoClaw records the selected value with the onboarding session and sandbox so rebuilds preserve it and ambient shell variables cannot silently change an internal rebuild.
 Model-specific compatibility safeguards may downgrade a selected `progressive` mode to direct exposure for that model without changing the recorded preference.
 To change an existing sandbox, recreate it explicitly:
@@ -476,7 +478,8 @@ To change an existing sandbox, recreate it explicitly:
 $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure direct
 ```
 
-Without an explicit flag or environment value, recreation preserves the recorded setting and only falls back to `progressive` for legacy state.
+Outside the Portable experimental profile, recreation without an explicit flag or environment value preserves the recorded setting and only falls back to `progressive` for legacy state.
+A Portable resume without the flag preserves the mode recorded by the interrupted session.
 Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
 
 <AgentOnly variant="deepagents">
@@ -1848,6 +1851,12 @@ Before it reports success, every completion path verifies the authenticated prox
 
 <AgentOnly variant="hermes">
 
+For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
+It waits for the existing in-container `nemoclaw-start` supervisor to establish authenticated Hermes health and never launches another detached `nemoclaw-start` process.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
+It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
+If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
+
 `recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
 If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key.
 The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child.
@@ -1969,7 +1978,7 @@ $$nemoclaw my-assistant start
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `start` revalidates and recovers the exact receipt-owned Podman container and manifest-owned Hermes startup command without using Docker as a fallback.
+For an active Portable Hermes receipt, `start` follows the exact Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover); it does not fall back to Docker.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 
 </AgentOnly>
@@ -4998,7 +5007,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, only `install-vllm` supplies the explicit Deferred preview intent; another provider stops installation before onboarding. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the experimental DGX Spark managed path and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for its declarative selection. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the exact managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
-| `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
+| `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior outside the Portable experimental profile. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. Fresh Portable onboarding ignores this variable and defaults to `direct` unless the flag explicitly selects a mode. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and exact address pinning remain active; wildcards are not supported. |
