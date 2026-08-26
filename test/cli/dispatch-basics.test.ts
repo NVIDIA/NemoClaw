@@ -668,6 +668,42 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it("quotes a hint argument that contains whitespace (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["exec", "--", "echo", "hello world"])).rejects.toThrow(
+        "process.exit:1",
+      );
+
+      // Joining raw would print `echo hello world`, which resplits into two
+      // arguments when the reader copies the command.
+      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> exec -- echo 'hello world'");
+    });
+  });
+
+  it("quotes an empty hint argument so it survives a copied command (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["exec", ""])).rejects.toThrow("process.exit:1");
+
+      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> exec ''");
+    });
+  });
+
+  it("escapes a single quote inside a hint argument (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["exec", "--", "echo", "it's"])).rejects.toThrow("process.exit:1");
+
+      expect(stderr.join("\n")).toContain(`Run: nemoclaw <name> exec -- echo 'it'\\''s'`);
+    });
+  });
+
+  it("leaves an ordinary flag argument unquoted in the hint (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["doctor", "--json"])).rejects.toThrow("process.exit:1");
+
+      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> doctor --json");
+    });
+  });
+
   it("reports the sandbox-first grammar for a two-token sandbox action (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
       await expect(dispatchCli(["policy", "list"])).rejects.toThrow("process.exit:1");
