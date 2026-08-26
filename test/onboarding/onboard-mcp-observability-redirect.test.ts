@@ -7,9 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
-import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 
 describe("onboard managed MCP recreation redirect", () => {
   it("prints the explicit observability opt-out in the transactional rebuild command", () => {

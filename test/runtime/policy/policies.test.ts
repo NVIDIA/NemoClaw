@@ -21,19 +21,19 @@ import {
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const policies = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
-) as typeof import("../src/lib/policy");
+) as typeof import("../../../src/lib/policy");
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
 const policyAuthorityModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "policy-authority.ts"),
-) as typeof import("../src/lib/adapters/openshell/policy-authority");
+) as typeof import("../../../src/lib/adapters/openshell/policy-authority");
 const registryForTest = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
-) as typeof import("../src/lib/state/registry");
+) as typeof import("../../../src/lib/state/registry");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
 const SOURCE_NODE_ARGS = ["--import", "tsx"];

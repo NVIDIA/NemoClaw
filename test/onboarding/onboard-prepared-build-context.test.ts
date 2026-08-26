@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
-import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type PreparedContextScenario = "create" | "custom-dockerfile";
 
@@ -25,7 +25,7 @@ type PreparedContextResult = {
   stageCalls: number;
 };
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 
 function runPreparedContextScenario(scenario: PreparedContextScenario): PreparedContextResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-prepared-context-test-"));
@@ -68,6 +68,9 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
   const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+  const onboardScriptMocksPath = JSON.stringify(
+    path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+  );
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -147,6 +150,8 @@ const normalize = (command) =>
 runner.run = (command) => {
   const normalized = normalize(command);
   commands.push(normalized);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   return normalized.includes("sandbox get") && normalized.includes(sandboxName)
     ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };

@@ -62,7 +62,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
         ...makeDcodeSandboxEntry(),
         policyAuthority: undefined,
       },
-      sandboxListOutput: "",
+      sandboxInventory: { sandboxes: [] },
       reconciledSandboxGatewayState: { state: "missing", output: "" },
     });
     configureDcodeSession(harness);

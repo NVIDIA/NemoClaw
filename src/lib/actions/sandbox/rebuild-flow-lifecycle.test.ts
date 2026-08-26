@@ -64,6 +64,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyAuthorityInspection: {
         authority: "externally-managed",
         effectivePolicy: { network_policies: {} },
+        policyIdentity: { hash: "external-policy", activeVersion: 1 },
       },
     });
 
@@ -91,6 +92,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyAuthorityInspection: {
         authority: "externally-managed",
         effectivePolicy: YAML.parse(OPENCLAW_BASELINE.content) as Record<string, unknown>,
+        policyIdentity: { hash: "external-policy", activeVersion: 1 },
       },
     });
 
@@ -121,8 +123,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
   it("stops before replacement restore when authority flips after recreate (#9833)", async () => {
     let authorityFlipped = false;
     const managedInspection = {
-      authority: "nemoclaw-managed" as const,
+      authority: "owner-unknown" as const,
       effectivePolicy: {},
+      policyIdentity: { hash: "policy-alpha", activeVersion: 7 },
     };
     const harness = createRebuildFlowHarness({
       onboard: () => {
@@ -131,10 +134,18 @@ describe("rebuildSandbox flow: lifecycle", () => {
     });
     const inspectChangedAuthority = () =>
       authorityFlipped
-        ? { authority: "externally-managed", effectivePolicy: {} }
+        ? {
+            authority: "externally-managed" as const,
+            effectivePolicy: {},
+            policyIdentity: { hash: "external-policy", activeVersion: 2 },
+          }
         : managedInspection;
     harness.inspectSandboxPolicyAuthoritySpy.mockImplementation(inspectChangedAuthority);
-    harness.inspectGlobalPolicyAuthoritySpy.mockImplementation(inspectChangedAuthority);
+    harness.inspectGlobalPolicyAuthoritySpy.mockImplementation(() =>
+      authorityFlipped
+        ? { state: "active", inspection: inspectChangedAuthority() }
+        : { state: "absent" },
+    );
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -360,10 +371,7 @@ network_policies:
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "invalid versioned baseline exclusion",
     );
-    expect(harness.registryUpdateSpy).toHaveBeenCalledOnce();
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      policyAuthority: "nemoclaw-managed",
-    });
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();

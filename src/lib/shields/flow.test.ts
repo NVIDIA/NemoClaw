@@ -10,11 +10,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import {
-  bindExternalPolicyRecovery,
   createShieldsFlowHarness,
   managedMcpPolicy,
   managedMcpSandbox,
-  prepareExternalMcpRecoveryFixture,
   type ShieldsFlowHarnessOptions,
   writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
@@ -185,22 +183,6 @@ describe("shields command flow", () => {
     const applied = YAML.parse(harness.policySetBodies.at(-1)!);
     expect(applied.network_policies.mcp_bridge_alpha).toEqual(alpha.networkPolicy);
     expect(applied.network_policies).not.toHaveProperty("restrictive_baseline");
-  });
-
-  it("requires current managed MCP entries during external policy recovery (#9833)", () => {
-    const { alpha, beta, harness, savedPolicy, snapshotPath } = prepareExternalMcpRecoveryFixture(
-      requireDist,
-      tmpDir,
-    );
-    bindExternalPolicyRecovery(harness, savedPolicy);
-    expect(() => harness.applyShieldsPolicySnapshot("openclaw", snapshotPath)).toThrow(
-      /managed MCP/iu,
-    );
-    const requiredPolicy = structuredClone(savedPolicy);
-    delete requiredPolicy.network_policies[alpha.key];
-    requiredPolicy.network_policies[beta.key] = beta.networkPolicy;
-    bindExternalPolicyRecovery(harness, requiredPolicy);
-    expect(harness.applyShieldsPolicySnapshot("openclaw", snapshotPath).status).toBe(0);
   });
 
   it("isolates same-millisecond policy snapshots and cleanup across sandboxes", () => {

@@ -16,22 +16,22 @@ import {
 
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
-  path.join(import.meta.dirname, "..", "src", "lib", "policy", "index.ts"),
-) as typeof import("../src/lib/policy");
+  path.join(import.meta.dirname, "../../..", "src", "lib", "policy", "index.ts"),
+) as typeof import("../../../src/lib/policy");
 const policyAuthority = requireForTest(
   path.join(
     import.meta.dirname,
-    "..",
+    "../../..",
     "src",
     "lib",
     "adapters",
     "openshell",
     "policy-authority.ts",
   ),
-) as typeof import("../src/lib/adapters/openshell/policy-authority");
+) as typeof import("../../../src/lib/adapters/openshell/policy-authority");
 const registry = requireForTest(
-  path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
-) as typeof import("../src/lib/state/registry");
+  path.join(import.meta.dirname, "../../..", "src", "lib", "state", "registry.ts"),
+) as typeof import("../../../src/lib/state/registry");
 const CUSTOM_PRESET = "network_policies:\n  example:\n    host: example.com\n";
 const MALFORMED_BASE_POLICIES = [
   ["network_policies string", "version: 1\nnetwork_policies: invalid\n"],

@@ -134,7 +134,6 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       null,
       undefined,
       GATEWAY,
-      { revalidatePolicyRequirements: undefined },
     );
   });
 

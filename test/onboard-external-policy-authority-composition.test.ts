@@ -205,8 +205,6 @@ describe("external policy authority onboarding composition", () => {
         persistVerifiedPolicy: vi.fn(),
         revalidateVerifiedPolicy: vi.fn(),
         cleanupTemporarySources: vi.fn(),
-        deleteCreatedSandbox: vi.fn(),
-        waitForCreatedSandboxAbsence: vi.fn(() => true),
       }),
     ).resolves.toBe(launch);
 

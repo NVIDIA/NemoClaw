@@ -24,25 +24,25 @@ const {
   runCapture: vi.fn(),
 }));
 
-vi.mock("../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
+vi.mock("../../../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
   ...(await importOriginal<
-    typeof import("../src/lib/adapters/openshell/policy-authority")
+    typeof import("../../../src/lib/adapters/openshell/policy-authority")
   >()),
   inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
 }));
 
-vi.mock("../src/lib/runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/runner")>()),
+vi.mock("../../../src/lib/runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/runner")>()),
   runCapture,
 }));
 
-vi.mock("../src/lib/state/registry", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/state/registry")>()),
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
   getSandbox,
 }));
 
-import { applyPresetContent, loadPreset, loadPresetFromFile } from "../src/lib/policy";
+import { applyPresetContent, loadPreset, loadPresetFromFile } from "../../../src/lib/policy";
 
 const tempDirs: string[] = [];
 const DRIFTED_PERSONAL_POLICY = `version: 1
