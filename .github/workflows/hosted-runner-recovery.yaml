@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / Recover Platform CI Runner
+name: Automation / Platform CI Runner
 
 run-name: Hosted runner recovery for source run ${{ github.event.workflow_run.id }}
 
@@ -16,6 +16,7 @@ permissions: {}
 
 jobs:
   recover:
+    name: Recover hosted-runner failures
     if: >-
       ${{
       github.run_attempt == 1 &&
