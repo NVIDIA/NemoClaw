@@ -35,8 +35,12 @@ export function scrubManagedMcpAdapterOrThrow(
   entry: McpBridgeEntry,
 ): McpScrubbedAdapterEntry {
   const observation = observeMcpCredentialRevision(sandboxName, entry);
-  const credentialRevision =
-    observation !== "absent" && observation !== "canonical" ? observation : undefined;
+  if (observation === "absent" || observation === "canonical") {
+    throw new McpBridgeError(
+      `Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server '${entry.server}'.`,
+    );
+  }
+  const credentialRevision: McpAttachedCredentialRevision = observation;
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
   const removal = unregisterAgentAdapter(sandboxName, adapter, entry, {
     envValues: {},

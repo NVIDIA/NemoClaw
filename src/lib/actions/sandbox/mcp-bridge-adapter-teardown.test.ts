@@ -95,6 +95,7 @@ const entry: McpBridgeEntry = {
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
+  providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
   addedAt: new Date(0).toISOString(),
 };
@@ -148,12 +149,21 @@ describe("MCP adapter teardown rollback", () => {
     },
   );
 
-  it("scrubs owned Hermes state without inventing an unavailable revision", () => {
+  it("does not derive a Hermes credential revision from an exact provider resource version", () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("absent");
+    mocks.inspectMcpProvider.mockReturnValue({
+      credentialKeys: ["GITHUB_TOKEN"],
+      exists: true,
+      id: entry.providerId,
+      resourceVersion: 12,
+      type: "nemoclaw-mcp-v1",
+    });
 
-    expect(scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toEqual(entry);
+    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toThrow(
+      "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
+    );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
-    expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
   });
 });
