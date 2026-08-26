@@ -599,6 +599,23 @@ describe("onboard policy preset suggestions", () => {
     expect(active).toContain("discord");
   });
 
+  it("omits credential-bound OpenClaw Discord egress until the channel is active (#10153)", () => {
+    const slackOnly = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: ["slack"],
+      knownPresetNames: known,
+    });
+    const discord = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: ["discord"],
+      knownPresetNames: known,
+    });
+
+    expect(slackOnly).toContain("slack");
+    expect(slackOnly).not.toContain("discord");
+    expect(discord).toContain("discord");
+  });
+
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: ["telegram", "not-a-real-preset"],
