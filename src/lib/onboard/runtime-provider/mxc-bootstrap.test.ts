@@ -123,7 +123,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
         expect(created).toEqual(verifiedCreateOutcome(plan));
         return readyEvidence(plan);
       }),
-      recoverCreate: vi.fn(async () => ({ status: "absent" })),
+      recoverCreate: vi.fn(async () => ({ status: "absent" as const })),
     };
 
     const receipt = await nativeBootstrap(operations).run(bootstrapInput());
@@ -283,7 +283,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
         return { status: "not-created" as const, reason: "create-rejected" as const };
       }),
       verifyReadiness: vi.fn(),
-      recoverCreate: vi.fn(async () => ({ status: "absent" })),
+      recoverCreate: vi.fn(async () => ({ status: "absent" as const })),
     };
 
     const bootstrap = nativeBootstrap(operations);
