@@ -11,7 +11,6 @@ import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-// Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
@@ -23,7 +22,8 @@ import {
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
-} from "../adapters/openshell/policy-authority";
+} from "./policy-authority";
+// Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";

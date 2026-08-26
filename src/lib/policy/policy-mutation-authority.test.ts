@@ -53,8 +53,10 @@ vi.mock("../state/registry", async (importOriginal) => ({
 import {
   applyPermissivePolicy,
   applyPresetContent,
+  applyPresets,
   excludeBaselineEntry,
   inspectPolicyRecoveryAuthority,
+  loadPresetForSandbox,
   removePreset,
   restoreBaselineEntry,
 } from "./index";
@@ -88,6 +90,12 @@ network_policies:
           - allow: { method: GET, path: "/**" }
 `;
 const WEATHER_POLICY = YAML.parse(WEATHER_PRESET).network_policies.weather;
+
+function loadBuiltInWeatherPolicy(): Record<string, unknown> {
+  const preset = loadPresetForSandbox(SANDBOX, "weather");
+  expect(preset).not.toBeNull();
+  return YAML.parse(preset!).network_policies.weather as Record<string, unknown>;
+}
 
 function reportedErrors(): string {
   return vi
@@ -185,6 +193,72 @@ describe("PolicyMutationAuthority", () => {
     expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
+
+  it("accepts complete external requirements through applyPresets without local mutation or attribution (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "externally-managed" };
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: { weather: loadBuiltInWeatherPolicy() } },
+      policyIdentity: { hash: INITIAL_POLICY_HASH, activeVersion: 1 },
+    });
+
+    expect(applyPresets(SANDBOX, ["weather"])).toBe(true);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.captureSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(mocks.compareAndSetSandboxPolicyCreationReceipt).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(sandbox).toEqual(
+      expect.objectContaining({ policyAuthority: "externally-managed", policies: [] }),
+    );
+    expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+  });
+
+  it.each([
+    {
+      caseName: "missing",
+      expectedDiagnostic: 'missing entries "weather"',
+      networkPolicies: {},
+    },
+    {
+      caseName: "changed",
+      expectedDiagnostic: 'drifted entries "weather"',
+      networkPolicies: null,
+    },
+  ])(
+    "refuses $caseName external requirements through applyPresets without local mutation or attribution (#9833)",
+    ({ expectedDiagnostic, networkPolicies }) => {
+      sandbox = { ...sandbox, policyAuthority: "externally-managed" };
+      const effectiveNetworkPolicies =
+        networkPolicies ?? {
+          weather: { ...loadBuiltInWeatherPolicy(), name: "changed-weather" },
+        };
+      mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+        authority: "externally-managed",
+        effectivePolicy: { network_policies: effectiveNetworkPolicies },
+        policyIdentity: { hash: INITIAL_POLICY_HASH, activeVersion: 1 },
+      });
+
+      expect(applyPresets(SANDBOX, ["weather"])).toBe(false);
+
+      expect(reportedErrors()).toContain("external policy authority");
+      expect(reportedErrors()).toContain(expectedDiagnostic);
+      expect(reportedErrors()).not.toContain("wttr.in");
+      expect(reportedErrors()).not.toContain("network_policies:");
+      expect(mocks.runCapture).not.toHaveBeenCalled();
+      expect(mocks.captureSandboxBasePolicy).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+      expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+      expect(mocks.compareAndSetSandboxPolicyCreationReceipt).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+      expect(sandbox).toEqual(
+        expect.objectContaining({ policyAuthority: "externally-managed", policies: [] }),
+      );
+      expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+    },
+  );
 
   it("reads verified global authority without changing the registry (#9833)", () => {
     sandbox = { ...sandbox, policyAuthority: "externally-managed" };

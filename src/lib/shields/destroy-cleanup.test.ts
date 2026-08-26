@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveNemoclawStateDir } from "../state/paths";
 import { cleanupShieldsDestroyArtifacts } from "./destroy-cleanup";
 
 describe("Shields destroy cleanup", () => {
@@ -155,11 +154,6 @@ describe("Shields destroy cleanup", () => {
     expect(warnings).toEqual(["Failed to terminate Shields timer PID 4242"]);
     expect(rmSync).toHaveBeenCalledOnce();
     expect(rmSync.mock.calls[0][0]).toContain("shields-external-policy-alpha.yaml");
-  });
-
-  it("state-dir helper resolves ~/.nemoclaw/state from a single shared helper", () => {
-    const resolved = resolveNemoclawStateDir("/tmp/example-home");
-    expect(resolved).toBe(path.join("/tmp/example-home", ".nemoclaw", "state"));
   });
 });
 

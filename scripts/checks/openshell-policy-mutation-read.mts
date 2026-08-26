@@ -7,8 +7,8 @@
  *
  * invalidState: a refactor introduces an unclassified policy read or changes a
  * mutation to consume provider-composed `--full` output.
- * sourceBoundary: typed command builders own argv construction; this audit owns
- * exhaustive discovery and classification of their production call sites.
+ * sourceBoundary: policy command builders and the OpenShell authority adapter
+ * own argv construction; this audit classifies their production read sites.
  * whyNotSourceFix: TypeScript cannot distinguish a command array after it
  * crosses the process runner, so this defense-in-depth check intentionally uses
  * deterministic AST classifications plus repository-wide read-site discovery.
@@ -100,6 +100,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
     relativePath: "src/lib/adapters/openshell/policy-authority.ts",
     expectedReads: [
       unclassifiedBase("captureSandboxBasePolicy"),
+      unclassifiedFull("inspectActiveGlobalPolicy"),
       unclassifiedFull("inspectSandboxPolicyAuthority"),
     ],
   },
@@ -117,18 +118,8 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
-      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
-      {
-        site: "buildPolicyGetArgs",
-        view: "base",
-        failureHandling: "unclassified",
-      },
-      {
-        site: "buildPolicyGetFullCommand",
-        view: "full",
-        failureHandling: "unclassified",
-      },
-      unclassifiedFull("buildPolicyGetFullJsonArgs"),
+      unclassifiedBase("buildPolicyGetCommand"),
+      unclassifiedFull("buildPolicyGetFullCommand"),
     ],
   },
 ] as const;

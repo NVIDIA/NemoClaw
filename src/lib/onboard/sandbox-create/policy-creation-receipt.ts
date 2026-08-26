@@ -10,7 +10,7 @@ import {
   inspectSandboxPolicyAuthority,
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
-} from "../../adapters/openshell/policy-authority";
+} from "../../policy/policy-authority";
 import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
 import type { PendingSandboxPolicyVerification } from "../../state/registry/types";
 import {

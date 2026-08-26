@@ -560,6 +560,50 @@ function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
   client.captureOpenshellCommand = (binary, args, options = {}) => {
+    if (args[0] === "policy") {
+      const result = runner.runCaptureEx([binary, ...args], {
+        env: options.env,
+        maxBuffer: options.maxBuffer,
+        timeout: options.timeout,
+      });
+      let stdout = String(result.stdout || "");
+      const stderr = String(result.stderr || "");
+      const status = Number.isInteger(result.exitCode) ? result.exitCode : null;
+      const timedOut = result.timedOut === true;
+      const outputIndex = args.indexOf("--output");
+      const sandboxName = args.at(-1);
+      const isSandboxFullJsonRead =
+        args[1] === "get" &&
+        !args.includes("--base") &&
+        !args.includes("--global") &&
+        args.includes("--full") &&
+        outputIndex >= 0 &&
+        args[outputIndex + 1] === "json" &&
+        outputIndex + 2 === args.length - 1 &&
+        typeof sandboxName === "string" &&
+        sandboxName.length > 0;
+      if (status === 0 && !timedOut && isSandboxFullJsonRead && stdout.trim().length === 0) {
+        stdout = JSON.stringify({
+          scope: "sandbox",
+          sandbox: sandboxName,
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "fixture-policy",
+          active_version: 1,
+          policy: {},
+        });
+      }
+      const error = timedOut
+        ? Object.assign(new Error("OpenShell capture timed out"), { code: "ETIMEDOUT" })
+        : null;
+      return {
+        status,
+        output: `${stdout}${options.includeStderr === true ? stderr : ""}`.trim(),
+        ...(options.includeStreams === true ? { stdout, stderr } : {}),
+        ...(error ? { error } : {}),
+      };
+    }
+
     let stdout = String(
       runner.runCapture([binary, ...args], {
         ...options,
@@ -567,21 +611,6 @@ function mockStructuredOpenShellCaptureFromRunner() {
         includeStderr: false,
       }) || "",
     );
-    if (
-      args[0] === "policy" &&
-      args[1] === "get" &&
-      !args.includes("--global") &&
-      stdout.trim().length === 0
-    ) {
-      const sandboxName = String(args.at(-1) || "unknown");
-      stdout = JSON.stringify({
-        scope: "sandbox",
-        sandbox: sandboxName,
-        status: "effective",
-        policy_source: "sandbox",
-        policy: {},
-      });
-    }
     const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
     if (isSandboxGet && stdout.trim().length === 0) {
       const sandboxName = String(args.at(-1) || "unknown");
@@ -601,9 +630,8 @@ function mockStructuredOpenShellCaptureFromRunner() {
 }
 
 function mockStandaloneGatewayTeardownAuthority() {
-  // Recreate integration fixtures historically mock runner.runCapture. Keep
-  // the structured OpenShell probe on that same seam while preserving clean
-  // nonzero NotFound metadata after the fixture records deletion.
+  // Recreate fixtures keep dynamic non-policy probes on runner.runCapture.
+  // Policy reads use runCaptureEx so failures cannot become empty success.
   mockStructuredOpenShellCaptureFromRunner();
   const authority = require(
     path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),

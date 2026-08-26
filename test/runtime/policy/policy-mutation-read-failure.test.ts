@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -69,6 +70,126 @@ describe("OpenShell policy mutation read failures", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["a nonzero status", 42, false],
+    ["a timeout", null, true],
+  ] as const)(
+    "refuses policy mutation when the full JSON authority read reports %s (#9833)",
+    (failure, exitCode, timedOut) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-read-"));
+      tempDirs.push(tempDir);
+      const fakeOpenshell = path.join(tempDir, "openshell");
+      const scriptPath = path.join(tempDir, "policy-authority-read.cjs");
+      const repoRoot = path.join(import.meta.dirname, "../../..");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      const script = String.raw`
+const fixtureMocks = require(${JSON.stringify(path.join(repoRoot, "test/helpers/onboard-script-mocks.cjs"))});
+const runner = require(${JSON.stringify(path.join(repoRoot, "src/lib/runner.ts"))});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+const registry = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/registry.ts"))});
+const policy = require(${JSON.stringify(path.join(repoRoot, "src/lib/policy/index.ts"))});
+
+const calls = [];
+const fullMetadata = JSON.stringify({
+  scope: "sandbox",
+  sandbox: "alpha",
+  status: "effective",
+  policy_source: "sandbox",
+  hash: "fixture-policy",
+  active_version: 1,
+  policy: {},
+});
+const sandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
+  name: "alpha",
+  agent: "openclaw",
+  policies: [],
+});
+registry.getSandbox = () => structuredClone(sandbox);
+registry.getBaselineExclusions = () => [];
+registry.updateSandbox = () => true;
+
+const normalize = (command) => command.map(String).join(" ");
+runner.runCaptureEx = (command) => {
+  const normalized = normalize(command);
+  calls.push({ seam: "structured", command: normalized });
+  if (normalized.includes("policy get") && normalized.includes("--full --output json")) {
+    return {
+      stdout: fullMetadata,
+      stderr: "private-policy-diagnostic",
+      exitCode: ${JSON.stringify(exitCode)},
+      timedOut: ${JSON.stringify(timedOut)},
+    };
+  }
+  if (normalized.includes("policy get") && normalized.includes("--base")) {
+    return {
+      stdout: "version: 1\nnetwork_policies: {}\n",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    };
+  }
+  return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+};
+runner.runCapture = (command) => {
+  const normalized = normalize(command);
+  calls.push({ seam: "string", command: normalized });
+  if (normalized.includes("policy get") && normalized.includes("--full --output json")) {
+    return fullMetadata;
+  }
+  if (normalized.includes("policy get") && normalized.includes("--base")) {
+    return "version: 1\nnetwork_policies: {}\n";
+  }
+  if (normalized.includes("sandbox get")) {
+    return "Name: alpha\nId: fixture-created-sandbox\n";
+  }
+  return "";
+};
+runner.run = (command) => {
+  calls.push({ seam: "run", command: normalize(command) });
+  return { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+};
+
+const applied = policy.applyPresetContent(
+  "alpha",
+  "advisor-regression",
+  "network_policies:\n  advisor-regression:\n    endpoints:\n      - host: example.com\n        port: 443\n",
+  { nonFatal: true, skipRegistryUpdate: true, suppressDisclosure: true },
+);
+console.log(JSON.stringify({ applied, calls }));
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: tempDir,
+          NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "") as {
+        applied: boolean;
+        calls: Array<{ command: string; seam: string }>;
+      };
+      expect(payload.applied).toBe(false);
+      expect(payload.calls).toContainEqual({
+        seam: "structured",
+        command: `${fakeOpenshell} policy get -g nemoclaw --full --output json alpha`,
+      });
+      expect(
+        payload.calls.some(
+          ({ command }) => command.includes("policy set") && command.includes("--wait"),
+        ),
+        `${failure} must stop before policy set`,
+      ).toBe(false);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("private-policy-diagnostic");
+    },
+  );
 
   describe.each([
     {

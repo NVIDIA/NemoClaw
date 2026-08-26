@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
   assertRecordedPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
   type SandboxPolicyAuthorityInspection,
@@ -115,5 +116,42 @@ describe("externally managed policy requirements", () => {
         operation: "apply a preset",
       }),
     ).not.toThrow();
+  });
+});
+
+describe("observed policy requirements", () => {
+  it("checks owner-unknown policy contents without assigning ownership (#9833)", () => {
+    const inspection: SandboxPolicyAuthorityInspection = {
+      authority: "owner-unknown",
+      policyIdentity: { hash: "policy-alpha", activeVersion: 7 },
+      effectivePolicy: {
+        network_policies: { required: { endpoints: ["api.test"] } },
+      },
+    };
+
+    expect(() =>
+      assertObservedPolicyRequirements({
+        inspection,
+        requiredPolicy: {
+          network_policies: { required: { endpoints: ["api.test"] } },
+        },
+        operation: "verify the created sandbox policy",
+        sandboxName: "alpha",
+      }),
+    ).not.toThrow();
+
+    const error = errorFrom(() =>
+      assertObservedPolicyRequirements({
+        inspection,
+        requiredPolicy: {
+          network_policies: { missing: { endpoints: ["required-secret.test"] } },
+        },
+        operation: "verify the created sandbox policy",
+        sandboxName: "alpha",
+      }),
+    );
+    expect(error.message).toContain('missing entries "missing"');
+    expect(error.message).toContain("The verified policy must supply the exact required entries");
+    expect(error.message).not.toContain("required-secret.test");
   });
 });
