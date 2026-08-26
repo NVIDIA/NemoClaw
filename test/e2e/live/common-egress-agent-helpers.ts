@@ -119,6 +119,14 @@ export interface PersonalPublicFetchToolEvidenceArtifact {
   webFetchResultsWithinMaxChars: number;
 }
 
+export interface OpenClawToolEvidenceReductionFailureArtifact {
+  schemaVersion: 1;
+  failureClass: "command-failed" | "output-invalid";
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+}
+
 export interface CommonEgressProviderValidationSkip {
   http429ProviderValidationFailure: boolean;
   matches: boolean;
@@ -154,8 +162,14 @@ interface AgentAssertionRetryOptions {
 export interface OpenClawAgentAttemptEvidenceOptions {
   classification: AgentAssertionAttempt;
   label: string;
+  recordToolEvidenceReductionFailure: (
+    evidence: OpenClawToolEvidenceReductionFailureArtifact,
+  ) => Promise<void>;
   recordToolEvidence: (evidence: OpenClawToolEvidence) => Promise<void>;
-  reduceToolEvidence: () => Promise<{ exitCode: number | null; stdout: string }>;
+  reduceToolEvidence: () => Promise<
+    Pick<ShellProbeResult, "exitCode" | "stdout"> &
+      Partial<Pick<ShellProbeResult, "signal" | "timedOut">>
+  >;
   reply: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
 }
@@ -878,6 +892,13 @@ export async function validateOpenClawAgentAttemptEvidence(
   if (options.toolEvidenceValidator) {
     const reduced = await options.reduceToolEvidence();
     if (reduced.exitCode !== 0) {
+      await options.recordToolEvidenceReductionFailure({
+        schemaVersion: 1,
+        failureClass: "command-failed",
+        exitCode: reduced.exitCode,
+        signal: reduced.signal ?? null,
+        timedOut: reduced.timedOut ?? false,
+      });
       return {
         attempt: { passed: false, failureClass: "deterministic" },
         failure: `reduced tool evidence exited with ${String(reduced.exitCode)}`,
@@ -886,6 +907,13 @@ export async function validateOpenClawAgentAttemptEvidence(
     try {
       toolEvidence = parseOpenClawToolEvidence(reduced.stdout);
     } catch (error) {
+      await options.recordToolEvidenceReductionFailure({
+        schemaVersion: 1,
+        failureClass: "output-invalid",
+        exitCode: reduced.exitCode,
+        signal: reduced.signal ?? null,
+        timedOut: reduced.timedOut ?? false,
+      });
       return {
         attempt: { passed: false, failureClass: "deterministic" },
         failure: error instanceof Error ? error.message : String(error),

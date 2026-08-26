@@ -18,7 +18,6 @@ import {
   text,
   type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
-  type PersonalPublicFetchToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 
@@ -40,10 +39,6 @@ export interface OpenClawAgentAssertionOptions {
   redactOutputInFailure?: boolean;
   sandboxName: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
-}
-
-export interface PersonalPublicFetchAssertionResult {
-  assessment: PersonalPublicFetchToolEvidenceArtifact;
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -137,6 +132,12 @@ export async function runOpenClawAgentAssertion(
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
         label: args.label,
+        recordToolEvidenceReductionFailure: async (failure) => {
+          await artifacts.writeJson(
+            `actions/${args.label}-attempt-${attempt}-reducer-failure.json`,
+            failure,
+          );
+        },
         recordToolEvidence: async (toolEvidence) => {
           await artifacts.writeJson(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
@@ -200,7 +201,7 @@ export async function runPersonalPublicFetchAgentAssertion(
   sandbox: SandboxClient,
   artifacts: ArtifactSink,
   args: { apiKey: string; label: string; sandboxName: string },
-): Promise<PersonalPublicFetchAssertionResult> {
+): Promise<void> {
   const publicFetch = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
     apiKey: args.apiKey,
     expected: "PERSONAL_PUBLIC_FETCH_OK",
@@ -213,9 +214,4 @@ export async function runPersonalPublicFetchAgentAssertion(
     toolEvidenceValidator: (evidence) => assessPersonalPublicFetchToolEvidence(evidence).matches,
   });
   expect(publicFetch.toolEvidence).toBeDefined();
-  const assessmentArtifact = projectPersonalPublicFetchToolEvidenceArtifact(
-    publicFetch.toolEvidence!,
-  );
-  await artifacts.writeJson(`actions/${args.label}-assessment.json`, assessmentArtifact);
-  return { assessment: assessmentArtifact };
 }

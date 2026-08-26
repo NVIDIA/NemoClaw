@@ -175,8 +175,6 @@ probe_denied() {
   set -e
   if [ "$rc" -ne 0 ] || [ "$status" != "403" ]; then
     printf 'PERSONAL_DENIAL_FAILED label=%s status=%s rc=%s\n' "$label" "$status" "$rc" >&2
-    head -c 1000 "$body" 2>/dev/null || true
-    head -c 1000 "$stderr" >&2 2>/dev/null || true
     rm -f "$body" "$stderr"
     return 1
   fi

@@ -36,6 +36,7 @@ const PUBLIC_FETCH_EXPECTATION = {
   content: "United States",
   url: PUBLIC_FETCH_URL,
 } satisfies OpenClawPublicFetchExpectation;
+const REDUCER_SECRET_SENTINEL = "nvidia-api-key-must-not-remain";
 
 function publicFetchPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -236,6 +237,7 @@ function publicFetchAttemptValidationOptions(
   return {
     classification: { passed: true },
     label: "personal-public-fetch",
+    recordToolEvidenceReductionFailure: vi.fn().mockResolvedValue(undefined),
     recordToolEvidence: vi.fn().mockResolvedValue(undefined),
     reduceToolEvidence: vi.fn().mockResolvedValue({
       exitCode: 0,
@@ -840,6 +842,59 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(result.attempt).toEqual({ passed: false, failureClass: "deterministic" });
     expect(result.failure).toMatch(failure);
     expect(result.evidence).toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: "a reducer command failure",
+      reduced: {
+        exitCode: 2,
+        signal: "SIGTERM" as const,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: true,
+      },
+      expected: {
+        schemaVersion: 1,
+        failureClass: "command-failed",
+        exitCode: 2,
+        signal: "SIGTERM",
+        timedOut: true,
+      },
+    },
+    {
+      name: "malformed reducer output",
+      reduced: {
+        exitCode: 0,
+        signal: null,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: false,
+      },
+      expected: {
+        schemaVersion: 1,
+        failureClass: "output-invalid",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      },
+    },
+  ])("records bounded diagnostics for $name", async ({ reduced, expected }) => {
+    const recordToolEvidenceReductionFailure = vi.fn().mockResolvedValue(undefined);
+    const result = await validateOpenClawAgentAttemptEvidence(
+      publicFetchAttemptValidationOptions({
+        recordToolEvidenceReductionFailure,
+        reduceToolEvidence: vi.fn().mockResolvedValue(reduced),
+      }),
+    );
+
+    expect(result.attempt).toEqual({ passed: false, failureClass: "deterministic" });
+    expect(recordToolEvidenceReductionFailure).toHaveBeenCalledOnce();
+    expect(recordToolEvidenceReductionFailure).toHaveBeenCalledWith(expected);
+    const serialized = JSON.stringify(recordToolEvidenceReductionFailure.mock.calls);
+    expect(serialized).not.toContain(PUBLIC_FETCH_URL);
+    expect(serialized).not.toContain(PUBLIC_FETCH_EXPECTATION.content);
+    expect(serialized).not.toContain(REDUCER_SECRET_SENTINEL);
   });
 
   it("uses parseable tool-result text when persisted OpenClaw details are capped", () => {
