@@ -156,8 +156,19 @@ type QualificationChecks = {
   readonly workloadTerminatedByDelete: boolean;
 };
 
+export type WindowsMxcOpenClawStartupObservation = {
+  readonly outcome:
+    | "not-observed"
+    | "spawn-failed"
+    | "exited-before-readiness"
+    | "health-timeout"
+    | "ready";
+  readonly gatewayExitCode: number | null;
+  readonly versionExitCode: number | null;
+};
+
 export interface WindowsMxcOpenClawQualificationReceipt {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly classification: "inactive-candidate";
   readonly backend: "process_container";
   readonly configuration: {
@@ -191,6 +202,7 @@ export interface WindowsMxcOpenClawQualificationReceipt {
     readonly wxcExecSha256: string;
   };
   readonly checks: QualificationChecks;
+  readonly startup: WindowsMxcOpenClawStartupObservation;
   readonly cleanup: {
     readonly boundedStopMarkerNeeded: boolean;
     readonly emergencyProcessTerminationNeeded: boolean;
@@ -374,7 +386,7 @@ function buildWindowsMxcSetupFailureReceipt(
   localArtifactsRemoved: boolean,
 ): WindowsMxcOpenClawQualificationReceipt {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -421,6 +433,11 @@ function buildWindowsMxcSetupFailureReceipt(
       sandboxCreateAccepted: false,
       sandboxDeleteAccepted: false,
       workloadTerminatedByDelete: false,
+    },
+    startup: {
+      outcome: "not-observed",
+      gatewayExitCode: null,
+      versionExitCode: null,
     },
     cleanup: {
       boundedStopMarkerNeeded: false,
@@ -1011,16 +1028,16 @@ const gateway = spawn(
   ],
   { env, stdio: "ignore", windowsHide: true },
 );
-let gatewaySpawnError = null;
-gateway.once("error", (error) => {
-  gatewaySpawnError = error instanceof Error ? error.message : String(error);
+let gatewaySpawnFailed = false;
+gateway.once("error", () => {
+  gatewaySpawnFailed = true;
 });
 if (gateway.pid !== undefined) writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
 
 let healthObserved = false;
 let lastHealth = { exitCode: null, stdout: "", stderr: "" };
 const deadline = Date.now() + 120000;
-while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError === null) {
+while (Date.now() < deadline && gateway.exitCode === null && !gatewaySpawnFailed) {
   lastHealth = await run([
     entry,
     "gateway",
@@ -1039,8 +1056,9 @@ while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError =
 const result = {
   controlWrite: true,
   deniedWrite,
+  gatewayExitCode: Number.isInteger(gateway.exitCode) ? gateway.exitCode : null,
   gatewayExitedBeforeReadiness: gateway.exitCode !== null,
-  gatewaySpawnError,
+  gatewaySpawnFailed,
   healthObserved,
   openClawVersion: version.stdout.trim(),
   versionExitCode: version.exitCode,
@@ -1054,7 +1072,7 @@ while (healthObserved && gateway.exitCode === null && !existsSync(stopPath)) {
   await sleep(250);
 }
 
-if (gateway.exitCode === null) {
+if (gateway.exitCode === null && !gatewaySpawnFailed) {
   gateway.kill();
   await Promise.race([
     new Promise((resolve) => gateway.once("exit", resolve)),
@@ -1409,14 +1427,40 @@ export function windowsMxcOpenClawStartupPreconditionsPass(input: {
   readonly openClawHealth: boolean;
   readonly openClawProcessPresentWhileReady: boolean;
   readonly registryPresentWhileReady: boolean;
+  readonly versionExitCode: number | null;
 }): boolean {
   return (
     input.filesystemControlWrite &&
     input.filesystemDeniedWrite &&
     input.openClawHealth &&
     input.openClawProcessPresentWhileReady &&
-    input.registryPresentWhileReady
+    input.registryPresentWhileReady &&
+    input.versionExitCode === 0
   );
+}
+
+function boundedExitCode(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
+export function classifyWindowsMxcOpenClawStartupObservation(
+  result: Record<string, unknown>,
+): WindowsMxcOpenClawStartupObservation {
+  const gatewayExitCode = boundedExitCode(result.gatewayExitCode);
+  const versionExitCode = boundedExitCode(result.versionExitCode);
+  if (result.healthObserved === true) {
+    return { outcome: "ready", gatewayExitCode, versionExitCode };
+  }
+  if (result.gatewaySpawnFailed === true) {
+    return { outcome: "spawn-failed", gatewayExitCode, versionExitCode };
+  }
+  if (result.gatewayExitedBeforeReadiness === true) {
+    return { outcome: "exited-before-readiness", gatewayExitCode, versionExitCode };
+  }
+  if (result.healthObserved === false) {
+    return { outcome: "health-timeout", gatewayExitCode, versionExitCode };
+  }
+  return { outcome: "not-observed", gatewayExitCode, versionExitCode };
 }
 
 export function classifyWindowsMxcForwardHealthObservation(
@@ -1969,6 +2013,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   let trustedForwardProcess: WindowsProcessIdentity | null = null;
   let primaryFailure: unknown = null;
   const cleanupFailures: unknown[] = [];
+  let startup: WindowsMxcOpenClawStartupObservation = {
+    outcome: "not-observed",
+    gatewayExitCode: null,
+    versionExitCode: null,
+  };
   let checks: QualificationChecks = {
     artifactIdentity: true,
     filesystemControlWrite: false,
@@ -2078,6 +2127,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     const probeResult = fs.existsSync(resultPath)
       ? (JSON.parse(fs.readFileSync(resultPath, "utf8")) as Record<string, unknown>)
       : {};
+    startup = classifyWindowsMxcOpenClawStartupObservation(probeResult);
     openClawProcessId = readProcessId(openClawPidPath);
     if (openClawProcessId !== null) {
       trustedOpenClawProcess = await observeTrustedOpenClawProcessIdentity({
@@ -2118,7 +2168,12 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       ...checks,
       sandboxCreateAccepted: create.exitCode === 0,
     };
-    if (!windowsMxcOpenClawStartupPreconditionsPass(checks)) {
+    if (
+      !windowsMxcOpenClawStartupPreconditionsPass({
+        ...checks,
+        versionExitCode: startup.versionExitCode,
+      })
+    ) {
       throw new Error("Windows MXC OpenClaw startup preconditions failed before forwarding");
     }
 
@@ -2554,7 +2609,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     sandboxName,
   });
   const receipt: WindowsMxcOpenClawQualificationReceipt = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -2588,6 +2643,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       wxcExecSha256: inputs.expected.wxcExecSha256,
     },
     checks,
+    startup,
     cleanup: {
       boundedStopMarkerNeeded,
       emergencyProcessTerminationNeeded,

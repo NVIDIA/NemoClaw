@@ -16,6 +16,7 @@ import {
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
@@ -490,18 +491,102 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });
 
-  it("renders a syntactically valid native OpenClaw probe agent (#8178)", () => {
+  it("serializes a generated probe spawn failure without raw diagnostics (#8178)", async () => {
     const { root } = fixture();
     const agentPath = path.join(root, "probe-agent.mjs");
+    const home = path.join(root, "probe-home");
+    const resultPath = path.join(root, "probe-result.json");
+    const outcomePath = path.join(root, "probe-outcome.json");
+    const token = "runtime-only-secret";
+    const missingNodePath = path.join(root, "missing-node.exe");
     fs.writeFileSync(agentPath, renderWindowsMxcOpenClawProbeAgent(), "utf8");
 
-    const checked = spawnSync(process.execPath, ["--check", agentPath], {
+    const executed = spawnSync(process.execPath, [agentPath], {
       encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_MXC_E2E_DENY_PATH: path.join(root, "missing-parent", "denied.txt"),
+        NEMOCLAW_MXC_E2E_ENTRY: path.join(root, "missing-openclaw.mjs"),
+        NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: path.join(root, "heartbeat.txt"),
+        NEMOCLAW_MXC_E2E_HOME: home,
+        NEMOCLAW_MXC_E2E_MOCK_PORT: "0",
+        NEMOCLAW_MXC_E2E_NODE: missingNodePath,
+        NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: path.join(root, "openclaw.pid"),
+        NEMOCLAW_MXC_E2E_OPENCLAW_PORT: "0",
+        NEMOCLAW_MXC_E2E_OUTCOME_PATH: outcomePath,
+        NEMOCLAW_MXC_E2E_READY_PATH: path.join(root, "ready.json"),
+        NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
+        NEMOCLAW_MXC_E2E_STOP_PATH: path.join(root, "stop.txt"),
+        NEMOCLAW_MXC_E2E_TOKEN: token,
+      },
+      timeout: 15_000,
       windowsHide: true,
     });
 
-    expect(checked.status, checked.stderr).toBe(0);
+    expect(executed.status, executed.stderr).toBe(1);
+    const resultText = fs.readFileSync(resultPath, "utf8");
+    const outcomeText = fs.readFileSync(outcomePath, "utf8");
+    const result = JSON.parse(resultText) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      gatewaySpawnFailed: true,
+      healthObserved: false,
+      versionExitCode: 1,
+    });
+    expect(result).not.toHaveProperty("gatewaySpawnError");
+    expect(Number.isSafeInteger(result.gatewayExitCode)).toBe(true);
+    expect(classifyWindowsMxcOpenClawStartupObservation(result)).toEqual({
+      outcome: "spawn-failed",
+      gatewayExitCode: result.gatewayExitCode,
+      versionExitCode: 1,
+    });
+    expect(outcomeText).toBe(resultText);
+    expect(resultText).not.toContain(missingNodePath);
+    expect(resultText).not.toContain(token);
   });
+
+  it.each([
+    {
+      expected: { outcome: "ready", gatewayExitCode: null, versionExitCode: 0 },
+      result: { healthObserved: true, versionExitCode: 0 },
+    },
+    {
+      expected: { outcome: "spawn-failed", gatewayExitCode: null, versionExitCode: 0 },
+      result: { gatewaySpawnFailed: true, versionExitCode: 0 },
+    },
+    {
+      expected: {
+        outcome: "exited-before-readiness",
+        gatewayExitCode: 3221225794,
+        versionExitCode: 0,
+      },
+      result: {
+        gatewayExitCode: 3221225794,
+        gatewayExitedBeforeReadiness: true,
+        versionExitCode: 0,
+      },
+    },
+    {
+      expected: { outcome: "health-timeout", gatewayExitCode: null, versionExitCode: null },
+      result: { healthObserved: false },
+    },
+    {
+      expected: { outcome: "not-observed", gatewayExitCode: null, versionExitCode: null },
+      result: {
+        gatewayExitCode: "C:\\sensitive\\path",
+        gatewaySpawnError: "token-bearing raw diagnostic",
+        versionExitCode: 1.5,
+      },
+    },
+  ])(
+    "classifies bounded secret-free startup evidence for $expected.outcome (#8178)",
+    ({ expected, result }) => {
+      const observation = classifyWindowsMxcOpenClawStartupObservation(result);
+
+      expect(observation).toEqual(expected);
+      expect(JSON.stringify(observation)).not.toContain("sensitive");
+      expect(JSON.stringify(observation)).not.toContain("token-bearing");
+    },
+  );
 
   it("accepts only authenticated health and one exact chat payload (#8178)", () => {
     expect(parseOpenClawHealthResult('notice\n{"ok":true}\n')).toBe(true);
@@ -742,6 +827,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       openClawHealth: true,
       openClawProcessPresentWhileReady: true,
       registryPresentWhileReady: true,
+      versionExitCode: 0,
     };
     checks[failedCheck] = false;
 
@@ -756,8 +842,22 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         openClawHealth: true,
         openClawProcessPresentWhileReady: true,
         registryPresentWhileReady: true,
+        versionExitCode: 0,
       }),
     ).toBe(true);
+  });
+
+  it("rejects readiness when the OpenClaw version command fails (#8178)", () => {
+    expect(
+      windowsMxcOpenClawStartupPreconditionsPass({
+        filesystemControlWrite: true,
+        filesystemDeniedWrite: true,
+        openClawHealth: true,
+        openClawProcessPresentWhileReady: true,
+        registryPresentWhileReady: true,
+        versionExitCode: 1,
+      }),
+    ).toBe(false);
   });
 
   it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(
