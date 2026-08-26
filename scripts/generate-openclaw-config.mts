@@ -1414,8 +1414,14 @@ export function buildConfig(env: Env = process.env): JsonObject {
     },
   };
 
+  const webSearchProvider =
+    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
+    // Tavily ships bundled in every sandbox image, like bonjour. Leaving its
+    // entry absent when it is not selected makes OpenClaw warn "plugin not
+    // installed: tavily" on every log stream (#10325).
+    ...(webSearchProvider !== "tavily" ? { tavily: { enabled: false } } : {}),
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,
@@ -1430,8 +1436,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
   }
-  const webSearchProvider =
-    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
   const plugins: JsonObject = {
     allow: unique([

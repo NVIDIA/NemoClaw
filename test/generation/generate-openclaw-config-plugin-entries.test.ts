@@ -103,6 +103,24 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.entries.qqbot).toBeUndefined();
   });
 
+  it("disables the bundled Tavily plugin when web search is not Tavily (#10325)", () => {
+    // Tavily ships bundled in every sandbox image, like bonjour. Leaving its
+    // entry absent (instead of explicitly disabled) makes OpenClaw warn
+    // "plugin not installed: tavily" on every `logs --follow`, and that
+    // warning banner's continuation lines are unattributable to any source.
+    const config = buildConfig({ ...BASE_ENV });
+    expect(config.plugins.entries.tavily).toEqual({ enabled: false });
+  });
+
+  it("disables the bundled Tavily plugin when Brave web search is selected instead (#10325)", () => {
+    const config = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+    });
+    expect(config.plugins.entries.tavily).toEqual({ enabled: false });
+  });
+
   it("keeps every managed-image plugin and channel explicitly inert before first start (#7744)", () => {
     const config = buildConfig({
       ...BASE_ENV,
