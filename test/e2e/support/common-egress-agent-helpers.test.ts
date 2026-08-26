@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { PERSONAL_STOCK_PROMPT } from "../live/openclaw-agent-assertion.ts";
 import {
   agentReplyContainsToken,
   assessPersonalStockToolEvidence,
@@ -281,6 +282,18 @@ async function expectAggregateStockFailure(
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
+  it("requires one stock result to contain the price and quote timestamp (#10330)", () => {
+    expect(PERSONAL_STOCK_PROMPT).toContain(
+      "If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.",
+    );
+    expect(PERSONAL_STOCK_PROMPT).toContain(
+      "Use the price and as_of values from that result. Set source_url to the exact URL for its paired web_fetch call.",
+    );
+    expect(PERSONAL_STOCK_PROMPT).toContain(
+      "If no result contains all three values, do not return success.",
+    );
+  });
+
   it("OpenClaw JSON parser accepts framed agent payloads", () => {
     expect(
       parseOpenClawAgentText(
@@ -355,6 +368,29 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(buildOpenClawToolEvidenceReducerScript(STOCK_REPLY)).toContain(
       "__NEMOCLAW_TOOL_EVIDENCE__=",
     );
+  });
+
+  it.each([
+    ["an ISO date", "2026-08-17"],
+    ["a compact date", "20260817"],
+    ["an exact ISO timestamp", STOCK_REPLY.as_of],
+    ["a Unix timestamp in seconds", "1786982340"],
+    ["a Unix timestamp in milliseconds", "1786982340000"],
+  ])("accepts %s from the qualifying stock result (#10330)", (_name, timestamp) => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines({
+        payload: stockPayload({
+          text: `{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"${timestamp}"}`,
+        }),
+      }),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      matches: true,
+      qualifyingWebFetchResults: 1,
+    });
   });
 
   it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
@@ -935,6 +971,16 @@ describe("common-egress agent parsing and classification helpers", () => {
     {
       name: "fetch content without the claimed price or date",
       session: stockSessionJsonLines({ payload: stockPayload({ text: "NVDA quote unavailable" }) }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "price paired with an unrelated source date (#10330)",
+      session: stockSessionJsonLines({
+        payload: stockPayload({
+          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"date":"2026-08-16"}',
+        }),
+      }),
       trajectory: stockTrajectory(),
       expected: STOCK_REPLY,
     },

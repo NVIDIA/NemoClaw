@@ -203,13 +203,20 @@ export async function runOpenClawAgentAssertion(
 }
 
 export const PERSONAL_STOCK_PROMPT = `Find the latest available NVIDIA (NVDA) stock price.
-Choose a small, machine-readable public HTTPS source yourself and use web_fetch as the only target tool.
+Choose a small, machine-readable public HTTPS source whose response contains one NVDA price and its market or update timestamp.
+Use web_fetch as the only target tool.
 If progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.
 Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
 Set web_fetch maxChars to no more than 8000.
-Only after web_fetch returns a numeric NVDA price with its source date or timestamp, reply with one JSON object and no Markdown.
-Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the quote's own market or update timestamp converted to ISO 8601.
-For a Unix-epoch quote field such as regularMarketTime, convert that field to ISO 8601. Never use the current clock, fetch time, or an unrelated date for as_of.`;
+If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.
+Fetch a different machine-readable source instead.
+Reply only after one web_fetch result contains NVDA, a numeric price, and its market or update timestamp.
+Use the price and as_of values from that result. Set source_url to the exact URL for its paired web_fetch call.
+If no result contains all three values, do not return success.
+Reply with one JSON object and no Markdown.
+Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, and as_of to the quote's own market or update timestamp.
+Copy an ISO 8601 source date or timestamp exactly. For a Unix-epoch field such as regularMarketTime, convert that field exactly to ISO 8601.
+Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(
   host: HostCliClient,
