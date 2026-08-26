@@ -72,6 +72,7 @@ export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedPolicyAuthorityError extends Error {}
+export class InvalidPersistedApfInterceptorIntentError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -238,6 +239,8 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  /** Operator-selected APF create mode; this is not observed policy provenance. */
+  apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   /** Policy authority selected from OpenShell metadata before policy-dependent effects. */
@@ -354,6 +357,7 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   policyAuthority: SandboxPolicyAuthority | null;
@@ -804,6 +808,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
+    apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets:
       policyAuthority === "externally-managed" ? null : readStringArray(overrides.policyPresets),
@@ -836,6 +841,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  if (
+    hasOwn(data, "apfInterceptorRequested") &&
+    typeof data.apfInterceptorRequested !== "boolean"
+  ) {
+    throw new InvalidPersistedApfInterceptorIntentError(
+      "Refusing to load the onboarding session: the saved APF selection is invalid.",
+    );
+  }
   const policyAuthority = readPolicyAuthority(data.policyAuthority);
   if (hasOwn(data, "policyAuthority") && data.policyAuthority !== null && !policyAuthority) {
     throw new InvalidPersistedPolicyAuthorityError(
@@ -917,6 +930,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
+    apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     policyAuthority,
@@ -1007,7 +1021,12 @@ export function loadSession(): Session | null {
     const parsed = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
     return normalizeSession(parsed);
   } catch (error) {
-    if (error instanceof InvalidPersistedPolicyAuthorityError) throw error;
+    if (
+      error instanceof InvalidPersistedPolicyAuthorityError ||
+      error instanceof InvalidPersistedApfInterceptorIntentError
+    ) {
+      throw error;
+    }
     return null;
   }
 }
@@ -1913,6 +1932,7 @@ export function summarizeForDebug(
     toolDisclosure: session.toolDisclosure,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
+    apfInterceptorRequested: session.apfInterceptorRequested,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     policyAuthority: session.policyAuthority,

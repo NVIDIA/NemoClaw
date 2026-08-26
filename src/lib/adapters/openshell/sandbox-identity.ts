@@ -22,6 +22,54 @@ export function fingerprintOpenShellSandboxId(sandboxId: string): string | null 
     : null;
 }
 
+export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
+export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
+
+export interface OpenShellSandboxListJsonRow {
+  readonly id: string;
+  readonly name: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly resource_version: number;
+  readonly created_at: string;
+  readonly phase: string;
+  readonly current_policy_version: number;
+}
+
+function isStrictSandboxListJsonRow(value: unknown): value is OpenShellSandboxListJsonRow {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const labels = row.labels;
+  return (
+    isOpenShellSandboxId(row.id) &&
+    typeof row.name === "string" &&
+    row.name.length > 0 &&
+    row.name.trim() === row.name &&
+    !!labels &&
+    typeof labels === "object" &&
+    !Array.isArray(labels) &&
+    Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") &&
+    typeof row.resource_version === "number" &&
+    Number.isFinite(row.resource_version) &&
+    typeof row.created_at === "string" &&
+    typeof row.phase === "string" &&
+    row.phase.length > 0 &&
+    typeof row.current_policy_version === "number" &&
+    Number.isFinite(row.current_policy_version)
+  );
+}
+
+export function parseStrictOpenShellSandboxListJson(
+  output: string,
+): readonly OpenShellSandboxListJsonRow[] | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  return Array.isArray(rows) && rows.every(isStrictSandboxListJsonRow) ? rows : null;
+}
+
 export function parseOpenShellSandboxId(output: string): string | null {
   const matches = [
     ...String(output)
@@ -50,6 +98,62 @@ export function resolveOpenShellSandboxId(
     );
   }
   return sandboxId;
+}
+
+/**
+ * Bind the first accepted sandbox ID to one create attempt. The random label is
+ * supplied on `sandbox create`; a same-name replacement without that label is
+ * rejected before the caller can run post-create effects.
+ */
+export function resolveCreatedOpenShellSandboxId(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly createAttemptNonce: string;
+  readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+}): string {
+  if (!/^[0-9a-f]{62}$/u.test(input.createAttemptNonce)) {
+    throw new Error("OpenShell sandbox create-attempt identity is invalid.");
+  }
+  let output: string;
+  try {
+    output = input.runCaptureOpenshell(
+      [
+        "sandbox",
+        "list",
+        "-g",
+        input.gatewayName,
+        "--selector",
+        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
+        "--output",
+        "json",
+        "--limit",
+        "2",
+      ],
+      {
+        ignoreError: false,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+        killSignal: "SIGKILL",
+        killProcessTreeOnTimeout: true,
+      },
+    );
+  } catch {
+    throw new Error(
+      `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'.`,
+    );
+  }
+  const rows = parseStrictOpenShellSandboxListJson(output);
+  const row = rows?.length === 1 ? rows[0] : null;
+  if (
+    !row ||
+    row.name !== input.sandboxName ||
+    row.labels[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
+  ) {
+    throw new Error(
+      `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'.`,
+    );
+  }
+  return row.id;
 }
 
 /**

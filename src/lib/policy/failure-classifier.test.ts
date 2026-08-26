@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { managedSandboxEntry } from "../../../test/helpers/managed-policy-receipt-fixture";
 
 vi.mock("../state/registry", () => ({
   getSandbox: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock(".", () => ({
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
   getSandboxBaselineEntryDigest: vi.fn(() => null),
+  inspectPolicyMutationAuthority: vi.fn(() => ({ authority: "nemoclaw-managed" })),
   isAgentBasePreset: vi.fn(() => false),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
@@ -78,7 +80,7 @@ function mockBuiltinPresets() {
 
 function stubRegistry(entry: Partial<{ policies: string[]; policyTier: string }>) {
   vi.mocked(registry.getSandbox).mockReturnValue({
-    name: SANDBOX,
+    ...managedSandboxEntry(SANDBOX),
     policies: entry.policies,
     policyTier: entry.policyTier ?? null,
   } as ReturnType<typeof registry.getSandbox>);
@@ -104,6 +106,10 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(policies.inspectPolicyMutationAuthority).mockReset();
+  vi.mocked(policies.inspectPolicyMutationAuthority).mockReturnValue({
+    authority: "nemoclaw-managed",
+  } as ReturnType<typeof policies.inspectPolicyMutationAuthority>);
   vi.mocked(policies.isAgentBasePreset).mockReset();
   vi.mocked(policies.isAgentBasePreset).mockReturnValue(false);
   vi.mocked(getTier).mockReset();
