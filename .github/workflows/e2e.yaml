@@ -4014,6 +4014,7 @@ jobs:
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}/local-bases.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/evidence.json
@@ -4199,6 +4200,12 @@ jobs:
             local dockerfile="$2"
             local repository="$3"
             local metadata="$work_dir/${output_name}-build.json"
+            local cache_args=()
+            if [[ "$PLATFORM" == "linux/amd64" ]]; then
+              local cache_destination="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/local-bases/${output_name}"
+              install -d -m 0700 "$(dirname "$cache_destination")"
+              cache_args=(--cache-to "type=local,dest=${cache_destination},mode=max")
+            fi
             scripts/check-production-build-args.sh -f "$dockerfile"
             docker buildx build \
               --file "$dockerfile" \
@@ -4209,6 +4216,7 @@ jobs:
               --metadata-file "$metadata" \
               --tag "${repository}:${CHECKOUT_SHA}" \
               --label "org.opencontainers.image.revision=${CHECKOUT_SHA}" \
+              "${cache_args[@]}" \
               .
             local digest
             digest="$(jq -er '."containerimage.digest"' "$metadata")"
@@ -4231,6 +4239,29 @@ jobs:
               build_local_base openclaw Dockerfile.base "${base_registry}/sandbox-base"
               build_local_base hermes agents/hermes/Dockerfile.base "${base_registry}/hermes-sandbox-base"
               build_local_base dcode agents/langchain-deepagents-code/Dockerfile.base "${base_registry}/langchain-deepagents-code-sandbox-base"
+              if [[ "$PLATFORM" == "linux/amd64" ]]; then
+                install -d -m 0700 "$(dirname "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT")"
+                jq -n \
+                  --arg dcode "$(jq -er '."containerimage.digest"' "$work_dir/dcode-build.json")" \
+                  --arg hermes "$(jq -er '."containerimage.digest"' "$work_dir/hermes-build.json")" \
+                  --arg openclaw "$(jq -er '."containerimage.digest"' "$work_dir/openclaw-build.json")" \
+                  --arg platform "$PLATFORM" \
+                  --arg revision "$CHECKOUT_SHA" \
+                  '{
+                    kind: "nemoclaw-protected-local-bases-v1",
+                    revision: $revision,
+                    platform: $platform,
+                    bases: {
+                      openclaw: {dockerfile: "Dockerfile.base", digest: $openclaw},
+                      hermes: {dockerfile: "agents/hermes/Dockerfile.base", digest: $hermes},
+                      dcode: {dockerfile: "agents/langchain-deepagents-code/Dockerfile.base", digest: $dcode}
+                    }
+                  }' > "${NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT}.tmp"
+                chmod 0600 "${NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT}.tmp"
+                mv \
+                  "${NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT}.tmp" \
+                  "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT"
+              fi
               exit 0
               ;;
             managed-image) ;;
@@ -4706,8 +4737,11 @@ jobs:
   # sourceBoundary: The hosted amd64 lane builds the exact candidate. It adds
   # every reachable Linux x64 glibc registry archive from the candidate
   # lockfile to the same-run cache artifact. The GPU lane verifies the manifest,
-  # lock digest, archive set, and
-  # each SHA-512 integrity before the candidate build can consume the seed.
+  # lock digest, archive set, and each SHA-512 integrity before the candidate
+  # build can consume the seed. For local Dockerfile selection, the artifact
+  # also carries each candidate base digest and BuildKit cache. The GPU lane
+  # rebuilds those bases without network access and requires exact digest
+  # equality before it builds or qualifies the managed images.
   # BuildKit records can accelerate the rebuild, while the seed makes a missing
   # npm layer reproducible without weakening the fail-closed network boundary.
   # whyNotBuildCacheOnly: Protected runs 31156103003, 31158136234, and
@@ -4735,7 +4769,7 @@ jobs:
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Protected GPU runtime supports Ollama vLLM NIM rollback and cleanup"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local and hosted inference services"
-      E2E_WORKLOAD_SOURCE: "managed-image"
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -4745,6 +4779,7 @@ jobs:
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64/local-bases.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: linux/amd64
@@ -4848,8 +4883,36 @@ jobs:
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
+      - name: Start isolated protected runtime registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
+            echo "::error::Protected runtime registry name already exists" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Refusing to reuse an existing localhost:5000 registry" >&2
+            exit 1
+          fi
+          docker run --detach \
+            --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
+            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.e2e-platform=linux/amd64" \
+            --publish 127.0.0.1:5000:5000 \
+            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >&2
+          exit 1
+
       - id: runtime-hermes-base
         name: Resolve reviewed Hermes runtime base image
+        if: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' }}
         uses: ./.github/actions/resolve-reviewed-hermes-platform
         with:
           dockerfile-path: .candidate-runtime/agents/hermes/Dockerfile
@@ -4858,12 +4921,56 @@ jobs:
       - id: runtime-bases
         name: Resolve exact amd64 runtime base images
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
+          HERMES_BASE_DIGEST: ${{ steps.runtime-hermes-base.outputs.digest }}
+          WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
         shell: bash
         run: |
           set -euo pipefail
+          candidate_root="$GITHUB_WORKSPACE/.candidate-runtime"
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-runtime-bases.XXXXXX")"
           trap 'rm -rf -- "$work_dir"' EXIT
+
+          rebuild_local_base() {
+            local output_name="$1"
+            local dockerfile="$2"
+            local repository="$3"
+            local expected_digest
+            expected_digest="$(jq -er --arg name "$output_name" '.bases[$name].digest' "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT")"
+            local cache_source="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/local-bases/${output_name}"
+            [[ -d "$cache_source" && ! -L "$cache_source" && -f "$cache_source/index.json" && ! -L "$cache_source/index.json" ]] || {
+              echo "::error::${output_name} local base cache is missing or invalid" >&2
+              exit 1
+            }
+            local metadata="$work_dir/${output_name}-build.json"
+            scripts/check-production-build-args.sh -f "$candidate_root/$dockerfile"
+            docker buildx build \
+              --file "$candidate_root/$dockerfile" \
+              --platform linux/amd64 \
+              --push \
+              --provenance=false \
+              --sbom=false \
+              --network=none \
+              --cache-from "type=local,src=${cache_source}" \
+              --metadata-file "$metadata" \
+              --tag "${repository}:${CHECKOUT_SHA}" \
+              --label "org.opencontainers.image.revision=${CHECKOUT_SHA}" \
+              "$candidate_root"
+            local actual_digest
+            actual_digest="$(jq -er '."containerimage.digest"' "$metadata")"
+            [[ "$actual_digest" == "$expected_digest" ]] || {
+              echo "::error::${output_name} protected runtime base digest does not match the hosted candidate build" >&2
+              exit 1
+            }
+            local reference="${repository}@${actual_digest}"
+            docker buildx imagetools inspect "$reference" --raw > "$work_dir/${output_name}-local.raw"
+            [[ "sha256:$(sha256sum "$work_dir/${output_name}-local.raw" | awk '{print $1}')" == "$actual_digest" ]] || {
+              echo "::error::${output_name} protected runtime base bytes do not match the candidate digest" >&2
+              exit 1
+            }
+            printf '%s=%s\n' "$output_name" "$reference" >> "$GITHUB_OUTPUT"
+          }
 
           resolve_base() {
             local output_name="$1"
@@ -4899,9 +5006,55 @@ jobs:
             printf '%s=%s\n' "$output_name" "$reference" >> "$GITHUB_OUTPUT"
           }
 
+          case "$WORKLOAD_SOURCE" in
+            local-dockerfile)
+              [[ -f "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" && ! -L "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" ]] || {
+                echo "::error::Protected local base identity contract is missing or invalid" >&2
+                exit 1
+              }
+              jq -e --arg revision "$CHECKOUT_SHA" '
+                (keys | sort) == ["bases", "kind", "platform", "revision"] and
+                .kind == "nemoclaw-protected-local-bases-v1" and
+                .revision == $revision and
+                .platform == "linux/amd64" and
+                (.bases | keys | sort) == ["dcode", "hermes", "openclaw"] and
+                .bases.openclaw.dockerfile == "Dockerfile.base" and
+                .bases.hermes.dockerfile == "agents/hermes/Dockerfile.base" and
+                .bases.dcode.dockerfile == "agents/langchain-deepagents-code/Dockerfile.base" and
+                all(.bases[];
+                  (keys | sort) == ["digest", "dockerfile"] and
+                  (.digest | test("^sha256:[a-f0-9]{64}$"))
+                )
+              ' "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" >/dev/null || {
+                echo "::error::Protected local base identity contract does not match the candidate" >&2
+                exit 1
+              }
+              base_registry="localhost:5000/nemoclaw-managed-protected-base"
+              rebuild_local_base openclaw Dockerfile.base "${base_registry}/sandbox-base"
+              rebuild_local_base hermes agents/hermes/Dockerfile.base "${base_registry}/hermes-sandbox-base"
+              rebuild_local_base dcode agents/langchain-deepagents-code/Dockerfile.base "${base_registry}/langchain-deepagents-code-sandbox-base"
+              install -m 0600 \
+                "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" \
+                "$E2E_ARTIFACT_DIR/local-bases.json"
+              exit 0
+              ;;
+            managed-image) ;;
+            *)
+              echo "::error::Protected runtime workload source is invalid" >&2
+              exit 1
+              ;;
+          esac
+
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
+          [[ "$HERMES_BASE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::Hermes reviewed runtime base resolver returned an invalid digest" >&2
+            exit 1
+          }
+          printf 'hermes=%s\n' \
+            "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${HERMES_BASE_DIGEST}" \
+            >> "$GITHUB_OUTPUT"
           [[ "$DCODE_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
             echo "::error::dcode base publication returned an invalid exact reference" >&2
             exit 1
@@ -4914,37 +5067,10 @@ jobs:
           }
           printf 'dcode=%s\n' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"
 
-      - name: Start isolated protected runtime registry
-        shell: bash
-        run: |
-          set -euo pipefail
-          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
-            echo "::error::Protected runtime registry name already exists" >&2
-            exit 1
-          fi
-          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
-            echo "::error::Refusing to reuse an existing localhost:5000 registry" >&2
-            exit 1
-          fi
-          docker run --detach \
-            --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
-            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
-            --label "io.nvidia.nemoclaw.e2e-platform=linux/amd64" \
-            --publish 127.0.0.1:5000:5000 \
-            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-          for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >&2
-          exit 1
-
       - name: Build exact all-agent protected runtime images
         env:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
-          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
+          BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash

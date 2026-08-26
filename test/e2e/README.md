@@ -90,16 +90,17 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
-checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
-It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
-missing, incomplete, or mixed all-agent publication before E2E jobs start.
+For a manual PR run, the trusted planner compares the changed files with the
+base-image and managed-image input paths. When those inputs are unchanged, the
+run uses the applicable trusted managed-image publication from `main`. When any
+input changed, the run builds the candidate Dockerfiles locally instead of
+waiting for a candidate publication.
 
-The planner adds the exact all-agent catalog to `dist/` after the candidate CLI build completes.
-Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
-is available only to the trusted planner job and is not included in the candidate CLI artifact.
+The native startup jobs build the local candidate bases for each platform. The
+AMD64 producer passes their exact digests and build caches to the protected GPU
+job. That job rebuilds with networking disabled and rejects any digest mismatch
+before it runs Ollama, NIM, or vLLM qualification. The GitHub token is available
+only to the trusted planner and is not included in the candidate CLI artifact.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
 discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate

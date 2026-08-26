@@ -164,6 +164,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
       "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT:
+      "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}/local-bases.json",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: "${{ inputs.checkout_sha || github.sha }}",
@@ -268,7 +270,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const hermesBase = requireStep(errors, steps, "Resolve reviewed Hermes platform base image");
-  if (hermesBase?.if !== "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' }}") {
+  if (
+    hermesBase?.if !== "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' }}"
+  ) {
     errors.push(`${JOB_ID} must resolve the reviewed Hermes base only for managed images`);
   }
   if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
@@ -306,17 +310,21 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     'arch="${PLATFORM#linux/}"',
     'case "$WORKLOAD_SOURCE" in',
     "local-dockerfile)",
+    "Protected managed-image workload source is invalid",
     "build_local_base openclaw Dockerfile.base",
     "build_local_base hermes agents/hermes/Dockerfile.base",
     "build_local_base dcode agents/langchain-deepagents-code/Dockerfile.base",
     '--platform "$PLATFORM"',
+    "--push",
+    '--cache-to "type=local,dest=${cache_destination},mode=max"',
     '--tag "${repository}:${CHECKOUT_SHA}"',
     '--label "org.opencontainers.image.revision=${CHECKOUT_SHA}"',
     'digest="$(jq -er \'."containerimage.digest"\' "$metadata")"',
     'reference="${repository}@${digest}"',
+    'kind: "nemoclaw-protected-local-bases-v1"',
+    '"${NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT}.tmp"',
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == $arch',
-    'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
     '"ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${HERMES_BASE_DIGEST}"',
