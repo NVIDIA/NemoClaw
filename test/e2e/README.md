@@ -90,11 +90,11 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-For a manual PR run, the trusted planner compares the changed files with the
-base-image and managed-image input paths. When those inputs are unchanged, the
-run uses the applicable trusted managed-image publication from `main`. When any
-input changed, the run builds the candidate Dockerfiles locally instead of
-waiting for a candidate publication.
+For a manual PR run, the trusted planner compares the immutable base and
+candidate commit trees with the base-image and managed-image input paths. When
+those inputs are unchanged, the run uses the applicable trusted managed-image
+publication from `main`. When any input changed, the run builds the candidate
+Dockerfiles locally instead of waiting for a candidate publication.
 
 The native startup jobs build the local candidate bases for each platform. The
 AMD64 producer passes their exact digests and build caches to the protected GPU

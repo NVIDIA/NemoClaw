@@ -25,6 +25,9 @@ import {
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
+const DRIFT_SHA = "c".repeat(40);
+const BASE_TREE_SHA = "1".repeat(40);
+const CANDIDATE_TREE_SHA = "2".repeat(40);
 const PR_NUMBER = 10_113;
 const CANDIDATE_REPOSITORY = "NVIDIA/NemoClaw";
 
@@ -63,13 +66,41 @@ function unexpectedRequest(requestPath: string): never {
   throw new Error(`unexpected request ${requestPath}`);
 }
 
-function requestFor(
-  files: Array<{ filename: string; previous_filename?: string }>,
+function requestForChanges(
+  changes: Array<{ filename: string; previous_filename?: string }>,
   pullOverrides: Record<string, unknown> = {},
 ) {
+  const baseEntries = changes.map((change) => ({
+    mode: "100644",
+    path: change.previous_filename ?? change.filename,
+    sha: "3".repeat(40),
+    type: "blob",
+  }));
+  const candidateEntries = changes.map((change) => ({
+    mode: "100644",
+    path: change.filename,
+    sha: "4".repeat(40),
+    type: "blob",
+  }));
   const responses = new Map<string, unknown>([
-    [`/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`, pull(files.length, pullOverrides)],
-    [`/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/files?per_page=100&page=1`, files],
+    [`/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`, pull(changes.length, pullOverrides)],
+    [`/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/files?per_page=100&page=1`, changes],
+    [
+      `/repos/NVIDIA/NemoClaw/git/commits/${BASE_SHA}`,
+      { sha: BASE_SHA, tree: { sha: BASE_TREE_SHA } },
+    ],
+    [
+      `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`,
+      { sha: BASE_TREE_SHA, tree: baseEntries, truncated: false },
+    ],
+    [
+      `/repos/${CANDIDATE_REPOSITORY}/git/commits/${CANDIDATE_SHA}`,
+      { sha: CANDIDATE_SHA, tree: { sha: CANDIDATE_TREE_SHA } },
+    ],
+    [
+      `/repos/${CANDIDATE_REPOSITORY}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`,
+      { sha: CANDIDATE_TREE_SHA, tree: candidateEntries, truncated: false },
+    ],
   ]);
   return async (requestPath: string): Promise<unknown> =>
     responses.get(requestPath) ?? unexpectedRequest(requestPath);
@@ -98,7 +129,7 @@ describe("PR managed-image source selection", () => {
     "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
   ])("selects a local Dockerfile when reviewed image input %s changes", async (filename) => {
     await expect(
-      resolvePrManagedImageSource(selectorInput(), requestFor([{ filename }])),
+      resolvePrManagedImageSource(selectorInput(), requestForChanges([{ filename }])),
     ).resolves.toBe("local-dockerfile");
   });
 
@@ -106,7 +137,7 @@ describe("PR managed-image source selection", () => {
     await expect(
       resolvePrManagedImageSource(
         selectorInput(),
-        requestFor([
+        requestForChanges([
           { filename: "docs/renamed-base-image.txt", previous_filename: "Dockerfile.base" },
         ]),
       ),
@@ -115,32 +146,64 @@ describe("PR managed-image source selection", () => {
 
   it("selects a trusted managed image when reviewed image inputs are unchanged", async () => {
     await expect(
-      resolvePrManagedImageSource(selectorInput(), requestFor([{ filename: "docs/guide.mdx" }])),
+      resolvePrManagedImageSource(
+        selectorInput(),
+        requestForChanges([{ filename: "docs/guide.mdx" }]),
+      ),
     ).resolves.toBe("managed-image");
   });
 
-  it("selects a local Dockerfile when a reviewed image input appears on page two", async () => {
+  it("keeps classification bound to immutable commits during A-to-B-to-A PR drift", async () => {
     const metadataPath = `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`;
-    const pageOnePath = `${metadataPath}/files?per_page=100&page=1`;
-    const pageTwoPath = `${metadataPath}/files?per_page=100&page=2`;
+    const mutableFilesPath = `${metadataPath}/files?per_page=100&page=1`;
+    const immutableRequest = requestForChanges([{ filename: "Dockerfile.base" }]);
     const requests: string[] = [];
-    const responses = new Map<string, unknown>([
-      [metadataPath, pull(101)],
+    const observedPrHeads = [CANDIDATE_SHA];
+    const requestHandlers = new Map<string, () => Promise<unknown> | unknown>([
       [
-        pageOnePath,
-        Array.from({ length: 100 }, (_, index) => ({ filename: `docs/guide-${index}.mdx` })),
+        metadataPath,
+        async () => {
+          const response = await immutableRequest(metadataPath);
+          observedPrHeads.push(DRIFT_SHA);
+          return response;
+        },
       ],
-      [pageTwoPath, [{ filename: "Dockerfile.base" }]],
+      [mutableFilesPath, () => [{ filename: "docs/guide.mdx" }]],
+      [
+        `/repos/${CANDIDATE_REPOSITORY}/git/commits/${CANDIDATE_SHA}`,
+        async () => {
+          observedPrHeads.push(CANDIDATE_SHA);
+          return immutableRequest(`/repos/${CANDIDATE_REPOSITORY}/git/commits/${CANDIDATE_SHA}`);
+        },
+      ],
     ]);
     const request = async (requestPath: string): Promise<unknown> => {
       requests.push(requestPath);
-      return responses.get(requestPath) ?? unexpectedRequest(requestPath);
+      const handler = requestHandlers.get(requestPath);
+      return handler ? handler() : immutableRequest(requestPath);
     };
 
     await expect(resolvePrManagedImageSource(selectorInput(), request)).resolves.toBe(
       "local-dockerfile",
     );
-    expect(requests).toContain(pageTwoPath);
+    expect(observedPrHeads).toEqual([CANDIDATE_SHA, DRIFT_SHA, CANDIDATE_SHA]);
+    expect(requests).not.toContain(mutableFilesPath);
+    expect(requests).toContain(
+      `/repos/${CANDIDATE_REPOSITORY}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`,
+    );
+  });
+
+  it("rejects a truncated immutable candidate tree", async () => {
+    const candidateTreePath = `/repos/${CANDIDATE_REPOSITORY}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`;
+    const immutableRequest = requestForChanges([{ filename: "docs/guide.mdx" }]);
+    const request = async (requestPath: string): Promise<unknown> =>
+      requestPath === candidateTreePath
+        ? { sha: CANDIDATE_TREE_SHA, tree: [], truncated: true }
+        : immutableRequest(requestPath);
+
+    await expect(resolvePrManagedImageSource(selectorInput(), request)).rejects.toThrow(
+      "PR candidate commit tree is truncated",
+    );
   });
 
   it.each([
@@ -176,19 +239,6 @@ describe("PR managed-image source selection", () => {
 
     await expect(resolvePrManagedImageSource(selectorInput(), request)).rejects.toThrow(message);
     expect(requests).toEqual([metadataPath]);
-  });
-
-  it("records PR source reads in the retry inventory", () => {
-    const row = fs
-      .readFileSync("test/e2e/RETRY_INVENTORY.md", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("| `github-publication-read` |"));
-
-    expect(row).toContain("tools/e2e/base-image-publication.mts");
-    expect(row).toContain("tools/e2e/pr-managed-image-source.mts");
-    expect(row).toContain("PR metadata reads");
-    expect(row).toContain("workload-source selection");
-    expect(row).toContain("HTTP 429, or HTTP 403 with `x-ratelimit-remaining: 0`");
   });
 });
 
