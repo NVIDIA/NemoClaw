@@ -13,11 +13,12 @@ export type PolicyTestWebSearchConfig = { fetchEnabled: true };
 export function createPolicyHandlerDeps(
   overrides: Partial<PoliciesStateOptions<PolicyTestAgent, PolicyTestWebSearchConfig>["deps"]> = {},
 ) {
-  let session = createSession();
+  let session = createSession({ policyAuthority: "nemoclaw-managed" });
   const calls = {
     load: vi.fn(() => session),
     activeSandbox: vi.fn(() => ({
       messaging: { plan: makeMessagingPlan({ channels: ["telegram"] }) },
+      policyAuthority: "nemoclaw-managed" as const,
     })),
     mergeChannels: vi.fn(
       (selected: string[], recorded: string[], active: string[] | null | undefined) =>
@@ -80,6 +81,7 @@ export function createPolicyHandlerDeps(
       ...overrides,
     },
     setSession(next: Session) {
+      if (!next.policyAuthority) next.policyAuthority = "nemoclaw-managed";
       session = next;
     },
     getSession: () => session,

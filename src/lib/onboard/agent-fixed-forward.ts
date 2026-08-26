@@ -24,6 +24,7 @@ export function ensureAgentFixedForward(
   sandboxName: string,
   port: number,
   label: string,
+  revalidatePolicyAuthority?: (operation: string) => void,
 ): boolean {
   const forwardTarget = String(port);
   const stopForwardForSandbox = (portToStop: string | number) =>
@@ -32,13 +33,23 @@ export function ensureAgentFixedForward(
       (args, opts) => deps.runCaptureOpenshell(args, opts),
       portToStop,
       sandboxName,
+      () =>
+        revalidatePolicyAuthority?.(
+          `stop ${label} forward ${String(portToStop)} for sandbox '${sandboxName}'`,
+        ),
     );
 
   stopForwardForSandbox(port);
+  const startForward = buildDetachedForwardStartSpawn(
+    deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
+  );
   const { ok, diagnostic } = runDetachedForwardStartWithRetries(
-    buildDetachedForwardStartSpawn(
-      deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
-    ),
+    (stdio) => {
+      revalidatePolicyAuthority?.(
+        `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
+      );
+      return startForward(stdio);
+    },
     () => deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
     { port, sandboxName },
     () => {

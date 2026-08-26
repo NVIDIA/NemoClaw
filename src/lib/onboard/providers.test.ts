@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 type RunResult = {
   error?: unknown;
@@ -20,6 +20,10 @@ type RunOptions = {
   timeout?: number;
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
+
+const messagingBridgeProvider = require(
+  "./messaging-bridge-provider"
+) as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -111,6 +115,7 @@ const {
       replaceExisting?: boolean;
       allowedSandboxes?: readonly string[];
       requireExactBinding?: boolean;
+      revalidatePolicyRequirements?(operation: string): void;
     },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
@@ -125,6 +130,7 @@ const {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
       replaceExisting?: boolean;
+      revalidatePolicyRequirements?(operation: string): void;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -912,6 +918,63 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
+  it("revalidates policy requirements before each messaging provider mutation (#9833)", () => {
+    const commands: string[] = [];
+    const revalidationSteps = [
+      () => undefined,
+      () => undefined,
+      () => {
+        throw new Error("policy authority changed between providers");
+      },
+    ];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first" },
+          { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second" },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command.includes("get")
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "", stderr: "" };
+        },
+        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+      ),
+    ).toThrow(/authority changed between providers/);
+    expect(commands).toEqual([
+      "provider get alpha-first",
+      "provider create --name alpha-first --type generic --credential FIRST_TOKEN",
+    ]);
+  });
+
+  it("rechecks policy authority after a provider probe and before its mutation (#9833)", () => {
+    const commands: string[] = [];
+    const revalidationSteps = [
+      () => undefined,
+      () => {
+        throw new Error("policy authority changed after provider probe");
+      },
+    ];
+
+    expect(() =>
+      upsertProvider(
+        "alpha-discord-bridge",
+        "generic",
+        "DISCORD_BOT_TOKEN",
+        null,
+        { DISCORD_BOT_TOKEN: "secret" },
+        (command) => {
+          commands.push(command.join(" "));
+          return { status: 1, stdout: "", stderr: "not found" };
+        },
+        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+      ),
+    ).toThrow(/authority changed after provider probe/u);
+    expect(commands).toEqual(["provider get alpha-discord-bridge"]);
+  });
+
   it("rejects an existing generic provider when an exact credential binding is required", () => {
     const commands: string[] = [];
     const result = upsertProvider(
@@ -981,6 +1044,7 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
+
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -1005,6 +1069,52 @@ describe("onboard provider helpers", () => {
       ).toThrow(/telegram-bridge: gateway unavailable/);
     } finally {
       process.exit = originalExit;
+    }
+  });
+
+  it("reports providers changed before bridge refresh throws (#9833)", () => {
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockImplementation(() => {
+        throw new Error("policy authority changed");
+      });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
+          () => ({ status: 0, stdout: "", stderr: "" }),
+          { bestEffort: true },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
+          mutatedProviderNames: ["alpha-bridge"],
+        }),
+      );
+    } finally {
+      configureRefreshes.mockRestore();
+    }
+  });
+
+  it("reports providers changed before bridge refresh returns failure (#9833)", () => {
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValue({ ok: false, reason: "refresh failed" });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
+          () => ({ status: 0, stdout: "", stderr: "" }),
+          { bestEffort: true },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/token minting.*alpha-bridge/isu),
+          mutatedProviderNames: ["alpha-bridge"],
+        }),
+      );
+    } finally {
+      configureRefreshes.mockRestore();
     }
   });
 

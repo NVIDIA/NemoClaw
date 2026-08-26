@@ -8,6 +8,7 @@ import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
   assertPolicyRequirementContainment,
+  parseGlobalPolicyAuthorityMetadata,
   parseOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies,
@@ -194,6 +195,43 @@ describe("sandbox policy authority boundary", () => {
         network_policies: { missing: { allow: true } },
       }),
     ).toThrow(/missing entries "missing"/u);
+  });
+});
+
+describe("global policy authority boundary", () => {
+  const policy = { version: 1, network_policies: { required: { allow: true } } };
+
+  it("classifies a loaded global policy as externally managed", () => {
+    expect(
+      parseGlobalPolicyAuthorityMetadata(
+        JSON.stringify({
+          scope: "global",
+          status: "loaded",
+          policy_source: "global",
+          policy,
+        }),
+      ),
+    ).toEqual({ authority: "externally-managed", effectivePolicy: policy });
+  });
+
+  it("classifies a superseded global revision as NemoClaw-managed", () => {
+    expect(
+      parseGlobalPolicyAuthorityMetadata(
+        JSON.stringify({ scope: "global", status: "superseded", policy_source: "global" }),
+      ),
+    ).toEqual({ authority: "nemoclaw-managed", effectivePolicy: {} });
+  });
+
+  it.each([
+    ["empty", ""],
+    ["malformed", "{"],
+    ["wrong scope", JSON.stringify({ scope: "sandbox", status: "loaded", policy })],
+    ["sandbox identity", JSON.stringify({ scope: "global", sandbox: "alpha", status: "loaded", policy })],
+    ["missing source", JSON.stringify({ scope: "global", status: "loaded", policy })],
+    ["unknown source", JSON.stringify({ scope: "global", status: "loaded", policy_source: "sandbox", policy })],
+    ["unknown status", JSON.stringify({ scope: "global", status: "pending", policy })],
+  ])("rejects %s global authority metadata", (_caseName, raw) => {
+    expect(() => parseGlobalPolicyAuthorityMetadata(raw)).toThrow(/global policy authority metadata/u);
   });
 });
 

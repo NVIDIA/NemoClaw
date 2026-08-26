@@ -123,6 +123,7 @@ export type SetupPolicySelectionOptions = {
   disabledChannels?: string[] | null;
   /** Process-local exclusions imposed by a narrower runtime route authority. */
   excludedPresets?: readonly string[];
+  revalidatePolicyRequirements?: (operation: string) => void;
 };
 
 export type SetupPolicySelectionDeps = {
@@ -416,6 +417,9 @@ async function setupPoliciesWithSelectionInner(
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
     ) === true;
   if (customOwnsObservability) {
+    options.revalidatePolicyRequirements?.(
+      `remove built-in policy attribution from sandbox '${sandboxName}'`,
+    );
     deps.policies.removeBuiltinPresetAttribution?.(
       sandboxName,
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -504,6 +508,9 @@ async function setupPoliciesWithSelectionInner(
     refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
+    options.revalidatePolicyRequirements?.(
+      `reapply recorded policy presets to sandbox '${sandboxName}'`,
+    );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     requireSandboxReady(deps, sandboxName, "after");
     if (onSelection) onSelection(resumeSelection);
@@ -514,6 +521,7 @@ async function setupPoliciesWithSelectionInner(
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
     refuseInPlacePersonalRemoval(personalAlreadyActive, []);
   }
+  options.revalidatePolicyRequirements?.(`record the policy tier for sandbox '${sandboxName}'`);
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = excludePresets(
@@ -574,6 +582,9 @@ async function setupPoliciesWithSelectionInner(
           personalTier
             ? "  [non-interactive] Applying the Personal tier requirement while skipping optional policy presets."
             : "  [non-interactive] Removing excluded or unavailable policy presets.",
+        );
+        options.revalidatePolicyRequirements?.(
+          `apply retained policy presets to sandbox '${sandboxName}'`,
         );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         requireSandboxReady(deps, sandboxName, "after");
@@ -658,6 +669,9 @@ async function setupPoliciesWithSelectionInner(
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
+    options.revalidatePolicyRequirements?.(
+      `apply non-interactive policy presets to sandbox '${sandboxName}'`,
+    );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     requireSandboxReady(deps, sandboxName, "after");
     if (onSelection) onSelection(chosen);
@@ -706,6 +720,7 @@ async function setupPoliciesWithSelectionInner(
   for (const preset of resolvedPresets) {
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
+  options.revalidatePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
   if (onSelection) onSelection(interactiveChoice);
