@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fchmodSync, openSync, renameSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { basename, dirname } from "node:path";
 
 export interface CreateTarballOptions {
@@ -66,11 +75,25 @@ export function createTarball(
       return false;
     }
     fchmodSync(fd, 0o600);
-    // rename() never follows the source: if the staging path was swapped for
-    // a symlink after we opened it, this moves the symlink itself, leaving
-    // our written data orphaned under `partial` rather than publishing
-    // through the link. Worst case is a failed/misplaced bundle, not a write
-    // through an attacker's symlink.
+    // rename() is pathname-based and never follows its source, so it cannot
+    // be tricked into writing through a symlink — but it also cannot tell a
+    // swapped path from the real one. Without this check, an attacker who
+    // swaps `partial` for a symlink after we opened it would have that link
+    // renamed to `output`: createTarball() would report success and the
+    // caller's own "attach this to your GitHub issue" guidance would point
+    // at attacker-chosen content instead of the archive we actually wrote.
+    // Comparing the still-open descriptor's identity against the pathname
+    // right before the one remaining pathname-based step closes that gap;
+    // a mismatch means the path no longer names the file we wrote to, so
+    // publication fails closed instead of moving whatever is there now.
+    const heldStat = fstatSync(fd);
+    const partialStat = lstatSync(partial);
+    if (partialStat.dev !== heldStat.dev || partialStat.ino !== heldStat.ino) {
+      error(
+        `Refusing to publish ${output}: the staged path ${partial} was replaced before it could be moved into place.`,
+      );
+      return false;
+    }
     renameSync(partial, output);
     staged = true;
   } catch (err) {

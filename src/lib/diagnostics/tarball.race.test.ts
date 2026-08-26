@@ -92,18 +92,26 @@ describe("createTarball staging-descriptor race (#10195)", () => {
       writeSync(heldFd, "MARKER");
       return { status: 0, signal: null } as ReturnType<typeof spawnSync>;
     });
-    const ok = createTarball(tempDir, output, { info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    const info = vi.fn();
+    const error = vi.fn();
+    const ok = createTarball(tempDir, output, { info, warn: vi.fn(), error });
     // The archive write and fchmod both went through the descriptor claimed
     // before the swap, so the victim's content and permissions are untouched
     // no matter what the staging pathname points to by the time tar and
     // fchmod run. rename() never dereferences its source, so renaming the
-    // swapped-in symlink onto `output` is itself a legitimate, successful
-    // operation (POSIX) — it moves the link, not the victim. This is the
-    // known residual: an attacker who can win this race can substitute what
-    // `output` points to, but can never write through it to the victim.
-    expect(ok).toBe(true);
+    // swapped-in symlink onto `output` would itself be a legitimate,
+    // successful operation (POSIX) — but publication compares the held
+    // descriptor's identity against the pathname first and refuses to
+    // proceed on a mismatch, so no rename happens at all. The victim is
+    // never touched, `output` is never created, and the call fails closed
+    // instead of reporting success for attacker-chosen content.
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledOnce();
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("Tarball written"));
     expect(readFileSync(victim, "utf-8")).toBe(victimContent);
     expect(statSync(victim).mode & 0o777).toBe(victimModeBefore);
+    expect(() => statSync(output)).toThrow();
     expectTarInvokedThroughHeldDescriptor(tempDir);
   });
 });
