@@ -633,6 +633,9 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: null,
     });
     const events: string[] = [];
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      events.push(`revalidate:${operation}`),
+    );
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "example.invalid/image@sha256:abc",
@@ -643,12 +646,14 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: ["telegram"],
       }),
-      runProviderPreDeleteCleanup: (revalidatePolicyRequirements) => {
-        revalidatePolicyRequirements?.("cleaning up deferred providers");
+      runProviderPreDeleteCleanup: (revalidate) => {
+        expect(revalidate).toBe(revalidatePolicyRequirements);
+        revalidate?.("cleaning up providers");
         events.push("cleanup");
       },
       upsertMessagingProviders: vi.fn((_tokenDefs, options) => {
-        options.revalidatePolicyRequirements?.("upserting deferred providers");
+        expect(options.revalidatePolicyRequirements).toBe(revalidatePolicyRequirements);
+        options.revalidatePolicyRequirements?.("upserting providers");
         events.push("upsert");
         return ["sandbox-telegram-bridge"];
       }),
@@ -665,9 +670,6 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-existing-discord",
     ]);
 
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
-      events.push(`policy: ${operation}`),
-    );
     expect(plan.activateDeferredProviderEffects?.(revalidatePolicyRequirements)).toEqual([
       "nvidia-prod",
       "sandbox-telegram-bridge",
@@ -676,9 +678,9 @@ describe("resolveSandboxCreateIntent", () => {
       "custom-provider",
     ]);
     expect(events).toEqual([
-      "policy: cleaning up deferred providers",
+      "revalidate:cleaning up providers",
       "cleanup",
-      "policy: upserting deferred providers",
+      "revalidate:upserting providers",
       "upsert",
       "hermes",
     ]);
