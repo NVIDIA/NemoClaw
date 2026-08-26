@@ -233,6 +233,57 @@ describe("created sandbox identity gate", () => {
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
+  it("persists unresolved APF recovery before rejecting a missing post-create identity (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.requirePolicylessCreate = true;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedApfSandboxRecovery = persistRetainedApfSandboxRecovery;
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit:${code}`);
+    });
+
+    const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: null,
+      message: formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce: nonce,
+        liveIdentityFingerprint: null,
+      }),
+    });
+    expect(exit).not.toHaveBeenCalled();
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
+    expect(output).toContain("Recovery is blocked");
+    expect(output).toContain("onboard --fresh --apf-interceptor --name <new-sandbox>");
+    expect(output).not.toContain("onboard --resume");
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("requires checkpoint revalidation before the first post-create effect (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
@@ -501,6 +552,62 @@ describe("created sandbox identity gate", () => {
     expect(output).toContain("Recovery is blocked");
     expect(output).toContain("onboard --fresh --apf-interceptor --name <new-sandbox>");
     expect(output).not.toContain("onboard --resume");
+  });
+
+  it("persists identifiable APF recovery before a terminal readiness exit (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.requirePolicylessCreate = true;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedApfSandboxRecovery = persistRetainedApfSandboxRecovery;
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Error",
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit:${code}`);
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: fingerprint,
+      message: formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce: nonce,
+        liveIdentityFingerprint: fingerprint,
+      }),
+    });
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledBefore(
+      patch.rollbackManagedStartupAfterCreateFailure,
+    );
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledBefore(exit);
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
+    expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
+    expect(output).toContain("onboard --fresh --apf-interceptor --name <new-sandbox>");
+    expect(output).not.toContain("onboard --resume");
+    expect(output).not.toContain("alpha-sandbox-id");
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it.each([

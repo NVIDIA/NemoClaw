@@ -770,6 +770,7 @@ export function createSandboxGpuCreateAttemptRunner(
           runCaptureOpenshell: deps.runCaptureOpenshell,
         });
       } catch (error) {
+        persistApfCreateFailureRecovery(input, captureRetainedSandboxRecovery);
         throw new Error(
           `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
           { cause: error },
@@ -866,6 +867,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ...captureRetainedSandboxRecovery(),
         } as const;
       }
+      persistApfCreateFailureRecovery(input, captureRetainedSandboxRecovery);
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
