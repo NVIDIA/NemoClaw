@@ -18,12 +18,15 @@ beforeEach(() => {
 });
 
 describe("fresh create identity", () => {
-  it(
-    "registers a fresh create only after owner-scoped identity confirmation (#8942)",
+  it.each([
+    { label: "managed creation", apfInterceptorRequested: false },
+    { label: "APF-selected creation", apfInterceptorRequested: true },
+  ])(
+    "registers $label only after owner-scoped identity and policy confirmation (#9833)",
     {
       timeout: 45000,
     },
-    async () => {
+    async ({ apfInterceptorRequested }) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -42,6 +45,9 @@ describe("fresh create identity", () => {
       );
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
+      );
+      const policyMergePath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "policy", "merge.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -72,7 +78,9 @@ let sandboxListCalls = 0;
 let dockerPsCalls = 0;
 let sandboxCreated = false;
 let registeredSandbox = null;
+let effectivePolicy = {};
 const keepAlive = setInterval(() => {}, 1000);
+const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
@@ -89,7 +97,7 @@ runner.run = (command, opts = {}) => {
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
-	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
 	  if (cmd.includes("sandbox get") || cmd.includes("sandbox list")) {
 	    lifecycleObservationCommands.push(cmd);
 	  }
@@ -120,6 +128,12 @@ runner.run = (command, opts = {}) => {
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
+	  apfInterceptorRequested,
+	  onVerifyCreatedPolicy: (input) => {
+	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
+	      fs.readFileSync(input.policySourcePath, "utf8"),
+	    ).policy;
+	  },
 	  registerSandbox: (entry) => { registeredSandbox = entry; },
 	});
 preflight.checkPortAvailable = async () => ({ ok: true });
@@ -175,10 +189,20 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
 	    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
 	    createFixture,
-	  ));
+	  );
+	  if (apfInterceptorRequested) {
+	    createArgs[15] = {
+	      apfInterceptorRequested: true,
+	      deferSandboxEffectsUntilPolicyVerification: true,
+	      recreate: false,
+	      toolDisclosure: "progressive",
+	      observabilityEnabled: false,
+	    };
+	  }
+	  const sandboxName = await createSandbox(...createArgs);
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
     sandboxName,
@@ -190,6 +214,8 @@ const { createSandbox } = require(${onboardPath});
     stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
     lifecycleObservationCommands,
     registeredSandbox,
+    createCommand: createCommand.command,
+    commandNames: commands.map((entry) => entry.command),
   }));
   clearInterval(keepAlive);
 })().catch((error) => {
@@ -226,6 +252,32 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(
         payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
         createHash("sha256").update("sbx-fresh-create").digest("hex"),
+      );
+      const assertPolicyMode = apfInterceptorRequested
+        ? () => {
+            assert.equal(payload.registeredSandbox.policyAuthority, "externally-managed");
+            assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
+            assert.deepEqual(payload.registeredSandbox.appliedPolicies ?? [], []);
+            assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:=|\s)/u);
+            const createIndex = payload.commandNames.findIndex((command: string) =>
+              command.includes("sandbox create"),
+            );
+            const deferredEffectIndexes = payload.commandNames
+              .map((command: string, index: number) => ({ command, index }))
+              .filter(({ command }: { command: string }) =>
+                /provider (?:profile import|create)|sandbox provider attach/u.test(command),
+              )
+              .map(({ index }: { index: number }) => index);
+            assert.ok(deferredEffectIndexes.every((index: number) => index > createIndex));
+          }
+        : () => {
+            assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
+            assert.ok(payload.registeredSandbox.policyCreationReceipt);
+          };
+      assertPolicyMode();
+      assert.match(
+        payload.createCommand,
+        /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
       );
       const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
         (command: string) => command.includes("-g nemoclaw"),
