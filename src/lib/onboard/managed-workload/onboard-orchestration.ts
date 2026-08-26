@@ -20,10 +20,7 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import {
-  isShippedManagedImageAgent,
-  managedImageRuntimeIdentity,
-} from "../managed-image/contract";
+import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -221,14 +218,15 @@ export function createManagedWorkloadOnboardRuntime(
     input.computePlan,
   );
   const strictManagedRuntime = input.tempManagedRuntime || input.managedWorkloadRebuild !== null;
-  const runtimeCapabilities =
-    strictManagedRuntime || input.stockManagedRuntime
-      ? discoveredRuntimeCapabilities
-      : {
-          ...discoveredRuntimeCapabilities,
-          managedImageSelectionPolicy: "prefer-managed" as const,
-          managedImages: null,
-        };
+  const runtimeCapabilities = strictManagedRuntime
+    ? discoveredRuntimeCapabilities
+    : {
+        ...discoveredRuntimeCapabilities,
+        managedImageSelectionPolicy: "prefer-managed" as const,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
+      };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
