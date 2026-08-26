@@ -42,6 +42,7 @@ import {
 import {
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAMESPACE_LABEL,
   queryOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
 
@@ -125,7 +126,36 @@ function isExactRunningReplacement(
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
     const deadline = Date.now() + timeoutMs;
-    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
+    const namespace = dockerRun(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, timeoutMs),
+      },
+    );
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      !hasZeroDockerExitStatus(namespace) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun },
+      remainingMs,
+      sandboxNamespace,
+    );
     if (
       !containers.ok ||
       containers.ids.length !== 1 ||
@@ -133,7 +163,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    const remainingMs = deadline - Date.now();
+    remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return false;
     const inspect = dockerRun(
       [
