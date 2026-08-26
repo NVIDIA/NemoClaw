@@ -188,6 +188,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -204,6 +205,10 @@ jobs:
           if [ "$required" != "true" ]; then
             echo "required=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error title=SDK package unavailable::The reviewed OpenShell SDK is available only to same-repository pull requests."
+            exit 1
           fi
           if [ ! -f .trusted-sdk-package-decision/.github/workflows/openshell-sdk-package-pr.yaml ]; then
             echo "::error title=Missing trusted SDK package workflow::The pull request base cannot package the approved OpenShell SDK."

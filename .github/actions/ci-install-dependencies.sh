@@ -28,8 +28,7 @@ if [ "$event_name" = "pull_request" ]; then
 fi
 
 target_root="$(pwd -P)"
-action_path="${GITHUB_ACTION_PATH:-$(cd "$(dirname "$0")" && pwd -P)}"
-trusted_root="$(cd "$action_path/../.." && pwd -P)"
+trusted_root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 npm_cache="${NPM_CONFIG_CACHE:-${RUNNER_TEMP:-$target_root/.ci-cache}/npm}"
 mkdir -p "$npm_cache"
 

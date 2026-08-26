@@ -438,12 +438,17 @@ describe("pull request and main workflow contracts", () => {
       path: ".trusted-sdk-package-decision",
     });
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
+    expect(locate.env?.HEAD_REPOSITORY).toBe(
+      "${{ github.event.pull_request.head.repo.full_name }}",
+    );
     expect(locate.run).toContain(
       ".trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );
     expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
     expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
     expect(locate.run).toContain("required=false");
+    expect(locate.run).toContain('[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]');
+    expect(locate.run).toContain("available only to same-repository pull requests");
     expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });

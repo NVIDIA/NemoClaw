@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const temporaryRoots: string[] = [];
 const installer = join(import.meta.dirname, "../../.github/actions/ci-install-dependencies.sh");
+const compositeActionPath = join(import.meta.dirname, "../../.github/actions/ci-build-typecheck");
 
 function makeFixture(): { root: string; trace: string; path: string } {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-ci-install-"));
@@ -46,7 +47,7 @@ afterEach(() => {
 });
 
 describe("shared CI dependency installer", () => {
-  it("installs root and plugin dependencies from lockfiles without lifecycle scripts", () => {
+  it("installs from a composite-action path without lifecycle scripts", () => {
     const fixture = makeFixture();
 
     const result = spawnSync("bash", [installer], {
@@ -54,6 +55,7 @@ describe("shared CI dependency installer", () => {
       encoding: "utf8",
       env: {
         ...process.env,
+        GITHUB_ACTION_PATH: compositeActionPath,
         GITHUB_EVENT_NAME: "pull_request",
         NPM_CONFIG_CACHE: join(fixture.root, "npm-cache"),
         NPM_TRACE: fixture.trace,

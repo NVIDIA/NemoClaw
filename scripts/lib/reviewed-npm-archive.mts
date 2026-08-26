@@ -537,7 +537,7 @@ function readReviewedLockPackages(
       tarballUrl,
     };
     identities.set(packageSpec, request);
-    reviewed.push(request);
+    if (!reviewedPackageWithoutIntegrity) reviewed.push(request);
   }
   if (!allowEmpty && reviewed.length === 0) {
     throw new Error(`reviewed npm lock contains no packages: ${lockfilePath}`);

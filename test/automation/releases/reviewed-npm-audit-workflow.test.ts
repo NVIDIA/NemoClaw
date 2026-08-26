@@ -469,6 +469,44 @@ esac
     }
   });
 
+  it("accepts one exact package without registry integrity metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-without-integrity-"));
+    const destination = path.join(root, "materialized");
+    const tarballUrl = "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      { optional: true, resolved: tarballUrl, version: "1.0.0" },
+      {},
+      true,
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          undefined,
+          [],
+          [
+            {
+              label: "reviewed fixture package without integrity",
+              packageSpec: "fixture-package@1.0.0",
+              tarballUrl,
+            },
+          ],
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects drift from an approved additional-registry package identity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-registry-drift-"));
     const destination = path.join(root, "materialized");

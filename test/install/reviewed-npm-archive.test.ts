@@ -255,6 +255,46 @@ describe("reviewed npm archive", () => {
     ]);
   });
 
+  it("validates but does not archive an approved package without integrity", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(
+      reviewed.tempDirectory as string,
+      "package-without-integrity-lock.json",
+    );
+    const packageWithoutIntegrity = {
+      label: "reviewed package without integrity",
+      packageSpec: "fixture-without-integrity@1.0.0",
+      tarballUrl:
+        "https://registry.npmjs.org/fixture-without-integrity/-/fixture-without-integrity-1.0.0.tgz",
+    };
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/fixture-without-integrity": {
+            resolved: packageWithoutIntegrity.tarballUrl,
+            version: "1.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+        reviewedPackagesWithoutIntegrity: [packageWithoutIntegrity],
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+  });
+
   it("rejects an off-origin locked archive before npm can read the cache", () => {
     const reviewed = cacheRequest();
     const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));

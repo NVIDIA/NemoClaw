@@ -362,6 +362,7 @@ export function materializeSourceGraph(
   installProductionDependencies: (directory: string) => void = installProductionSourceDependencies,
   sourceRegistryPackage?: ReviewedPackage,
   sourceNestedShrinkwrapPackages: readonly string[] = [],
+  sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
@@ -380,6 +381,7 @@ export function materializeSourceGraph(
           },
         ]
       : [],
+    reviewedPackagesWithoutIntegrity: sourceRegistryPackagesWithoutIntegrity,
   });
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
@@ -520,6 +522,7 @@ function auditSourceGraph(
     installProductionSourceDependencies,
     config.sourceRegistryPackage,
     config.sourceNestedShrinkwrapPackages,
+    config.sourceRegistryPackagesWithoutIntegrity,
   );
   return auditMaterializedSourceGraph({
     directory,

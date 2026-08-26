@@ -30,7 +30,7 @@ describe("base-controlled OpenShell SDK package workflow", () => {
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(job.permissions).toEqual({ contents: "read", packages: "read" });
     expect(job.if).toBe(
-      "${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+      "${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}",
     );
     expect(job["timeout-minutes"]).toBe(5);
 
