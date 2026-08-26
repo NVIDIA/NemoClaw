@@ -419,7 +419,6 @@ export function writeConfigFile(filePath: string, data: SerializableConfig): voi
     }
     if (backupCreated) {
       cleanupTempFile(backupFile);
-      backupCreated = false;
     }
   } catch (error) {
     cleanupTempFile(tmpFile);
