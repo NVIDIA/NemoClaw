@@ -169,6 +169,18 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
+    env.E2E_MANAGED_IMAGE_REVISION,
+    "${{ needs.generate-matrix.outputs.managed_image_revision }}",
+    `${jobName} must receive the selected managed-image revision`,
+  );
+  requireEqual(
+    errors,
+    env.E2E_WORKLOAD_SOURCE,
+    "${{ needs.generate-matrix.outputs.workload_source }}",
+    `${jobName} must receive the selected workload source`,
+  );
+  requireEqual(
+    errors,
     job["timeout-minutes"],
     90,
     `${jobName} must bound each shard to 90 minutes`,
@@ -178,7 +190,9 @@ function validateJobIdentity(
     errors,
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
-      jobName === "mcp-bridge-dev" ? ["generate-matrix", DEV_ARTIFACT_JOB] : ["generate-matrix"],
+      jobName === "mcp-bridge-dev"
+        ? ["generate-matrix", DEV_ARTIFACT_JOB]
+        : ["base-image-publication", "generate-matrix"],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -841,8 +855,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["base-image-publication", "generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend on its trusted image and matrix producers without MCP serialization`,
+    JSON.stringify(["generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
   );
   requireEqual(
     errors,
@@ -865,6 +879,8 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
+    E2E_MANAGED_IMAGE_REVISION: "${{ needs.generate-matrix.outputs.managed_image_revision }}",
+    E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
@@ -873,8 +889,6 @@ function validateCredentialWindowJob(
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu Docker host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
-    E2E_MANAGED_IMAGE_REVISION:
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",

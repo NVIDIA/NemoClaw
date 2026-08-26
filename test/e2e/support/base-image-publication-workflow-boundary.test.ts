@@ -127,7 +127,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (_case, eventName, checkoutSha, ref, required, reuse) => {
+    (_case, eventName, checkoutSha, ref, required, pr) => {
       expect(
         runClassifier({
           checkoutSha,
@@ -135,7 +135,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           ref,
           repository: "NVIDIA/NemoClaw",
         }),
-      ).toEqual({ output: `required=${required}\nreuse=${reuse}\n`, status: 0 });
+      ).toEqual({ output: `required=${required}\npr=${pr}\n`, status: 0 });
     },
   );
 
@@ -194,28 +194,18 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
     ["Node version", (value) => (gateSteps(value)[2].with!["node-version"] = 20)],
     [
-      "pairing condition",
-      (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).if = "${{ always() }}"),
+      "selector condition",
+      (value) => (gateStep(value, "Select PR workload source").if = "${{ always() }}"),
     ],
     [
-      "pairing catalog",
+      "selector token",
       (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).env!["MANAGED_IMAGE_CATALOG"] = "${{ inputs.catalog }}"),
+        (gateStep(value, "Select PR workload source").env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}"),
     ],
     [
-      "pairing verifier",
+      "PR base checkout ref",
       (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).run = "node unreviewed.mts"),
+        (gateStep(value, "Check out trusted PR base").with!.ref = "${{ inputs.checkout_sha }}"),
     ],
     [
       "verifier condition",
@@ -268,15 +258,23 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    ["publication matrix dependency", (value) => delete value.jobs["base-image-publication"].needs],
     [
-      "matrix publication dependency",
-      (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
+      "publication dependency cycle",
+      (value) => (value.jobs["base-image-publication"].needs = "generate-matrix"),
+    ],
+    ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
+    [
+      "matrix workload source",
+      (value) => (value.jobs["generate-matrix"].outputs!.workload_source = "${{ github.sha }}"),
     ],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
       "live managed-image revision",
       (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "live workload source",
+      (value) => (value.jobs.live.env!.E2E_WORKLOAD_SOURCE = "managed-image"),
     ],
     [
       "cloud-onboard publication dependency",
@@ -286,6 +284,34 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "cloud-onboard managed-image revision",
       (value) =>
         (value.jobs["cloud-onboard"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "cloud-onboard workload source",
+      (value) => (value.jobs["cloud-onboard"].env!.E2E_WORKLOAD_SOURCE = "managed-image"),
+    ],
+    [
+      "MCP bridge workload source",
+      (value) => (value.jobs["mcp-bridge"].env!.E2E_WORKLOAD_SOURCE = "managed-image"),
+    ],
+    [
+      "MCP bridge publication dependency",
+      (value) => (value.jobs["mcp-bridge"].needs = ["generate-matrix"]),
+    ],
+    [
+      "MCP bridge dev managed-image revision",
+      (value) =>
+        (value.jobs["mcp-bridge-dev"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "credential-window workload source",
+      (value) =>
+        (value.jobs["openshell-credential-generation-window"].env!.E2E_WORKLOAD_SOURCE =
+          "managed-image"),
+    ],
+    [
+      "Hermes GPU managed-image revision",
+      (value) =>
+        (value.jobs["hermes-gpu-startup"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
     ],
     [
       "Launchable publication dependency",
