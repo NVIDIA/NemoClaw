@@ -515,6 +515,7 @@ function requireDirectChild(directory: string, root: string, name: string): void
   const relative = path.relative(root, directory);
   if (
     !relative ||
+    relative === ".." ||
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative) ||
     relative.includes(path.sep)

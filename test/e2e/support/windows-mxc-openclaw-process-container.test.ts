@@ -303,6 +303,18 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     );
   });
 
+  it("rejects an OpenClaw artifact root that is the work root parent (#8178)", () => {
+    const { environment, root } = fixture();
+    const openClawRoot = path.join(root, "openclaw");
+    const workRoot = path.join(openClawRoot, "work");
+    fs.mkdirSync(workRoot);
+    environment.NEMOCLAW_WINDOWS_MXC_WORK_ROOT = workRoot;
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /artifact root must be a direct child of the qualification work root/u,
+    );
+  });
+
   it("rejects moving aliases instead of exact digest and revision identities (#8178)", () => {
     const { environment } = fixture();
     environment.NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION = "main";
