@@ -34,8 +34,8 @@ import {
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
@@ -1009,7 +1009,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ...createDockerRuntimeProviderBundle(),
       bootstrap: createDockerManagedBootstrapSurface("docker"),
     } as RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {

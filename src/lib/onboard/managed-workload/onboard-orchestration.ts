@@ -35,7 +35,7 @@ import {
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -77,8 +77,9 @@ type ManagedProfileInput = Omit<
 >;
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
-type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
-type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+type BootstrapProvider = RuntimeProviderBundle & {
+  readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+};
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
@@ -204,7 +205,11 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
 }
 
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
-  if (!provider || !provider.bootstrap.supported) {
+  if (
+    !provider ||
+    !provider.bootstrap.supported ||
+    provider.bootstrap.bootstrapKind !== "managed-image"
+  ) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
   }
   return provider as BootstrapProvider;
