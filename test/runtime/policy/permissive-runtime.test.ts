@@ -426,7 +426,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   });
 
   it.each(SLACK_PROVIDER_CASES)(
-    "%s Slack egress reflects an %s live credential-provider set",
+    "%s keeps Slack egress only when the live provider set is exact; observed %s (#10153)",
     (agent, _providerState, sandboxName, livePolicyKey, providers, shouldKeep) => {
       let stagedPolicy = "";
       buildRuntimePermissivePolicy(`/unused-${agent}-permissive.yaml`, {

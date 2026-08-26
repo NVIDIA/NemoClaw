@@ -318,9 +318,7 @@ export function composeCredentialBoundMessagingPolicies(
       reportOmission?.({
         channelId,
         reason: providerReason ?? "the credential-bound channel policy could not be materialized",
-        recoveryAction:
-          `run \`nemoclaw ${sandboxName} channels add ${channelId}\` to replace the channel ` +
-          "credentials, then rebuild the sandbox before retrying",
+        recoveryAction: `run \`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance`,
       });
     } else if (networkPolicies) {
       networkPolicies[policy.permissivePolicyKey] = {

@@ -226,8 +226,7 @@ describe("applyPermissivePolicy", () => {
       expect(observed.result.stderr).toContain(
         `sandbox '${sandboxName}', channel 'telegram': ` +
           "the live policy has no credential providers; expected 1. Recovery: " +
-          `run \`nemoclaw ${sandboxName} channels add telegram\` to replace the channel ` +
-          "credentials, then rebuild the sandbox before retrying.",
+          `run \`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance.`,
       );
       expect(observed.result.stderr).not.toContain("channel 'slack'");
     } finally {
