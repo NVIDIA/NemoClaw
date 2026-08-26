@@ -135,13 +135,18 @@ $$nemoclaw <sandbox> channels add <channel>
 ```
 
 In an interactive terminal, approve each rebuild prompt.
-For non-interactive recovery, provide the required channel credentials and run every `channels add` command before one rebuild:
+For channels whose required inputs support non-interactive enrollment, provide the required credentials and run every `channels add` command before one rebuild:
 
 ```bash
 $$nemoclaw <sandbox> rebuild
 ```
 
 Retry `shields down` after the rebuild.
+
+<AgentOnly variant="openclaw">
+OpenClaw Google Chat recovery requires interactive `$$nemoclaw <sandbox> channels add googlechat` to configure its public webhook audience.
+Rebuild the sandbox after enrollment, then retry `shields down`.
+</AgentOnly>
 
 When the saved plan is available, `shields down` can continue without an affected credential-bound route.
 NemoClaw omits the route when its channel policy cannot be materialized or the live policy has an absent, partial, or mismatched credential provider set.
