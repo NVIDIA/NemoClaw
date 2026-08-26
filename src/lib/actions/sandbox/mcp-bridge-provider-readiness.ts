@@ -13,7 +13,6 @@ import {
 import { executeSandboxExecCommand } from "./process-recovery";
 
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
-const MCP_ATTACHED_CREDENTIAL_REVISION_RE = /^v[0-9]{1,20}$/;
 
 export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
 export type McpAttachedCredentialRevision = Exclude<
@@ -148,9 +147,8 @@ export function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
   options: {
-    expectedRevision?: McpAttachedCredentialRevision;
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => McpAttachedCredentialRevision | void;
+    refreshAfterObservedAbsence?: () => void;
   } = {},
 ): McpAttachedCredentialRevision {
   assertAuthenticatedBridgeEntry(entry);
@@ -161,19 +159,12 @@ export function waitForAttachedMcpCredential(
   ) {
     throw new McpBridgeError("Invalid prior MCP credential revision observation.");
   }
-  if (
-    options.expectedRevision !== undefined &&
-    !MCP_ATTACHED_CREDENTIAL_REVISION_RE.test(options.expectedRevision)
-  ) {
-    throw new McpBridgeError("Invalid expected MCP credential revision observation.");
-  }
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
   );
   let refreshedAfterObservedAbsence = false;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
-  let expectedRevision = options.expectedRevision;
   let candidateRevision: McpAttachedCredentialRevision | undefined;
   let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitForMcpBridgeCondition(
@@ -190,13 +181,7 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        const refreshedRevision = options.refreshAfterObservedAbsence();
-        if (refreshedRevision !== undefined) {
-          if (!MCP_ATTACHED_CREDENTIAL_REVISION_RE.test(refreshedRevision)) {
-            throw new McpBridgeError("Invalid refreshed MCP credential revision observation.");
-          }
-          expectedRevision = refreshedRevision;
-        }
+        options.refreshAfterObservedAbsence();
         attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
         lastAttempt = attempt;
       }
@@ -209,9 +194,7 @@ export function waitForAttachedMcpCredential(
         observation !== null &&
         observation !== "absent" &&
         observation !== "canonical" &&
-        (expectedRevision !== undefined
-          ? observation === expectedRevision
-          : options.previousRevision === undefined || observation !== options.previousRevision);
+        (options.previousRevision === undefined || observation !== options.previousRevision);
       if (!attached) {
         candidateRevision = undefined;
         return false;
