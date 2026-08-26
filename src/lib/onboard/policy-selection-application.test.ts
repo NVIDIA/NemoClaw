@@ -3,7 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 import * as policies from "../policy";
+import * as tiers from "../policy/tiers";
 import {
+  computeSetupPresetSuggestions,
   createOnboardPolicyApplication,
   type OnboardPolicyApplicationDeps,
 } from "./policy-selection";
@@ -28,6 +30,17 @@ vi.mock("./policy-context-seed", () => ({ seedInitialPolicyContext }));
 vi.mock("./policy-preset-sync", () => ({ syncPresetSelection }));
 
 describe("onboarding policy application", () => {
+  it("suggests only enabled OpenClaw messaging presets for the open tier (#10153)", () => {
+    const suggestions = computeSetupPresetSuggestions(
+      { policies, tiers, localInferenceProviders: [] },
+      "open",
+      { agent: "openclaw", enabledChannels: ["slack"] },
+    );
+
+    expect(suggestions).toContain("slack");
+    expect(suggestions).not.toContain("discord");
+  });
+
   it("runs policy application while holding the sandbox mutation lock", async () => {
     const events: string[] = [];
     const withSandboxMutationLock: OnboardPolicyApplicationDeps["withSandboxMutationLock"] = vi.fn(
