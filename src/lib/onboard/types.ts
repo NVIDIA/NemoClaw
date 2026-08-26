@@ -59,6 +59,8 @@ export interface SandboxCreateIntent {
   /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
   readonly deferSandboxEffectsUntilPolicyVerification?: true;
   readonly recreate: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
@@ -184,6 +186,8 @@ export type OnboardOptions = {
     | null;
   resume?: boolean;
   fresh?: boolean;
+  /** Operator-selected APF compatibility mode for fresh sandbox creation. */
+  apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
