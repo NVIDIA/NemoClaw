@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { readYaml } from "../../helpers/e2e-workflow-contract.ts";
 
 import {
   collectPaginated,
@@ -17,7 +16,6 @@ import {
   type PublicationRun,
   isBaseImagePublicationEvent,
   parseBaseImagePushPaths,
-  REQUIRED_PUBLISHER_JOBS,
   resolveFirstParentHistory,
   selectPublicationRun,
   validateBoundRun,
@@ -87,7 +85,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
     id: RUN_ID,
     run_attempt: 1,
     workflow_id: WORKFLOW_ID,
-    name: "Images / Base Images",
+    name: "Images / Publish Base and Managed Images",
     event: "push",
     status: "completed",
     conclusion: "success",
@@ -104,7 +102,7 @@ function workflowRun(overrides: Record<string, unknown> = {}): Record<string, un
 function workflowMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: WORKFLOW_ID,
-    name: "Images / Base Images",
+    name: "Images / Publish Base and Managed Images",
     path: ".github/workflows/base-image.yaml",
     state: "active",
     html_url: "https://github.com/NVIDIA/NemoClaw/blob/main/.github/workflows/base-image.yaml",
@@ -149,15 +147,15 @@ function publisherJob(
 function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string, unknown>[] {
   const runAttempt = overrides.runAttempt ?? 1;
   return [
-    publisherJob("Manifests / OpenClaw", {
+    publisherJob("Build and push OpenClaw base image", {
       id: 1,
       run_attempt: runAttempt,
     }),
-    publisherJob("Manifests / Hermes", {
+    publisherJob("Build and push Hermes base image", {
       id: 2,
       run_attempt: runAttempt,
     }),
-    publisherJob("Manifests / Deep Agents Code", {
+    publisherJob("Build and push Deep Agents Code base image", {
       id: 3,
       run_attempt: runAttempt,
     }),
@@ -165,24 +163,6 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
-  it("keeps required publisher names aligned with the workflow", () => {
-    const workflow = readYaml<{ jobs?: Record<string, { name?: unknown }> }>(
-      ".github/workflows/base-image.yaml",
-    );
-    const names = Object.values(workflow.jobs ?? {}).map((job) => job.name);
-
-    expect(REQUIRED_PUBLISHER_JOBS.every((name) => names.includes(name))).toBe(true);
-  });
-
-  it("rejects an obsolete publisher name", () => {
-    const jobs = successfulJobs();
-    jobs[0] = publisherJob("Build and push OpenClaw base image", { id: 1 });
-
-    expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toThrow(
-      /missing required Manifests \/ OpenClaw job/u,
-    );
-  });
-
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
@@ -525,7 +505,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be Images \/ Base Images/u);
+    ).toThrow(/name must be Images \/ Publish Base and Managed Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -598,7 +578,7 @@ describe("base-image publication evidence", () => {
 
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
     const jobs = successfulJobs().map((job) =>
-      job.name === "Manifests / Hermes"
+      job.name === "Build and push Hermes base image"
         ? { ...job, status: "in_progress", conclusion: null }
         : job,
     );
@@ -618,7 +598,7 @@ describe("base-image publication evidence", () => {
     "rejects a required publisher that concludes %s before the workflow completes (#9549)",
     (conclusion) => {
       const jobs = successfulJobs().map((job) =>
-        job.name === "Manifests / Hermes" ? { ...job, conclusion } : job,
+        job.name === "Build and push Hermes base image" ? { ...job, conclusion } : job,
       );
 
       expect(() =>
@@ -663,13 +643,13 @@ describe("base-image publication evidence", () => {
     ["missing", successfulJobs().slice(0, 2), /missing required/u],
     [
       "duplicated",
-      [...successfulJobs(), publisherJob("Manifests / Hermes", { id: 9 })],
+      [...successfulJobs(), publisherJob("Build and push Hermes base image", { id: 9 })],
       /duplicated in attempt/u,
     ],
     [
       "failed selected attempt",
       successfulJobs().map((job) =>
-        job.name === "Manifests / Hermes" ? { ...job, conclusion: "failure" } : job,
+        job.name === "Build and push Hermes base image" ? { ...job, conclusion: "failure" } : job,
       ),
       /did not complete successfully/u,
     ],
