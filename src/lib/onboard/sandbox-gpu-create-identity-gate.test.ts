@@ -135,6 +135,7 @@ describe("created sandbox identity gate", () => {
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       events.push("create");
       expect(options.onPoll).toBeUndefined();
+      expect(options.waitForReadyTermination).toBe(true);
       expect(args.indexOf("--label")).toBeGreaterThan(0);
       expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
       nonce = createAttemptNonce(args);

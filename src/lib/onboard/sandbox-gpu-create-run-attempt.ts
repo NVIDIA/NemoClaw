@@ -479,7 +479,7 @@ export function createSandboxGpuCreateAttemptRunner(
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover,
+        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
             ? "create"
