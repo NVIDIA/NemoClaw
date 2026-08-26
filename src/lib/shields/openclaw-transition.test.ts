@@ -821,7 +821,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     // base path. That is the state that makes the leak reachable.
     const harness = createHarness({
       livePolicyYaml:
-        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\n",
+        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\nnetwork_policies: {}\n",
       fork: () => {
         runtimeDirDuringFork = mkdtempSpy.mock.results
           .filter((result) => result.type === "return")

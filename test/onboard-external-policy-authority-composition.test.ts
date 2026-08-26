@@ -54,6 +54,7 @@ describe("external policy authority onboarding composition", () => {
         directGpu: false,
         additionalPresets,
         agentName: agent.name,
+        sandboxName,
         policyTier,
       });
     const effectivePolicySource = prepareRequiredPolicy();

@@ -279,6 +279,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
                 observabilityEnabled: requirements.observabilityEnabled,
               }),
               agentName: agent.name,
+              sandboxName,
               policyTier: observed.existingEntry?.policyTier ?? policyTier,
               baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
             },
