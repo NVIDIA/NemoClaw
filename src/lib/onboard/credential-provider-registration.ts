@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { legacyCredentialAliases } from "../credentials/legacy-env-aliases";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
@@ -42,7 +43,6 @@ export interface CredentialProviderRegistrationDeps {
   redact(input: string): string;
   getGatewayName(): string;
   getCredential(name: string): string | null;
-  legacyCredentialAliases(envName: string): readonly string[];
   normalizeCredentialValue(value: unknown): string;
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
@@ -175,7 +175,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       // resolveProviderCredential resolves transparently. Account the alias
       // too, or the staged key never looks migrated and the plaintext file
       // survives an onboard that used it (#10373).
-      const migrationKeys = [credentialEnv, ...deps.legacyCredentialAliases(credentialEnv)].filter(
+      const migrationKeys = [credentialEnv, ...legacyCredentialAliases(credentialEnv)].filter(
         (key) => deps.stagedLegacyValues.has(key),
       );
       if (migrationKeys.length > 0) {

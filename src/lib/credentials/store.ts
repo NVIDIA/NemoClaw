@@ -19,6 +19,7 @@ import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { legacyCredentialAliases } from "./legacy-env-aliases";
 import { getScopedCredentialOverride } from "./scoped-overrides";
 
 export { withCredentialOverrides } from "./scoped-overrides";
@@ -55,10 +56,6 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "ALLOWED_CHAT_IDS",
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
-
-const LEGACY_CREDENTIAL_ENV_ALIASES: Partial<Record<string, readonly string[]>> = {
-  NVIDIA_INFERENCE_API_KEY: ["NVIDIA_API_KEY"],
-};
 
 // Hard upper bound on the legacy credentials.json size we are willing to
 // read into memory. The largest realistic credential set NemoClaw has ever
@@ -195,17 +192,8 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
-/**
- * Legacy env keys whose staged value can satisfy `envName`. Migration
- * accounting needs this because the legacy file names the alias while the
- * gateway registers the canonical key (#10373).
- */
-export function legacyCredentialAliases(envName: string): readonly string[] {
-  return LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? [];
-}
-
 function getLegacyCredentialAlias(envName: string): string | null {
-  for (const alias of LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? []) {
+  for (const alias of legacyCredentialAliases(envName)) {
     const value = getCredential(alias);
     if (value) return value;
   }

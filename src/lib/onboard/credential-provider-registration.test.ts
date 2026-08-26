@@ -3,7 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { legacyCredentialAliases } from "../credentials/store";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
@@ -66,7 +65,6 @@ function registrationDeps(
     redact: (input) => input,
     getGatewayName: () => "test-gateway",
     getCredential: () => null,
-    legacyCredentialAliases,
     normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession,
     stagedLegacyValues: new Map(),
@@ -315,6 +313,27 @@ describe("credential provider registration", () => {
     );
 
     expect(deps.migratedLegacyKeys).toEqual(new Set());
+  });
+
+  it("records only the key whose staged value the gateway received (#10373)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = registrationDeps(runOpenshell, session);
+    deps.stagedLegacyValues = new Map([
+      ["NVIDIA_INFERENCE_API_KEY", "nvapi-canonical"],
+      ["NVIDIA_API_KEY", "nvapi-stale-alias"],
+    ]);
+    const registration = createCredentialProviderRegistration(deps);
+
+    registration.upsertProvider(
+      "nvidia-prod",
+      "nvidia",
+      "NVIDIA_INFERENCE_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+      { NVIDIA_INFERENCE_API_KEY: "nvapi-canonical" },
+    );
+
+    expect(deps.migratedLegacyKeys).toEqual(new Set(["NVIDIA_INFERENCE_API_KEY"]));
   });
 
   it("does not record migration when provider registration fails", () => {

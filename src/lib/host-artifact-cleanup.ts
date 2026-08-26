@@ -28,7 +28,7 @@ interface StaleHostFile {
 
 const STALE_FILES: readonly StaleHostFile[] = [
   {
-    description: "~/.nemoclaw/credentials.json (empty)",
+    description: "~/.nemoclaw/credentials.json (no stored values)",
     tryRemove: removeLegacyCredentialsFileIfEmpty,
   },
 ];
