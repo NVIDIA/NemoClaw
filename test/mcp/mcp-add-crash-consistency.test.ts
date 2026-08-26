@@ -18,6 +18,7 @@ type CrashBoundary =
   | "credential-collision"
   | "credential-command-race"
   | "credential-projection-coalesced"
+  | "credential-projection-unstable"
   | "credential-projection-delayed-hostless"
   | "registered-credential-collision"
   | "registered-late-collision"
@@ -43,8 +44,13 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
+const credentialProjectionScenario =
+  crashAfter === "credential-projection-coalesced" ||
+  crashAfter === "credential-projection-unstable";
 if (crashAfter === "credential-projection-coalesced") {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "3";
+} else if (crashAfter === "credential-projection-unstable") {
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
 } else if (crashAfter === "credential-projection-delayed-hostless") {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
 }
@@ -113,6 +119,9 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
+    if (credentialProjectionScenario) {
+      fs.appendFileSync(marker("provider-mutation-log"), args[1] + "\n", { mode: 0o600 });
+    }
     if (!marked("policy")) {
       return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
     }
@@ -133,7 +142,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         mark("updated");
       }
       if (
-        crashAfter === "credential-projection-coalesced" &&
+        credentialProjectionScenario &&
         isCredentialUpdate &&
         marked("bound-policy") &&
         !observedCredentialAbsentThisProcess
@@ -142,7 +151,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         fs.appendFileSync(marker("republish-before-observation"), "republish\n", { mode: 0o600 });
       }
       if (
-        crashAfter === "credential-projection-coalesced" &&
+        credentialProjectionScenario &&
         isCredentialUpdate &&
         marked("bound-policy") &&
         observedCredentialAbsentThisProcess
@@ -240,7 +249,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
-  if (crashAfter === "credential-projection-coalesced" && isObservation) {
+  if (credentialProjectionScenario && isObservation) {
     const credentialRepublishCount =
       credentialRepublishBeforeObservationCountThisProcess +
       credentialRepublishAfterAbsenceCountThisProcess;
@@ -250,14 +259,22 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     } else {
       credentialObservationAfterRepublishCountThisProcess += 1;
     }
-    return {
-      status: 0,
-      stdout:
-        credentialRepublishCount === 0
-          ? "absent"
+    const observation =
+      credentialRepublishCount === 0
+        ? "absent"
+        : crashAfter === "credential-projection-unstable"
+          ? credentialObservationAfterRepublishCountThisProcess % 2 === 1
+            ? "v4067750153477477214"
+            : childCredentialRevision()
           : credentialObservationAfterRepublishCountThisProcess === 1
             ? "v4067750153477477214"
-            : childCredentialRevision(),
+            : childCredentialRevision();
+    if (credentialRepublishCount > 0) {
+      fs.appendFileSync(marker("credential-observation-log"), observation + "\n", { mode: 0o600 });
+    }
+    return {
+      status: 0,
+      stdout: observation,
       stderr: "",
     };
   }
@@ -305,6 +322,19 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   ) {
     return { status: 0, stdout: "mismatch\n", stderr: "" };
   }
+  if (
+    crashAfter === "credential-projection-coalesced" &&
+    marked("adapter") &&
+    (command.includes('["config", "get"') || command.includes('"get", expected.server'))
+  ) {
+    const expectedRevision = command.match(/openshell:resolve:env:(v[0-9]+)_FAKE_MCP_SECRET/)?.[1];
+    const adapterRevision = fs.readFileSync(marker("adapter-revision"), "utf8");
+    return {
+      status: 0,
+      stdout: expectedRevision === adapterRevision ? "registered\n" : "mismatch\n",
+      stderr: "",
+    };
+  }
   return {
     status: 0,
     stdout: marked("adapter") ? "registered\n" : "absent\n",
@@ -328,7 +358,18 @@ bridge.addMcpBridge("crash-test", {
   url: "https://8.8.8.8/mcp",
   env: [{ name: "FAKE_MCP_SECRET" }],
 }).then(
-  () => process.exit(0),
+  async () => {
+    try {
+      if (crashAfter === "credential-projection-coalesced") {
+        const [status] = await bridge.statusMcpBridge("crash-test", "fake");
+        fs.writeFileSync(marker("post-add-status"), JSON.stringify(status), { mode: 0o600 });
+      }
+      process.exit(0);
+    } catch (error) {
+      console.error(error && error.stack || error);
+      process.exit(2);
+    }
+  },
   (error) => {
     console.error(error && error.stack || error);
     process.exit(2);
@@ -631,6 +672,20 @@ function readBridge(home: string): Record<string, unknown> {
   return parsed.sandboxes["crash-test"].mcp.bridges.fake;
 }
 
+function readFixtureArtifacts(directory: string): string {
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .map((entry) => {
+      const target = path.join(directory, entry.name);
+      return entry.isDirectory()
+        ? readFixtureArtifacts(target)
+        : entry.isFile()
+          ? fs.readFileSync(target, "utf8")
+          : "";
+    })
+    .join("\n");
+}
+
 describe("MCP add crash consistency", () => {
   it("commits one bridge at the stable credential revision and rejects one duplicate (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
@@ -657,14 +712,64 @@ describe("MCP add crash consistency", () => {
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);
+      expect(
+        fs
+          .readFileSync(path.join(home, "provider-mutation-log.marker"), "utf8")
+          .split("\n")
+          .filter(Boolean),
+      ).toEqual(["create", "update"]);
+      expect(
+        fs
+          .readFileSync(path.join(home, "credential-observation-log.marker"), "utf8")
+          .split("\n")
+          .filter(Boolean),
+      ).toEqual([
+        "v4067750153477477214",
+        "v4067750153477477215",
+        "v4067750153477477215",
+        "v4067750153477477215",
+      ]);
       expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).toBe(
         "v4067750153477477215",
       );
+      const postAddStatus = JSON.parse(
+        fs.readFileSync(path.join(home, "post-add-status.marker"), "utf8"),
+      ) as { adapter: { registered: boolean | null } };
+      expect(postAddStatus.adapter.registered).toBe(true);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
+      expect(readFixtureArtifacts(home)).not.toContain("host-only-secret");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("times out without committing an adapter while credential revisions remain unstable (#9764)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-unstable-revision-"));
+    try {
+      const result = runAddProcess(home, "credential-projection-unstable");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(2);
+      expect(result.stderr).toContain("did not synchronize the expected credential revision");
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      const observations = fs
+        .readFileSync(path.join(home, "credential-observation-log.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean);
+      expect(observations.length).toBeGreaterThan(1);
+      expect(
+        observations.every(
+          (revision, index) => index === 0 || revision !== observations[index - 1],
+        ),
+      ).toBe(true);
+      expect(readFixtureArtifacts(home)).not.toContain("host-only-secret");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
