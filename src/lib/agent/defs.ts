@@ -39,6 +39,7 @@ import {
   readBoolean,
   readConfigShieldsFiles,
   readDashboard,
+  readDeferredOnboarding,
   readHealthProbe,
   readInference,
   readMcpCapability,
@@ -202,6 +203,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
+  const deferredOnboarding = readDeferredOnboarding(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -219,6 +221,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     forward_ports: forwardPorts,
     health_probe: healthProbe,
     config,
+    deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
     state_lock_plan_in_image: stateLockPlanInImage,

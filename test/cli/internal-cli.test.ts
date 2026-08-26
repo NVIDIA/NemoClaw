@@ -95,6 +95,34 @@ describe("internal oclif namespace", () => {
       provider: { normalized: "build", raw: "cloud", valid: true },
       runtime: { ok: true },
     });
+
+    const deferredEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      NEMOCLAW_AGENT: "langchain-deepagents-code",
+      NEMOCLAW_PROVIDER: "build",
+    };
+    delete deferredEnv.NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE;
+    delete deferredEnv.NEMOCLAW_PROVIDER_KEY;
+    delete deferredEnv.NVIDIA_API_KEY;
+    delete deferredEnv.NVIDIA_INFERENCE_API_KEY;
+    const decision = spawnSync(
+      process.execPath,
+      [
+        CLI,
+        "internal",
+        "installer",
+        "plan",
+        "--defer-onboarding",
+        "--deferred-onboarding-supported",
+        "--registered-sandbox-count",
+        "0",
+        "--deferred-onboarding-decision",
+      ],
+      { encoding: "utf-8", env: deferredEnv },
+    );
+
+    expect(decision.status, decision.stderr).toBe(0);
+    expect(decision.stdout.trim()).toBe("defer");
   });
 
   it("exposes installer ref and env normalization helpers through oclif routing", () => {

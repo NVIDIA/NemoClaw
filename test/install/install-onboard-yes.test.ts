@@ -10,6 +10,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
+const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 
 type StubAssignments = {
   cliBin?: string;
@@ -604,7 +605,7 @@ fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
 install_nemoclaw() { record install-nemoclaw; }
 verify_nemoclaw() {
-  _CLI_PATH="/usr/bin/true"
+  _CLI_PATH=${JSON.stringify(CLI)}
   NEMOCLAW_READY_NOW=true
 }
 require_reportable_openshell_version() { :; }
@@ -655,7 +656,7 @@ main --non-interactive --yes-i-accept-third-party-software ${options.deferFlag ?
   };
 }
 
-describe("Hermes deferred onboarding", () => {
+describe("deferred onboarding", () => {
   it("lists the installer option and environment setting (#10288)", () => {
     const result = runInstallerSourcedBody("usage", {
       extraEnv: { NEMOCLAW_AGENT: "hermes" },
@@ -665,7 +666,9 @@ describe("Hermes deferred onboarding", () => {
     expect(result.result.status, result.output).toBe(0);
     expect(result.output).toContain("--defer-onboarding");
     expect(result.output).toContain("NEMOCLAW_DEFER_ONBOARDING=1");
-    expect(result.output.match(/NEMOCLAW_AGENT=hermes/g)).toHaveLength(2);
+    expect(
+      result.output.match(/NEMOCLAW_AGENT=hermes or langchain-deepagents-code/g),
+    ).toHaveLength(2);
     expect(result.output.match(/no registered sandboxes/g)).toHaveLength(2);
     expect(result.output.match(/no local model profile/g)).toHaveLength(2);
     expect(result.output.match(/build, cloud, or routed NVIDIA hosted provider/g)).toHaveLength(2);
@@ -688,6 +691,37 @@ describe("Hermes deferred onboarding", () => {
       expect(result.output).toContain("nemohermes onboard");
     },
   );
+
+  it("defers Deep Agents Code and completes normal onboarding after credentials arrive", () => {
+    const prepared = runDeferredOnboardingMain({
+      agent: "langchain-deepagents-code",
+      deferFlag: true,
+    });
+
+    expect(prepared.result.status, prepared.output).toBe(0);
+    expect(prepared.calls).toContain("install-nemoclaw");
+    expect(prepared.calls).not.toContain("host-preflight");
+    expect(prepared.calls).not.toContain("onboard");
+    expect(prepared.output).toContain(
+      "LangChain Deep Agents Code onboarding did not run",
+    );
+    expect(prepared.output).toContain("nemo-deepagents onboard");
+
+    const credential = "nvapi-dcode-runtime-test";
+    const completed = runDeferredOnboardingMain({
+      agent: "langchain-deepagents-code",
+      deferFlag: true,
+      inferenceKey: credential,
+    });
+
+    expect(completed.result.status, completed.output).toBe(0);
+    expect(completed.calls).toContain("host-preflight");
+    expect(completed.calls).toContain("onboard");
+    expect(completed.output).not.toContain(credential);
+    expect(fs.readFileSync(path.join(completed.home, "onboard-args.log"), "utf-8")).not.toContain(
+      credential,
+    );
+  });
 
   it.each(["build", "routed", "custom"])(
     "treats the %s provider key as a selector when credentials are absent (#10288)",
@@ -722,23 +756,35 @@ describe("Hermes deferred onboarding", () => {
     );
   });
 
-  it("propagates the onboarding failure when a credential is provided (#10288)", () => {
-    const invalidKey = "invalid-runtime-test-value";
-    const result = runDeferredOnboardingMain({
-      deferFlag: true,
-      inferenceKey: invalidKey,
-      onboardStatus: 1,
-    });
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "propagates invalid-credential onboarding failure for %s",
+    (agent) => {
+      const invalidKey = "invalid-runtime-test-value";
+      const result = runDeferredOnboardingMain({
+        agent,
+        deferFlag: true,
+        inferenceKey: invalidKey,
+        onboardStatus: 1,
+      });
 
-    expect(result.result.status).toBe(1);
-    expect(result.calls).toContain("host-preflight");
-    expect(result.calls).toContain("onboard");
-    expect(result.output).toContain("Onboarding did not complete successfully");
-    expect(result.output).not.toContain(invalidKey);
-  });
+      expect(result.result.status).toBe(1);
+      expect(result.calls).toContain("host-preflight");
+      expect(result.calls).toContain("onboard");
+      expect(result.output).toContain("Onboarding did not complete successfully");
+      expect(result.output).not.toContain(invalidKey);
+    },
+  );
 
   it("keeps the missing-credential failure when deferred onboarding is not enabled (#10288)", () => {
     const result = runDeferredOnboardingMain({ onboardStatus: 1 });
+
+    expect(result.result.status).toBe(1);
+    expect(result.calls).toContain("onboard");
+    expect(result.output).toContain("Onboarding did not complete successfully");
+  });
+
+  it("keeps normal onboarding for a runtime without the opt-in", () => {
+    const result = runDeferredOnboardingMain({ agent: "openclaw", onboardStatus: 1 });
 
     expect(result.result.status).toBe(1);
     expect(result.calls).toContain("onboard");
@@ -755,10 +801,14 @@ describe("Hermes deferred onboarding", () => {
   });
 
   it.each([
-    ["OpenClaw", { agent: "openclaw" }, "NEMOCLAW_AGENT=hermes"],
+    [
+      "OpenClaw",
+      { agent: "openclaw" },
+      "--defer-onboarding is not supported for NEMOCLAW_AGENT=openclaw",
+    ],
     ["a non-NVIDIA provider", { provider: "openai" }, "NVIDIA hosted inference only"],
   ])(
-    "rejects deferred Hermes onboarding for %s before installation (#10288)",
+    "rejects deferred onboarding for %s before installation (#10288)",
     (_name, input, expected) => {
       const result = runDeferredOnboardingMain({ deferFlag: true, ...input });
 

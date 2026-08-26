@@ -28,6 +28,7 @@ gateway_command: "hermes gateway run"
 # command so NemoClaw stops hardcoding it.
 runtime:
   interactive_command: "hermes"
+deferred_onboarding: true
 
 # ── Health probe ────────────────────────────────────────────────
 # The API server adapter listens on 8642 by default and exposes

@@ -147,6 +147,7 @@ export interface AgentDefinition {
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
+  deferred_onboarding?: boolean;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
   state_lock_plan_in_image?: boolean;

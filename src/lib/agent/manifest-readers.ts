@@ -46,6 +46,15 @@ export function readBoolean(record: ManifestRecord, key: string): boolean | unde
   return typeof value === "boolean" ? value : undefined;
 }
 
+export function readDeferredOnboarding(record: ManifestRecord): boolean {
+  const value = record.deferred_onboarding;
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new Error("Agent manifest field 'deferred_onboarding' must be a boolean");
+  }
+  return value;
+}
+
 export function readStateLockPlanInImage(record: ManifestRecord): boolean {
   const value = record.state_lock_plan_in_image;
   if (value === undefined) return false;
