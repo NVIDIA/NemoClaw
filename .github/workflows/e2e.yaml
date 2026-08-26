@@ -96,6 +96,7 @@ env:
 
 jobs:
   base-image-publication:
+    needs: generate-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
