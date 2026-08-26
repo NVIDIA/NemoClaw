@@ -27,6 +27,7 @@ const BASE_DOCKERFILES = [
   path.join(ROOT, "Dockerfile.base"),
   path.join(ROOT, "agents", "hermes", "Dockerfile.base"),
   path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
+  path.join(ROOT, "agents", "pi", "Dockerfile.base"),
 ] as const;
 
 function runLibssh2Harness(nestedFailure = false) {
