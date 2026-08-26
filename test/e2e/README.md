@@ -451,9 +451,13 @@ the operator's exact host-preparation declaration. It observes whether the test
 process is elevated but does not change host ACLs or elevation. Compute the
 canonical artifact-tree digest after staging:
 
-The share and host-state directories are fresh siblings directly beneath the
-declared drive root. This matches the current package's shallow-share
-requirement and keeps host-only configuration outside the sandbox share.
+The OpenClaw artifact, share, and host-state directories must be fresh siblings
+directly beneath the declared drive root. This matches the current package's
+shallow-share requirement and the qualified workaround for MXC parent-path
+traversal. The generated agent environment redirects `TEMP` and `TMP` into a
+test-owned directory beneath the writable share; it does not expose the host
+temporary directory to the sandbox. Host-only configuration remains outside
+the sandbox share.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -478,7 +482,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | Exact declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
 | `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
-| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION` | Expected OpenClaw version |

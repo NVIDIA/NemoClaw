@@ -4,10 +4,12 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { isWebSearchProvider } from "../../inference/web-search/provider";
 import type { SandboxEntry } from "./types";
 
 const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "credentialEnv",
+  "dashboardPort",
   "endpointSource",
   "endpointUrl",
   "gatewayName",
@@ -19,11 +21,61 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",
+  "policies",
+  "policyPresetsFinalized",
+  "policyTier",
   "provider",
   "reservationSessionId",
+  "webSearchEnabled",
+  "webSearchProvider",
 ]);
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
+  if (
+    entry.dashboardPort !== undefined &&
+    entry.dashboardPort !== null &&
+    (!Number.isSafeInteger(entry.dashboardPort) ||
+      entry.dashboardPort < 1 ||
+      entry.dashboardPort > 65_535)
+  ) {
+    return false;
+  }
+  if (
+    entry.policies !== undefined &&
+    (!Array.isArray(entry.policies) ||
+      entry.policies.some(
+        (value) => typeof value !== "string" || value.length === 0 || CONTROL_CHARACTER.test(value),
+      ) ||
+      new Set(entry.policies).size !== entry.policies.length)
+  ) {
+    return false;
+  }
+  if (
+    entry.policyPresetsFinalized !== undefined &&
+    typeof entry.policyPresetsFinalized !== "boolean"
+  ) {
+    return false;
+  }
+  if (
+    entry.policyTier !== undefined &&
+    entry.policyTier !== null &&
+    (typeof entry.policyTier !== "string" ||
+      entry.policyTier.length === 0 ||
+      CONTROL_CHARACTER.test(entry.policyTier))
+  ) {
+    return false;
+  }
+  if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
+    return false;
+  }
+  return (
+    entry.webSearchProvider === undefined ||
+    entry.webSearchProvider === null ||
+    isWebSearchProvider(entry.webSearchProvider)
+  );
+}
 
 export interface SandboxInferenceRouteReservationAuthority {
   readonly sandboxName: string;
@@ -70,9 +122,7 @@ export function isRouteOnlySandboxReservation(entry: {
 }
 
 /** True only for a completed registry entry available to normal sandbox consumers. */
-export function isPublishedSandboxRegistration(entry: {
-  pendingRouteReservation?: true;
-}): boolean {
+export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?: true }): boolean {
   return entry.pendingRouteReservation !== true;
 }
 
@@ -109,6 +159,12 @@ export function classifySandboxInferenceRouteReservation(
   }
   if (Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))) {
     return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+  }
+  if (!validCarriedRouteMetadata(entry)) {
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation carry metadata is malformed",
+    };
   }
   if (entry.name !== authority.sandboxName || entry.gatewayName !== authority.gatewayName) {
     return {
