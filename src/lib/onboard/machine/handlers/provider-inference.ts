@@ -1009,6 +1009,41 @@ async function repairResumedLocalInference(
   });
 }
 
+type ResumedHostLocalInferenceRepairDeps = LocalInferenceRepairDeps &
+  Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "isNonInteractive" | "log"
+  >;
+
+async function repairOrRecoverResumedHostLocalInference(
+  selection: EarlyManagedHostLocalLifecycleSelection | null,
+  provider: string,
+  model: string,
+  agent: unknown,
+  revalidatePolicyRequirements: (operation: string, requiredProvider?: string | null) => void,
+  forceInferenceSetup: boolean,
+  deps: ResumedHostLocalInferenceRepairDeps,
+): Promise<boolean> {
+  const request = selection?.setupOptions.hostLocalInference?.request;
+  if (request?.service === "ollama" && "managed" in request) {
+    deps.log("  [resume] Recovering managed Ollama through its receipt-bound runtime.");
+    return true;
+  }
+  revalidatePolicyRequirements(
+    `repair local inference provider ${JSON.stringify(provider)}`,
+    provider,
+  );
+  await repairResumedLocalInference(provider, model, agent, {
+    ...deps,
+    repairLocalInferenceSystemdOverrideOrExit: (options) =>
+      deps.repairLocalInferenceSystemdOverrideOrExit({
+        ...options,
+        isNonInteractive: deps.isNonInteractive,
+      }),
+  });
+  return forceInferenceSetup;
+}
+
 type ConfigurationReviewDeps<Agent> = Pick<
   ProviderInferenceStateOptions<unknown, Agent, unknown>["deps"],
   | "checkpointSandboxIdentity"
@@ -1438,30 +1473,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       compatibleEndpointReasoning = configuredReasoning.reasoning;
       compatibleEndpointReasoningEffort = configuredReasoning.effort;
-      const earlyHostLocalRequest =
-        earlyManagedHostLocalLifecycleSelection?.setupOptions.hostLocalInference?.request;
-      if (earlyHostLocalRequest?.service === "ollama" && "managed" in earlyHostLocalRequest) {
-        forceInferenceSetup = true;
-        deps.log("  [resume] Recovering managed Ollama through its receipt-bound runtime.");
-      } else {
-        revalidatePolicyRequirements(
-          `repair local inference provider ${JSON.stringify(resumedSelection.provider)}`,
-          resumedSelection.provider,
-        );
-        await repairResumedLocalInference(
-          resumedSelection.provider,
-          resumedSelection.model,
-          agent,
-          {
-            ...deps,
-            repairLocalInferenceSystemdOverrideOrExit: (options) =>
-              deps.repairLocalInferenceSystemdOverrideOrExit({
-                ...options,
-                isNonInteractive: deps.isNonInteractive,
-              }),
-          },
-        );
-      }
+      forceInferenceSetup = await repairOrRecoverResumedHostLocalInference(
+        earlyManagedHostLocalLifecycleSelection,
+        resumedSelection.provider,
+        resumedSelection.model,
+        agent,
+        revalidatePolicyRequirements,
+        forceInferenceSetup,
+        deps,
+      );
     } else {
       // An incomplete Station Express resume intentionally retries setupNim here. The outer
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
