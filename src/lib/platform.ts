@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
-import { isSubprocessEnvNameAllowed } from "./subprocess-env";
+import { isSubprocessEnvNameAllowed, withLocalNoProxy } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -143,8 +143,8 @@ function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentit
 function buildDockerProbeEnv(
   source: NodeJS.ProcessEnv,
   dockerHost: string | undefined,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+): Record<string, string> {
+  const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(source)) {
     // The probe pins its own authority; an ambient one would mask it.
     if (name === "DOCKER_HOST") continue;
@@ -158,6 +158,9 @@ function buildDockerProbeEnv(
   if (dockerHost) {
     env.DOCKER_HOST = dockerHost;
   }
+  // Keep a local authority off a forwarded host proxy, exactly as
+  // `buildSubprocessEnv` does for the Docker commands that follow.
+  withLocalNoProxy(env);
   return env;
 }
 
@@ -262,8 +265,10 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
 
   if (platform === "linux") {
     const uid = opts.uid ?? process.getuid?.() ?? 1000;
-    // Docker sockets first: NemoClaw targets Docker, and the rootless daemon
-    // socket sits in the same runtime directory as Podman's (#10367).
+    // The rootless Docker daemon puts its socket in the same runtime
+    // directory as Podman's, and was never a candidate here (#10367).
+    // Order decides only between candidates that identify as the same
+    // engine; two engines that both answer still abort the selection below.
     return [
       "/run/docker.sock",
       "/var/run/docker.sock",

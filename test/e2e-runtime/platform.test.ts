@@ -323,7 +323,7 @@ describe("platform helpers", () => {
       });
     });
 
-    it("preserves a reachable Docker context and config before local socket fallbacks (#8816)", () => {
+    it("probes the default Docker authority with the environment real commands get (#8816, #10367)", () => {
       const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
       try {
         const docker = path.join(fixtureDir, "docker");
@@ -333,64 +333,27 @@ describe("platform helpers", () => {
           path.join(dockerConfig, "config.json"),
           JSON.stringify({ currentContext: "healthy-context" }),
         );
+        // Each guard below stands for a real host whose default authority
+        // answers only through that name: a named Docker context, a rootless
+        // daemon under the runtime directory, and a local endpoint kept off a
+        // forwarded host proxy. Answering Podman under an explicit DOCKER_HOST
+        // makes any missing name redirect the whole CLI to a fallback socket.
         writeFileSync(
           docker,
           [
             "#!/bin/sh",
             'test "$1" = "version" || exit 2',
+            'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
             'if test -z "${DOCKER_HOST:-}"; then',
             '  test "${DOCKER_CONTEXT:-}" = "healthy-context" || exit 4',
             `  test "\${DOCKER_CONFIG:-}" = "${dockerConfig}" || exit 7`,
             '  test -f "$DOCKER_CONFIG/config.json" || exit 8',
+            '  test -n "${XDG_RUNTIME_DIR:-}" || exit 3',
+            '  case ",${NO_PROXY:-}," in *,127.0.0.1,*) ;; *) exit 10 ;; esac',
+            "  printf '%s\\n' '{\"Server\":{\"Platform\":{\"Name\":\"Docker Engine - Community\"}}}'",
             "else",
             '  test -z "${DOCKER_CONTEXT:-}" || exit 6',
             '  test -z "${DOCKER_CONFIG:-}" || exit 9',
-            "fi",
-            'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
-            'printf \'%s\\n\' \'{"Server":{"Platform":{"Name":"Docker Engine - Community"}}}\'',
-          ].join("\n"),
-        );
-        chmodSync(docker, 0o755);
-
-        expect(
-          detectDockerHost({
-            env: {
-              HOME: fixtureDir,
-              PATH: fixtureDir,
-              DOCKER_CONFIG: dockerConfig,
-              DOCKER_CONTEXT: "healthy-context",
-              NVIDIA_INFERENCE_API_KEY: "test-secret-must-not-cross-probe-boundary",
-            },
-            platform: "linux",
-            uid: 1000,
-            existsSync: (candidate) =>
-              candidate === "/run/user/1000/podman/podman.sock" ||
-              candidate === "/var/run/docker.sock",
-          }),
-        ).toBe(null);
-      } finally {
-        rmSync(fixtureDir, { recursive: true, force: true });
-      }
-    });
-
-    it("probes the default authority with the environment real Docker commands get (#10367)", () => {
-      const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-probe-env-"));
-      try {
-        const docker = path.join(fixtureDir, "docker");
-        // Stands in for a daemon the CLI only finds through the runtime
-        // directory — a rootless socket, an ssh:// context agent, a proxied
-        // tcp:// endpoint. Answering Podman under an explicit DOCKER_HOST
-        // makes a narrowed probe environment redirect the whole CLI.
-        writeFileSync(
-          docker,
-          [
-            "#!/bin/sh",
-            'test "$1" = "version" || exit 2',
-            'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
-            'if test -z "${DOCKER_HOST:-}"; then',
-            '  test -n "${XDG_RUNTIME_DIR:-}" || exit 3',
-            "  printf '%s\\n' '{\"Server\":{\"Platform\":{\"Name\":\"Docker Engine - Community\"}}}'",
-            "else",
             "  printf '%s\\n' '{\"Server\":{\"Components\":[{\"Name\":\"Podman Engine\"}]}}'",
             "fi",
           ].join("\n"),
@@ -402,12 +365,17 @@ describe("platform helpers", () => {
             env: {
               HOME: fixtureDir,
               PATH: fixtureDir,
+              DOCKER_CONFIG: dockerConfig,
+              DOCKER_CONTEXT: "healthy-context",
               XDG_RUNTIME_DIR: "/run/user/1000",
+              HTTP_PROXY: "http://proxy.invalid:3128",
               NVIDIA_INFERENCE_API_KEY: "test-secret-must-not-cross-probe-boundary",
             },
             platform: "linux",
             uid: 1000,
-            existsSync: (candidate) => candidate === "/run/user/1000/podman/podman.sock",
+            existsSync: (candidate) =>
+              candidate === "/run/user/1000/podman/podman.sock" ||
+              candidate === "/var/run/docker.sock",
           }),
         ).toBe(null);
       } finally {
