@@ -46,7 +46,7 @@ jobs:
               - '!fern/docs.yml'
               - '!fern/assets/**'
             hugging_face_models:
-              - '{managed-inference/models/**,src/lib/inference/serving/hugging-face-model-verification.ts,tools/managed-inference/verify-hugging-face-models.ts,package.json,package-lock.json}'
+              - '{managed-inference/models/**,src/lib/inference/serving/catalog-loader.ts,src/lib/inference/serving/generate-catalog.ts,src/lib/inference/serving/hugging-face-model-verification.ts,tools/managed-inference/verify-hugging-face-models.ts,package.json,package-lock.json}'
 
   docs-only-checks:
     needs: changes

@@ -373,7 +373,11 @@ describe("pull request and main workflow contracts", () => {
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
+    const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
+    const filters = String(filterStep?.with?.filters ?? "");
 
+    expect(filters).toContain("src/lib/inference/serving/catalog-loader.ts");
+    expect(filters).toContain("src/lib/inference/serving/generate-catalog.ts");
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
