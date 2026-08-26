@@ -383,6 +383,37 @@ describe("platform helpers", () => {
       }
     });
 
+    it("classifies a Docker CLI that dies without answering as no verdict (#10367)", () => {
+      // Exercises the real probe rather than an injected one. A signal death
+      // reports the same "no exit status" that the probe timeout produces,
+      // and must not read as "the default authority refused" and send the
+      // CLI to the Podman socket that answers right after it.
+      const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-no-verdict-"));
+      try {
+        const docker = path.join(fixtureDir, "docker");
+        writeFileSync(
+          docker,
+          [
+            "#!/bin/sh",
+            'test -n "${DOCKER_HOST:-}" || kill -TERM $$',
+            "printf '%s\\n' '{\"Server\":{\"Components\":[{\"Name\":\"Podman Engine\"}]}}'",
+          ].join("\n"),
+        );
+        chmodSync(docker, 0o755);
+
+        expect(
+          detectDockerHost({
+            env: { HOME: fixtureDir, PATH: fixtureDir },
+            platform: "linux",
+            uid: 1000,
+            existsSync: (candidate) => candidate === "/run/user/1000/podman/podman.sock",
+          }),
+        ).toBe(null);
+      } finally {
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    });
+
     it("keeps the host default authority when the default probe never answers (#10367)", () => {
       const socketPath = "/run/user/1000/podman/podman.sock";
 
