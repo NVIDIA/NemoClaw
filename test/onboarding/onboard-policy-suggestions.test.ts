@@ -583,38 +583,25 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
-  it("omits credential-bound Hermes Discord egress until the channel is active", () => {
-    const inactive = computeSetupPresetSuggestions("open", {
-      agent: "hermes",
-      enabledChannels: [],
-      knownPresetNames: known,
-    });
-    const active = computeSetupPresetSuggestions("open", {
-      agent: "hermes",
-      enabledChannels: ["discord"],
-      knownPresetNames: known,
-    });
+  it.each(["hermes", "openclaw"] as const)(
+    "omits credential-bound Discord egress for %s until the channel is active (#10153)",
+    (agent) => {
+      const slackOnly = computeSetupPresetSuggestions("open", {
+        agent,
+        enabledChannels: ["slack"],
+        knownPresetNames: known,
+      });
+      const discord = computeSetupPresetSuggestions("open", {
+        agent,
+        enabledChannels: ["discord"],
+        knownPresetNames: known,
+      });
 
-    expect(inactive).not.toContain("discord");
-    expect(active).toContain("discord");
-  });
-
-  it("omits credential-bound OpenClaw Discord egress until the channel is active (#10153)", () => {
-    const slackOnly = computeSetupPresetSuggestions("open", {
-      agent: "openclaw",
-      enabledChannels: ["slack"],
-      knownPresetNames: known,
-    });
-    const discord = computeSetupPresetSuggestions("open", {
-      agent: "openclaw",
-      enabledChannels: ["discord"],
-      knownPresetNames: known,
-    });
-
-    expect(slackOnly).toContain("slack");
-    expect(slackOnly).not.toContain("discord");
-    expect(discord).toContain("discord");
-  });
+      expect(slackOnly).toContain("slack");
+      expect(slackOnly).not.toContain("discord");
+      expect(discord).toContain("discord");
+    },
+  );
 
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
