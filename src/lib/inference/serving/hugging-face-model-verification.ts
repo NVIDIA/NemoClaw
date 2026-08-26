@@ -67,8 +67,10 @@ async function verifyReference(
   const fetchReference = options.fetch ?? fetch;
   const wait = options.sleep ?? sleep;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxAttempts = RETRY_DELAYS_MS.length + 1;
 
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const retryDelayMs = RETRY_DELAYS_MS[attempt];
     let response: Pick<Response, "ok" | "status" | "statusText">;
     try {
       response = await fetchReference(url, {
@@ -78,13 +80,13 @@ async function verifyReference(
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      if (attempt >= RETRY_DELAYS_MS.length) {
+      if (retryDelayMs === undefined) {
         throw new Error(
           `Could not verify Hugging Face model '${modelId}' at revision '${revision}' after ${attempt + 1} attempts: ${errorMessage(error)}`,
           { cause: error },
         );
       }
-      await wait(RETRY_DELAYS_MS[attempt]!);
+      await wait(retryDelayMs);
       continue;
     }
     if (response.ok) {
@@ -95,7 +97,7 @@ async function verifyReference(
         url: url.href,
       };
     }
-    const canRetry = isTransientStatus(response.status) && attempt < RETRY_DELAYS_MS.length;
+    const canRetry = isTransientStatus(response.status) && retryDelayMs !== undefined;
     if (!canRetry) {
       const accessDetail =
         response.status === 401 || response.status === 403
@@ -105,7 +107,7 @@ async function verifyReference(
         `Hugging Face model '${modelId}' at revision '${revision}' returned HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.${accessDetail}`,
       );
     }
-    await wait(RETRY_DELAYS_MS[attempt]!);
+    await wait(retryDelayMs);
   }
 
   throw new Error(`Could not verify Hugging Face model '${modelId}'.`);
