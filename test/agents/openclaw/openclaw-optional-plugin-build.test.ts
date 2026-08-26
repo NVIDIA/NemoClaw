@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { dockerRunCommandBetween } from "../../helpers/dockerfile-run-shell";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
 import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -71,6 +71,51 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     expect(calls).toContain(
       "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
     );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+it("reports an unsafe messaging cache path before invoking the build applier", () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-cache-safety-"));
+  const trustedCache = path.join(tmp, "trusted-cache");
+  const unsafeCacheEntry = path.join(trustedCache, "unsafe-entry");
+  const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
+
+  try {
+    fs.mkdirSync(trustedCache);
+    fs.writeFileSync(unsafeCacheEntry, "fixture\n", { mode: 0o666 });
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN --mount=from=openclaw-managed-messaging-npm-cache",
+      "# Copy the full candidate runtime payload after the stable offline plugin",
+    )
+      .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", trustedCache)
+      .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", trustedCache)
+      .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate);
+    const { calls, result } = runLoggedDockerShell(
+      command,
+      tmp,
+      [
+        'find() { printf "%s\\n" "$UNSAFE_CACHE_ENTRY"; }',
+        'node() { printf "node %s\\n" "$*" >> "$call_log"; }',
+      ],
+      {
+        env: {
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+          UNSAFE_CACHE_ENTRY: unsafeCacheEntry,
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "ERROR: trusted messaging cache is unsafe phase=before-install",
+    );
+    expect(result.stderr).toContain(`path=${unsafeCacheEntry}`);
+    expect(result.stderr).toContain("reason=not-root-owned-or-group-world-writable");
+    expect(calls).toBe("");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

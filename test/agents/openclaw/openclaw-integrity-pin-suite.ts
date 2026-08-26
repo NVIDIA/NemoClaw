@@ -1800,14 +1800,14 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const installBlock = extractRunBlock(
           DOCKERFILE,
           "# Install non-messaging OpenClaw plugins that need to match the runtime.",
-          "# Add messaging source after the non-messaging install so channel-only changes",
+          "# The reviewed cache stays root-owned and immutable to the sandbox user.",
         );
         const installSource = dockerfile.slice(
           dockerfile.indexOf(
             "# Install non-messaging OpenClaw plugins that need to match the runtime.",
           ),
           dockerfile.indexOf(
-            "# Add messaging source after the non-messaging install so channel-only changes",
+            "# The reviewed cache stays root-owned and immutable to the sandbox user.",
           ),
         );
         const remediation = fs.readFileSync(
