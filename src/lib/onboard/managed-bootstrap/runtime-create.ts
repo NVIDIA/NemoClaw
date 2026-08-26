@@ -38,7 +38,7 @@ export interface ManagedBootstrapRuntimeLimit {
 }
 
 export type ManagedBootstrapNativeGpuFallbackRollbackRequest = Readonly<{
-  ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment";
+  ownerCleanupHandoff: "native-gpu-fallback";
 }>;
 
 export type ManagedBootstrapNativeGpuFallbackRollbackOutcome =
