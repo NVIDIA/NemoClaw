@@ -327,6 +327,7 @@ describe("resolveSandboxCreateIntent", () => {
       { upsertMessagingProviders },
     );
 
+    expect(intent.reusableMessagingProviders).toEqual([]);
     expect(plan.activeMessagingChannels).toEqual([]);
     expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
     expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).not.toContain(
@@ -376,6 +377,8 @@ describe("resolveSandboxCreateIntent", () => {
       selected: true,
     });
     const cleanupPolicy = vi.fn(() => true);
+    const cleanupProviders = vi.fn();
+    const upsertMessagingProviders = vi.fn(() => [discordProviderName]);
 
     expect(() =>
       materializeDiscordCreatePlan(
@@ -387,13 +390,16 @@ describe("resolveSandboxCreateIntent", () => {
             credentialBindingProviders: [discordProviderName, "sandbox-missing-provider"],
             cleanup: cleanupPolicy,
           })),
-          upsertMessagingProviders: vi.fn(() => [discordProviderName]),
+          runProviderPreDeleteCleanup: cleanupProviders,
+          upsertMessagingProviders,
         },
       ),
     ).toThrow(
       "Cannot create sandbox; create-time policy requires credential provider 'sandbox-missing-provider', but the sandbox create plan does not attach it.",
     );
     expect(cleanupPolicy).toHaveBeenCalledOnce();
+    expect(cleanupProviders).not.toHaveBeenCalled();
+    expect(upsertMessagingProviders).not.toHaveBeenCalled();
   });
 
   it("attaches a retained static provider while its channel runtime is stopped (#9773)", () => {
@@ -437,6 +443,7 @@ describe("resolveSandboxCreateIntent", () => {
       replaceExisting: true,
       allowedSandboxes: ["sandbox"],
     });
+    expect(intent.reusableMessagingProviders).toEqual(["sandbox-discord-bridge"]);
     expect(plan.messagingProviders).toEqual(["sandbox-discord-bridge"]);
     expect(plan.createArgs).toContain("sandbox-discord-bridge");
   });
@@ -550,7 +557,7 @@ describe("resolveSandboxCreateIntent", () => {
       },
     });
 
-    expect(events).toEqual(["policy", "disclose", "cleanup", "upsert", "hermes"]);
+    expect(events).toEqual(["policy", "hermes", "disclose", "cleanup", "upsert"]);
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",

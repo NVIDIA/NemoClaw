@@ -31,25 +31,20 @@ function filterMessagingProviderRequestsByEnabledChannel(
   );
 }
 
-function resolveTokenProviderChannelMap(
+export function filterMessagingProvidersForSandboxCreate(
+  providerNames: readonly string[],
   requests: readonly SandboxCreateMessagingProviderRequest[],
-): Map<string, string> {
+  activeChannelNames: Iterable<string>,
+  disabledChannelNames: Iterable<string>,
+): string[] {
   const providerChannels = new Map<string, string>();
   for (const { channel, name } of requests) {
     if (channel) providerChannels.set(name, channel);
   }
-  return providerChannels;
-}
-
-function filterMessagingProvidersByEnabledChannel(
-  providerNames: string[],
-  providerChannels: ReadonlyMap<string, string>,
-  activeChannelNames: ReadonlySet<string>,
-  disabledChannelNames: ReadonlySet<string>,
-): string[] {
-  return providerNames.filter((providerName) => {
+  const eligibleChannels = new Set([...activeChannelNames, ...disabledChannelNames]);
+  return [...new Set(providerNames)].filter((providerName) => {
     const channel = providerChannels.get(providerName);
-    return !channel || activeChannelNames.has(channel) || disabledChannelNames.has(channel);
+    return !channel || eligibleChannels.has(channel);
   });
 }
 
@@ -169,7 +164,6 @@ export function resolveSandboxCreateIntent({
     selectedChannelNames,
     disabledChannelNames,
   );
-  const providerChannels = resolveTokenProviderChannelMap(messagingProviderRequests);
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
@@ -178,10 +172,10 @@ export function resolveSandboxCreateIntent({
     primaryMessagingCredentialEnvKeys,
     reusableMessagingChannels,
   });
-  const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
-    [...new Set(reusableMessagingProviders)],
-    providerChannels,
-    new Set(activeMessagingChannels),
+  const enabledReusableMessagingProviders = filterMessagingProvidersForSandboxCreate(
+    reusableMessagingProviders,
+    messagingProviderRequests,
+    activeMessagingChannels,
     disabledChannelNames,
   );
 

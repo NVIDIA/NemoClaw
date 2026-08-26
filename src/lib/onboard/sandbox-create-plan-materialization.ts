@@ -3,6 +3,7 @@
 
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
+import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -194,28 +195,6 @@ export function validateSandboxCreateIntentBindings(
   });
 }
 
-function resolveProviderChannelMap(
-  requests: readonly SandboxCreateMessagingProviderRequest[],
-): Map<string, string> {
-  const providerChannels = new Map<string, string>();
-  for (const { channel, name } of requests) {
-    if (channel) providerChannels.set(name, channel);
-  }
-  return providerChannels;
-}
-
-function filterDisabledMessagingProviders(
-  providerNames: string[],
-  providerChannels: ReadonlyMap<string, string>,
-  activeChannelNames: ReadonlySet<string>,
-  disabledChannelNames: ReadonlySet<string>,
-): string[] {
-  return providerNames.filter((providerName) => {
-    const channel = providerChannels.get(providerName);
-    return !channel || activeChannelNames.has(channel) || disabledChannelNames.has(channel);
-  });
-}
-
 function assertCredentialBindingProvidersAttached(
   policy: InitialSandboxPolicy,
   createProviders: ReadonlySet<string>,
@@ -227,6 +206,21 @@ function assertCredentialBindingProvidersAttached(
       `Cannot create sandbox; create-time policy requires credential provider '${provider}', but the sandbox create plan does not attach it.`,
     );
   }
+}
+
+function buildCreateProviderSet(
+  intent: SandboxCreateIntent,
+  messagingProviders: readonly string[],
+  hermesToolGatewayProvider: string | null,
+): Set<string> {
+  return new Set(
+    [
+      intent.inferenceProvider,
+      ...messagingProviders,
+      hermesToolGatewayProvider,
+      ...intent.extraProviders,
+    ].filter((provider): provider is string => Boolean(provider)),
+  );
 }
 
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
@@ -262,12 +256,6 @@ export function materializeSandboxCreatePlan({
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
   );
-  try {
-    discloseInitialSandboxPolicy?.(initialSandboxPolicy);
-  } catch (error) {
-    initialSandboxPolicy.cleanup?.();
-    throw error;
-  }
   const createArgs = [
     "--from",
     fromRef,
@@ -280,30 +268,48 @@ export function materializeSandboxCreatePlan({
     ...intent.resourceCreateArgs,
   ];
 
-  runProviderPreDeleteCleanup();
-  const providerChannels = resolveProviderChannelMap(intent.messagingProviderRequests);
-  const activeChannelNames = new Set(intent.policy.activeMessagingChannels);
-  const messagingProviders = filterDisabledMessagingProviders(
+  const hermesToolGatewayProvider =
+    intent.hermesToolGateways.length > 0
+      ? getHermesToolGatewayProviderName(intent.sandboxName)
+      : null;
+  const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
-      ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
-          replaceExisting: true,
-          allowedSandboxes: [intent.sandboxName],
-        }),
-        ...intent.reusableMessagingProviders,
-      ]),
+      ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
+      ...intent.reusableMessagingProviders,
     ],
-    providerChannels,
-    activeChannelNames,
-    new Set(intent.disabledChannelNames),
+    intent.messagingProviderRequests,
+    intent.policy.activeMessagingChannels,
+    intent.disabledChannelNames,
   );
-  const createProviders = new Set<string>();
-  if (intent.inferenceProvider) createProviders.add(intent.inferenceProvider);
-  for (const provider of messagingProviders) createProviders.add(provider);
-  if (intent.hermesToolGateways.length > 0) {
-    createProviders.add(getHermesToolGatewayProviderName(intent.sandboxName));
+  assertCredentialBindingProvidersAttached(
+    initialSandboxPolicy,
+    buildCreateProviderSet(intent, plannedMessagingProviders, hermesToolGatewayProvider),
+  );
+  try {
+    discloseInitialSandboxPolicy?.(initialSandboxPolicy);
+  } catch (error) {
+    initialSandboxPolicy.cleanup?.();
+    throw error;
   }
-  for (const provider of intent.extraProviders) createProviders.add(provider);
+
+  runProviderPreDeleteCleanup();
+  const messagingProviders = filterMessagingProvidersForSandboxCreate(
+    [
+      ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+        replaceExisting: true,
+        allowedSandboxes: [intent.sandboxName],
+      }),
+      ...intent.reusableMessagingProviders,
+    ],
+    intent.messagingProviderRequests,
+    intent.policy.activeMessagingChannels,
+    intent.disabledChannelNames,
+  );
+  const createProviders = buildCreateProviderSet(
+    intent,
+    messagingProviders,
+    hermesToolGatewayProvider,
+  );
   assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
   for (const provider of createProviders) {
     createArgs.push("--provider", provider);
