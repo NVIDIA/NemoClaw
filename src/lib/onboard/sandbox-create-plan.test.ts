@@ -68,7 +68,11 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
-function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
+function resolveDiscordCreateIntent(input: {
+  selected: boolean;
+  reusable?: boolean;
+  additionalPresets?: string[];
+}) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
       name: discordProviderName,
@@ -77,7 +81,7 @@ function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boole
       providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     },
   ];
-  const intent = resolveSandboxCreateIntent({
+  const resolvedIntent = resolveSandboxCreateIntent({
     basePolicyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
     sandboxName: "sandbox",
     channels,
@@ -98,6 +102,18 @@ function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boole
     agentName: "openclaw",
     policyTier: "balanced",
   });
+  const intent = input.additionalPresets
+    ? {
+        ...resolvedIntent,
+        policy: {
+          ...resolvedIntent.policy,
+          options: {
+            ...resolvedIntent.policy.options,
+            additionalPresets: [...input.additionalPresets],
+          },
+        },
+      }
+    : resolvedIntent;
   return { intent, messagingTokenDefs };
 }
 
@@ -360,9 +376,10 @@ describe("resolveSandboxCreateIntent", () => {
     plan.initialSandboxPolicy.cleanup?.();
   });
 
-  it("defers the selected Discord policy until its provider can be attached (#10153)", () => {
+  it("defers selected and rebuild-carried messaging policies until providers attach (#10153)", () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
       selected: true,
+      additionalPresets: ["telegram", "npm"],
     });
 
     const plan = materializeDiscordCreatePlan(
@@ -372,6 +389,8 @@ describe("resolveSandboxCreateIntent", () => {
 
     expect(plan.activeMessagingChannels).toEqual(["discord"]);
     expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
+    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("telegram");
+    expect(plan.initialSandboxPolicy.appliedPresets).toContain("npm");
     expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).toEqual([]);
     expect(plan.messagingProviders).toEqual([discordProviderName]);
     expect(plan.createArgs).not.toContain(discordProviderName);

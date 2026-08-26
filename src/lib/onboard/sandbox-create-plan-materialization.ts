@@ -4,6 +4,7 @@
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { MessagingTokenDef } from "./messaging-prep";
+import { messagingChannelsForPolicyPresets } from "./messaging-policy-presets";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -283,10 +284,16 @@ export function materializeSandboxCreatePlan({
   // new sandbox identity and policy receipt are verified. Keep channel routes
   // out of that temporary managed policy, then let policy finalization apply
   // them after the deferred provider effects complete.
-  const initialPolicyMessagingChannels =
-    deferSandboxEffectsUntilPolicyVerification && policyAuthority === "nemoclaw-managed"
-      ? []
-      : [...intent.policy.activeMessagingChannels];
+  const deferMessagingPolicyUntilProviderAttachment =
+    deferSandboxEffectsUntilPolicyVerification && policyAuthority === "nemoclaw-managed";
+  const initialPolicyMessagingChannels = deferMessagingPolicyUntilProviderAttachment
+    ? []
+    : [...intent.policy.activeMessagingChannels];
+  const initialPolicyAdditionalPresets = deferMessagingPolicyUntilProviderAttachment
+    ? intent.policy.options.additionalPresets.filter(
+        (preset) => messagingChannelsForPolicyPresets([preset]).length === 0,
+      )
+    : [...intent.policy.options.additionalPresets];
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
     initialPolicyMessagingChannels,
@@ -294,8 +301,8 @@ export function materializeSandboxCreatePlan({
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
       additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
-        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
-        : [...intent.policy.options.additionalPresets],
+        ? initialPolicyAdditionalPresets.filter((name) => name !== "local-inference")
+        : initialPolicyAdditionalPresets,
       agentName: intent.policy.options.agentName,
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
