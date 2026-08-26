@@ -204,18 +204,6 @@ function getLegacyCredentialAlias(envName: string): string | null {
 }
 
 /**
- * Legacy env key names that resolve to `envName` via
- * {@link getLegacyCredentialAlias} (e.g. `NVIDIA_API_KEY` for
- * `NVIDIA_INFERENCE_API_KEY`). Staging (`stageLegacyCredentialsToEnv`)
- * records a credential under its literal legacy key, while providers
- * that consume it can register under the canonical key instead — callers
- * that match staged keys against a canonical env name need both.
- */
-export function getLegacyCredentialAliasKeys(envName: string): readonly string[] {
-  return LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? [];
-}
-
-/**
  * Canonical entry point for provider credential resolution (PR #2306).
  * Resolves an asynchronous in-process override before `process.env`.
  * Without an override, falls back to a one-time on-demand stage of any
