@@ -55,6 +55,30 @@ const NEW_GENERATION = "00000000-0000-4000-8000-000000000002";
 const OLD_FINGERPRINT = "a".repeat(64);
 const NEW_FINGERPRINT = "b".repeat(64);
 
+type SandboxMutationLock = NonNullable<
+  ManagedWorkloadRebuildTransactionDependencies["withSandboxMutationLock"]
+>;
+
+const immediateSandboxMutationLock: SandboxMutationLock = async (_sandboxName, operation) =>
+  await operation();
+
+function serializedSandboxMutationLock(): SandboxMutationLock {
+  let tail = Promise.resolve();
+  return async (_sandboxName, operation) => {
+    const previous = tail;
+    let release = (): void => {};
+    tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+}
+
 const replacementPolicyAuthority = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
@@ -398,6 +422,7 @@ function transactionHarness(
     readonly dependencies?: NonNullable<
       ManagedWorkloadRebuildTransactionDependencies["replacementAuthority"]
     >;
+    readonly withSandboxMutationLock?: SandboxMutationLock | null;
   } = {},
 ) {
   const events: string[] = [];
@@ -483,6 +508,10 @@ function transactionHarness(
           commitAuthority,
           replacementAuthority:
             replacementOptions.dependencies ?? replacementAuthorityDependencies(),
+          withSandboxMutationLock:
+            replacementOptions.withSandboxMutationLock === null
+              ? undefined
+              : (replacementOptions.withSandboxMutationLock ?? immediateSandboxMutationLock),
         },
       ),
   };
@@ -883,6 +912,124 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.events).not.toContain("registry-commit");
   });
 
+  it("serializes a same-name replacement requested after final identity verification (#9833)", async () => {
+    const withSandboxMutationLock = serializedSandboxMutationLock();
+    let liveIdentity = NEW_FINGERPRINT;
+    let sameNameReplacement = Promise.resolve();
+    let harness!: ReturnType<typeof transactionHarness>;
+    const inspectSandboxIdentity = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        harness.events.push("identity-read:1");
+        return liveIdentity;
+      })
+      .mockImplementationOnce(() => {
+        const observed = liveIdentity;
+        harness.events.push("identity-read:2");
+        harness.events.push("same-name-replacement-requested");
+        sameNameReplacement = withSandboxMutationLock("rebuild-openclaw", () => {
+          liveIdentity = "c".repeat(64);
+          harness.events.push("same-name-replacement-ran");
+        });
+        return observed;
+      });
+    harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        dependencies: replacementAuthorityDependencies({ inspectSandboxIdentity }),
+        withSandboxMutationLock,
+      },
+    );
+
+    const result = await harness.run();
+    await sameNameReplacement;
+
+    expect(result.status).toBe("committed");
+    expect(inspectSandboxIdentity).toHaveBeenCalledTimes(2);
+    expect(harness.events.indexOf("registry-commit")).toBeLessThan(
+      harness.events.indexOf("same-name-replacement-ran"),
+    );
+    expect(harness.events).toContain("same-name-replacement-requested");
+    expect(liveIdentity).toBe("c".repeat(64));
+  });
+
+  it("keeps old authority when the replacement publication lock fails (#9833)", async () => {
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        withSandboxMutationLock: async () => {
+          throw new Error("sandbox mutation lock unavailable");
+        },
+      },
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({
+      phase: "registry-commit",
+      message: expect.stringContaining("sandbox mutation lock could not protect"),
+    });
+
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.operations.rollback).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("registry-commit");
+    expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
+  });
+
+  it("keeps old authority when replacement publication has no sandbox lock (#9833)", async () => {
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        withSandboxMutationLock: null,
+      },
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({
+      phase: "registry-commit",
+      message: expect.stringContaining("requires the sandbox mutation lock"),
+    });
+
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.operations.rollback).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("registry-commit");
+    expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
+  });
+
+  it("does not roll back publication when the sandbox lock release fails (#9833)", async () => {
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        withSandboxMutationLock: async (_sandboxName, operation) => {
+          await operation();
+          throw new Error("sandbox mutation lock release failed");
+        },
+      },
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({
+      name: "ManagedWorkloadRebuildIndeterminatePublicationError",
+      recoveryTask: { operation: "reconcile-publication" },
+    });
+
+    expect(harness.currentEntry().lifecycleGeneration).toBe(NEW_GENERATION);
+    expect(harness.operations.rollback).not.toHaveBeenCalled();
+    expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
+  });
+
   it("rolls back a not-ready replacement by exact staged handle", async () => {
     const harness = transactionHarness("hermes", "docker", "readiness");
 
@@ -1231,6 +1378,7 @@ describe("managed workload rebuild transaction", () => {
           entry: structuredClone(replacement),
         }),
         replacementAuthority: replacementAuthorityDependencies(),
+        withSandboxMutationLock: immediateSandboxMutationLock,
       },
     );
 

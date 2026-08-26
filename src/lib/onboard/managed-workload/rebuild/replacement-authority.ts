@@ -4,7 +4,6 @@
 import type { SandboxPolicyAuthority } from "../../../adapters/openshell/policy-authority";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../../adapters/openshell/policy-authority";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
-import type { SelectedDockerGpuRoute } from "../../docker-gpu-route";
 import {
   verifyCreatedSandboxPolicyRegistration,
   type CreatedSandboxPolicyRegistrationInput,
@@ -17,7 +16,7 @@ export interface ManagedWorkloadReplacementPolicyAuthorityInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly policySourcePath: string;
-  readonly route: SelectedDockerGpuRoute;
+  readonly route: CreatedSandboxPolicyRegistrationInput["route"];
   readonly plannedAuthority: Exclude<SandboxPolicyAuthority, "owner-unknown">;
 }
 
