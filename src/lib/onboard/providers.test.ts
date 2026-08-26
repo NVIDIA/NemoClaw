@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 type RunResult = {
   error?: unknown;
@@ -20,6 +20,10 @@ type RunOptions = {
   timeout?: number;
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
+
+const messagingBridgeProvider = require(
+  "./messaging-bridge-provider"
+) as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -1065,6 +1069,52 @@ describe("onboard provider helpers", () => {
       ).toThrow(/telegram-bridge: gateway unavailable/);
     } finally {
       process.exit = originalExit;
+    }
+  });
+
+  it("reports providers changed before bridge refresh throws (#9833)", () => {
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockImplementation(() => {
+        throw new Error("policy authority changed");
+      });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
+          () => ({ status: 0, stdout: "", stderr: "" }),
+          { bestEffort: true },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
+          mutatedProviderNames: ["alpha-bridge"],
+        }),
+      );
+    } finally {
+      configureRefreshes.mockRestore();
+    }
+  });
+
+  it("reports providers changed before bridge refresh returns failure (#9833)", () => {
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValue({ ok: false, reason: "refresh failed" });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
+          () => ({ status: 0, stdout: "", stderr: "" }),
+          { bestEffort: true },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/token minting.*alpha-bridge/isu),
+          mutatedProviderNames: ["alpha-bridge"],
+        }),
+      );
+    } finally {
+      configureRefreshes.mockRestore();
     }
   });
 

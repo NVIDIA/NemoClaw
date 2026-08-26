@@ -9,8 +9,20 @@ import type {
   HostLocalInferenceStartupSelection,
   HostLocalInferenceStartupSelectionInput,
 } from "../../runtime-provider/host-local-inference-routing";
-import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import {
+  handleProviderInferenceState,
+  type ProviderInferenceStateOptions,
+} from "./provider-inference";
+import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+  type Agent,
+  type Gpu,
+  type Host,
+} from "./provider-inference.test-support";
+
+type TestProviderInferenceOptions = ProviderInferenceStateOptions<Gpu, Agent, Host>;
 
 function refuseExternalPolicy(): never {
   throw new Error("external policy authority must supply the selected route");
@@ -87,35 +99,37 @@ describe("provider inference policy authority", () => {
   });
 
   it("rechecks before local inference provider preparation (#9833)", async () => {
-    const setupNim = vi.fn(async (...args: unknown[]) => {
-      const revalidatePolicyRequirements = args[8] as (
-        route: {
-          provider: string;
-          model: string;
-          endpointUrl: string | null;
-          credentialEnv: string | null;
-          preferredInferenceApi: string | null;
-        },
-        operation: string,
-      ) => void;
-      revalidatePolicyRequirements(
-        {
+    const setupNim = vi.fn<TestProviderInferenceOptions["deps"]["setupNim"]>(
+      async (
+        _gpu,
+        _sandboxName,
+        _agent,
+        _allowRecordedProviderRecovery,
+        _gatewayName,
+        _assertRouteCompatible,
+        _canProbeRoute,
+        _recoverySessionId,
+        revalidatePolicyRequirements,
+      ) => {
+        revalidatePolicyRequirements?.(
+          {
+            provider: "ollama-local",
+            model: "llama3.1",
+            endpointUrl: "http://127.0.0.1:11434/v1",
+            credentialEnv: null,
+            preferredInferenceApi: "openai-completions",
+          },
+          "install managed local runtime",
+        );
+        return {
+          ...baseSelection,
           provider: "ollama-local",
           model: "llama3.1",
           endpointUrl: "http://127.0.0.1:11434/v1",
           credentialEnv: null,
-          preferredInferenceApi: "openai-completions",
-        },
-        "install managed local runtime",
-      );
-      return {
-        ...baseSelection,
-        provider: "ollama-local",
-        model: "llama3.1",
-        endpointUrl: "http://127.0.0.1:11434/v1",
-        credentialEnv: null,
-      };
-    });
+        };
+      },
+    );
     const policyChecks = new Map([["install managed local runtime", refuseExternalPolicy]]);
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
       policyChecks.get(requirements.operation)?.(),

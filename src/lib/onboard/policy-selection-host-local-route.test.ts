@@ -163,6 +163,74 @@ describe("host-local route-only policy selection", () => {
     expect(onSelection).not.toHaveBeenCalled();
   });
 
+  it("refuses resumed preset synchronization when authority changes (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: ["npm"],
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+      "reapply recorded policy presets to sandbox 'alpha'",
+    );
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses retained-preset synchronization when authority changes (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.env.NEMOCLAW_POLICY_MODE = "skip";
+    const revalidatePolicyRequirements = vi
+      .fn<() => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(revalidatePolicyRequirements).toHaveBeenLastCalledWith(
+      "apply retained policy presets to sandbox 'alpha'",
+    );
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-interactive preset synchronization when authority changes (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    const revalidatePolicyRequirements = vi
+      .fn<() => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(revalidatePolicyRequirements).toHaveBeenLastCalledWith(
+      "apply non-interactive policy presets to sandbox 'alpha'",
+    );
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
   it("removes a live stale local-inference preset even when ordinary policy setup is skipped", async () => {
     const { deps, syncPresetSelection } = createHarness();
     deps.env.NEMOCLAW_POLICY_MODE = "skip";

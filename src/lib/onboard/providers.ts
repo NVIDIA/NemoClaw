@@ -743,25 +743,32 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // Gateway-side token minting is configured AFTER the providers exist (best-effort,
   // self-gates without a bridge token def). Secret material stays gateway-side —
   // never written into the sandbox.
-  const refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
-    runOpenshell: runMessagingBridgeOpenshell,
-    redact,
-    getCredential,
-    env: process.env,
-    normalizeCredentialValue,
-  });
+  let refreshResult;
+  try {
+    refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
+      runOpenshell: runMessagingBridgeOpenshell,
+      redact,
+      getCredential,
+      env: process.env,
+      normalizeCredentialValue,
+    });
+  } catch (error) {
+    throw attachMutatedProviderNames(error, mutatedProviderNames);
+  }
   // Fail-closed: an active bridge channel whose gateway token minting was not
   // configured can receive webhooks but cannot authenticate outbound replies.
   // Surface it instead of reporting a fully-configured channel (bestEffort/rollback
   // paths report residual work by throwing; the normal path exits like a failed
   // provider upsert above).
   if (refreshResult && !refreshResult.ok) {
-    if (options.bestEffort) {
-      throw new Error("Failed to configure gateway token minting for a messaging bridge.");
-    }
-    console.error(
-      "\n  ✗ Gateway token minting for a messaging bridge was not configured; aborting.",
+    const failure = attachMutatedProviderNames(
+      new Error("Failed to configure gateway token minting for a messaging bridge."),
+      mutatedProviderNames,
     );
+    if (options.bestEffort) {
+      throw failure;
+    }
+    console.error(`\n  ✗ ${failure.message}`);
     process.exit(1);
   }
   return upserted;
