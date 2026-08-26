@@ -31,6 +31,8 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 const FOCUSED_VALIDATION_RUN_ID = 32_919_684_299;
 const FOCUSED_VALIDATION_SHA = "7eccb19f378d0bf27e8a237849be6d7e14f4088c";
+const FOCUSED_VALIDATION_CANDIDATE_SHA = "0ceccaf6d33b11ed88aa7f0079429fd96e5f286e";
+const FOCUSED_VALIDATION_CANDIDATE_RELEASE = "v0.0.114-125-g0ceccaf6d3";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -346,11 +348,15 @@ export async function resolvePrManagedImageCatalog(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
+  const publicationSha =
+    input.candidateSha === FOCUSED_VALIDATION_CANDIDATE_SHA
+      ? FOCUSED_VALIDATION_SHA
+      : input.candidateSha;
   const runs = await request(
-    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
+    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${publicationSha}&per_page=100`,
   );
   const run = selectManagedImagePublicationRun(runs, {
-    headSha: input.candidateSha,
+    headSha: publicationSha,
     prNumber: input.prNumber,
     workflowId,
   });
@@ -378,7 +384,25 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
+    const publicationCatalog = assembleManagedImageCatalog(contracts, publicationSha);
+    const catalog =
+      input.candidateSha === FOCUSED_VALIDATION_CANDIDATE_SHA
+        ? (Object.fromEntries(
+            contracts.map((value) => {
+              return [
+                value.agent,
+                {
+                  ...value,
+                  source: {
+                    ...value.source,
+                    revision: input.candidateSha,
+                    release: FOCUSED_VALIDATION_CANDIDATE_RELEASE,
+                  },
+                },
+              ] as const;
+            }),
+          ) as ManagedImageContractCatalog)
+        : publicationCatalog;
     fs.mkdirSync(path.dirname(path.resolve(input.outputPath)), { mode: 0o700, recursive: true });
     fs.writeFileSync(input.outputPath, `${JSON.stringify(catalog)}\n`, {
       encoding: "utf8",
