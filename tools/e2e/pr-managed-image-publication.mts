@@ -29,8 +29,8 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
-const FOCUSED_VALIDATION_RUN_ID = 32_914_912_666;
-const FOCUSED_VALIDATION_SHA = "edd347514ccb98919440e598f7e42fbb356b5a2f";
+const FOCUSED_VALIDATION_RUN_ID = 32_919_684_299;
+const FOCUSED_VALIDATION_SHA = "7eccb19f378d0bf27e8a237849be6d7e14f4088c";
 
 type JsonRecord = Record<string, unknown>;
 
