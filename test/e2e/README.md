@@ -451,9 +451,13 @@ the operator's exact host-preparation declaration. It observes whether the test
 process is elevated but does not change host ACLs or elevation. Compute the
 canonical artifact-tree digest after staging:
 
-The share and host-state directories are fresh siblings directly beneath the
-declared drive root. This matches the current package's shallow-share
-requirement and keeps host-only configuration outside the sandbox share.
+The OpenClaw artifact, share, and host-state directories must be fresh siblings
+directly beneath the declared drive root. This matches the current package's
+shallow-share requirement and the qualified workaround for MXC parent-path
+traversal. The generated agent environment redirects `TEMP` and `TMP` into a
+test-owned directory beneath the writable share; it does not expose the host
+temporary directory to the sandbox. Host-only configuration remains outside
+the sandbox share.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -478,7 +482,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | Exact declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
 | `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
-| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION` | Expected OpenClaw version |
@@ -538,9 +542,18 @@ It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. Cleanup removes both test-owned run directories
-for every verdict because MXC can write the temporary gateway token to its agent
-environment file. A failed run retains only the secret-free receipt.
+runtime artifacts were removed. Receipt schema version 3 also classifies startup
+as not observed, spawn failed, exited before readiness, health timeout, or ready.
+The ready outcome means that the in-sandbox health probe succeeded.
+It does not mean that the qualification passed.
+Use `verdict` and `startup.versionExitCode` to diagnose the result.
+A nonzero version exit code produces a failed qualification.
+It retains only bounded numeric child and version exit codes; it does not retain
+child output, error text, command arguments, paths, or credentials. Cleanup
+removes both test-owned run directories for every verdict because MXC can write
+the temporary gateway token to its agent environment file. A failed run retains
+the secret-free receipt and any secret-free forward-readiness artifact written
+before the failure.
 The host-preparation declaration is operator evidence, not an ACL attestation.
 Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation

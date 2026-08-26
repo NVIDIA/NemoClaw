@@ -32,6 +32,7 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import {
   buildHermesPortableCommandAuthority,
   buildHermesPortableOnboardingCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -77,6 +78,7 @@ export {
   runHermesPortableOnboardingTransaction,
   shouldManageHermesPortableDashboard,
   buildHermesPortableCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 };
 export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
 export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;

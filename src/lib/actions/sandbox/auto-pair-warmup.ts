@@ -36,7 +36,8 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 // Outer spawnSync cap (ms) for the direct write-scope probe. The cap prevents a
 // wedged sandbox from blocking onboard or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
-export const WARMUP_PROBE_TIMEOUT_S = 5;
+// Match the in-sandbox watcher child bound on loaded hosts while retaining the fixed outer cap.
+export const WARMUP_PROBE_TIMEOUT_S = 10;
 
 const WARMUP_RESULT_MARKER = "NEMOCLAW_OPENCLAW_WARMUP_RESULT=";
 const WATCHER_STATUS_MARKER = "NEMOCLAW_OPENCLAW_WATCHER_STATUS=";

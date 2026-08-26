@@ -46,7 +46,7 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
     expect(WARMUP_TIMEOUT_MS).toBe(30_000);
     expect(typeof WARMUP_TIMEOUT_MS).toBe("number");
     expect(WARMUP_TIMEOUT_MS).toBeGreaterThan(0);
-    expect(WARMUP_PROBE_TIMEOUT_S).toBe(5);
+    expect(WARMUP_PROBE_TIMEOUT_S).toBe(10);
   });
 
   it("stays within the bounds the contract budgeted for finalization latency", () => {
