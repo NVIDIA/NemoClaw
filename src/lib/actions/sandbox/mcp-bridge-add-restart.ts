@@ -40,7 +40,6 @@ import {
   detachProvider,
   ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
-  mcpCredentialRevisionForProviderResourceVersion,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
@@ -436,26 +435,16 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    let expectedCredentialRevision = mcpCredentialRevisionForProviderResourceVersion(
-      providerResult.inspection.resourceVersion,
-    );
     if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // OpenShell 0.0.106 can miss a credential update published before the
       // bound policy generation. Republish while that policy is active and
       // before the first readiness exec; the exact provider identity is
       // rechecked before and after this update-only mutation.
-      const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
-      const publishedProvider =
-        republished.action === "updated"
-          ? republished.inspection
-          : refreshMcpProviderEnvironment(entry);
-      expectedCredentialRevision = mcpCredentialRevisionForProviderResourceVersion(
-        publishedProvider.resourceVersion,
-      );
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
@@ -463,7 +452,6 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
-      expectedRevision: expectedCredentialRevision,
       // A no-field provider update advances only the provider resource version.
       // If the credential remains available, republish it after observing an
       // absence; otherwise, a hostless recovery advances the provider revision.
@@ -485,13 +473,7 @@ async function addMcpBridgeUnlocked(
           expectedProviderId: entry.providerId,
           requireExisting: true,
         });
-        const publishedProvider =
-          republished.action === "updated"
-            ? republished.inspection
-            : refreshMcpProviderEnvironment(entry);
-        return mcpCredentialRevisionForProviderResourceVersion(
-          publishedProvider.resourceVersion,
-        );
+        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a

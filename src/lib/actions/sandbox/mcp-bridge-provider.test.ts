@@ -21,7 +21,6 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import {
   assertMcpProviderRecoverable,
-  mcpCredentialRevisionForProviderResourceVersion,
   observeMcpCredentialRevision,
   refreshMcpProviderEnvironment,
   waitForAttachedMcpCredential,
@@ -379,32 +378,6 @@ alpha-mcp-slack   generic  1                 0
     expect(revision).toBe("v11");
   });
 
-  it("waits for the final published provider revision", () => {
-    const exec = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
-
-    const revision = waitForAttachedMcpCredential(
-      "alpha",
-      {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      },
-      { expectedRevision: "v12" },
-    );
-
-    expect(exec).toHaveBeenCalledTimes(2);
-    expect(revision).toBe("v12");
-  });
-
   it("does not accept an identityless placeholder as attachment readiness", () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
@@ -445,26 +418,15 @@ alpha-mcp-slack   generic  1                 0
       .spyOn(processRecovery, "executeSandboxExecCommand")
       .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
-    const refreshAfterObservedAbsence = vi.fn(() => "v12" as const);
+    const refreshAfterObservedAbsence = vi.fn();
 
     const revision = waitForAttachedMcpCredential("alpha", entry, {
-      expectedRevision: "v11",
       refreshAfterObservedAbsence,
     });
 
     expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledTimes(2);
     expect(revision).toBe("v12");
-  });
-
-  it("derives the bounded credential revision from the published provider", () => {
-    expect(mcpCredentialRevisionForProviderResourceVersion(12)).toBe("v12");
-    expect(() => mcpCredentialRevisionForProviderResourceVersion(null)).toThrow(
-      /valid MCP provider resource version/,
-    );
-    expect(() => mcpCredentialRevisionForProviderResourceVersion(0)).toThrow(
-      /valid MCP provider resource version/,
-    );
   });
 
   it("does not repeat the refresh when the credential remains absent (#9764)", () => {
