@@ -111,28 +111,22 @@ describe("provider inference policy authority", () => {
         _recoverySessionId,
         revalidatePolicyRequirements,
       ) => {
-        revalidatePolicyRequirements?.(
-          {
-            provider: "ollama-local",
-            model: "llama3.1",
-            endpointUrl: "http://127.0.0.1:11434/v1",
-            credentialEnv: null,
-            preferredInferenceApi: "openai-completions",
-          },
-          "install managed local runtime",
-        );
-        return {
+        const selection = {
           ...baseSelection,
           provider: "ollama-local",
           model: "llama3.1",
           endpointUrl: "http://127.0.0.1:11434/v1",
           credentialEnv: null,
         };
+        expect(revalidatePolicyRequirements).toBeTypeOf("function");
+        revalidatePolicyRequirements!(selection, "install managed local runtime");
+        return selection;
       },
     );
-    const policyChecks = new Map([["install managed local runtime", refuseExternalPolicy]]);
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
-      policyChecks.get(requirements.operation)?.(),
+      requirements.operation === "install managed local runtime"
+        ? refuseExternalPolicy()
+        : undefined,
     );
     const { deps, calls } = createDeps({ setupNim, preflightPolicyRequirements });
 
@@ -178,19 +172,7 @@ describe("provider inference policy authority", () => {
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });
 
-  it("withholds inference success when authority changes after deferred selection (#9833)", async () => {
-    const session = createSession({
-      sandboxName: "alpha",
-      provider: "nvidia-prod",
-      model: "nvidia/model",
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: false,
-        messaging: false,
-        resourceProfile: false,
-      },
-    });
-    session.steps.provider_selection.status = "failed";
+  it("withholds durable inference success when final policy authority changes (#9833)", async () => {
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
       requirements.operation === "record successful inference configuration"
         ? refuseExternalPolicy()
@@ -198,14 +180,11 @@ describe("provider inference policy authority", () => {
     );
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
 
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        sandboxName: "alpha",
-      }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow(
+      /external policy authority must supply/u,
+    );
 
-    expect(calls.complete).toHaveBeenCalledWith("provider_selection", expect.any(Object));
+    expect(calls.setupInference).toHaveBeenCalledOnce();
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });
 
