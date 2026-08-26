@@ -72,14 +72,22 @@ export async function applyAgentConfigAtOpenShell(
       entry.kind === "json-fragment" && disabledChannelIds.has(entry.channelId),
   );
 
-  for (const [target, render] of groupRenderByTarget([...enabledRender, ...disabledJsonRender])) {
+  const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledJsonRender]);
+  const targets: [string, SandboxMessagingAgentRenderPlan[]][] = [
+    ...renderByTarget,
+    ...migrationOnlyEnvTargets(plan, renderByTarget).map(
+      (target) => [target, []] as [string, SandboxMessagingAgentRenderPlan[]],
+    ),
+  ];
+  for (const [target, render] of targets) {
     const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
     const kind = render[0]?.kind;
-    if (!kind) continue;
-    if (render.some((entry) => entry.kind !== kind)) {
+    if (kind && render.some((entry) => entry.kind !== kind)) {
       throw new Error(`Cannot apply mixed messaging render kinds to ${target}.`);
     }
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    // Nothing rendered and no file on disk: no migration to perform.
+    if (!kind && existing === undefined) continue;
     const contents =
       kind === "json-fragment"
         ? applyJsonFragments(
@@ -389,6 +397,27 @@ function staleCredentialEnvKeys(
     }
   }
   return stale;
+}
+
+// Env targets this plan owns but no longer renders into. Every channel that
+// renders env lines targets the same Hermes file, and Hermes loads it with
+// override=True, so a credential line left by an older NemoClaw version shadows
+// the value OpenShell injects. Visit the target anyway so staleCredentialEnvKeys
+// can prune it; without this, a channel whose render collapsed to nothing is
+// never cleaned.
+const HERMES_ENV_RENDER_TARGET = "~/.hermes/.env";
+
+function migrationOnlyEnvTargets(
+  plan: SandboxMessagingPlan,
+  rendered: ReadonlyMap<string, SandboxMessagingAgentRenderPlan[]>,
+): readonly string[] {
+  const ownsCredentialEnv =
+    plan.agent === "hermes" &&
+    !rendered.has(HERMES_ENV_RENDER_TARGET) &&
+    activeCredentialBindings(plan).some(
+      (binding) => typeof binding.providerEnvKey === "string" && binding.providerEnvKey.length > 0,
+    );
+  return ownsCredentialEnv ? [HERMES_ENV_RENDER_TARGET] : [];
 }
 
 function applyEnvLines(

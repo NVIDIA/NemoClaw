@@ -828,6 +828,37 @@ describe("MessagingSetupApplier", () => {
     expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
   });
 
+  it("drops a stale credential env line when the plan renders nothing into the file", async () => {
+    // Telegram's only remaining Hermes env line is the allowlist, so without
+    // allowed IDs the whole env render collapses and the target never appears
+    // in the render plan. The file on disk still has to be cleaned.
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "telegram-token" }, ["telegram"], "hermes");
+    const files: Record<string, string> = {
+      "/sandbox/.hermes/.env": [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "OPERATOR_OWNED=keep-me",
+        "",
+      ].join("\n"),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      const reading = args.includes("cat") && options?.input === undefined;
+      const written = options?.input;
+      Object.assign(files, written === undefined ? {} : { [target]: written });
+      return reading
+        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+        : { status: written === undefined ? 1 : 0 };
+    };
+
+    expect(plan.agentRender.some((render) => render.target === "~/.hermes/.env")).toBe(false);
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
+    expect(renderedEnv).not.toContain("TELEGRAM_BOT_TOKEN=");
+    expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
+  });
+
   it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {
     const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ALL_CHANNELS, "hermes");
     const files: Record<string, string> = {};
