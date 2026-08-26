@@ -104,7 +104,7 @@ permissions:
 
 jobs:
   run:
-    name: ${{ inputs.credential_boundary }}
+    name: Run / ${{ inputs.credential_boundary }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
