@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { createTempSshConfig } from "../../../src/lib/sandbox/temp-ssh-config.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -75,18 +74,7 @@ export async function runOpenClawAgentAssertion(
     sshConfig.exitCode,
     `OpenShell SSH configuration exited with ${String(sshConfig.exitCode)}`,
   ).toBe(0);
-  const sshConfigDirectory = await mkdtemp(join(tmpdir(), "nemoclaw-e2e-ssh-"));
-  const sshConfigPath = join(sshConfigDirectory, "config");
-  try {
-    await writeFile(sshConfigPath, sshConfig.stdout, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
-  } catch (error) {
-    await rm(sshConfigDirectory, { force: true, recursive: true });
-    throw error;
-  }
+  const temporarySshConfig = createTempSshConfig(sshConfig.stdout, "nemoclaw-e2e-ssh-");
 
   let lastFailure = "";
   let successfulEvidence: OpenClawAgentAssertionEvidence | null = null;
@@ -111,7 +99,7 @@ export async function runOpenClawAgentAssertion(
         "ssh",
         [
           "-F",
-          sshConfigPath,
+          temporarySshConfig.file,
           "-o",
           "StrictHostKeyChecking=no",
           "-o",
@@ -201,7 +189,12 @@ export async function runOpenClawAgentAssertion(
       }
       return true;
     },
-  }).finally(() => rm(sshConfigDirectory, { force: true, recursive: true }));
+  }).finally(() => {
+    temporarySshConfig.cleanup();
+    if (existsSync(temporarySshConfig.dir)) {
+      throw new Error(`${args.label}: failed to remove temporary OpenShell SSH configuration`);
+    }
+  });
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
