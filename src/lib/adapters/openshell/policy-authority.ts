@@ -17,6 +17,7 @@ import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
   assertPolicyRequirementContainment,
+  classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata,
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyAuthority,
@@ -104,10 +105,21 @@ function failInspection(subject: "sandbox" | "global" | "gateway", reason: strin
 function captureBoundedOpenShell(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
+  runtimeSelection?: { readonly gatewayName?: string },
 ): ReturnType<typeof openshellRuntime.captureResolvedOpenshell> {
+  const env = openshellRuntime.buildOpenShellSubprocessEnv();
+  if (runtimeSelection !== undefined) {
+    for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
+      const value = process.env[name];
+      if (value !== undefined) env[name] = value;
+    }
+    if (runtimeSelection.gatewayName !== undefined) {
+      env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
+    }
+  }
   try {
     return openshellRuntime.captureResolvedOpenshell(args, {
-      env: openshellRuntime.buildOpenShellSubprocessEnv(),
+      env,
       ignoreError: true,
       includeStreams: true,
       maxBuffer: POLICY_AUTHORITY_CAPTURE_MAX_BYTES,
@@ -122,8 +134,9 @@ function captureBoundedOpenShell(
 function captureAuthorityRead(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
+  runtimeSelection?: { readonly gatewayName?: string },
 ): { readonly output: string; readonly stdout: string; readonly stderr: string } {
-  const result = captureBoundedOpenShell(args, subject);
+  const result = captureBoundedOpenShell(args, subject, runtimeSelection);
   if (
     !isObject(result) ||
     typeof result.output !== "string" ||
@@ -184,9 +197,19 @@ export function inspectActiveGlobalPolicy({
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const history = capturePolicyRead(buildGlobalPolicyListArgs(validatedGatewayName), "global");
-  if (history.trim().length === 0) return { state: "absent" };
-  const raw = capturePolicyRead(buildGlobalPolicyGetFullJsonArgs(validatedGatewayName), "global");
+  const history = captureAuthorityRead(buildGlobalPolicyListArgs(validatedGatewayName), "global", {
+    gatewayName: validatedGatewayName,
+  });
+  const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
+  if (historyState === "absent") return { state: "absent" };
+  if (historyState === "invalid") {
+    failInspection("global", "OpenShell returned invalid global policy history");
+  }
+  const raw = captureAuthorityRead(
+    buildGlobalPolicyGetFullJsonArgs(validatedGatewayName),
+    "global",
+    { gatewayName: validatedGatewayName },
+  ).stdout;
   try {
     return parseActiveGlobalPolicyAuthorityMetadata(raw);
   } catch (error) {

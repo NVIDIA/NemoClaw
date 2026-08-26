@@ -51,6 +51,19 @@ export type ActiveGlobalPolicyInspection =
       };
     };
 
+export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
+
+const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
+
+/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+export function classifyOpenShellGlobalPolicyHistory(
+  stdout: string,
+  stderr: string,
+): OpenShellGlobalPolicyHistoryState {
+  if (stdout.trim().length > 0) return "present";
+  return stderr.trim() === OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT ? "absent" : "invalid";
+}
+
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 

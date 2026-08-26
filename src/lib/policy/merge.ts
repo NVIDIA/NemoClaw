@@ -6,6 +6,7 @@ import {
   assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
   assertMatchingPolicyAuthority as assertCanonicalMatchingPolicyAuthority,
   assertNemoClawPolicyCreationReceiptMatches as assertCanonicalNemoClawPolicyCreationReceiptMatches,
+  classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata as parseCanonicalActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt as parseCanonicalNemoClawPolicyCreationReceipt,
   openShellPolicyValuesEqual as canonicalOpenShellPolicyValuesEqual,
@@ -16,6 +17,7 @@ import {
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyAuthority,
   type OpenShellPolicyIdentity,
+  type OpenShellGlobalPolicyHistoryState,
   type SandboxPolicyAuthorityInspection,
   withoutProviderComposedPolicies as withoutCanonicalProviderComposedPolicies,
 } from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
@@ -27,6 +29,7 @@ import type { JsonObject } from "../core/json-types";
 // CommonJS wrapper is compiled. Keep this file implementation-free.
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
 export const openShellPolicyValuesEqual = canonicalOpenShellPolicyValuesEqual;
+export const classifyOpenShellGlobalPolicyHistory = classifyCanonicalOpenShellGlobalPolicyHistory;
 export const parseNemoClawPolicyCreationReceipt = parseCanonicalNemoClawPolicyCreationReceipt;
 export const parseActiveGlobalPolicyAuthorityMetadata =
   parseCanonicalActiveGlobalPolicyAuthorityMetadata;
@@ -43,6 +46,7 @@ export type {
   NemoClawPolicyCreationReceipt,
   OpenShellPolicyAuthority,
   OpenShellPolicyIdentity,
+  OpenShellGlobalPolicyHistoryState,
   SandboxPolicyAuthorityInspection,
 };
 

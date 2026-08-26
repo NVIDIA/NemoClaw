@@ -99,6 +99,15 @@ export function successResult(): {
   return { exitCode: 0, stdout: "", stderr: "" };
 }
 
+/** OpenShell 0.0.106 output when no global policy revision exists. */
+export function absentGlobalPolicyHistoryResult(): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: "",
+    stderr: "No global policy history found\n",
+  };
+}
+
 export type CommandResult = { exitCode: number; stdout: string; stderr: string };
 
 /** The configured policy used by blueprint runner tests that create a sandbox. */
@@ -189,7 +198,7 @@ export function resultWithBlueprintPolicyAuthority(
     : args.join(" ") === `gateway info -g ${gateway}`
       ? gatewayInfoResult()
       : args.join(" ") === `policy list -g ${gateway} --global --limit 1`
-        ? successResult()
+        ? absentGlobalPolicyHistoryResult()
         : args[0] === "policy" &&
             args[1] === "get" &&
             args[2] === "-g" &&

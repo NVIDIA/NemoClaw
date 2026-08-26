@@ -70,6 +70,7 @@ const {
   assertExternalPolicyRequirementContainment,
   assertNemoClawPolicyCreationReceiptMatches,
   assertPolicyRequirementContainment,
+  classifyOpenShellGlobalPolicyHistory,
   openShellPolicyValuesEqual,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
@@ -858,8 +859,14 @@ async function inspectBlueprintPolicyAuthority(
       ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
       subject,
     );
-    if (history.stdout.trim().length === 0) {
+    const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
+    if (historyState === "absent") {
       return null;
+    }
+    if (historyState === "invalid") {
+      throw new Error(
+        "OpenShell returned invalid global policy history. Policy-dependent operations must stop.",
+      );
     }
   }
   const command =

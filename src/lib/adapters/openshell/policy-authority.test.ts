@@ -68,6 +68,7 @@ describe("OpenShell policy authority inspection", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("leaves a sandbox-scoped effective policy owner unknown (#9833)", () => {
@@ -155,6 +156,65 @@ describe("OpenShell policy authority inspection", () => {
       ["policy", "list", "-g", "nemoclaw-18080", "--global", "--limit", "1"],
       ["policy", "get", "-g", "nemoclaw-18080", "--global", "--full", "--output", "json"],
     ]);
+  });
+
+  it("recognizes the OpenShell 0.0.106 fresh-gateway history response as absent (#9833)", () => {
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult("", { stderr: "No global policy history found\n" }));
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toEqual({
+      state: "absent",
+    });
+    expect(captureOpenshell).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["empty output", ""],
+    ["an unexpected diagnostic", "captured-stderr-secret"],
+  ])("fails closed on %s from a successful global history read (#9833)", (_name, stderr) => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult("", { stderr }),
+    );
+
+    const error = errorFrom(() => inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" }));
+    expect(error.message).toContain("invalid global policy history");
+    expect(error.message).not.toContain("captured-stderr-secret");
+  });
+
+  it("keeps a canonical absence response non-authoritative after a failed command (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult("", { status: 7, stderr: "No global policy history found\n" }),
+    );
+
+    expect(() => inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toThrow(
+      /did not complete successfully/u,
+    );
+  });
+
+  it("preserves fresh-gateway config and workspace without accepting endpoint overrides (#9833)", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "/tmp/nemoclaw-openshell-config");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "selected-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENAI_API_KEY", "must-not-cross-policy-boundary");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult("", { stderr: "No global policy history found\n" }));
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toEqual({
+      state: "absent",
+    });
+    const options = captureOpenshell.mock.calls[0]?.[1];
+    expect(options?.env).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-18080",
+      OPENSHELL_WORKSPACE: "selected-workspace",
+      XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+    });
+    expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(options?.env).not.toHaveProperty("OPENAI_API_KEY");
   });
 
   it("rejects invalid sandbox and gateway identities before querying policy (#9833)", () => {
