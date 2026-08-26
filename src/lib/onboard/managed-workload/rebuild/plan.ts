@@ -22,6 +22,7 @@ import { ManagedWorkloadRebuildTransactionError } from "./contract";
 const PROTECTED_REBUILD_METADATA_FIELDS = new Set<keyof SandboxEntry>([
   "name",
   "pendingRouteReservation",
+  "pendingPolicyVerification",
   "reservationSessionId",
   "openshellDriver",
   "fromDockerfile",

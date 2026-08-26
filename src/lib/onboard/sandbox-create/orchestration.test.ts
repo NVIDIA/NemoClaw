@@ -16,25 +16,9 @@ import {
 } from "./orchestration";
 
 describe("deferred provider effect authority", () => {
-  it("refuses a second provider attachment after policy authority changes (#9833)", async () => {
-    const events: string[] = [];
-    const recordPolicyCheck = (operation: string) => {
-      events.push(`policy: ${operation}`);
-    };
-    const revalidatePolicyRequirements = vi.fn(recordPolicyCheck);
-    const runOpenshell = vi.fn((args: string[]) => {
-      events.push(args.join(" "));
-      revalidatePolicyRequirements
-        .mockImplementationOnce(recordPolicyCheck)
-        .mockImplementationOnce((operation) => {
-          recordPolicyCheck(operation);
-          throw new Error("policy authority changed after the first provider attachment");
-        });
-      return { status: 0 };
-    });
-    const revalidateSandboxIdentity = vi.fn((_exactIdentity: string, operation: string) => {
-      events.push(`identity: ${operation}`);
-    });
+  it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
+    const revalidatePolicyRequirements = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const boundary = createProviderEffectBoundary({
       deferred: true,
       sandboxName: "alpha",
@@ -55,8 +39,6 @@ describe("deferred provider effect authority", () => {
       runVerifiedSandboxCreateEffects: null,
       activateDeferredProviderEffects: () => ["first", "second"],
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
-      runOpenshell: runOpenshell as never,
-      revalidateSandboxIdentity,
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
     expect(runAfterVerifiedCreate).toBeTypeOf("function");
@@ -77,18 +59,15 @@ describe("deferred provider effect authority", () => {
         route: "direct" as never,
         revalidatePolicyRequirements,
       }),
-    ).rejects.toThrow("policy authority changed after the first provider attachment");
+    ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
 
-    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "first"],
-      { ignoreError: true, suppressOutput: true },
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "provider", "attach"]),
+      expect.anything(),
     );
-    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
-      "a".repeat(64),
-      "attaching provider 'second' to sandbox 'alpha'",
+    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+      "attaching deferred providers to sandbox 'alpha'",
     );
-    expect(events).toContain("policy: attaching provider 'second' to sandbox 'alpha'");
-    expect(events).not.toContain("sandbox provider attach -g nemoclaw alpha second");
   });
 });
 
@@ -489,6 +468,75 @@ describe("sandbox create policy authority checks", () => {
       "recording verified policy for sandbox 'alpha'",
     );
     expect(sandboxIdentity).toBe("replacement");
+  });
+
+  it("retains the durable checkpoint when identity-bound provider attachment is unavailable (#9833)", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const checkpoint = { state: "absent" };
+    const providerBoundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "kubernetes",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        providerExistsInGateway: vi.fn(() => true),
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: () => ["credential-provider"],
+      revalidatePolicyAuthorityBeforeCreate: vi.fn(),
+    });
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      ...exactIdentityBoundary(),
+      persistVerifiedPolicy: () => {
+        checkpoint.state = "verified-create";
+      },
+      runVerifiedCreateEffects: async () => {
+        await providerBoundary.runAfterVerifiedCreate?.({
+          registration: {
+            policyAuthority: "nemoclaw-managed",
+            policyCreationReceipt: {
+              schemaVersion: 1,
+              origin: "sandbox-create",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+              sandboxName: "alpha",
+              lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+              sandboxIdentityFingerprint: exactIdentity,
+              policyHash: "policy-alpha",
+              policyVersion: 1,
+            },
+            observedPolicyAuthority: "owner-unknown",
+          },
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+          lifecycleLiveIdentityFingerprint: exactIdentity,
+          route: "none",
+          revalidatePolicyRequirements: vi.fn(),
+        });
+      },
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(checkpoint.state).toBe("verified-create");
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("reports temporary source cleanup failure with sandbox preservation (#9833)", async () => {

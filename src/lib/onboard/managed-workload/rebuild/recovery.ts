@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { cloneAndDeepFreeze } from "../../../core/immutable";
+import type { VerifiedSandboxPolicyBoundary } from "../../types";
 import type {
   ManagedWorkloadRebuildPlan,
   ManagedWorkloadRebuildRecoveryTask,
@@ -11,6 +12,7 @@ import type {
 export function createManagedWorkloadRebuildRecoveryTask(
   plan: ManagedWorkloadRebuildPlan,
   replacement: StagedManagedWorkloadReplacement,
+  policyBoundary: VerifiedSandboxPolicyBoundary,
   operation: ManagedWorkloadRebuildRecoveryTask["operation"],
 ): ManagedWorkloadRebuildRecoveryTask {
   return cloneAndDeepFreeze({
@@ -28,6 +30,9 @@ export function createManagedWorkloadRebuildRecoveryTask(
       receipt: plan.replacementReceipt,
       lifecycleGeneration: replacement.lifecycleGeneration,
       liveIdentityFingerprint: replacement.liveIdentityFingerprint,
+      gatewayName: policyBoundary.gatewayName,
+      gatewayPort: policyBoundary.gatewayPort,
+      policyRegistration: policyBoundary.registration,
     },
   });
 }

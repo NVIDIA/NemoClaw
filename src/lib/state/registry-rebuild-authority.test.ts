@@ -29,6 +29,8 @@ vi.mock("./registry/lock", () => ({
 
 const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
 const PROFILE_SHA256 = createHash("sha256").update(ENCODED_PROFILE, "utf8").digest("hex");
+const REPLACEMENT_GENERATION = "00000000-0000-4000-8000-000000000002";
+const REPLACEMENT_FINGERPRINT = "b".repeat(64);
 
 function receipt(digest: string): Extract<SandboxWorkloadReceipt, { kind: "managed-image" }> {
   return {
@@ -82,9 +84,21 @@ function registry(current: SandboxEntry = entry()): SandboxRegistry {
 function replacement(): SandboxEntry {
   const workload = receipt("b");
   return {
-    ...entry("generation-new", "fingerprint-new"),
+    ...entry(REPLACEMENT_GENERATION, REPLACEMENT_FINGERPRINT),
     imageTag: workload.reference,
     workload,
+    policyAuthority: "nemoclaw-managed",
+    policyCreationReceipt: {
+      schemaVersion: 1,
+      origin: "sandbox-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration: REPLACEMENT_GENERATION,
+      sandboxIdentityFingerprint: REPLACEMENT_FINGERPRINT,
+      policyHash: "replacement-policy",
+      policyVersion: 2,
+    },
   };
 }
 
@@ -149,8 +163,8 @@ describe("sandbox rebuild authority", () => {
     expect(swapped.result).toMatchObject({
       status: "committed",
       entry: {
-        lifecycleGeneration: "generation-new",
-        lifecycleLiveIdentityFingerprint: "fingerprint-new",
+        lifecycleGeneration: REPLACEMENT_GENERATION,
+        lifecycleLiveIdentityFingerprint: REPLACEMENT_FINGERPRINT,
         workload: { reference: receipt("b").reference },
       },
     });
@@ -202,8 +216,8 @@ describe("sandbox rebuild authority", () => {
     expect(result).toMatchObject({
       status: "committed",
       entry: {
-        lifecycleGeneration: "generation-new",
-        lifecycleLiveIdentityFingerprint: "fingerprint-new",
+        lifecycleGeneration: REPLACEMENT_GENERATION,
+        lifecycleLiveIdentityFingerprint: REPLACEMENT_FINGERPRINT,
       },
     });
     expect(registryPersistence.load).toHaveBeenCalledTimes(2);
@@ -243,9 +257,14 @@ describe("sandbox rebuild authority", () => {
       sandboxRebuildReplacementMatchesEntry(expected, {
         ...expected,
         model: "updated-after-publication",
-        gatewayPort: 9090,
       }),
     ).toBe(true);
+    expect(
+      sandboxRebuildReplacementMatchesEntry(expected, {
+        ...expected,
+        gatewayPort: 9090,
+      }),
+    ).toBe(false);
     expect(
       sandboxRebuildReplacementMatchesEntry(expected, {
         ...expected,
@@ -277,6 +296,24 @@ describe("sandbox rebuild authority", () => {
       (candidate: SandboxEntry) => ({
         ...candidate,
         imageTag: receipt("a").reference,
+      }),
+    ],
+    ["gateway", (candidate: SandboxEntry) => ({ ...candidate, gatewayPort: 9090 })],
+    [
+      "policy authority",
+      (candidate: SandboxEntry) => ({
+        ...candidate,
+        policyAuthority: "externally-managed" as const,
+      }),
+    ],
+    [
+      "policy receipt",
+      (candidate: SandboxEntry) => ({
+        ...candidate,
+        policyCreationReceipt: {
+          ...candidate.policyCreationReceipt!,
+          sandboxIdentityFingerprint: "c".repeat(64),
+        },
       }),
     ],
   ] as const)("rejects replacement %s drift before CAS", (_label, mutate) => {

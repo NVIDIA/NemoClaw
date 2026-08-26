@@ -4,6 +4,7 @@
 import type { SandboxRebuildAuthority } from "../../../state/registry/rebuild-authority";
 import type { SandboxEntry } from "../../../state/registry/types";
 import type { ManagedImageAgent } from "../../managed-image/contract";
+import type { VerifiedSandboxPolicyRegistration } from "../../types";
 import type { ManagedWorkloadRebuildHandoff, ManagedWorkloadReceipt } from "../../workload/rebuild";
 
 export type ManagedWorkloadRebuildPhase =
@@ -156,6 +157,9 @@ export interface ManagedWorkloadRebuildRecoveryTask {
     readonly receipt: ManagedWorkloadReceipt;
     readonly lifecycleGeneration: string;
     readonly liveIdentityFingerprint: string;
+    readonly gatewayName: string;
+    readonly gatewayPort: number;
+    readonly policyRegistration: VerifiedSandboxPolicyRegistration;
   };
 }
 

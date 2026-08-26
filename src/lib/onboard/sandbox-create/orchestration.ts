@@ -41,6 +41,16 @@ import {
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
+function cancelRecoveryIdentity(
+  liveExists: boolean,
+  requireVerifiedPolicyGate: () => VerifiedSandboxPolicyBoundary,
+): { readonly lifecycleLiveIdentityFingerprint?: string } {
+  if (liveExists) return {};
+  return {
+    lifecycleLiveIdentityFingerprint: requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
+  };
+}
+
 type SandboxRecreateReasonInput = {
   sandboxName: string;
   recreateForAgentDrift: boolean;
@@ -404,8 +414,6 @@ export function createProviderEffectBoundary(input: {
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
   readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
-  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-  readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -447,20 +455,11 @@ export function createProviderEffectBoundary(input: {
       context.revalidatePolicyRequirements(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
-      attachProvidersAfterSandboxCreation(
-        {
-          sandboxName: input.sandboxName,
-          gatewayName: input.gatewayName,
-          providerNames,
-        },
-        {
-          runOpenshell: input.runOpenshell,
-          revalidateSandboxIdentity: (operation) => {
-            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
-            context.revalidatePolicyRequirements(operation);
-          },
-        },
-      );
+      attachProvidersAfterSandboxCreation({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        providerNames,
+      });
     },
   };
 }
@@ -1865,16 +1864,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           false,
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
-      runOpenshell,
-      revalidateSandboxIdentity: (exactIdentity, operation) =>
-        sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-          { sandboxName, gatewayName: GATEWAY_NAME },
-          {
-            lifecycleGeneration: createdSandboxLifecycle.generation,
-            lifecycleLiveIdentityFingerprint: exactIdentity,
-          },
-          getSandboxRecreateObservation,
-        ),
     });
     providerEffectBoundary.validateBeforeCreate();
 
@@ -1979,6 +1968,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
         liveExists,
+        ...cancelRecoveryIdentity(liveExists, requireVerifiedPolicyGate),
       },
       {
         setDefault: registry.setDefault,

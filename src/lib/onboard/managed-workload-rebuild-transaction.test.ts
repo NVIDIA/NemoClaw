@@ -36,7 +36,10 @@ import {
   type StagedManagedWorkloadReplacement,
 } from "./managed-workload/rebuild/contract";
 import { createManagedWorkloadReplacementRollback } from "./managed-workload/rebuild/rollback";
-import { runManagedWorkloadRebuildTransaction } from "./managed-workload/rebuild/transaction";
+import {
+  type ManagedWorkloadRebuildTransactionDependencies,
+  runManagedWorkloadRebuildTransaction,
+} from "./managed-workload/rebuild/transaction";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import { RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION } from "./runtime-provider/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
@@ -47,6 +50,47 @@ const PROVIDERS = ["docker", "mxc"] as const;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const OLD_RELEASE = "v0.0.99";
 const NEW_RELEASE = "v0.0.100";
+const OLD_GENERATION = "00000000-0000-4000-8000-000000000001";
+const NEW_GENERATION = "00000000-0000-4000-8000-000000000002";
+const OLD_FINGERPRINT = "a".repeat(64);
+const NEW_FINGERPRINT = "b".repeat(64);
+
+const replacementPolicyAuthority = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  policySourcePath: "/tmp/replacement-policy.yaml",
+  route: "none" as const,
+  plannedAuthority: "nemoclaw-managed" as const,
+};
+
+function replacementAuthorityDependencies(
+  overrides: Partial<
+    NonNullable<ManagedWorkloadRebuildTransactionDependencies["replacementAuthority"]>
+  > = {},
+): NonNullable<ManagedWorkloadRebuildTransactionDependencies["replacementAuthority"]> {
+  return {
+    inspectSandboxIdentity: vi.fn(() => NEW_FINGERPRINT),
+    verifyCreatedPolicy: vi.fn(
+      (input) =>
+        ({
+          policyAuthority: "nemoclaw-managed",
+          observedPolicyAuthority: "owner-unknown",
+          policyCreationReceipt: {
+            schemaVersion: 1,
+            origin: "sandbox-create",
+            gatewayName: input.gatewayName,
+            gatewayPort: input.gatewayPort,
+            sandboxName: input.sandboxName,
+            lifecycleGeneration: input.lifecycleGeneration,
+            sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+            policyHash: "policy-new",
+            policyVersion: 2,
+          },
+        }) as const,
+    ),
+    ...overrides,
+  };
+}
 
 function raiseInjectedFailure(message: string): never {
   throw new Error(message);
@@ -131,8 +175,8 @@ function previousEntry(
     model: "nvidia/nemotron",
     imageTag: workload.reference,
     workload,
-    lifecycleGeneration: "generation-old",
-    lifecycleLiveIdentityFingerprint: "fingerprint-old",
+    lifecycleGeneration: OLD_GENERATION,
+    lifecycleLiveIdentityFingerprint: OLD_FINGERPRINT,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
   };
@@ -266,7 +310,7 @@ function operationsHarness(
   providerId: string,
   events: string[],
   failAt: FailurePhase = null,
-  previousLiveIdentityFingerprint = "fingerprint-old",
+  previousLiveIdentityFingerprint = OLD_FINGERPRINT,
 ): ManagedWorkloadRebuildProviderOperations {
   const bound = {
     schemaVersion: 1 as const,
@@ -283,8 +327,8 @@ function operationsHarness(
     ...bound,
     previousRuntimeHandle: prepared.previousRuntimeHandle,
     stagingHandle: "runtime-new-staged-exact",
-    lifecycleGeneration: "generation-new",
-    liveIdentityFingerprint: "fingerprint-new",
+    lifecycleGeneration: NEW_GENERATION,
+    liveIdentityFingerprint: NEW_FINGERPRINT,
   };
   const ready: ReadyManagedWorkloadReplacement = {
     ...staged,
@@ -347,6 +391,14 @@ function transactionHarness(
   failAt: FailurePhase = null,
   platform: (typeof PLATFORMS)[number] = "linux/amd64",
   previousEntryOverrides: Partial<SandboxEntry> = {},
+  replacementOptions: {
+    readonly policy?: Parameters<
+      typeof runManagedWorkloadRebuildTransaction
+    >[0]["replacementPolicyAuthority"];
+    readonly dependencies?: NonNullable<
+      ManagedWorkloadRebuildTransactionDependencies["replacementAuthority"]
+    >;
+  } = {},
 ) {
   const events: string[] = [];
   const oldEntry = { ...previousEntry(agent, providerId, platform), ...previousEntryOverrides };
@@ -410,6 +462,7 @@ function transactionHarness(
           provider: bundle(providerId),
           handoff: handoff(agent, providerId, platform),
           operations,
+          replacementPolicyAuthority: replacementOptions.policy ?? replacementPolicyAuthority,
           replacementMetadata: { model: "nvidia/nemotron-new" },
           transactionId: "transaction-1",
         },
@@ -428,6 +481,8 @@ function transactionHarness(
             return structuredClone(currentEntry);
           },
           commitAuthority,
+          replacementAuthority:
+            replacementOptions.dependencies ?? replacementAuthorityDependencies(),
         },
       ),
   };
@@ -653,8 +708,8 @@ describe("managed workload rebuild transaction", () => {
           openshellDriver: provider,
           model: "nvidia/nemotron-new",
           fromDockerfile: null,
-          lifecycleGeneration: "generation-new",
-          lifecycleLiveIdentityFingerprint: "fingerprint-new",
+          lifecycleGeneration: NEW_GENERATION,
+          lifecycleLiveIdentityFingerprint: NEW_FINGERPRINT,
           workload: {
             kind: "managed-image",
             platform,
@@ -699,7 +754,7 @@ describe("managed workload rebuild transaction", () => {
     );
   });
 
-  it("publishes a replacement without carrying the previous policy receipt (#9833)", async () => {
+  it("publishes a replacement-bound receipt without carrying the previous receipt (#9833)", async () => {
     const lifecycleGeneration = "00000000-0000-4000-8000-000000000001";
     const sandboxIdentityFingerprint = "a".repeat(64);
     const harness = transactionHarness("openclaw", "mxc", null, "linux/amd64", {
@@ -721,9 +776,111 @@ describe("managed workload rebuild transaction", () => {
 
     const result = await harness.run();
 
-    expect(result.entry.lifecycleGeneration).toBe("generation-new");
-    expect(result.entry).not.toHaveProperty("policyAuthority");
+    expect(result.entry.lifecycleGeneration).toBe(NEW_GENERATION);
+    expect(result.entry).toMatchObject({
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: NEW_GENERATION,
+        sandboxIdentityFingerprint: NEW_FINGERPRINT,
+        policyHash: "policy-new",
+        policyVersion: 2,
+      },
+    });
+    expect(result.entry.policyCreationReceipt).not.toEqual(harness.oldEntry.policyCreationReceipt);
+  });
+
+  it("publishes verified global authority without a NemoClaw receipt (#9833)", async () => {
+    const verifyCreatedPolicy = vi.fn(() => ({
+      policyAuthority: "externally-managed" as const,
+      policyCreationReceipt: null,
+      observedPolicyAuthority: "externally-managed" as const,
+      policyIdentity: { hash: "global-policy", activeVersion: 4 },
+    }));
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        policy: {
+          ...replacementPolicyAuthority,
+          plannedAuthority: "externally-managed",
+        },
+        dependencies: replacementAuthorityDependencies({ verifyCreatedPolicy }),
+      },
+    );
+
+    const result = await harness.run();
+
+    expect(result.entry).toMatchObject({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: NEW_GENERATION,
+      lifecycleLiveIdentityFingerprint: NEW_FINGERPRINT,
+      policyAuthority: "externally-managed",
+    });
     expect(result.entry).not.toHaveProperty("policyCreationReceipt");
+    expect(verifyCreatedPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plannedAuthority: "externally-managed",
+        lifecycleGeneration: NEW_GENERATION,
+        lifecycleLiveIdentityFingerprint: NEW_FINGERPRINT,
+      }),
+    );
+  });
+
+  it("rolls back and preserves old authority when replacement identity changes during policy proof (#9833)", async () => {
+    const inspectSandboxIdentity = vi
+      .fn()
+      .mockReturnValueOnce(NEW_FINGERPRINT)
+      .mockReturnValueOnce("c".repeat(64));
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        dependencies: replacementAuthorityDependencies({ inspectSandboxIdentity }),
+      },
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({
+      phase: "registry-commit",
+      message: expect.stringContaining("identity changed after policy verification"),
+    });
+
+    expect(inspectSandboxIdentity).toHaveBeenCalledTimes(2);
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.operations.rollback).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("registry-commit");
+    expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
+  });
+
+  it("rolls back and preserves old authority when replacement policy proof fails (#9833)", async () => {
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      null,
+      "linux/amd64",
+      {},
+      {
+        dependencies: replacementAuthorityDependencies({
+          verifyCreatedPolicy: vi.fn(() => {
+            throw new Error("replacement policy changed");
+          }),
+        }),
+      },
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({ phase: "registry-commit" });
+
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.operations.rollback).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("registry-commit");
   });
 
   it("rolls back a not-ready replacement by exact staged handle", async () => {
@@ -739,7 +896,7 @@ describe("managed workload rebuild transaction", () => {
       "readiness",
       "rollback:runtime-new-staged-exact",
     ]);
-    expect(harness.currentEntry().lifecycleGeneration).toBe("generation-old");
+    expect(harness.currentEntry().lifecycleGeneration).toBe(OLD_GENERATION);
   });
 
   it.each(INVALID_PROVIDER_ARTIFACT_CASES)(
@@ -782,6 +939,7 @@ describe("managed workload rebuild transaction", () => {
           provider: bundle("mxc"),
           handoff: handoff("openclaw", "mxc"),
           operations,
+          replacementPolicyAuthority,
           transactionId: "transaction-1",
         },
         { getSandbox: () => structuredClone(currentEntry) },
@@ -846,9 +1004,20 @@ describe("managed workload rebuild transaction", () => {
         operation: "retire-previous",
         previousRuntimeHandle: "runtime-old-exact",
         stagingHandle: "runtime-new-staged-exact",
+        replacement: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          policyRegistration: {
+            policyAuthority: "nemoclaw-managed",
+            policyCreationReceipt: {
+              lifecycleGeneration: NEW_GENERATION,
+              sandboxIdentityFingerprint: NEW_FINGERPRINT,
+            },
+          },
+        },
       },
     });
-    expect(harness.currentEntry().lifecycleGeneration).toBe("generation-new");
+    expect(harness.currentEntry().lifecycleGeneration).toBe(NEW_GENERATION);
     expect(harness.events.at(-1)).toBe("retire:runtime-old-exact");
     expect(harness.operations.rollback).not.toHaveBeenCalled();
   });
@@ -866,7 +1035,7 @@ describe("managed workload rebuild transaction", () => {
     expect(result).toMatchObject({
       status: "committed",
       entry: {
-        lifecycleGeneration: "generation-new",
+        lifecycleGeneration: NEW_GENERATION,
         workload: { platform: "linux/arm64" },
       },
     });
@@ -893,7 +1062,7 @@ describe("managed workload rebuild transaction", () => {
       },
     });
 
-    expect(harness.currentEntry().lifecycleGeneration).toBe("generation-new");
+    expect(harness.currentEntry().lifecycleGeneration).toBe(NEW_GENERATION);
     expect(harness.operations.rollback).not.toHaveBeenCalled();
     expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
   });
@@ -927,8 +1096,8 @@ describe("managed workload rebuild transaction", () => {
       transactionId: "transaction-1",
       previousRuntimeHandle: "runtime-old-exact",
       stagingHandle: "runtime-new-staged-exact",
-      lifecycleGeneration: "generation-new",
-      liveIdentityFingerprint: "fingerprint-new",
+      lifecycleGeneration: NEW_GENERATION,
+      liveIdentityFingerprint: NEW_FINGERPRINT,
     };
     const rollback = createManagedWorkloadReplacementRollback(plan, staged, providerOperations);
 
@@ -964,6 +1133,7 @@ describe("managed workload rebuild transaction", () => {
             },
           },
           operations,
+          replacementPolicyAuthority,
           transactionId: "transaction-1",
         },
         { getSandbox: () => structuredClone(oldEntry) },
@@ -993,6 +1163,7 @@ describe("managed workload rebuild transaction", () => {
             },
           },
           operations,
+          replacementPolicyAuthority,
           transactionId: "transaction-1",
         },
         { getSandbox: () => structuredClone(oldEntry) },
@@ -1018,6 +1189,7 @@ describe("managed workload rebuild transaction", () => {
             replacementProfile: hermesHandoff.replacementProfile,
           },
           operations,
+          replacementPolicyAuthority,
           transactionId: "transaction-1",
         },
         { getSandbox: () => structuredClone(oldEntry) },
@@ -1049,6 +1221,7 @@ describe("managed workload rebuild transaction", () => {
         provider: bundle("mxc"),
         handoff: handoff("openclaw", "mxc"),
         operations,
+        replacementPolicyAuthority,
         transactionId: "transaction-1",
       },
       {
@@ -1057,6 +1230,7 @@ describe("managed workload rebuild transaction", () => {
           status: "committed",
           entry: structuredClone(replacement),
         }),
+        replacementAuthority: replacementAuthorityDependencies(),
       },
     );
 
@@ -1074,6 +1248,7 @@ describe("managed workload rebuild transaction", () => {
           provider: bundle("mxc"),
           handoff: handoff("openclaw", "mxc"),
           operations,
+          replacementPolicyAuthority,
           transactionId: "transaction-1",
         },
         { getSandbox: () => structuredClone(oldEntry) },

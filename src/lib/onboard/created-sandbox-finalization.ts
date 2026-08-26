@@ -29,14 +29,9 @@ import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-port
 import { warnIfLandlockUnsupported } from "./landlock-warning";
 import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
 import { printMessagingProviderMissing } from "./preflight-messages";
-import {
-  pendingSandboxPolicyVerificationForBoundary,
-} from "./sandbox-create/policy-creation-receipt";
+import { pendingSandboxPolicyVerificationForBoundary } from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import type {
-  VerifiedSandboxPolicyBoundary,
-  VerifiedSandboxPolicyRegistration,
-} from "./types";
+import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "./types";
 import type { SelectionDrift } from "./selection-drift";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 import {
@@ -250,6 +245,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
     readonly liveExists: boolean;
+    readonly lifecycleLiveIdentityFingerprint?: string;
   },
   deps: {
     readonly setDefault: (sandboxName: string) => void;
@@ -257,7 +253,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly scriptsDir: string;
     readonly gatewayName: string;
     readonly providerExistsInGateway: (providerName: string) => boolean;
-    readonly armCancelRollback: (sandboxName: string) => void;
+    readonly armCancelRollback: (sandboxName: string, sandboxIdentityFingerprint: string) => void;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
     readonly revalidatePolicyAuthority: (operation: string) => void;
@@ -287,7 +283,16 @@ export function completeOrdinaryOnboardSandboxCreation(
   deps.revalidatePolicyAuthority(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
   warnIfLandlockUnsupported(deps);
-  if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
+  if (!input.liveExists) {
+    const lifecycleLiveIdentityFingerprint = input.lifecycleLiveIdentityFingerprint;
+    if (
+      !lifecycleLiveIdentityFingerprint ||
+      !/^[0-9a-f]{64}$/u.test(lifecycleLiveIdentityFingerprint)
+    ) {
+      throw new Error(`Sandbox '${input.sandboxName}' has no exact identity for cancel recovery.`);
+    }
+    deps.armCancelRollback(input.sandboxName, lifecycleLiveIdentityFingerprint);
+  }
   return input.sandboxName;
 }
 
@@ -474,8 +479,7 @@ export function createCreatedSandboxCompletionActions(
               policyAuthority: verifiedPolicyRegistration.policyAuthority,
               ...(verifiedPolicyRegistration.policyAuthority === "nemoclaw-managed"
                 ? {
-                    policyCreationReceipt:
-                      verifiedPolicyRegistration.policyCreationReceipt,
+                    policyCreationReceipt: verifiedPolicyRegistration.policyCreationReceipt,
                   }
                 : {}),
               inferenceRouteReservation,
@@ -566,8 +570,8 @@ type OnboardGatewayBinding = {
 };
 type OnboardPreparedPolicy = Omit<
   Pick<
-  managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
-  "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
+    managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
+    "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
   >,
   "policyAuthority"
 > & {

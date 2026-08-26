@@ -28,12 +28,18 @@ import {
   createManagedWorkloadPreparationAbort,
   createManagedWorkloadReplacementRollback,
 } from "./rollback";
+import {
+  type ManagedWorkloadReplacementAuthorityDependencies,
+  type ManagedWorkloadReplacementPolicyAuthorityInput,
+  verifyManagedWorkloadReplacementAuthority,
+} from "./replacement-authority";
 
 export interface RunManagedWorkloadRebuildTransactionInput {
   readonly previousEntry: SandboxEntry;
   readonly provider: RuntimeProviderBundle;
   readonly handoff: ManagedWorkloadRebuildHandoff;
   readonly operations: ManagedWorkloadRebuildProviderOperations;
+  readonly replacementPolicyAuthority: ManagedWorkloadReplacementPolicyAuthorityInput;
   readonly replacementMetadata?: Readonly<Partial<SandboxEntry>>;
   readonly transactionId?: string;
 }
@@ -41,6 +47,7 @@ export interface RunManagedWorkloadRebuildTransactionInput {
 export interface ManagedWorkloadRebuildTransactionDependencies {
   readonly getSandbox?: (sandboxName: string) => SandboxEntry | null;
   readonly commitAuthority?: CommitSandboxRebuildAuthority;
+  readonly replacementAuthority?: ManagedWorkloadReplacementAuthorityDependencies;
 }
 
 function readSandboxFromRegistry(sandboxName: string): SandboxEntry | null {
@@ -138,10 +145,17 @@ export async function runManagedWorkloadRebuildTransaction(
     const ready = await requireReadyManagedWorkloadReplacement(plan, staged, input.operations);
     const restored = await restoreStagedManagedWorkloadState(plan, ready, input.operations);
     const rebound = await rebindStagedManagedWorkloadProviders(plan, restored, input.operations);
+    const policyBoundary = verifyManagedWorkloadReplacementAuthority({
+      sandboxName: plan.sandboxName,
+      replacement: rebound,
+      policy: input.replacementPolicyAuthority,
+      dependencies: dependencies.replacementAuthority,
+    });
     const entry = commitManagedWorkloadReplacement(
       input.previousEntry,
       plan,
       rebound,
+      policyBoundary,
       dependencies.commitAuthority,
       readSandbox,
     );
@@ -154,7 +168,12 @@ export async function runManagedWorkloadRebuildTransaction(
         entry,
         previousCleanup: "pending",
         cleanupError,
-        recoveryTask: createManagedWorkloadRebuildRecoveryTask(plan, rebound, "retire-previous"),
+        recoveryTask: createManagedWorkloadRebuildRecoveryTask(
+          plan,
+          rebound,
+          policyBoundary,
+          "retire-previous",
+        ),
       };
     }
   } catch (error) {
