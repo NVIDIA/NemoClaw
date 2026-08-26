@@ -44,7 +44,7 @@ describe("uninstall CLI flags", () => {
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
-  "sandbox list") printf 'ordinary-authority Ready\\n' ;;
+  "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
   "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
   "sandbox delete "*) printf 'delete\\n' >> ${JSON.stringify(eventLog)} ;;
   "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;

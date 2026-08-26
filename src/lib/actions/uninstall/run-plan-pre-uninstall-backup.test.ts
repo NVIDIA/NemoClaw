@@ -150,6 +150,23 @@ describe("pre-uninstall sandbox backup", () => {
     );
   });
 
+  it("excludes normalised Podman registrations from pre-uninstall backup", async () => {
+    const fixture = createFixture();
+    const registry = JSON.parse(fs.readFileSync(fixture.registryFile, "utf8"));
+    registry.sandboxes.alpha.openshellDriver = " PODMAN ";
+    fs.writeFileSync(fixture.registryFile, `${JSON.stringify(registry)}\n`);
+    const backup = vi.fn(async () => undefined);
+
+    const result = await runUninstallPlanProduction(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { ...fixture.deps, backupAllBeforeUninstall: backup },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(backup).not.toHaveBeenCalled();
+    expect(fixture.events).toEqual(["delete"]);
+  });
+
   it("stops before backup when a sandbox mutation lock is unavailable", async () => {
     const fixture = createFixture();
     const backup = vi.fn(async () => undefined);

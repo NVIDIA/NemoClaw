@@ -1415,9 +1415,12 @@ function selectedRegistrySandboxState(
       );
     }
     names.push(name);
-    if (entry.openshellDriver !== "podman") backupNames.push(name);
+    const managedHermesStateVolume = managedHermesStateVolumeContext(name, entry);
+    if (managedHermesStateVolume.runtimeProviderId !== "podman") {
+      backupNames.push(name);
+    }
     registrations[name] = entry;
-    managedHermesStateVolumes.push(managedHermesStateVolumeContext(name, entry));
+    managedHermesStateVolumes.push(managedHermesStateVolume);
   }
   return {
     backupNames: backupNames.sort(),

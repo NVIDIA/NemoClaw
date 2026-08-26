@@ -27,6 +27,7 @@
       "src/lib/runner.ts": 86,
       "src/lib/security/redact.ts": 54,
       "src/lib/state/onboard-session.ts": 36,
+      "src/lib/state/mcp-lifecycle-lock.ts": 21,
       "src/lib/state/registry.ts": 101,
       "src/lib/state/state-root.ts": 21,
       "src/lib/subprocess-env.ts": 24,

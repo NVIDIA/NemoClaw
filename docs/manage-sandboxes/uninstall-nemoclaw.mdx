@@ -22,7 +22,7 @@ It uses the same state contract as `$$nemoclaw backup-all`, including temporaril
 If any current sandbox cannot be backed up, that gateway pass exits nonzero before sandbox deletion.
 During `--all-gateway-ports`, the sweep continues with later ports and reports the aggregate failure.
 `--yes` skips the confirmation prompt but does not skip this backup gate.
-An explicit user-data purge skips eligible fresh backups and permanently removes both current sandbox state and existing host-side backups.
+An explicit user-data purge skips eligible fresh backups and attempts to remove both current sandbox state and existing host-side backups.
 
 Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
 It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.

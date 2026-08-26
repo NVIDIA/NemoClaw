@@ -661,7 +661,6 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
