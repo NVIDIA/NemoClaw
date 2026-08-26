@@ -37,20 +37,21 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  // #5967 - a channel that is not flagged requiredAtCreate (Telegram, WhatsApp,
-  // WeChat) still needs its egress preset merged, so policy finalization
-  // persists it and policy-list marks it applied. Discord, Slack, and Teams bind
-  // a credential in their preset, so they are create-time required instead.
+  // #5967 - a channel that is not flagged requiredAtCreate (WhatsApp, WeChat,
+  // Google Chat) still needs its egress preset merged, so policy finalization
+  // persists it and policy-list marks it applied. Discord, Slack, Teams, and
+  // Telegram bind a credential in their preset, so they are create-time required
+  // instead.
   it("merges an enabled channel preset that is not required at create time", () => {
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["wechat"])).toEqual([
       "npm",
-      "telegram",
+      "wechat",
     ]);
-    expect(requiredMessagingChannelPolicyPresets(["telegram"])).toEqual([]);
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "telegram"])).toEqual([
+    expect(requiredMessagingChannelPolicyPresets(["wechat"])).toEqual([]);
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "wechat"])).toEqual([
       "npm",
       "slack",
-      "telegram",
+      "wechat",
     ]);
   });
 

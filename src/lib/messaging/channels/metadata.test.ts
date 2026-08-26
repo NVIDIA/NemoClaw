@@ -165,6 +165,7 @@ describe("built-in messaging channel metadata", () => {
     // the sandbox reads the provider environment once, at boot, so a binding
     // added afterwards never reaches the running agent.
     expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual([
+      "telegram",
       "discord",
       "slack",
       "teams",

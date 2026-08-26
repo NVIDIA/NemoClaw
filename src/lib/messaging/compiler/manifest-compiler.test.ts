@@ -221,7 +221,12 @@ describe("ManifestCompiler", () => {
     expect(plan.agentRender.every((render) => render.handler === "common.staticOutputs")).toBe(
       true,
     );
-    expect(JSON.stringify(plan.agentRender)).toContain("openshell:resolve:env:TELEGRAM_BOT_TOKEN");
+    // The credential placeholder stays out of the agent render: OpenShell injects
+    // it into the sandbox environment, and writing the canonical form into config
+    // is what 0.0.106 refuses once the policy binds the credential.
+    expect(JSON.stringify(plan.agentRender)).not.toContain(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
     expect(plan.buildSteps.map(({ value: _value, ...step }) => step)).toEqual([
       {
         channelId: "discord",
@@ -403,7 +408,9 @@ describe("ManifestCompiler", () => {
       source: "manifest",
     });
     expect(plan.agentRender.map((render) => `${render.channelId}:${render.target}`)).toEqual([
-      "telegram:~/.hermes/.env",
+      // No telegram .env entry: this case configures no allowed IDs, so every
+      // remaining Telegram env line resolves to undefined once the bot-token
+      // line is gone.
       "telegram:~/.hermes/config.yaml",
       "telegram:~/.hermes/config.yaml",
       // No discord .env entry: this case configures no server ID, so every

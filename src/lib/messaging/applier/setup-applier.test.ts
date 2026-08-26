@@ -729,11 +729,13 @@ describe("MessagingSetupApplier", () => {
     expect(calls[1]?.input).toBeTruthy();
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.agents.list).toEqual(["default"]);
+    // No botToken: OpenClaw resolves the default account from the injected
+    // environment, so the config carries no credential placeholder.
     expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
-      botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
       enabled: true,
       groupPolicy: "open",
     });
+    expect(openclawConfig.channels.telegram.accounts.default.botToken).toBeUndefined();
     expect(openclawConfig.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
@@ -899,7 +901,6 @@ describe("MessagingSetupApplier", () => {
     const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
     expect(renderedEnv.split("\n")).toEqual(
       expect.arrayContaining([
-        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USERS=1001,1002",
         "NEMOCLAW_DISCORD_GUILD_IDS=guild-1",
         "DISCORD_ALLOWED_USERS=discord-user-1",
