@@ -45,14 +45,14 @@ export function validateGrowthGuardrailsWorkflowBoundary(
   }
 
   const expectedWorkflow = {
-    name: "Governance / Codebase Growth",
+    name: "Governance / Enforce Codebase Growth Limits",
     on: {
       pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
     },
     permissions: { contents: "read" },
     jobs: {
       "codebase-growth-guardrails": {
-        name: "Enforce limits",
+        name: "codebase-growth-guardrails",
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 5,
         steps: [

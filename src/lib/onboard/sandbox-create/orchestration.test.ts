@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
@@ -88,7 +89,10 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["first", "second"],
+      activateDeferredProviderEffects: (revalidate) => {
+        revalidate("cleaning up providers for sandbox 'alpha'");
+        return ["first", "second"];
+      },
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
       runOpenshell: runOpenshell as never,
       revalidateSandboxIdentity,
@@ -123,6 +127,7 @@ describe("deferred provider effect authority", () => {
       "attaching provider 'second' to sandbox 'alpha'",
     );
     expect(events).toContain("policy: attaching provider 'second' to sandbox 'alpha'");
+    expect(events).toContain("policy: cleaning up providers for sandbox 'alpha'");
     expect(events).not.toContain("sandbox provider attach -g nemoclaw alpha second");
   });
 });
@@ -602,26 +607,26 @@ describe("sandbox create policy authority checks", () => {
     const persistVerifiedPolicy = vi.fn();
     const runVerifiedCreateEffects = vi.fn();
 
-    await expect(
-      runSandboxCreateWithPolicyAuthorityChecks({
-        sandboxName: "alpha",
-        revalidate: vi.fn(),
-        create: async (verifyCreatedSandbox) => {
-          await verifyCreatedSandbox("created");
-          return "created";
-        },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: () => {
-          throw new Error("policy verification failed");
-        },
-        persistVerifiedPolicy,
-        revalidateVerifiedPolicy: vi.fn(),
-        runVerifiedCreateEffects,
-        cleanupTemporarySources: vi.fn(),
-      }),
-    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      captureCreatedSandboxIdentity: () => exactIdentity,
+      revalidateCreatedSandboxIdentity: vi.fn(),
+      verifyCreatedPolicy: () => {
+        throw new PolicyAuthorityRefusalError("policy verification failed");
+      },
+      persistVerifiedPolicy,
+      revalidateVerifiedPolicy: vi.fn(),
+      runVerifiedCreateEffects,
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
 
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).message).toContain("policy verification failed");
     expect(persistVerifiedPolicy).not.toHaveBeenCalled();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
