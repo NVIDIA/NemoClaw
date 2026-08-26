@@ -111,7 +111,8 @@ the candidate validator, push, or open the PR. Report that trusted-base validati
 and require a trusted-base validation environment or maintainer direction before publication.
 
 After the final commit, refresh `origin/main` with the explicit remote-tracking ref update in Step 1
-and run this command before every agent-managed push:
+and complete the final review collection immediately before direct validation. Then run this command
+before every agent-managed push:
 
 ```bash
 npm run validate:pr
@@ -120,7 +121,10 @@ npm run validate:pr
 The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff.
 It compares the branch with the refreshed `origin/main` ref from Step 1.
 Do not push when the command fails or its result is inconclusive.
-If the command changes a tracked file, commit the file and run the command again.
+If the command changes a tracked file, do not push. Commit the file, return to Review-Driven Repair
+Closure, repeat the complete final collection and stable-`headRefOid` check for the new commit,
+reestablish the trusted validation surface, and run the command again. Push only when validation
+after the final collection changes no tracked file.
 Use normal hook results as supplemental evidence. They do not replace this command.
 
 Use `npm run check` for changes to repository-wide validation.

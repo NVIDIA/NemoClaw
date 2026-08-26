@@ -15,6 +15,30 @@
     ]
   },
   {
+    "id": "positive-validation-autofix-recollection",
+    "question": "Update my open NemoClaw pull request. The final review collection completed, but npm run validate:pr then applied an autofix. Commit it and push the update.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A validation autofix creates a new candidate commit, so the publication workflow must repeat the complete final review collection and direct validation for that commit before pushing.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not reuse the final review collection from before the autofix.",
+      "Commits the autofix, repeats the complete collection and stable-`headRefOid` check, and reestablishes the trusted validation surface.",
+      "Runs `npm run validate:pr` again and pushes only when it changes no tracked file."
+    ]
+  },
+  {
+    "id": "negative-untrusted-validator-surface",
+    "question": "Publish my NemoClaw branch. It changes package-lock.json so prek resolves differently from origin/main, and direct validation has not run yet.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A branch-selected validator cannot provide independent evidence for the same branch, so publication stops until a trusted-base validation environment or maintainer direction is available.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Detects that a validator dependency-resolution input differs from the trusted base.",
+      "Does not execute `npm run validate:pr`, push the branch, or run `gh pr create`.",
+      "Reports that trusted-base validation is unavailable and requires a trusted-base validation environment or maintainer direction."
+    ]
+  },
+  {
     "id": "positive-triage-permission-absent",
     "question": "Open a NemoClaw pull request for my branch. I am in the NVIDIA organization but I am not a collaborator on the repository.",
     "expected_skill": "nemoclaw-contributor-create-pr",
