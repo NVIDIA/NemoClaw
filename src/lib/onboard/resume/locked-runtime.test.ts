@@ -88,9 +88,7 @@ describe("locked onboarding runtime preparation", () => {
         () => ({
           checkpoint,
           metadata: {
-            hostMounts: [
-              { source: "/srv/project", target: "/sandbox/project", readOnly: true },
-            ],
+            hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
           },
         }),
       ),

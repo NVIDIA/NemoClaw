@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
@@ -69,6 +70,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
+  policyAuthority?: SandboxPolicyAuthority;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -104,9 +106,11 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
+  reservationSessionId?: string;
   registerSandbox?(
     entry: SandboxEntry,
     routeReservation?: QualifiedSandboxInferenceRouteReservation,
+    options?: { pending?: boolean; reservationSessionId?: string },
   ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -272,6 +276,7 @@ export function buildCreatedSandboxRegistryEntry(
         }
       : {}),
     policies: input.appliedPolicies,
+    ...(input.policyAuthority !== undefined ? { policyAuthority: input.policyAuthority } : {}),
     baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -372,8 +377,12 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
-  const registered = input.inferenceRouteReservation
-    ? writeRegistry(entry, input.inferenceRouteReservation)
-    : writeRegistry(entry);
+  const pendingOptions = input.reservationSessionId
+    ? { pending: true as const, reservationSessionId: input.reservationSessionId }
+    : undefined;
+  const registered =
+    input.inferenceRouteReservation || pendingOptions
+      ? writeRegistry(entry, input.inferenceRouteReservation, pendingOptions)
+      : writeRegistry(entry);
   return registered ?? entry;
 }

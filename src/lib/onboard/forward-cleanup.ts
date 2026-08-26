@@ -48,10 +48,7 @@ export function waitForStoppedForwardPortRelease(
 }
 
 /** Poll a forward ownership/readiness condition within its configured recovery budget. */
-export function waitForForwardRecoveryState(
-  condition: () => boolean,
-  budgetMs: number,
-): boolean {
+export function waitForForwardRecoveryState(condition: () => boolean, budgetMs: number): boolean {
   return waitUntil(condition, {
     deadlineMs: Date.now() + budgetMs,
     initialIntervalMs: FORWARD_RECOVERY_INITIAL_POLL_MS,
@@ -108,6 +105,7 @@ export function bestEffortForwardStopForSandbox(
   runCaptureOpenshell: ForwardListRunner,
   port: string | number,
   sandboxName: string,
+  beforeStop?: () => void,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
   // A runner reports failure either by throwing or by returning null; both
   // mean "list-failed" here. Do not pass either result to getOccupiedPorts,
@@ -131,6 +129,7 @@ export function bestEffortForwardStopForSandbox(
   if (owner && owner !== sandboxName) {
     return "owned-other";
   }
+  beforeStop?.();
   runOpenshell(["forward", "stop", String(port), sandboxName], {
     ignoreError: true,
     suppressOutput: true,

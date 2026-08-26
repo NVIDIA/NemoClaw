@@ -61,9 +61,7 @@ Select checks that apply to the diff.
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
 This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
-in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and complete its
-count-and-approval decision. The shared workflow owns the single count-and-approval state machine
-for the complete PR task. Carry its recorded progress across every routed repair.
+in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and set the repair scope.
 
 Group valid code-changing findings in the repair scope by root cause. Route only finding groups in
 the repair scope to `nemoclaw-contributor-implement-issue`. Do not route a finding group that the
