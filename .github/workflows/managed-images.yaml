@@ -373,7 +373,7 @@ jobs:
           fi
 
   pr-build-and-entrypoint:
-    name: PR / ${{ matrix.display_name }} / Build image and test entrypoint
+    name: PR / ${{ matrix.display_name }} / Build and validate image
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
