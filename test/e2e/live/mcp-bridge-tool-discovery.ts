@@ -8,6 +8,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { runBoundedRetry, type RetryEvidence } from "../fixtures/retry-policy.ts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
 
 export interface AuthenticatedMcpDiscoveryTarget {
@@ -75,6 +76,7 @@ function buildMcpToolDiscoveryDiagnostics(
   status: McpToolDiscoveryStatusJson,
   requests: readonly FakeMcpRequest[],
   expectedSecret: string,
+  retry: RetryEvidence,
 ): Record<string, unknown> {
   return {
     provider: {
@@ -105,6 +107,7 @@ function buildMcpToolDiscoveryDiagnostics(
       truncated: status.toolDiscovery.truncated,
       ...(status.toolDiscovery.detail !== undefined ? { detail: status.toolDiscovery.detail } : {}),
     },
+    retry,
     requests: requests.map((request) => ({
       httpMethod: request.method,
       rpcMethod: request.rpcMethod ?? null,
@@ -434,49 +437,94 @@ export async function assertAuthenticatedMcpToolDiscovery(
     credentialKey?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    reconcileTransportFailure?: () => Promise<void>;
     serverName?: string;
+  },
+  deps: {
+    sleep: (milliseconds: number) => Promise<void>;
+  } = {
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   },
 ): Promise<void> {
   const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
   const serverName = options.serverName ?? "fake";
+  const reconcileTransportFailure = options.reconcileTransportFailure;
   const requestOffset = fakeMcp.requests.length;
-  let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
-  let statusJson: McpToolDiscoveryStatusJson | undefined;
-  for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
-    status = await host.nemoclaw(
-      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
-      {
-        artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          [credentialKey]: options.hostSecret,
+  let reconciliationError: unknown;
+  const retryResult = await runBoundedRetry({
+    operation: "mcp-tool-discovery",
+    owner: "mcp-bridge-live-e2e",
+    idempotence: reconcileTransportFailure ? "reconciled-mutation" : "read-only",
+    maxAttempts: MCP_TOOL_DISCOVERY_ATTEMPTS,
+    run: async (attempt) => {
+      const status = await host.nemoclaw(
+        [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
+        {
+          artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
+          env: {
+            ...buildAvailabilityProbeEnv(),
+            [credentialKey]: options.hostSecret,
+          },
+          redactionValues: [options.hostSecret],
+          timeoutMs: 60_000,
         },
-        redactionValues: [options.hostSecret],
-        timeoutMs: 60_000,
-      },
-    );
-    assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
-    statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
-    if (
-      !shouldRetryMcpToolDiscoveryTransportFailure(
-        statusJson.toolDiscovery,
+      );
+      assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
+      return {
+        status,
+        statusJson: JSON.parse(status.stdout) as McpToolDiscoveryStatusJson,
+      };
+    },
+    classify: (value, error) => {
+      if (error || !value) return { outcome: "failed", failureClass: "deterministic" };
+      if (value.statusJson.toolDiscovery.ok) return { outcome: "passed" };
+      return shouldRetryMcpToolDiscoveryTransportFailure(
+        value.statusJson.toolDiscovery,
         fakeMcp.requests.slice(requestOffset),
-        attempt,
+        1,
       )
-    ) {
-      break;
-    }
-    options.progress.event(
-      "MCP tool discovery transport failed before reaching the fixture; retrying once",
-    );
-    await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
+        ? { outcome: "failed", failureClass: "transient-external" }
+        : { outcome: "failed", failureClass: "deterministic" };
+    },
+    reconcile: reconcileTransportFailure
+      ? async () => {
+          options.progress.event(
+            "MCP tool discovery transport failed before reaching the fixture; restarting the bridge once",
+          );
+          try {
+            await reconcileTransportFailure();
+            return true;
+          } catch (error) {
+            reconciliationError = error;
+            return false;
+          }
+        }
+      : undefined,
+    delayMs: MCP_TOOL_DISCOVERY_RETRY_DELAY_MS,
+    sleep: async (milliseconds) => {
+      if (!reconcileTransportFailure) {
+        options.progress.event(
+          "MCP tool discovery transport failed before reaching the fixture; retrying once",
+        );
+      }
+      await deps.sleep(milliseconds);
+    },
+  });
+  if (!retryResult.value) {
+    throw new Error("MCP tool discovery did not return status");
   }
-  if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
+  const { status, statusJson } = retryResult.value;
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
-    buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
+    buildMcpToolDiscoveryDiagnostics(
+      statusJson,
+      discoveryRequests,
+      options.hostSecret,
+      retryResult.evidence,
+    ),
   );
+  if (reconciliationError) throw reconciliationError;
   expect(statusJson.provider.credentialResolution).toBeUndefined();
   expect(statusJson.toolDiscovery).toMatchObject({
     ok: true,

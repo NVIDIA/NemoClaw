@@ -809,6 +809,12 @@ test("mcp-bridge", {
     artifactPrefix: "openclaw",
     hostSecret: HOST_SECRET,
     progress,
+    reconcileTransportFailure: () =>
+      restartBridgeWithoutHostSecret(
+        host,
+        OPENCLAW_SANDBOX_NAME,
+        "openclaw-tool-discovery-retry",
+      ),
   });
   await assertBridgeInfrastructure(host, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,

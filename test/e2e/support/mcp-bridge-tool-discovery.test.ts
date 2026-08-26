@@ -321,6 +321,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const artifactRoot = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-diagnostics-"));
     artifactRoots.push(artifactRoot);
     const artifacts = new ArtifactSink(artifactRoot);
+    const reconcileTransportFailure = vi.fn().mockResolvedValue(undefined);
 
     await expect(
       assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
@@ -329,6 +330,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
         artifactPrefix: "openclaw-trusted-private",
         hostSecret: EXPECTED_SECRET,
         progress: { event: vi.fn() },
+        reconcileTransportFailure,
       }),
     ).rejects.toThrow();
 
@@ -354,6 +356,22 @@ describe("authenticated MCP tool discovery transport retry", () => {
         tools: [],
         truncated: false,
         detail: "MCP tool discovery request failed",
+      },
+      retry: {
+        schemaVersion: 1,
+        operation: "mcp-tool-discovery",
+        owner: "mcp-bridge-live-e2e",
+        idempotence: "reconciled-mutation",
+        maxAttempts: 2,
+        outcome: "failed-no-retry",
+        attempts: [
+          {
+            attempt: 1,
+            outcome: "failed",
+            failureClass: "deterministic",
+            retryScheduled: false,
+          },
+        ],
       },
       requests: [
         {
@@ -381,6 +399,99 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(diagnostics).not.toContain(EXPECTED_SECRET);
     expect(diagnostics).not.toContain(SESSION_ID);
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);
+    expect(reconcileTransportFailure).not.toHaveBeenCalled();
+  });
+
+  it("restarts the bridge once before retrying a no-request transport failure", async () => {
+    const failedStatus = {
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+      },
+      policy: { registryPresent: true, gatewayPresent: true },
+      adapter: { registered: true },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "MCP tool discovery request failed",
+      },
+    };
+    const passedStatus = {
+      ...failedStatus,
+      toolDiscovery: {
+        ok: true,
+        count: 2,
+        tools: ["fake_echo", "fake_status"],
+        truncated: false,
+      },
+    };
+    const fakeMcp = fakeDiscoveryServer();
+    const host = {
+      nemoclaw: vi
+        .fn()
+        .mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify(failedStatus), stderr: "" })
+        .mockImplementationOnce(async () => {
+          fakeMcp.requests.push(
+            successfulInitialize(),
+            request("notifications/initialized"),
+            request("tools/list"),
+            request("tools/list"),
+          );
+          return { exitCode: 0, stdout: JSON.stringify(passedStatus), stderr: "" };
+        }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = discoveryArtifacts();
+    const progress = { event: vi.fn() };
+    const reconcileTransportFailure = vi.fn().mockResolvedValue(undefined);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    await assertAuthenticatedMcpToolDiscovery(
+      host,
+      fakeMcp,
+      {
+        artifacts,
+        sandboxName: "sandbox",
+        artifactPrefix: "openclaw",
+        hostSecret: EXPECTED_SECRET,
+        progress,
+        reconcileTransportFailure,
+      },
+      { sleep },
+    );
+
+    expect(host.nemoclaw).toHaveBeenCalledTimes(2);
+    expect(reconcileTransportFailure).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1_000);
+    expect(progress.event).toHaveBeenCalledWith(
+      "MCP tool discovery transport failed before reaching the fixture; restarting the bridge once",
+    );
+    expect(artifacts.writeJson).toHaveBeenCalledWith(
+      "openclaw-mcp-tool-discovery-diagnostics.json",
+      expect.objectContaining({
+        retry: {
+          schemaVersion: 1,
+          operation: "mcp-tool-discovery",
+          owner: "mcp-bridge-live-e2e",
+          idempotence: "reconciled-mutation",
+          maxAttempts: 2,
+          outcome: "passed-after-retry",
+          attempts: [
+            {
+              attempt: 1,
+              outcome: "failed",
+              failureClass: "transient-external",
+              reconciled: true,
+              retryScheduled: true,
+            },
+            { attempt: 2, outcome: "passed", retryScheduled: false },
+          ],
+        },
+      }),
+    );
   });
 
   it("retries one generic transport failure before any request reaches the fixture", () => {

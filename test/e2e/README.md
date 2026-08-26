@@ -1275,6 +1275,7 @@ Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
 A main push can queue repository-owned GPU runners or create external resources when a selected target requires them.
 The main-run observer records attempt evidence but does not request broad failed-job reruns.
 Each E2E test owns any bounded operation-level retry policy.
+[`RETRY_INVENTORY.md`](RETRY_INVENTORY.md) records each policy's owner and retry boundary.
 
 `Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
 The job reads these credentials from repository Actions secrets:
