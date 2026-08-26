@@ -127,6 +127,34 @@ describe("shields command flow", () => {
     );
   });
 
+  it("restores restrictive policy when receipt finalization fails (#9833)", () => {
+    const harness = createHarness();
+    harness.policyReceiptFinalizeSpy.mockImplementationOnce(() => {
+      throw new Error("policy receipt persistence failed");
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "receipt finalization coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("policy receipt persistence failed");
+
+    expect(harness.policySetBodies.map((body) => YAML.parse(body).network_policies)).toEqual([
+      {},
+      { test: {} },
+    ]);
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    const stateFiles = fs.readdirSync(path.join(tmpDir, ".nemoclaw", "state"));
+    expect(
+      stateFiles.filter((name) =>
+        /^(shields-openclaw|shields-timer-|shields-transition-openclaw)/u.test(name),
+      ),
+    ).toEqual([]);
+  });
+
   it("shieldsDown preserves an exact managed MCP policy and records its snapshot key (#7952)", {
     timeout: 15_000,
   }, () => {
