@@ -114,14 +114,17 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("recovers an unreachable explicit gateway after its scoped observation (#6114)", async () => {
+  it("recovers a missing explicit gateway after its scoped observation (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
     mocks.captureOpenshell
-      .mockReturnValueOnce({ status: 1, output: "Status: Disconnected" })
+      .mockReturnValueOnce({ status: 1, output: "Unknown gateway 'nemoclaw-12345'." })
       .mockReturnValueOnce({ status: 0, output: "alpha Ready" });
 
     const result = await captureSandboxListWithGatewayPreflightOrExit(context, options);
 
+    expect(result).toEqual({
+      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+    });
     expect(mocks.detectPreflightIssue).toHaveBeenCalledWith(options);
     const expectedRecoveryOptions = {
       gatewayName: "nemoclaw-12345",
@@ -138,6 +141,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
       ["sandbox", "list", "-g", "nemoclaw-12345"],
       expect.anything(),
     );
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

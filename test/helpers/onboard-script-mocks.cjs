@@ -257,6 +257,7 @@ const ONBOARD_SANDBOX_INSPECT = {
     Labels: {
       "openshell.ai/managed-by": "openshell",
       "openshell.ai/sandbox-name": "my-assistant",
+      "openshell.ai/sandbox-namespace": "test-gateway",
     },
     Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     Cmd: [],
@@ -479,7 +480,28 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
   );
   const receipt = require(receiptPath);
+  const apfPolicyRegistration = (input) => {
+    if (options.apfInterceptorRequested !== true) {
+      throw new Error("integration fixture received unexpected APF policy verification");
+    }
+    options.onVerifyCreatedPolicy?.(input);
+    return {
+      policyAuthority: "externally-managed",
+      observedPolicyAuthority: "owner-unknown",
+      policyCreationReceipt: null,
+      policyIdentity: {
+        hash: "fixture-policy",
+        activeVersion: 1,
+      },
+    };
+  };
   Object.defineProperties(receipt, {
+    verifyCreatedApfInterceptorPolicyRegistration: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: apfPolicyRegistration,
+    },
     verifyCreatedSandboxPolicyRegistration: {
       configurable: true,
       enumerable: true,
@@ -615,13 +637,19 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
     const normalized = normalizeCommand(command);
     if (
       finalCommitReleased &&
-      normalized.startsWith("docker ps -a --no-trunc ") &&
-      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
-      normalized.endsWith("--format {{.ID}}")
+      ((normalized.startsWith("docker ps -a --no-trunc ") &&
+        normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+        normalized.endsWith("--format {{.ID}}")) ||
+        normalized ===
+          `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`)
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stdout: Buffer.from(
+          normalized.startsWith("docker inspect ")
+            ? "test-gateway\n"
+            : `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`,
+        ),
         stderr: Buffer.alloc(0),
       };
     }
