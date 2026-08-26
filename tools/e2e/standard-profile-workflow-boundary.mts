@@ -45,6 +45,7 @@ const SKILL_AGENT_UPLOAD_PATH = `${[
 const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
+    displayName: "Catalogue / Standard / ${{ matrix.display_name }}",
     matrix: "catalogue_standard_matrix",
     credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -53,6 +54,7 @@ const PROFILE_JOBS = {
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
+    displayName: "Catalogue / NVIDIA API / ${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_api_matrix",
     credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
@@ -61,6 +63,7 @@ const PROFILE_JOBS = {
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
+    displayName: "Catalogue / NVIDIA Inference / ${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
@@ -69,6 +72,7 @@ const PROFILE_JOBS = {
   },
   "github-read": {
     job: "catalogue-github-read",
+    displayName: "Catalogue / GitHub Read / ${{ matrix.display_name }}",
     matrix: "catalogue_github_read_matrix",
     credentialBoundary: "GitHub read token",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -77,14 +81,10 @@ const PROFILE_JOBS = {
   },
   "brave-nvidia-inference": {
     job: "catalogue-brave-nvidia-inference",
+    displayName: "Catalogue / Brave and NVIDIA Inference / ${{ matrix.display_name }}",
     matrix: "catalogue_brave_nvidia_inference_matrix",
     credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: [
-      "BRAVE_API_KEY",
-      "DOCKERHUB_TOKEN",
-      "DOCKERHUB_USERNAME",
-      "NVIDIA_INFERENCE_API_KEY",
-    ],
+    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
     githubToken: false,
     maxParallel: 2,
   },
@@ -132,7 +132,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
-    if (job.name !== "${{ matrix.display_name }}") {
+    if (job.name !== contract.displayName) {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
@@ -265,7 +265,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
   }
-  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+  if (runJob.name !== "Run / ${{ inputs.credential_boundary }}") {
     errors.push("standard E2E profile must show the planned credential boundary");
   }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
@@ -470,9 +470,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !managedCatalogRun.includes(
       "managed-image catalog source identity does not match the candidate",
     ) ||
-    !managedCatalogRun.includes(
-      "managed-image catalog release does not match the restored CLI",
-    ) ||
+    !managedCatalogRun.includes("managed-image catalog release does not match the restored CLI") ||
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
     managedCatalogRun.includes(".source.release = $release") ||
@@ -489,11 +487,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     cloudflared.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(cloudflared.env), {
       CLOUDFLARED_VERSION: "2026.6.1",
-      CLOUDFLARED_DEB_SHA256:
-        "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+      CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
     }) ||
     !cloudflaredRun.includes(
-      'https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb',
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
     ) ||
     !cloudflaredRun.includes("sha256sum -c -") ||
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
@@ -596,8 +593,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !==
-      "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

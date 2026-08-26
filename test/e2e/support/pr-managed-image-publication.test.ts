@@ -58,7 +58,7 @@ function run(overrides: Record<string, unknown> = {}): unknown {
         id: 32144654845,
         run_attempt: 1,
         workflow_id: WORKFLOW_ID,
-        name: "Images / Build, Test, and Publish Managed Images",
+        name: "Images / Managed Images",
         path: ".github/workflows/managed-images.yaml",
         event: "pull_request",
         head_sha: CANDIDATE_SHA,
