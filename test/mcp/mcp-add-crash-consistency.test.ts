@@ -61,7 +61,14 @@ const providerVersion = () => Number.parseInt(marked("provider-version") ? fs.re
 // OpenShell provider resource versions and child credential revisions are
 // separate identities. Keep the fixture values unrelated so readiness cannot
 // derive one from the other.
-const childCredentialRevision = () => "v" + (4067750153477477213n + BigInt(providerVersion())).toString();
+const initialChildCredentialRevision = "v4067750153477477214";
+const childCredentialRevision = () => marked("child-credential-revision")
+  ? fs.readFileSync(marker("child-credential-revision"), "utf8").trim()
+  : initialChildCredentialRevision;
+const setChildCredentialRevision = (revision) => fs.writeFileSync(marker("child-credential-revision"), revision, { mode: 0o600 });
+const advanceChildCredentialRevision = () => setChildCredentialRevision(
+  "v" + (BigInt(childCredentialRevision().slice(1)) + 1n).toString(),
+);
 const setProviderVersion = (version) => fs.writeFileSync(marker("provider-version"), String(version), { mode: 0o600 });
 const providerPresentAtStart = marked("provider");
 const providerId = "11111111-2222-4333-8444-555555555555";
@@ -125,7 +132,11 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (!marked("policy")) {
       return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
     }
-    if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1], setProviderVersion(1);
+    if (args[1] === "create") {
+      observedProviderName = args[args.indexOf("--name") + 1];
+      setProviderVersion(1);
+      setChildCredentialRevision(initialChildCredentialRevision);
+    }
     if (args[1] === "update") {
       const isCredentialUpdate =
         args.length === 5 &&
@@ -139,6 +150,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       setProviderVersion(providerVersion() + 1);
       if (isCredentialUpdate) {
         credentialUpdatedThisProcess = true;
+        advanceChildCredentialRevision();
         mark("updated");
       }
       if (
@@ -264,10 +276,10 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
         ? "absent"
         : crashAfter === "credential-projection-unstable"
           ? credentialObservationAfterRepublishCountThisProcess % 2 === 1
-            ? "v4067750153477477214"
+            ? initialChildCredentialRevision
             : childCredentialRevision()
           : credentialObservationAfterRepublishCountThisProcess === 1
-            ? "v4067750153477477214"
+            ? initialChildCredentialRevision
             : childCredentialRevision();
     if (credentialRepublishCount > 0) {
       fs.appendFileSync(marker("credential-observation-log"), observation + "\n", { mode: 0o600 });
@@ -730,7 +742,10 @@ describe("MCP add crash consistency", () => {
         "v4067750153477477215",
       ]);
       expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).toBe(
-        "v4067750153477477215",
+        fs.readFileSync(path.join(home, "child-credential-revision.marker"), "utf8"),
+      );
+      expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).not.toBe(
+        `v${fs.readFileSync(path.join(home, "provider-version.marker"), "utf8")}`,
       );
       const postAddStatus = JSON.parse(
         fs.readFileSync(path.join(home, "post-add-status.marker"), "utf8"),
