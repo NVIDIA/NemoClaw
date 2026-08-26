@@ -45,6 +45,20 @@ const STOCK_REPLY = {
   as_of: "2026-08-17T15:59:00Z",
 } satisfies NvdaPersonalStockReply;
 const DAY_MS = 24 * 60 * 60_000;
+const STOCK_PROMPT_REQUIREMENTS =
+  `If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.
+Never combine a price from one result with a timestamp from another result.
+Select exactly one complete result and ignore every unselected result when constructing the reply.
+If no result contains all three values, do not return success.
+Never add a clock time or timezone to a date-only value.
+interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601 without applying exchange hours, timezone labels, or daylight-saving rules.
+source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string
+Copy source_timestamp character for character from the selected result before deriving as_of.
+Do not reconstruct source_timestamp from as_of, a nearby field, market hours, or date arithmetic.
+check in this order that source_timestamp appears exactly in the selected result, the same result contains the selected NVDA price, and as_of represents source_timestamp exactly.
+If any check fails, discard that result and fetch a different machine-readable source instead of returning success.`.split(
+    "\n",
+  );
 
 function stockPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -285,32 +299,12 @@ async function expectAggregateStockFailure(
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
-  it("requires one stock result to contain the price and quote timestamp (#10330)", () => {
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "Never combine a price from one result with a timestamp from another result.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "Select exactly one complete result and ignore every unselected result when constructing the reply.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "If no result contains all three values, do not return success.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "Never add a clock time or timezone to a date-only value.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601 without applying exchange hours, timezone labels, or daylight-saving rules.",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string",
-    );
-    expect(PERSONAL_STOCK_PROMPT).toContain(
-      "confirm that source_timestamp appears exactly in the selected result; for a Unix epoch, reverse-convert as_of to the same unit and require exact integer equality.",
-    );
-  });
+  it.each(STOCK_PROMPT_REQUIREMENTS)(
+    "includes required stock prompt instruction: %s (#10330)",
+    (instruction) => {
+      expect(PERSONAL_STOCK_PROMPT).toContain(instruction);
+    },
+  );
 
   it("OpenClaw JSON parser accepts framed agent payloads", () => {
     expect(
@@ -938,12 +932,15 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
-    ["a malformed", "2026-08-17T15:59:00Z-invalid"],
-    ["an impossible", "2026-02-30"],
-    ["a missing", undefined],
-  ])("rejects a stock reply with %s source timestamp (#10330)", (_reason, source_timestamp) => {
+    ["a malformed source timestamp", "2026-08-17T15:59:00Z-invalid", STOCK_REPLY.as_of],
+    ["an impossible source timestamp", "2026-02-30", STOCK_REPLY.as_of],
+    ["a missing source timestamp", undefined, STOCK_REPLY.as_of],
+    ["a shifted Unix epoch", "1787688000", "2026-08-25T21:00:00Z"],
+    ["a mismatched compact date", "20260817", "2026-08-18"],
+    ["a shifted ISO timestamp", STOCK_REPLY.as_of, "2026-08-17T16:00:00Z"],
+  ])("rejects a stock reply with %s (#10330)", (_reason, source_timestamp, as_of) => {
     expect(
-      parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_timestamp })),
+      parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_timestamp, as_of })),
     ).toBeNull();
   });
 

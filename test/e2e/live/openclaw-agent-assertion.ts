@@ -220,10 +220,13 @@ Return these fields:
 - source_url: the exact URL for the paired web_fetch call
 - source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string
 - as_of: the ISO 8601 representation of source_timestamp
+Copy source_timestamp character for character from the selected result before deriving as_of. Treat a timestamp as returned only when that exact token occurs in the selected result.
+Do not reconstruct source_timestamp from as_of, a nearby field, market hours, or date arithmetic.
 Copy an extended ISO 8601 source date or timestamp exactly. Convert a compact YYYYMMDD source date to YYYY-MM-DD.
 If a source value has a calendar date but no clock time, return YYYY-MM-DD. Never add a clock time or timezone to a date-only value.
 For a Unix-epoch field such as regularMarketTime, interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601 without applying exchange hours, timezone labels, or daylight-saving rules.
-Before replying, confirm that source_timestamp appears exactly in the selected result; for a Unix epoch, reverse-convert as_of to the same unit and require exact integer equality.
+Before replying, check in this order that source_timestamp appears exactly in the selected result, the same result contains the selected NVDA price, and as_of represents source_timestamp exactly. For a Unix epoch, reverse-convert as_of to the same unit and require exact integer equality.
+If any check fails, discard that result and fetch a different machine-readable source instead of returning success.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(

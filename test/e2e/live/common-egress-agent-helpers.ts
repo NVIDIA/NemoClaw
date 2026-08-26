@@ -285,6 +285,25 @@ function hasValidCalendarDate(value: string): boolean {
   return month >= 1 && month <= 12 && day >= 1 && day <= (daysInMonth[month - 1] ?? 0);
 }
 
+function sourceTimestampRepresentsAsOf(sourceTimestamp: string, asOf: string): boolean {
+  if (!hasValidCalendarDate(sourceTimestamp) || !hasValidCalendarDate(asOf)) return false;
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs)) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(sourceTimestamp)) return asOf === sourceTimestamp;
+  if (/^\d{8}$/u.test(sourceTimestamp)) {
+    return (
+      asOf ===
+      `${sourceTimestamp.slice(0, 4)}-${sourceTimestamp.slice(4, 6)}-${sourceTimestamp.slice(6, 8)}`
+    );
+  }
+  if (/^(?:\d{10}|\d{13})$/u.test(sourceTimestamp)) {
+    const epochMs = Number(sourceTimestamp) * (sourceTimestamp.length === 10 ? 1_000 : 1);
+    return Number.isFinite(epochMs) && epochMs === asOfMs;
+  }
+  const sourceMs = Date.parse(sourceTimestamp);
+  return Number.isFinite(sourceMs) && sourceMs === asOfMs;
+}
+
 /**
  * Reduce OpenClaw session and trajectory JSONL to bounded proof that one
  * successful direct web_fetch result supports the expected quote. Fetched
@@ -462,30 +481,18 @@ export function reduceOpenClawToolEvidence(
     return false;
   };
   const timestampMatches = (text: string, sourceTimestamp: string, asOf: string): boolean => {
-    if (!hasValidCalendarDate(sourceTimestamp) || !hasValidCalendarDate(asOf)) return false;
-    const asOfMs = Date.parse(asOf);
-    if (!Number.isFinite(asOfMs)) return false;
+    if (!sourceTimestampRepresentsAsOf(sourceTimestamp, asOf)) return false;
     if (/^\d{4}-\d{2}-\d{2}$/u.test(sourceTimestamp)) {
       const dateTokenMatches = (candidate: string): boolean =>
         new RegExp(`(?:^|[^0-9])${candidate}(?![0-9]|T|\\s+\\d{2}:)`, "u").test(text);
-      return asOf === sourceTimestamp && dateTokenMatches(sourceTimestamp);
+      return dateTokenMatches(sourceTimestamp);
     }
     if (/^\d{8}$/u.test(sourceTimestamp)) {
-      const sourceDate = `${sourceTimestamp.slice(0, 4)}-${sourceTimestamp.slice(4, 6)}-${sourceTimestamp.slice(6, 8)}`;
-      return (
-        asOf === sourceDate && new RegExp(`(?:^|[^0-9])${sourceTimestamp}(?![0-9])`, "u").test(text)
-      );
+      return new RegExp(`(?:^|[^0-9])${sourceTimestamp}(?![0-9])`, "u").test(text);
     }
     if (/^(?:\d{10}|\d{13})$/u.test(sourceTimestamp)) {
-      const epochMs = Number(sourceTimestamp) * (sourceTimestamp.length === 10 ? 1_000 : 1);
-      return (
-        Number.isFinite(epochMs) &&
-        epochMs === asOfMs &&
-        new RegExp(`(?:^|\\D)${sourceTimestamp}(?!\\d)`, "u").test(text)
-      );
+      return new RegExp(`(?:^|\\D)${sourceTimestamp}(?!\\d)`, "u").test(text);
     }
-    const sourceMs = Date.parse(sourceTimestamp);
-    if (!Number.isFinite(sourceMs) || sourceMs !== asOfMs) return false;
     const escapedSource = sourceTimestamp.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     return new RegExp(`(?:^|[^0-9A-Za-z_.:+-])${escapedSource}(?![0-9A-Za-z_.:+-])`, "u").test(
       text,
@@ -756,6 +763,7 @@ export function buildOpenClawToolEvidenceReducerScript(
     '"use strict"',
     'const fs = require("node:fs")',
     hasValidCalendarDate.toString(),
+    sourceTimestampRepresentsAsOf.toString(),
     `const reduce = ${reduceOpenClawToolEvidence.toString()}`,
     `const expectedStock = ${JSON.stringify(expectedStock)}`,
     "const [sessionPath, trajectoryPath] = process.argv.slice(1)",
@@ -977,7 +985,8 @@ export function parseNvdaPersonalStockReply(raw: string): NvdaPersonalStockReply
           parsed.as_of,
         ) &&
         hasValidCalendarDate(parsed.as_of) &&
-        Number.isFinite(Date.parse(parsed.as_of))
+        Number.isFinite(Date.parse(parsed.as_of)) &&
+        sourceTimestampRepresentsAsOf(parsed.source_timestamp, parsed.as_of)
       ) {
         return parsed as NvdaPersonalStockReply;
       }
