@@ -291,59 +291,70 @@ const { createSandbox } = require(${onboardPath});
 }
 
 describe("onboard prepared DCode build context", () => {
-  it("creates from the supplied context without restaging or repatching it (#6195)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("create");
+  it(
+    "creates from the supplied context without restaging or repatching it (#6195)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("create");
 
-    assert.equal(result.errorMessage, null);
-    assert.equal(result.stageCalls, 0);
-    assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
-    assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
-    assert.equal(result.cleanupCalls, 1);
-    assert.ok(
-      result.commands.some((command) =>
-        command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
-      ),
-      `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
-    );
-    assert.ok(
-      result.registerCalls.some(
-        (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
-      ),
-      "expected the prepared build ID to determine the registered image tag",
-    );
-  });
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.stageCalls, 0);
+      assert.equal(result.patchCalls, 0);
+      assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
+      assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
+      assert.equal(result.cleanupCalls, 1);
+      assert.ok(
+        result.commands.some((command) =>
+          command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
+        ),
+        `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
+      );
+      assert.ok(
+        result.registerCalls.some(
+          (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
+        ),
+        "expected the prepared build ID to determine the registered image tag",
+      );
+    },
+  );
 
+  it(
+    "passes the seconds-based sleep helper to the Docker GPU patch during prepared-context onboarding (#9218)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("create");
 
-  it("passes the seconds-based sleep helper to the Docker GPU patch during prepared-context onboarding (#9218)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("create");
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.patchSleepUsesSeconds, true);
+    },
+  );
 
-    assert.equal(result.errorMessage, null);
-    assert.equal(result.patchSleepUsesSeconds, true);
-  });
+  it(
+    "rejects a prepared context combined with a custom Dockerfile (#6195)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("custom-dockerfile");
 
-  it("rejects a prepared context combined with a custom Dockerfile (#6195)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("custom-dockerfile");
-
-    assert.match(
-      result.errorMessage ?? "",
-      /prepared DCode build context cannot be used for this sandbox target/i,
-    );
-    assert.equal(result.stageCalls, 0);
-    assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, []);
-    assert.deepEqual(result.resolvedBuildIds, []);
-    assert.equal(result.cleanupCalls, 0);
-    assert.equal(
-      result.commands.some((command) => command.includes("sandbox create")),
-      false,
-    );
-    assert.deepEqual(result.registerCalls, []);
-  });
+      assert.match(
+        result.errorMessage ?? "",
+        /prepared DCode build context cannot be used for this sandbox target/i,
+      );
+      assert.equal(result.stageCalls, 0);
+      assert.equal(result.patchCalls, 0);
+      assert.deepEqual(result.planFromRefs, []);
+      assert.deepEqual(result.resolvedBuildIds, []);
+      assert.equal(result.cleanupCalls, 0);
+      assert.equal(
+        result.commands.some((command) => command.includes("sandbox create")),
+        false,
+      );
+      assert.deepEqual(result.registerCalls, []);
+    },
+  );
 });

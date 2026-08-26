@@ -778,14 +778,8 @@ describe("blueprint identity wrapper", () => {
     );
     expectPolicyBoundaryImmediatelyBefore(commands, "provider delete acme-okta-runtime");
     expectPolicyBoundaryImmediatelyBefore(commands, "provider delete test-provider");
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "sandbox stop -g test-gateway test-sandbox",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "sandbox remove -g test-gateway test-sandbox",
-    );
+    expectPolicyBoundaryImmediatelyBefore(commands, "sandbox stop -g test-gateway test-sandbox");
+    expectPolicyBoundaryImmediatelyBefore(commands, "sandbox remove -g test-gateway test-sandbox");
     expect(commands.indexOf("provider delete test-provider")).toBeLessThan(
       commands.indexOf("sandbox remove -g test-gateway test-sandbox"),
     );
@@ -905,10 +899,7 @@ describe("blueprint identity wrapper", () => {
       rollbackCommands,
       "sandbox provider detach test-sandbox acme-okta-runtime",
     );
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
-      "provider delete acme-okta-runtime",
-    );
+    expectPolicyBoundaryImmediatelyBefore(rollbackCommands, "provider delete acme-okta-runtime");
     expectPolicyBoundaryImmediatelyBefore(
       rollbackCommands,
       "sandbox stop -g test-gateway test-sandbox",

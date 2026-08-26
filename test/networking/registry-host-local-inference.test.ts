@@ -156,11 +156,15 @@ describe("registry host-local inference authority", () => {
       hostLocalInferenceProvenance: provenance,
     } as const;
     const verified = prepareVerifiedCreate("llama-clone", route);
-    registry.registerSandbox({
-      name: "llama-clone",
-      ...route,
-      ...verified.registration,
-    }, verified.reservation, { verifiedCreate: verified });
+    registry.registerSandbox(
+      {
+        name: "llama-clone",
+        ...route,
+        ...verified.registration,
+      },
+      verified.reservation,
+      { verifiedCreate: verified },
+    );
 
     expect(registry.getSandbox("llama-clone")).toMatchObject({
       hostLocalInferenceReceipt: receipt,
@@ -197,16 +201,18 @@ describe("registry host-local inference authority", () => {
     const verified = prepareVerifiedCreate("llama-drift", route);
 
     expect(() =>
-      registry.registerSandbox({
-        name: "llama-drift",
-        ...route,
-        ...verified.registration,
-        ...drift,
-      }, verified.reservation, { verifiedCreate: verified }),
+      registry.registerSandbox(
+        {
+          name: "llama-drift",
+          ...route,
+          ...verified.registration,
+          ...drift,
+        },
+        verified.reservation,
+        { verifiedCreate: verified },
+      ),
     ).toThrow(
-      label === "gateway port"
-        ? /policy creation receipt does not match/u
-        : /reservation changed/u,
+      label === "gateway port" ? /policy creation receipt does not match/u : /reservation changed/u,
     );
   });
 
@@ -228,31 +234,39 @@ describe("registry host-local inference authority", () => {
     };
     const ownerVerified = prepareVerifiedCreate("llama-owner-drift", route);
     expect(() =>
-      registry.registerSandbox({
-        name: "llama-owner-drift",
-        ...route,
-        ...ownerVerified.registration,
-        hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-          "different-owner",
-          receipt,
-        ),
-      }, ownerVerified.reservation, { verifiedCreate: ownerVerified }),
+      registry.registerSandbox(
+        {
+          name: "llama-owner-drift",
+          ...route,
+          ...ownerVerified.registration,
+          hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+            "different-owner",
+            receipt,
+          ),
+        },
+        ownerVerified.reservation,
+        { verifiedCreate: ownerVerified },
+      ),
     ).toThrow(/reservation changed/);
 
     fs.rmSync(regFile, { force: true });
     const receiptVerified = prepareVerifiedCreate("llama-receipt-drift", route);
     const changedReceipt = serializedLlamaCppHostLocalInferenceReceipt("mxc");
     expect(() =>
-      registry.registerSandbox({
-        name: "llama-receipt-drift",
-        ...route,
-        ...receiptVerified.registration,
-        hostLocalInferenceReceipt: changedReceipt,
-        hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-          "llama-owner",
-          changedReceipt,
-        ),
-      }, receiptVerified.reservation, { verifiedCreate: receiptVerified }),
+      registry.registerSandbox(
+        {
+          name: "llama-receipt-drift",
+          ...route,
+          ...receiptVerified.registration,
+          hostLocalInferenceReceipt: changedReceipt,
+          hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+            "llama-owner",
+            changedReceipt,
+          ),
+        },
+        receiptVerified.reservation,
+        { verifiedCreate: receiptVerified },
+      ),
     ).toThrow(/reservation changed/);
   });
 

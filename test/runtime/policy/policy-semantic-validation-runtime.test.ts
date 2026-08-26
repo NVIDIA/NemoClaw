@@ -12,7 +12,12 @@ import {
   SANDBOX_IDENTITY,
 } from "../../helpers/managed-policy-receipt-fixture";
 
-const { getSandbox, inspectOpenShellSandboxIdentityFingerprint, inspectSandboxPolicyAuthority, runCapture } = vi.hoisted(() => ({
+const {
+  getSandbox,
+  inspectOpenShellSandboxIdentityFingerprint,
+  inspectSandboxPolicyAuthority,
+  runCapture,
+} = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
   inspectSandboxPolicyAuthority: vi.fn(),

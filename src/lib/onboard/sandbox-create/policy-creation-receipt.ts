@@ -19,6 +19,8 @@ import {
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
 } from "../../policy/merge";
+import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
+import { isOpenShellNativeGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
 import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "../types";
 
 export interface CreatedSandboxPolicyReceiptInput {
@@ -28,6 +30,7 @@ export interface CreatedSandboxPolicyReceiptInput {
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly policySourcePath: string;
+  readonly route: SelectedDockerGpuRoute;
 }
 
 export interface CreatedSandboxPolicyReceiptDeps {
@@ -124,7 +127,13 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   ) {
     refusal("the effective policy identity changed during receipt verification");
   }
-  if (!openShellPolicyValuesEqual(intendedPolicy, liveBasePolicy)) {
+  if (
+    !openShellPolicyValuesEqual(intendedPolicy, liveBasePolicy) &&
+    !(
+      input.route === "native" &&
+      isOpenShellNativeGpuBaselineEnrichment(intendedPolicy, liveBasePolicy)
+    )
+  ) {
     refusal("the live base policy does not match the policy supplied by this create transaction");
   }
   try {

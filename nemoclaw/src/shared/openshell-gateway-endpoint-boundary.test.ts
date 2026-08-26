@@ -50,4 +50,15 @@ describe("OpenShell managed gateway endpoint boundary", () => {
       "did not report one gateway endpoint",
     );
   });
+
+  it.each(["", "not-a-url"])(
+    "rejects an empty or malformed gateway endpoint %j (#9833)",
+    (endpoint) => {
+      const output = `Gateway endpoint: ${endpoint}\n`;
+      expect(() => parseSingleManagedGatewayEndpointPort(output)).toThrow(
+        "invalid gateway endpoint",
+      );
+      expect(classifyManagedGatewayEndpointBinding([output], 8080)).toBe("mismatch");
+    },
+  );
 });

@@ -141,8 +141,11 @@ export async function completeHermesPortableSandboxRegistration(input: {
  * immediately after OpenShell returns the exact created identity and before provider,
  * credential, service, runtime, registry, or completion effects.
  */
-export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidence, Result = Created>(
-  input: {
+export async function runSandboxCreateWithPolicyAuthorityChecks<
+  Created,
+  Evidence,
+  Result = Created,
+>(input: {
   readonly sandboxName: string;
   readonly revalidate: (sandboxIsLive: boolean, operation: string) => void;
   readonly create: (verifyCreatedSandbox: (created: Created) => Promise<string>) => Promise<Result>;
@@ -166,8 +169,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidenc
     evidence: Evidence,
   ) => Promise<void>;
   readonly cleanupTemporarySources: () => void;
-  },
-): Promise<Result> {
+}): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
   let cleanupAttempted = false;
@@ -399,9 +401,7 @@ function createProviderEffectBoundary(input: {
   readonly gatewayName: string;
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
-  readonly runVerifiedSandboxCreateEffects:
-    | import("../types").VerifiedSandboxCreateEffects
-    | null;
+  readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
   readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
@@ -456,10 +456,7 @@ function createProviderEffectBoundary(input: {
         {
           runOpenshell: input.runOpenshell,
           revalidateSandboxIdentity: (operation) =>
-            input.revalidateSandboxIdentity(
-              context.lifecycleLiveIdentityFingerprint,
-              operation,
-            ),
+            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation),
         },
       );
     },
@@ -1516,7 +1513,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       return policySourcePath;
     };
-    const revalidateCreatedSandboxIdentity = (expectedIdentity: string, operation: string): void => {
+    const revalidateCreatedSandboxIdentity = (
+      expectedIdentity: string,
+      operation: string,
+    ): void => {
       sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
         { sandboxName, gatewayName: GATEWAY_NAME },
         {
@@ -1576,6 +1576,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         lifecycleGeneration: createdSandboxLifecycle.generation,
         lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
         policySourcePath: policySourcePathForRoute(boundary.route),
+        route: boundary.route,
         operation,
         registration: boundary.registration,
       });
@@ -1590,9 +1591,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
       hermesPortableReadyRunner?: import("../sandbox-gpu-create-flow").HermesPortableReadyRunner,
       createWorkingDirectory?: string,
-      runDeferredProviderEffects?: (
-        context: VerifiedSandboxCreateEffectsContext,
-      ) => Promise<void>,
+      runDeferredProviderEffects?: (context: VerifiedSandboxCreateEffectsContext) => Promise<void>,
     ) => {
       admittedCreateReservation = admitCreateReservation();
       return runSandboxCreateWithPolicyAuthorityChecks<
@@ -1616,6 +1615,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             policySourcePath: policySourcePathForRoute(identity.route),
+            route: identity.route,
             plannedAuthority: resolvedPolicyAuthority,
             operation: `verify effective policy for sandbox '${sandboxName}'`,
           });

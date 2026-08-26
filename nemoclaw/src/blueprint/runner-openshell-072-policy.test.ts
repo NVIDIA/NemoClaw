@@ -1205,7 +1205,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         : defaultCommandResult(args),
     );
 
-    await actionReconcile(runId);
+    await main(["reconcile", "--run-id", runId]);
     expect(JSON.parse(store.get(`${stateDir}/plan.json`)?.content ?? "{}")).toMatchObject({
       policy_authority: {
         policy_creation_receipt: {

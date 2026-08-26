@@ -288,6 +288,19 @@ describe("sandbox policy authority boundary", () => {
         network_policies: { missing: { allow: true } },
       }),
     ).toThrow(/missing entries "missing"/u);
+
+    expect(() =>
+      assertPolicyRequirementContainment(
+        { ...inspection, authority: "invalid" as never },
+        { network_policies: {} },
+      ),
+    ).toThrow(/observed OpenShell policy authority is invalid/u);
+    expect(() =>
+      assertExternalPolicyRequirementContainment(
+        { ...inspection, authority: "owner-unknown" },
+        { network_policies: {} },
+      ),
+    ).toThrow(/observed OpenShell policy authority is unknown/u);
   });
 
   it("accepts only a complete secret-free receipt for the exact live policy", () => {

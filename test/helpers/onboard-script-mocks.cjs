@@ -123,9 +123,7 @@ function createStatefulMessagingProviderRunner({
     if (providerAction === "profile") {
       const profileActionIndex = providerIndex + 2;
       const profileAction =
-        args[profileActionIndex] === "-g"
-          ? args[profileActionIndex + 2]
-          : args[profileActionIndex];
+        args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
       if (profileAction === "export") {
         return messagingProfileImported
           ? { status: 0, stdout: messagingProfile, stderr: "" }
@@ -274,15 +272,14 @@ const ONBOARD_SANDBOX_INSPECT = {
 function isOpenClawSecurityInventoryProbe(command) {
   const commandArgs = Array.isArray(command) ? command.map(String) : [];
   const dockerArgs = commandArgs[0] === "docker" ? commandArgs.slice(1) : commandArgs;
-  const matches = (
+  const matches =
     dockerArgs.length === 14 &&
     OPENCLAW_SECURITY_INVENTORY_PROBE_PREFIX.every(
       (expected, index) => dockerArgs[index] === expected,
     ) &&
     dockerArgs[11].length > 0 &&
     dockerArgs[12] === "-c" &&
-    dockerArgs[13] === OPENCLAW_SECURITY_INVENTORY_PROBE
-  );
+    dockerArgs[13] === OPENCLAW_SECURITY_INVENTORY_PROBE;
   return matches;
 }
 
@@ -319,10 +316,7 @@ function mockOnboardRunCapture(command, options = {}) {
   ) {
     return `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\n${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
   }
-  if (
-    normalized ===
-    `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`
-  ) {
+  if (normalized === `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
     return JSON.stringify([ONBOARD_SANDBOX_INSPECT]);
   }
   if (isOpenClawSecurityInventoryProbe(command)) {
@@ -433,9 +427,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     return structuredClone(pendingEntry);
   };
 
-  const registryPath = require.resolve(
-    path.resolve(__dirname, "../../src/lib/state/registry.ts"),
-  );
+  const registryPath = require.resolve(path.resolve(__dirname, "../../src/lib/state/registry.ts"));
   const registryFixture = {
     ...registry,
     qualifyPendingSandboxCreateReservation,
@@ -493,24 +485,24 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       enumerable: true,
       writable: true,
       value: (input) => {
-    if (input.plannedAuthority !== "nemoclaw-managed") {
-      throw new Error("integration fixture supports only managed sandbox creation");
-    }
-    return {
-      policyAuthority: "nemoclaw-managed",
-      observedPolicyAuthority: "owner-unknown",
-      policyCreationReceipt: {
-        schemaVersion: 1,
-        origin: "sandbox-create",
-        gatewayName: input.gatewayName,
-        gatewayPort: input.gatewayPort,
-        sandboxName: input.sandboxName,
-        lifecycleGeneration: input.lifecycleGeneration,
-        sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-        policyHash: "fixture-policy",
-        policyVersion: 1,
-      },
-    };
+        if (input.plannedAuthority !== "nemoclaw-managed") {
+          throw new Error("integration fixture supports only managed sandbox creation");
+        }
+        return {
+          policyAuthority: "nemoclaw-managed",
+          observedPolicyAuthority: "owner-unknown",
+          policyCreationReceipt: {
+            schemaVersion: 1,
+            origin: "sandbox-create",
+            gatewayName: input.gatewayName,
+            gatewayPort: input.gatewayPort,
+            sandboxName: input.sandboxName,
+            lifecycleGeneration: input.lifecycleGeneration,
+            sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+            policyHash: "fixture-policy",
+            policyVersion: 1,
+          },
+        };
       },
     },
     revalidateCreatedSandboxPolicyRegistration: {
@@ -535,8 +527,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const sandboxName = options.sandboxName || entry.name;
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
-  const lifecycleGeneration =
-    options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
+  const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
   const sandboxId = options.sandboxId || "fixture-created-sandbox";
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
@@ -567,9 +558,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
 
 function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
-  const client = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"),
-  );
+  const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
   client.captureOpenshellCommand = (binary, args, options = {}) => {
     const stdout = String(
       runner.runCapture([binary, ...args], {
@@ -720,8 +709,7 @@ function mockManagedImageCatalog() {
               release,
               cohort: "ghrun-9068-1",
             },
-            startupProfileContractVersion:
-              contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+            startupProfileContractVersion: contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
             capabilityContractVersion: contract.MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
           },
         ];
@@ -738,10 +726,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker.ts"),
   );
   const authorityStore = require(
-    path.resolve(
-      __dirname,
-      "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts",
-    ),
+    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
   );
   const sandboxIdentity = require(
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),

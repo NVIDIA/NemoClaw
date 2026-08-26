@@ -245,10 +245,14 @@ function runPolicyMutation({ driver, policySet, basePolicy }: PolicyMutationRun)
 
   const openshellStubPath = path.join(scratchDir, "openshell");
   const appliedPolicyPath = path.join(scratchDir, "applied-policy.yaml");
-  fs.writeFileSync(openshellStubPath, buildOpenshellStub(policySet, basePolicy, appliedPolicyPath), {
-    encoding: "utf-8",
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    openshellStubPath,
+    buildOpenshellStub(policySet, basePolicy, appliedPolicyPath),
+    {
+      encoding: "utf-8",
+      mode: 0o755,
+    },
+  );
 
   const driverPath = path.join(scratchDir, "driver.js");
   fs.writeFileSync(driverPath, driver, "utf-8");
