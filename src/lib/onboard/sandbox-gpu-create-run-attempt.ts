@@ -708,8 +708,8 @@ export function createSandboxGpuCreateAttemptRunner(
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
     }
-    revalidatePostCreateEffect(`reconnect sandbox supervisor for '${input.sandboxName}'`);
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
+    revalidatePostCreateEffect(`reconnect sandbox supervisor for '${input.sandboxName}'`);
     console.log("  Waiting for sandbox to become ready...");
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
