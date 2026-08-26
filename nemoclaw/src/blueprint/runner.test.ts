@@ -628,9 +628,22 @@ describe("runner", () => {
     });
 
     it("compensates an owned inference provider when inference set fails (#6703)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(args, ["inference", "set"], "inference route rejected"),
-      );
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args.join(" ") === "provider get my-provider") {
+          return {
+            exitCode: 0,
+            stdout: [
+              "Name: my-provider",
+              "Type: openai",
+              "Credential keys: <none>",
+              "Config keys: OPENAI_BASE_URL",
+              "",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return resultForCommandFailure(args, ["inference", "set"], "inference route rejected");
+      });
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,

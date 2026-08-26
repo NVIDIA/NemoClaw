@@ -115,19 +115,23 @@ export function gatewayStatusResult(gateway = "test-gateway"): CommandResult {
 }
 
 /** The stable endpoint binding reported by `openshell gateway info`. */
-export function gatewayInfoResult(port = 8080): CommandResult {
+export function gatewayInfoResult(port = 8080, host = "127.0.0.1"): CommandResult {
   return {
     exitCode: 0,
-    stdout: `Gateway endpoint: http://127.0.0.1:${port}\n`,
+    stdout: `Gateway endpoint: http://${host}:${port}\n`,
     stderr: "",
   };
 }
 
 /** The immutable identity and lifecycle state reported for one sandbox. */
-export function sandboxIdentityResult(sandboxName: string, id = "sandbox-id-1"): CommandResult {
+export function sandboxIdentityResult(
+  sandboxName: string,
+  id = "sandbox-id-1",
+  phase = "Ready",
+): CommandResult {
   return {
     exitCode: 0,
-    stdout: `Name: ${sandboxName}\nId: ${id}\nPhase: Ready\n`,
+    stdout: `Name: ${sandboxName}\nId: ${id}\nPhase: ${phase}\n`,
     stderr: "",
   };
 }
@@ -241,6 +245,19 @@ export function createMutableSandboxPolicyResult(
         livePolicyHash,
         livePolicyVersion,
       );
+    }
+    if (args[0] === "provider" && args[1] === "get" && typeof args[2] === "string") {
+      return {
+        exitCode: 0,
+        stdout: [
+          `Name: ${args[2]}`,
+          "Type: openai",
+          "Credential keys: OPENAI_API_KEY",
+          "Config keys: OPENAI_BASE_URL",
+          "",
+        ].join("\n"),
+        stderr: "",
+      };
     }
     return resultWithBlueprintPolicyAuthority(args, successResult());
   };

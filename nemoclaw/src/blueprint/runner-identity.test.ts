@@ -75,6 +75,18 @@ const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
 
 const success = successResult();
 const providersV2Enabled = providersV2EnabledResult();
+const POLICY_BOUNDARY_COMMAND = "policy get -g test-gateway --full --output json test-sandbox";
+
+function expectPolicyBoundaryImmediatelyBefore(
+  commands: readonly string[],
+  mutation: string | ((command: string) => boolean),
+): void {
+  const index = commands.findIndex((command) =>
+    typeof mutation === "string" ? command === mutation : mutation(command),
+  );
+  expect(index).toBeGreaterThan(0);
+  expect(commands[index - 1]).toBe(POLICY_BOUNDARY_COMMAND);
+}
 
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
@@ -90,6 +102,7 @@ function responseQueue(
       "sandbox get test-sandbox",
       { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
     ],
+    ["provider get test-provider", { exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
     ["settings get --global --json", providersV2Enabled],
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
@@ -139,6 +152,7 @@ function managedPolicyAuthorityReceipt(sandboxName = "test-sandbox") {
   return {
     authority: "nemoclaw-managed",
     gateway: "test-gateway",
+    gateway_host: "127.0.0.1",
     gateway_port: 8080,
     scope: "sandbox",
     sandbox_name: sandboxName,
@@ -344,6 +358,32 @@ describe("blueprint identity wrapper", () => {
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
+    );
+    expectPolicyBoundaryImmediatelyBefore(commands, (command) =>
+      command.startsWith("provider profile import --file "),
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
+    expectPolicyBoundaryImmediatelyBefore(commands, (command) =>
+      command.startsWith("provider refresh configure "),
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "inference set --provider test-provider --model test-model",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "sandbox provider attach test-sandbox acme-okta-runtime",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
     );
   });
 
@@ -732,6 +772,23 @@ describe("blueprint identity wrapper", () => {
     expect(commands).toContain("provider delete acme-okta-runtime");
     expect(commands).toContain("sandbox remove -g test-gateway test-sandbox");
     expect(commands).toContain("provider delete test-provider");
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "sandbox provider detach test-sandbox acme-okta-runtime",
+    );
+    expectPolicyBoundaryImmediatelyBefore(commands, "provider delete acme-okta-runtime");
+    expectPolicyBoundaryImmediatelyBefore(commands, "provider delete test-provider");
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "sandbox stop -g test-gateway test-sandbox",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      commands,
+      "sandbox remove -g test-gateway test-sandbox",
+    );
+    expect(commands.indexOf("provider delete test-provider")).toBeLessThan(
+      commands.indexOf("sandbox remove -g test-gateway test-sandbox"),
+    );
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(JSON.parse(planEntry!.content!)).toMatchObject({
       sandbox_created_by_apply: false,
@@ -826,6 +883,10 @@ describe("blueprint identity wrapper", () => {
     mockExeca.mockClear();
     responseQueue([
       [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
         "provider get acme-okta-runtime",
         [
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
@@ -840,6 +901,22 @@ describe("blueprint identity wrapper", () => {
     expect(rollbackCommands).toContain("sandbox remove -g test-gateway test-sandbox");
     expect(rollbackCommands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
     expect(rollbackCommands).toContain("provider delete acme-okta-runtime");
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "sandbox provider detach test-sandbox acme-okta-runtime",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "provider delete acme-okta-runtime",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "sandbox stop -g test-gateway test-sandbox",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "sandbox remove -g test-gateway test-sandbox",
+    );
   });
 
   it("preserves a sandbox for a legacy plan without an ownership receipt", async () => {
@@ -902,6 +979,10 @@ describe("blueprint identity wrapper", () => {
     mockExeca.mockClear();
     responseQueue([
       [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
         "provider get acme-okta-runtime",
         [
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
@@ -913,6 +994,18 @@ describe("blueprint identity wrapper", () => {
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(rollbackCommands).toContain("provider delete test-provider");
     expect(rollbackCommands).toContain("sandbox remove -g test-gateway test-sandbox");
+    expectPolicyBoundaryImmediatelyBefore(rollbackCommands, "provider delete test-provider");
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "sandbox stop -g test-gateway test-sandbox",
+    );
+    expectPolicyBoundaryImmediatelyBefore(
+      rollbackCommands,
+      "sandbox remove -g test-gateway test-sandbox",
+    );
+    expect(rollbackCommands.indexOf("provider delete test-provider")).toBeLessThan(
+      rollbackCommands.indexOf("sandbox remove -g test-gateway test-sandbox"),
+    );
   });
 
   it("keeps an owned sandbox receipt retryable when removal fails", async () => {
@@ -944,16 +1037,108 @@ describe("blueprint identity wrapper", () => {
       content: JSON.stringify({
         sandbox_name: "test-sandbox",
         inference_provider_created_by_apply: true,
-        inference: { provider_name: "test-provider" },
+        inference: { provider_name: "test-provider", provider_type: "openai" },
         policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
-    responseQueue([["provider delete test-provider", [failureResult("provider delete denied")]]]);
+    responseQueue([
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      ["provider delete test-provider", [failureResult("provider delete denied")]],
+    ]);
 
     await expect(actionRollback("failed-inference-provider-removal")).rejects.toThrow(
       /Failed to remove owned inference provider 'test-provider': provider delete denied/,
     );
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
+  });
+
+  it("preserves rollback resources when policy authority changes before provider removal", async () => {
+    const stateDir = "/fakehome/.nemoclaw/state/runs/provider-authority-drift";
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        sandbox_name: "test-sandbox",
+        inference_provider_created_by_apply: true,
+        inference: { provider_name: "test-provider", provider_type: "openai" },
+        policy_authority: managedPolicyAuthorityReceipt(),
+      }),
+    });
+    const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
+      resultWithBlueprintPolicyAuthority(POLICY_BOUNDARY_COMMAND.split(" "), success),
+      {
+        ...resultWithBlueprintPolicyAuthority(POLICY_BOUNDARY_COMMAND.split(" "), success),
+        stdout: JSON.stringify({
+          scope: "sandbox",
+          sandbox: "test-sandbox",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "sha256:replacement-policy",
+          active_version: 2,
+          policy: { version: 1, network_policies: {} },
+        }),
+      },
+    ]);
+    mockExeca.mockImplementation(async (_command: string, args: string[]) =>
+      args.join(" ") === "provider get test-provider"
+        ? { exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }
+        : (policyResult(args) ?? resultWithBlueprintPolicyAuthority(args, success)),
+    );
+
+    await expect(actionRollback("provider-authority-drift")).rejects.toThrow(
+      /receipt does not match the live sandbox policy/u,
+    );
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).not.toContain("provider delete test-provider");
+    expect(commands).not.toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(commands).not.toContain("sandbox remove -g test-gateway test-sandbox");
+  });
+
+  it("preserves a stopped sandbox when authority changes before removal", async () => {
+    const stateDir = "/fakehome/.nemoclaw/state/runs/sandbox-authority-drift";
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        sandbox_name: "test-sandbox",
+        sandbox_created_by_apply: true,
+        policy_authority: managedPolicyAuthorityReceipt(),
+      }),
+    });
+    const matchingPolicy = resultWithBlueprintPolicyAuthority(
+      POLICY_BOUNDARY_COMMAND.split(" "),
+      success,
+    );
+    const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
+      matchingPolicy,
+      matchingPolicy,
+      {
+        ...matchingPolicy,
+        stdout: JSON.stringify({
+          scope: "sandbox",
+          sandbox: "test-sandbox",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "sha256:replacement-policy",
+          active_version: 2,
+          policy: { version: 1, network_policies: {} },
+        }),
+      },
+    ]);
+    mockExeca.mockImplementation(
+      async (_command: string, args: string[]) =>
+        policyResult(args) ?? resultWithBlueprintPolicyAuthority(args, success),
+    );
+
+    await expect(actionRollback("sandbox-authority-drift")).rejects.toThrow(
+      /receipt does not match the live sandbox policy/u,
+    );
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(commands).not.toContain("sandbox remove -g test-gateway test-sandbox");
   });
 
   it("rejects an invalid owned inference provider receipt before mutation", async () => {
@@ -995,6 +1180,7 @@ describe("blueprint identity wrapper", () => {
         "provider delete acme-okta-runtime",
         [failureResult("delete denied"), { exitCode: 0, stdout: "", stderr: "" }],
       ],
+      ["inference get", [failureResult("inference route not found")]],
       [
         "inference set --provider test-provider --model test-model",
         [failureResult("route failed")],
@@ -1080,12 +1266,16 @@ describe("blueprint identity wrapper", () => {
         sandbox_name: "test-sandbox",
         sandbox_created_by_apply: true,
         inference_provider_created_by_apply: true,
-        inference: { provider_name: "test-provider" },
+        inference: { provider_name: "test-provider", provider_type: "openai" },
         identity: receipt,
         policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
     responseQueue([
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
       [
         "provider get acme-okta-runtime",
         [

@@ -7,6 +7,7 @@ const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
 
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
+export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
 
 export interface OpenShellSandboxListJsonRow {
   readonly id: string;
@@ -100,7 +101,7 @@ export function resolveCreatedOpenShellSandboxId(input: {
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
 }): string {
-  if (!/^[0-9a-f]{64}$/u.test(input.createAttemptNonce)) {
+  if (!/^[0-9a-f]{62}$/u.test(input.createAttemptNonce)) {
     throw new Error("OpenShell sandbox create-attempt identity is invalid.");
   }
   let output: string;

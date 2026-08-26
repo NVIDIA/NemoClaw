@@ -76,8 +76,21 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 const fs = require("node:fs");
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+const scenario = ${JSON.stringify(scenario)};
+const buildCtx = ${JSON.stringify(preparedBuildCtx)};
+const buildId = ${JSON.stringify(buildId)};
+const sandboxName = "prepared-dcode";
+const commands = [];
+const registerCalls = [];
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName,
+  provider: "nvidia-prod",
+  model: "nvidia/nemotron-3-super-120b-a12b",
+  registerSandbox: (entry) => registerCalls.push(entry),
+});
+const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
@@ -87,19 +100,13 @@ const imageTag = require(${imageTagPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const wait = require(${waitPath});
 const { loadAgent } = require(${agentDefsPath});
-
-const scenario = ${JSON.stringify(scenario)};
-const buildCtx = ${JSON.stringify(preparedBuildCtx)};
-const buildId = ${JSON.stringify(buildId)};
-const sandboxName = "prepared-dcode";
-const commands = [];
-const registerCalls = [];
 const planFromRefs = [];
 const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
 let patchSleepUsesSeconds = null;
 let stageCalls = 0;
+let sandboxCreated = false;
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
@@ -155,6 +162,8 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName });
+  if (createdIdentity !== null) return createdIdentity;
   if (
     normalized.includes(
       "sandbox exec --name " +
@@ -169,20 +178,14 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get")) return "";
+  if (normalized.includes("sandbox get")) {
+    return sandboxCreated ? sandboxName + "\nId: fixture-created-sandbox\n" : "";
+  }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   return "";
 };
-registry.getSandbox = () => null;
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
-registry.registerSandbox = (entry) => {
-  registerCalls.push(entry);
-  return true;
-};
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
@@ -194,6 +197,7 @@ childProcess.spawn = (...args) => {
   child.pid = 6195;
   commands.push(normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]));
   process.nextTick(() => {
+    sandboxCreated = true;
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
     child.emit("close", 0);
   });
@@ -234,6 +238,7 @@ const { createSandbox } = require(${onboardPath});
       null,
       [],
       null,
+      { sessionId: createFixture.sessionId },
       null,
       null,
       preparedBuildContext,

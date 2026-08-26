@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 
 import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   resolveOpenShellSandboxId,
@@ -331,7 +332,9 @@ export function createSandboxGpuCreateAttemptRunner(
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
-    const createAttemptNonce = deferPostCreateEffects ? randomBytes(32).toString("hex") : null;
+    const createAttemptNonce = deferPostCreateEffects
+      ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
+      : null;
     const attemptArgv = createAttemptNonce
       ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
       : unboundAttemptArgv;

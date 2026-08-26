@@ -338,6 +338,233 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+function mockCreatedSandboxIdentityList(command, options = {}) {
+  const args = Array.isArray(command) ? command.map(String) : [];
+  const sandboxIndex = args.indexOf("sandbox");
+  if (
+    sandboxIndex < 0 ||
+    args[sandboxIndex + 1] !== "list" ||
+    !args.includes("--output") ||
+    args[args.indexOf("--output") + 1] !== "json"
+  ) {
+    return null;
+  }
+  const selectorIndex = args.indexOf("--selector");
+  const selector = selectorIndex >= 0 ? args[selectorIndex + 1] || "" : "";
+  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
+  if (!selector.startsWith(prefix)) return null;
+  const nonce = selector.slice(prefix.length);
+  return JSON.stringify([
+    {
+      id: options.sandboxId || "fixture-created-sandbox",
+      name: options.sandboxName || "my-assistant",
+      labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
+      resource_version: 1,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 1,
+    },
+  ]);
+}
+
+function installVerifiedSandboxCreateFixture(registry, options) {
+  const sandboxName = options.sandboxName;
+  const gatewayName = options.gatewayName || "nemoclaw";
+  const sessionId = options.sessionId || "integration-fixture-session";
+  const selection = {
+    provider: options.provider,
+    model: options.model,
+    endpointUrl: options.endpointUrl || null,
+    endpointSource: options.endpointSource || null,
+    credentialEnv: options.credentialEnv || null,
+    preferredInferenceApi: options.preferredInferenceApi || null,
+  };
+  const reservationEntry = {
+    name: sandboxName,
+    gatewayName,
+    pendingRouteReservation: true,
+    reservationSessionId: sessionId,
+    ...selection,
+  };
+  let pendingCheckpoint = null;
+  let pendingEntry = null;
+  let publishedEntry = null;
+  let sourceEntry = options.getSandbox ? options.getSandbox(sandboxName) : null;
+  const qualifyPendingSandboxCreateReservation = (authority) => {
+    const selectionMatches = [
+      "provider",
+      "model",
+      "endpointUrl",
+      "endpointSource",
+      "credentialEnv",
+      "preferredInferenceApi",
+    ].every((key) => (authority.selection[key] ?? null) === (selection[key] ?? null));
+    if (
+      authority.sandboxName !== sandboxName ||
+      authority.gatewayName !== gatewayName ||
+      authority.sessionId !== sessionId ||
+      !selectionMatches
+    ) {
+      throw new Error("integration fixture received unexpected create reservation authority");
+    }
+    return {
+      authority: structuredClone(authority),
+      entry: structuredClone(reservationEntry),
+    };
+  };
+  const recordPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+    pendingCheckpoint = structuredClone(checkpoint);
+    pendingEntry = {
+      ...structuredClone(reservation.entry),
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      pendingPolicyVerification: structuredClone(checkpoint),
+    };
+    return structuredClone(pendingEntry);
+  };
+  const requireCurrentPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+    if (
+      reservation.authority.sessionId !== sessionId ||
+      pendingCheckpoint === null ||
+      JSON.stringify(checkpoint) !== JSON.stringify(pendingCheckpoint)
+    ) {
+      throw new Error("integration fixture verified create checkpoint changed");
+    }
+    return structuredClone(pendingEntry);
+  };
+
+  const registryPath = require.resolve(
+    path.resolve(__dirname, "../../src/lib/state/registry.ts"),
+  );
+  const registryFixture = {
+    ...registry,
+    qualifyPendingSandboxCreateReservation,
+    recordPendingSandboxPolicyVerification,
+    requireCurrentPendingSandboxPolicyVerification,
+    getSandbox: (name) =>
+      name === sandboxName
+        ? structuredClone(publishedEntry || pendingEntry || sourceEntry)
+        : registry.getSandbox(name),
+    registerSandbox: (entry) => {
+      publishedEntry = structuredClone(entry);
+      pendingEntry = null;
+      pendingCheckpoint = null;
+      options.registerSandbox?.(structuredClone(entry));
+      return structuredClone(entry);
+    },
+    updateSandbox: (name, updates) => {
+      if (name === sandboxName && publishedEntry) {
+        publishedEntry = { ...publishedEntry, ...structuredClone(updates) };
+      }
+      options.updateSandbox?.(name, updates);
+      return true;
+    },
+    setDefault: (name) => {
+      options.setDefault?.(name);
+      return true;
+    },
+    removeSandbox: (name) => {
+      if (name === sandboxName) {
+        pendingEntry = null;
+        publishedEntry = null;
+        sourceEntry = null;
+      }
+      options.removeSandbox?.(name);
+      return true;
+    },
+  };
+  for (const [name, value] of Object.entries(registryFixture)) {
+    Object.defineProperty(registry, name, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  }
+  require.cache[registryPath].exports = registry;
+
+  const receiptPath = require.resolve(
+    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
+  );
+  const receipt = require(receiptPath);
+  Object.defineProperties(receipt, {
+    verifyCreatedSandboxPolicyRegistration: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: (input) => {
+    if (input.plannedAuthority !== "nemoclaw-managed") {
+      throw new Error("integration fixture supports only managed sandbox creation");
+    }
+    return {
+      policyAuthority: "nemoclaw-managed",
+      observedPolicyAuthority: "owner-unknown",
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: input.gatewayName,
+        gatewayPort: input.gatewayPort,
+        sandboxName: input.sandboxName,
+        lifecycleGeneration: input.lifecycleGeneration,
+        sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+        policyHash: "fixture-policy",
+        policyVersion: 1,
+      },
+    };
+      },
+    },
+    revalidateCreatedSandboxPolicyRegistration: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: (input) => input.registration,
+    },
+  });
+  require.cache[receiptPath].exports = receipt;
+  return { sessionId };
+}
+
+function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
+  const createArgs = [...args];
+  while (createArgs.length < 15) createArgs.push(null);
+  createArgs[14] = { sessionId: fixture.sessionId };
+  return createArgs;
+}
+
+function managedSandboxPolicyReceiptFixture(entry, options = {}) {
+  const sandboxName = options.sandboxName || entry.name;
+  const gatewayName = options.gatewayName || "nemoclaw";
+  const gatewayPort = options.gatewayPort || 8080;
+  const lifecycleGeneration =
+    options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
+  const sandboxId = options.sandboxId || "fixture-created-sandbox";
+  const sandboxIdentityFingerprint = require("node:crypto")
+    .createHash("sha256")
+    .update(sandboxId)
+    .digest("hex");
+  const policyHash = options.policyHash || "fixture-policy";
+  const policyVersion = options.policyVersion || 1;
+  return {
+    ...entry,
+    gatewayName,
+    gatewayPort,
+    lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+    policyAuthority: "nemoclaw-managed",
+    policyCreationReceipt: {
+      schemaVersion: 1,
+      origin: "sandbox-create",
+      gatewayName,
+      gatewayPort,
+      sandboxName,
+      lifecycleGeneration,
+      sandboxIdentityFingerprint,
+      policyHash,
+      policyVersion,
+    },
+  };
+}
+
 function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(
@@ -676,7 +903,11 @@ module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
+  mockCreatedSandboxIdentityList,
+  installVerifiedSandboxCreateFixture,
+  managedSandboxPolicyReceiptFixture,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,
+  sandboxCreateArgsWithVerifiedReservation,
 };

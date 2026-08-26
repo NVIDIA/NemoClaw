@@ -9,11 +9,12 @@ import {
   createOpenshellSandboxIdReader,
   fingerprintOpenShellSandboxLiveIdentity,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
 } from "./sandbox-identity";
 
-const CREATE_ATTEMPT_NONCE = "a".repeat(64);
+const CREATE_ATTEMPT_NONCE = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
 
 function sandboxListJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify([
@@ -87,6 +88,23 @@ describe("OpenShell sandbox identity reading", () => {
       },
     );
   });
+
+  it.each(["a".repeat(61), "a".repeat(63), "a".repeat(64), "g".repeat(62)])(
+    "refuses a create-attempt nonce outside the label-compatible contract (#9833)",
+    (createAttemptNonce) => {
+      const runCaptureOpenshell = vi.fn();
+
+      expect(() =>
+        resolveCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce,
+          runCaptureOpenshell,
+        }),
+      ).toThrow("OpenShell sandbox create-attempt identity is invalid.");
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["same-name replacement", sandboxListJson({ labels: {} })],

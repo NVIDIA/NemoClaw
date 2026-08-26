@@ -43,8 +43,18 @@ describe("onboard extra-provider reconciliation", () => {
       writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
-const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+registry.addExtraProvider("tavily-search");
+registry.addExtraProvider("brave-search");
+registry.addExtraProvider("custom-provider");
+registry.addExtraProvider("my-slack-bridge");
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
+const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
@@ -53,10 +63,6 @@ const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 
 const commands = [];
-registry.addExtraProvider("tavily-search");
-registry.addExtraProvider("brave-search");
-registry.addExtraProvider("custom-provider");
-registry.addExtraProvider("my-slack-bridge");
 
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -83,6 +89,8 @@ runner.run = (command, opts = {}) => {
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const normalized = _n(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "my-assistant Ready";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -92,10 +100,6 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
@@ -124,11 +128,29 @@ childProcess.spawn = (...args) => {
 
 const { createSandbox } = require(${onboardPath});
 
+const createReservedSandbox = () => createSandbox(
+  null,
+  "gpt-5.4",
+  "nvidia-prod",
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  [],
+  null,
+  { sessionId: createFixture.sessionId },
+);
+
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxNames = [
-    await createSandbox(null, "gpt-5.4", "nvidia-prod"),
-    await createSandbox(null, "gpt-5.4", "nvidia-prod"),
+    await createReservedSandbox(),
+    await createReservedSandbox(),
   ];
   console.log(JSON.stringify({
     sandboxNames,

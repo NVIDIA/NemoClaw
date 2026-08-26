@@ -13,6 +13,9 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
+
+export { classifyManagedGatewayEndpointBinding };
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
@@ -91,39 +94,8 @@ export function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
 }
 
-export type ManagedGatewayEndpointBinding = "match" | "mismatch" | "not-applicable" | "unknown";
-
-/** Classify whether captured OpenShell output names the expected local gateway endpoint. */
-export function classifyManagedGatewayEndpointBinding(
-  outputs: readonly string[],
-  expectedGatewayPort: number,
-): Exclude<ManagedGatewayEndpointBinding, "not-applicable"> {
-  let observedEndpoint = false;
-  for (const output of outputs) {
-    for (const match of stripAnsi(output).matchAll(/^\s*(?:Gateway endpoint|Server):(.*)$/gm)) {
-      observedEndpoint = true;
-      const endpointText = match[1]?.trim() ?? "";
-      if (!endpointText || /\s/u.test(endpointText)) return "mismatch";
-      try {
-        const endpoint = new URL(endpointText);
-        const localProtocol = endpoint.protocol === "https:" || endpoint.protocol === "http:";
-        const localHost =
-          endpoint.hostname === "127.0.0.1" ||
-          endpoint.hostname === "localhost" ||
-          endpoint.hostname === "[::1]";
-        const endpointPort =
-          endpoint.port ||
-          (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
-        if (!localProtocol || !localHost || endpointPort !== String(expectedGatewayPort)) {
-          return "mismatch";
-        }
-      } catch {
-        return "mismatch";
-      }
-    }
-  }
-  return observedEndpoint ? "match" : "unknown";
-}
+export type ManagedGatewayEndpointBinding =
+  import("../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs").ManagedGatewayEndpointBinding;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

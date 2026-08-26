@@ -50,7 +50,10 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
-import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
+import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
+} from "../adapters/openshell/sandbox-identity";
 import {
   createGpuFlowDeps,
   createGpuFlowInput,
@@ -134,7 +137,9 @@ describe("created sandbox identity gate", () => {
       expect(args.indexOf("--label")).toBeGreaterThan(0);
       expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
       nonce = createAttemptNonce(args);
-      expect(nonce).toMatch(/^[0-9a-f]{64}$/u);
+      expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
+      expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+      expect(nonce.length).toBeLessThanOrEqual(63);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
@@ -204,7 +209,7 @@ describe("created sandbox identity gate", () => {
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
       sandboxListJson("replacement-id", {
-        [NEMOCLAW_CREATE_ATTEMPT_LABEL]: "0".repeat(64),
+        [NEMOCLAW_CREATE_ATTEMPT_LABEL]: "0".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH),
         untrusted: outputCanary,
       }),
     );
@@ -276,8 +281,8 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(nonces).toHaveLength(2);
-    expect(nonces[0]).toMatch(/^[0-9a-f]{64}$/u);
-    expect(nonces[1]).toMatch(/^[0-9a-f]{64}$/u);
+    expect(nonces[0]).toMatch(/^[0-9a-f]{62}$/u);
+    expect(nonces[1]).toMatch(/^[0-9a-f]{62}$/u);
     expect(nonces[0]).not.toBe(nonces[1]);
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
   });

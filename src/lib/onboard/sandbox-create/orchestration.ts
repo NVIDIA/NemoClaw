@@ -815,19 +815,21 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const qualifyPolicyAuthority = (
       sandboxIsLive = liveExists,
       operation = `prepare sandbox '${sandboxName}'`,
-    ) =>
-      policyAuthorityPreflight.qualifySandboxPolicyAuthority({
+    ) => {
+      const recordedSandbox = sandboxIsLive ? registry.getSandbox(sandboxName) : existingEntry;
+      return policyAuthorityPreflight.qualifySandboxPolicyAuthority({
         sandboxName,
         gatewayName: GATEWAY_NAME,
         liveExists: sandboxIsLive,
         recordedAuthorities: [existingEntry?.policyAuthority, sessionPolicyAuthority],
-        recordedSandbox: existingEntry,
+        recordedSandbox,
         readRecordedSandbox: registry.getSandbox,
         prepareRequiredPolicy: () =>
           sandboxCreatePlanMaterialization.prepareSandboxCreatePolicy(policyRequirementIntent)
             .initialSandboxPolicy,
         operation,
       });
+    };
     const policyAuthorityInspection = qualifyPolicyAuthority();
     const resolvedPolicyAuthority = policyAuthorityInspection.authority;
     const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {

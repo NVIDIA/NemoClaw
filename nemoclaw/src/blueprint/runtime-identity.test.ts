@@ -868,6 +868,20 @@ describe("runtime identity contract", () => {
     );
   });
 
+  it("preserves a created provider when its ownership receipt is not durable (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    deps.persistReceipt = () => {
+      throw new Error("receipt persistence failed");
+    };
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      "receipt persistence failed",
+    );
+    const commands = calls.map(({ args }) => commandKey(args));
+    expect(commands).not.toContain("provider delete acme-okta-runtime");
+    expect(commands.join("\n")).not.toContain("provider refresh configure");
+  });
+
   it("redacts client ID and secret material from refresh configuration errors", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
     responses.set(

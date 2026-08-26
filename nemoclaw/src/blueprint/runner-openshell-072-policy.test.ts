@@ -522,6 +522,14 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           : defaultCommandResult(args),
       /reported an invalid gateway port/u,
     ],
+    [
+      "a non-loopback gateway endpoint",
+      (args: string[]) =>
+        args.join(" ") === "gateway info -g test-gateway"
+          ? { exitCode: 0, stdout: "Gateway endpoint: http:\/\/192.0.2.10:8080\n", stderr: "" }
+          : defaultCommandResult(args),
+      /reported an unsupported local gateway endpoint/u,
+    ],
   ])("stops before effects for %s (#9833)", async (_caseName, result, expected) => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) => result(args));
 
@@ -727,6 +735,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     return {
       authority: "nemoclaw-managed",
       gateway: "test-gateway",
+      gateway_host: "127.0.0.1",
       gateway_port: 8080,
       scope: "sandbox",
       sandbox_name: "test-sandbox",
@@ -746,6 +755,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         status: "incomplete",
         sandbox_name: "test-sandbox",
         gateway: "test-gateway",
+        gateway_host: "127.0.0.1",
         gateway_port: 8080,
         expected_authority: "nemoclaw-managed",
         policy_addition_names: ["nim_service"],
@@ -785,6 +795,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_authority: {
         authority: "nemoclaw-managed",
         gateway: "test-gateway",
+        gateway_host: "127.0.0.1",
         gateway_port: 8080,
         sandbox_name: "test-sandbox",
         policy_creation_receipt: {
@@ -832,6 +843,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_creation_transition: {
         status: "incomplete",
         gateway: "test-gateway",
+        gateway_host: "127.0.0.1",
         gateway_port: 8080,
         sandbox_name: "test-sandbox",
       },
@@ -887,6 +899,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   it("stops before provider effects when the gateway binding changes (#9833)", async () => {
     const gatewayResult = sequentialCommandResult("gateway info -g test-gateway", [
       gatewayInfoResult(),
+      gatewayInfoResult(),
       gatewayInfoResult(9090),
     ]);
     mockExeca.mockImplementation(
@@ -894,10 +907,30 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     );
 
     await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-      /receipt does not match the live sandbox policy/u,
+      /gateway endpoint no longer matches the durable policy receipt/u,
     );
     expect(
       mockExeca.mock.calls.some((call) => Array.isArray(call[1]) && call[1][0] === "provider"),
+    ).toBe(false);
+  });
+
+  it("rejects a non-loopback gateway substitution on the receipt port (#9833)", async () => {
+    const gatewayResult = sequentialCommandResult("gateway info -g test-gateway", [
+      gatewayInfoResult(),
+      gatewayInfoResult(),
+      gatewayInfoResult(8080, "gateway.example.com"),
+    ]);
+    mockExeca.mockImplementation(
+      async (_cmd: string, args: string[]) => gatewayResult(args) ?? defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /unsupported local gateway endpoint/u,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][1] === "create",
+      ),
     ).toBe(false);
   });
 
@@ -975,6 +1008,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     const additions = blueprint().components!.policy!.additions!;
     const gatewayResult = sequentialCommandResult("gateway info -g test-gateway", [
       gatewayInfoResult(),
+      gatewayInfoResult(),
       gatewayInfoResult(9090),
     ]);
     mockExeca.mockImplementation(
@@ -1007,7 +1041,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"));
     const plan = JSON.parse(planEntry?.[1].content ?? "{}");
     expect(plan).toMatchObject({
-      sandbox_created_by_apply: false,
+      sandbox_created_by_apply: true,
       policy_creation_transition: { status: "incomplete" },
     });
     expect(plan).not.toHaveProperty("policy_authority");
@@ -1055,6 +1089,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_transition: {
         status: "pending",
         gateway: "test-gateway",
+        gateway_host: "127.0.0.1",
         gateway_port: 8080,
         policy_addition_names: ["nim_service"],
       },
@@ -1071,6 +1106,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         policy_authority: {
           authority: "externally-managed",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           scope: "global",
         },
@@ -1150,6 +1186,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           status: "incomplete",
           sandbox_name: "test-sandbox",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           expected_authority: "nemoclaw-managed",
           policy_addition_names: ["nim_service"],
@@ -1201,6 +1238,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           status: "incomplete",
           sandbox_name: "test-sandbox",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           expected_authority: "nemoclaw-managed",
           policy_addition_names: ["nim_service"],
@@ -1227,6 +1265,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         policy_creation_transition: {
           status: "complete",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           sandbox_name: "test-sandbox",
           lifecycle_generation: FIXED_RUN_UUID,
@@ -1272,6 +1311,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         policy_creation_transition: {
           status: "pending",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           sandbox_name: "test-sandbox",
           lifecycle_generation: FIXED_RUN_UUID,
@@ -1421,6 +1461,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           status: "complete",
           sandbox_name: "test-sandbox",
           gateway: "test-gateway",
+          gateway_host: "127.0.0.1",
           gateway_port: 8080,
           expected_authority: "nemoclaw-managed",
           policy_addition_names: ["nim_service"],
