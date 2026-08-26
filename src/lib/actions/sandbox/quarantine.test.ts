@@ -205,6 +205,12 @@ function harness(
     deps,
     order,
     prepare,
+    setAccessState: (state: "ready" | "not_ready") => {
+      accessState = state;
+    },
+    setRuntimeState: (state: "running" | "stopped") => {
+      runtimeState = state;
+    },
     start,
     stop,
     stopMessaging,
@@ -1010,6 +1016,39 @@ describe("sandbox quarantine", () => {
 
     expect(result.status).toBe("failed");
     expect(result.message).toContain("authority changed");
+    expect(clearFence).not.toHaveBeenCalled();
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      observedState: "running exact runtime",
+      makeUnsafe: (test: ReturnType<typeof harness>) => test.setRuntimeState("running"),
+    },
+    {
+      observedState: "ready sandbox access",
+      makeUnsafe: (test: ReturnType<typeof harness>) => test.setAccessState("ready"),
+    },
+  ])("keeps the fence when release observes $observedState (#10140)", ({ makeUnsafe }) => {
+    const test = harness();
+    quarantineSandbox(
+      "alpha",
+      { reason: "incident investigation", idempotencyKey: "incident-42" },
+      test.deps,
+    );
+    makeUnsafe(test);
+    test.writeReceipt.mockClear();
+    const clearFence = vi.fn(() => true);
+
+    const result = releaseSandboxQuarantine("alpha", FENCE_ID, {
+      ...test.deps,
+      clearFence,
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, status: "failed" });
+    expect(result.message).toContain("fence remains active");
+    expect(test.writeReceipt).not.toHaveBeenCalled();
     expect(clearFence).not.toHaveBeenCalled();
     expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
     expect(test.start).not.toHaveBeenCalled();
