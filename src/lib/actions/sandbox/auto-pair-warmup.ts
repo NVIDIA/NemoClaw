@@ -42,7 +42,7 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 // Outer spawnSync cap (ms) for the direct write-scope probe. The cap prevents a
 // wedged sandbox from blocking onboard or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
-export const WARMUP_PROBE_TIMEOUT_S = 5;
+export const WARMUP_PROBE_TIMEOUT_S = 10;
 
 // Best-effort in-sandbox request producer. Always exits 0. Use the stored CLI
 // device credential for the direct `sessions.create` call. Shared gateway
@@ -126,16 +126,12 @@ function runSandboxWarmupScript(
   try {
     const openshellBinary = resolveOpenshell();
     if (!openshellBinary) return;
-    spawnSync(
-      openshellBinary,
-      sandboxWarmupExecArgs(sandboxName, gatewayName, script),
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: WARMUP_TIMEOUT_MS,
-      },
-    );
+    spawnSync(openshellBinary, sandboxWarmupExecArgs(sandboxName, gatewayName, script), {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: WARMUP_TIMEOUT_MS,
+    });
   } catch {
     /* defense-in-depth — never throw from a warm-up path */
   }
