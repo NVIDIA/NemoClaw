@@ -203,7 +203,7 @@ describe("Pi qualification receipts", () => {
       verifyPiQualificationReceipts({
         ...sources,
         candidateAuthority: sources.candidateAuthority.replace(
-          "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+          "0529e5e5a0e9314397c2f78b8363ba224dfa0279bb7c62a00c88129ea21e5f20",
           "f".repeat(64),
         ),
       }),
@@ -216,7 +216,7 @@ describe("Pi qualification receipts", () => {
         qualificationReceipts: {
           ...sources.qualificationReceipts,
           "linux/arm64": sources.qualificationReceipts["linux/arm64"].replace(
-            '"revision": "d92acac1c40364702eaae92a169a2b06d1bfda4b"',
+            '"revision": "ac3ebe9aa5a8f1c6b39885f966fa547a41fbc4f7"',
             `"revision": "${"e".repeat(40)}"`,
           ),
         },
@@ -227,14 +227,14 @@ describe("Pi qualification receipts", () => {
   it("rejects a stale commented Pi authority before the executed entry", () => {
     const sources = currentSources();
     const changedAuthority = sources.candidateAuthority.replace(
-      "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+      "0529e5e5a0e9314397c2f78b8363ba224dfa0279bb7c62a00c88129ea21e5f20",
       "f".repeat(64),
     );
     const staleAuthority = changedAuthority.replace(
       "export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS",
       `// pi: Object.freeze([
-//   "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
-//   "1e49356ca9a910ea52fc7a0a70164aff8b056a5530e786c8ea0e54f79858e20e",
+//   "0529e5e5a0e9314397c2f78b8363ba224dfa0279bb7c62a00c88129ea21e5f20",
+//   "ded950d154e45e1e4ff7259c9c0dd052c16502b770a4c0b87d39287b26a93ffd",
 // ])
 export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS`,
     );
