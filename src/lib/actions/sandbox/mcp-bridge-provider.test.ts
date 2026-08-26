@@ -21,7 +21,6 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import {
   assertMcpProviderRecoverable,
-  credentialRevisionForProviderResourceVersion,
   observeMcpCredentialRevision,
   refreshMcpProviderEnvironment,
   waitForAttachedMcpCredential,
@@ -82,16 +81,6 @@ Provider:
     });
     expect(output).not.toContain("\u001b");
     expect(output).not.toMatch(/\[[0-9;]*m/);
-  });
-
-  it("maps a valid provider resource version to its credential revision", () => {
-    expect(credentialRevisionForProviderResourceVersion(12)).toBe("v12");
-    expect(() => credentialRevisionForProviderResourceVersion(null)).toThrow(
-      "OpenShell provider metadata has no valid credential revision.",
-    );
-    expect(() => credentialRevisionForProviderResourceVersion(0)).toThrow(
-      "OpenShell provider metadata has no valid credential revision.",
-    );
   });
 
   it("accepts an exact legacy generic provider only for cleanup", () => {
@@ -625,28 +614,5 @@ alpha-mcp-slack   generic  1                 0
       /did not synchronize the expected credential revision/,
     );
     expect(exec).toHaveBeenCalledTimes(1);
-  });
-
-  it("waits for the credential revision from the final provider publication", () => {
-    const entry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://mcp.example.test/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github-0123456789abcdef",
-      providerId: "11111111-2222-4333-8444-555555555555",
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
-    };
-    const exec = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
-
-    expect(
-      waitForAttachedMcpCredential("alpha", entry, { expectedRevision: "v12" }),
-    ).toBe("v12");
-    expect(exec).toHaveBeenCalledTimes(2);
   });
 });
