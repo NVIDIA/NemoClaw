@@ -279,9 +279,17 @@ export function materializeSandboxCreatePlan({
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
+  // Normal onboarding cannot publish or attach credential providers until the
+  // new sandbox identity and policy receipt are verified. Keep channel routes
+  // out of that temporary managed policy, then let policy finalization apply
+  // them after the deferred provider effects complete.
+  const initialPolicyMessagingChannels =
+    deferSandboxEffectsUntilPolicyVerification && policyAuthority === "nemoclaw-managed"
+      ? []
+      : [...intent.policy.activeMessagingChannels];
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
-    [...intent.policy.activeMessagingChannels],
+    initialPolicyMessagingChannels,
     {
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,

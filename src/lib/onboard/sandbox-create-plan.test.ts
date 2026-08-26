@@ -108,6 +108,7 @@ type DiscordPlanOverrides = Partial<
     | "runProviderPreDeleteCleanup"
     | "upsertMessagingProviders"
     | "getHermesToolGatewayProviderName"
+    | "deferSandboxEffectsUntilPolicyVerification"
   >
 >;
 
@@ -356,6 +357,25 @@ describe("resolveSandboxCreateIntent", () => {
     expect(plan.initialSandboxPolicy.credentialBindingProviders).toEqual([discordProviderName]);
     expect(plan.messagingProviders).toEqual([discordProviderName]);
     expect(plan.createArgs).toContain(discordProviderName);
+    plan.initialSandboxPolicy.cleanup?.();
+  });
+
+  it("defers the selected Discord policy until its provider can be attached (#10153)", () => {
+    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
+      selected: true,
+    });
+
+    const plan = materializeDiscordCreatePlan(
+      { intent, messagingTokenDefs },
+      { deferSandboxEffectsUntilPolicyVerification: true },
+    );
+
+    expect(plan.activeMessagingChannels).toEqual(["discord"]);
+    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
+    expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).toEqual([]);
+    expect(plan.messagingProviders).toEqual([discordProviderName]);
+    expect(plan.createArgs).not.toContain(discordProviderName);
+    expect(plan.activateDeferredProviderEffects?.(() => undefined)).toContain(discordProviderName);
     plan.initialSandboxPolicy.cleanup?.();
   });
 
@@ -663,12 +683,7 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-hermes-tools",
       "custom-provider",
     ]);
-    expect(events).toEqual([
-      "revalidate:cleaning up providers",
-      "cleanup",
-      "upsert",
-      "hermes",
-    ]);
+    expect(events).toEqual(["revalidate:cleaning up providers", "cleanup", "upsert", "hermes"]);
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
@@ -707,9 +722,7 @@ describe("resolveSandboxCreateIntent", () => {
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createArgs).toEqual(
-      expect.arrayContaining(["--policy", "/tmp/policy.yaml"]),
-    );
+    expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
     expect(plan.createArgs).not.toContain("--provider");
   });
 
