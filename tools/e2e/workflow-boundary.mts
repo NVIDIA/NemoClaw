@@ -1997,7 +1997,7 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  if (job.name !== "Brev Launchable / Test staging image") {
+  if (job.name !== "Exact staging Brev Launchable") {
     errors.push("staging-brev-launchable must identify the exact Launchable E2E contract");
   }
   if (job.needs !== "generate-matrix") {
@@ -2147,7 +2147,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
 function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = STAGING_BREV_IDENTITY_JOB_ID;
   const job = asRecord(jobs[jobName]);
-  if (job.name !== "Brev Launchable / Verify staging image identity") {
+  if (job.name !== "Exact staging Brev Launchable identity") {
     errors.push(`${jobName} must identify the exact image and runtime identity contract`);
   }
   if (job.needs !== "generate-matrix") {
@@ -2979,7 +2979,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
-  if (liveTargets.name !== "Live / ${{ matrix.label }}") {
+  if (liveTargets.name !== "${{ matrix.label }}") {
     errors.push("live job name must expose the semantic matrix label");
   }
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
