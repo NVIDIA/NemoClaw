@@ -19,6 +19,7 @@ import {
   parseChatContent,
   parseOpenClawAgentText,
   parseOpenClawToolEvidence,
+  projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
   reduceOpenClawToolEvidence,
   runHermesAgentAssertionRetry,
@@ -349,9 +350,6 @@ describe("common-egress agent parsing and classification helpers", () => {
         `log line\n__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
       ),
     ).toEqual(evidence);
-    expect(buildOpenClawToolEvidenceReducerScript(PUBLIC_FETCH_EXPECTATION)).toContain(
-      "__NEMOCLAW_TOOL_EVIDENCE__=",
-    );
   });
 
   it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
@@ -812,6 +810,34 @@ describe("common-egress agent parsing and classification helpers", () => {
       },
     });
     expect(reduceToolEvidence).not.toHaveBeenCalled();
+  });
+
+  it("projects a bounded agent-command failure before reducer execution", () => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      2,
+      { passed: false, failureClass: "authentication" },
+      {
+        exitCode: 1,
+        signal: null,
+        stderr: `credential=${REDUCER_SECRET_SENTINEL}`,
+        stdout: `${PUBLIC_FETCH_URL} ${PUBLIC_FETCH_EXPECTATION.content}`,
+        timedOut: false,
+      },
+    );
+
+    expect(artifact).toEqual({
+      schemaVersion: 1,
+      attempt: 2,
+      diagnosticSummary: "command-exited-nonzero",
+      exitCode: 1,
+      failureClass: "authentication",
+      signal: null,
+      timedOut: false,
+    });
+    const serialized = JSON.stringify(artifact);
+    expect(serialized).not.toContain(PUBLIC_FETCH_URL);
+    expect(serialized).not.toContain(PUBLIC_FETCH_EXPECTATION.content);
+    expect(serialized).not.toContain(REDUCER_SECRET_SENTINEL);
   });
 
   it.each([

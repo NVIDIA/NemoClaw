@@ -9,10 +9,10 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
-  assessPersonalPublicFetchToolEvidence,
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
   parseOpenClawAgentText,
+  projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,
   text,
@@ -129,6 +129,12 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      if (!classification.passed && args.persistCommandArtifacts === false) {
+        await artifacts.writeJson(
+          `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
+          projectOpenClawAgentFailureArtifact(attempt, classification, agent),
+        );
+      }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
         label: args.label,
@@ -182,36 +188,4 @@ export async function runOpenClawAgentAssertion(
   });
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
-}
-
-export const PERSONAL_PUBLIC_FETCH_EXPECTATION = {
-  content: "United States",
-  url: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
-} satisfies OpenClawPublicFetchExpectation;
-
-export const PERSONAL_PUBLIC_FETCH_PROMPT = `Use web_fetch to fetch exactly this public HTTPS URL:
-${PERSONAL_PUBLIC_FETCH_EXPECTATION.url}
-If progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.
-Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
-Set web_fetch maxChars to no more than 8000.
-After web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`;
-
-export async function runPersonalPublicFetchAgentAssertion(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  artifacts: ArtifactSink,
-  args: { apiKey: string; label: string; sandboxName: string },
-): Promise<void> {
-  const publicFetch = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
-    apiKey: args.apiKey,
-    expected: "PERSONAL_PUBLIC_FETCH_OK",
-    label: args.label,
-    persistCommandArtifacts: false,
-    prompt: PERSONAL_PUBLIC_FETCH_PROMPT,
-    publicFetchExpectation: PERSONAL_PUBLIC_FETCH_EXPECTATION,
-    redactOutputInFailure: true,
-    sandboxName: args.sandboxName,
-    toolEvidenceValidator: (evidence) => assessPersonalPublicFetchToolEvidence(evidence).matches,
-  });
-  expect(publicFetch.toolEvidence).toBeDefined();
 }

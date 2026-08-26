@@ -27,15 +27,16 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  assessPersonalPublicFetchToolEvidence,
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
   parseChatContent,
   runHermesAgentAssertionRetry,
+  type OpenClawPublicFetchExpectation,
 } from "./common-egress-agent-helpers.ts";
 import {
   runOpenClawAgentAssertion,
-  runPersonalPublicFetchAgentAssertion,
   type OpenClawAgentAssertionEvidence,
 } from "./openclaw-agent-assertion.ts";
 import { stripAnsi } from "./json-envelope.ts";
@@ -53,6 +54,16 @@ const OPENCLAW_OPEN_SANDBOX =
 const OPENCLAW_PERSONAL_SANDBOX =
   process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_PERSONAL_SANDBOX ?? "e2e-oc-personal";
 const HERMES_SANDBOX = process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-hm-open";
+const PERSONAL_PUBLIC_FETCH_EXPECTATION = {
+  content: "United States",
+  url: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
+} satisfies OpenClawPublicFetchExpectation;
+const PERSONAL_PUBLIC_FETCH_PROMPT = `Use web_fetch to fetch exactly this public HTTPS URL:
+${PERSONAL_PUBLIC_FETCH_EXPECTATION.url}
+If progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.
+Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
+Set web_fetch maxChars to no more than 8000.
+After web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`;
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
@@ -916,11 +927,19 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       });
 
       progress.phase("fetch a fixed public reference with OpenClaw");
-      await runPersonalPublicFetchAgentAssertion(host, sandbox, artifacts, {
+      const publicFetch = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
+        expected: "PERSONAL_PUBLIC_FETCH_OK",
         label: "c4-agent-personal-public-fetch",
+        persistCommandArtifacts: false,
+        prompt: PERSONAL_PUBLIC_FETCH_PROMPT,
+        publicFetchExpectation: PERSONAL_PUBLIC_FETCH_EXPECTATION,
+        redactOutputInFailure: true,
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
+        toolEvidenceValidator: (evidence) =>
+          assessPersonalPublicFetchToolEvidence(evidence).matches,
       });
+      expect(publicFetch.toolEvidence).toBeDefined();
       await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-personal-public-fetch",

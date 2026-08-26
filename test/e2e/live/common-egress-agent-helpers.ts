@@ -127,6 +127,20 @@ export interface OpenClawToolEvidenceReductionFailureArtifact {
   timedOut: boolean;
 }
 
+export interface OpenClawAgentFailureArtifact {
+  schemaVersion: 1;
+  attempt: number;
+  diagnosticSummary:
+    | "command-exited-nonzero"
+    | "command-signaled"
+    | "command-timed-out"
+    | "expected-reply-missing";
+  exitCode: number | null;
+  failureClass: RetryFailureClass;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+}
+
 export interface CommonEgressProviderValidationSkip {
   http429ProviderValidationFailure: boolean;
   matches: boolean;
@@ -178,6 +192,29 @@ export interface OpenClawAgentAttemptEvidenceResult {
   attempt: AgentAssertionAttempt;
   evidence?: { reply: string; toolEvidence?: OpenClawToolEvidence };
   failure?: string;
+}
+
+export function projectOpenClawAgentFailureArtifact(
+  attempt: number,
+  classification: AgentAssertionAttempt,
+  result: Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout" | "timedOut">,
+): OpenClawAgentFailureArtifact {
+  const diagnosticSummary = result.timedOut
+    ? "command-timed-out"
+    : result.signal
+      ? "command-signaled"
+      : result.exitCode !== 0
+        ? "command-exited-nonzero"
+        : "expected-reply-missing";
+  return {
+    schemaVersion: 1,
+    attempt,
+    diagnosticSummary,
+    exitCode: result.exitCode,
+    failureClass: classification.failureClass ?? "deterministic",
+    signal: result.signal,
+    timedOut: result.timedOut,
+  };
 }
 
 export function runHermesAgentAssertionRetry(
