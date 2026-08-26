@@ -19,6 +19,11 @@ import type {
   SandboxMessagingPlan,
 } from "../manifest";
 import { isProviderPlaceholderForEnvKey } from "../provider-placeholders";
+import {
+  migrationOnlyEnvTargets,
+  readEnvLineKey,
+  staleCredentialEnvKeys,
+} from "./credential-env-cleanup";
 import { allowRenderedOpenClawPlugins } from "./openclaw-plugin-allow";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
@@ -75,7 +80,7 @@ export async function applyAgentConfigAtOpenShell(
   const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledJsonRender]);
   const targets: [string, SandboxMessagingAgentRenderPlan[]][] = [
     ...renderByTarget,
-    ...migrationOnlyEnvTargets(plan, renderByTarget).map(
+    ...migrationOnlyEnvTargets(plan, new Set(renderByTarget.keys())).map(
       (target) => [target, []] as [string, SandboxMessagingAgentRenderPlan[]],
     ),
   ];
@@ -380,46 +385,6 @@ function setJsonPath(
   cursor[finalSegment] = value;
 }
 
-// Credential keys this plan owns but no longer renders. Upserting alone would
-// carry them over, and Hermes loads ~/.hermes/.env with override=True, so a
-// stale canonical placeholder shadows the revision-scoped value OpenShell
-// injects into the process environment and the channel stays unauthenticated.
-// Scoped to the plan's own credential keys so unrelated .env entries survive.
-function staleCredentialEnvKeys(
-  plan: SandboxMessagingPlan,
-  desired: ReadonlyMap<string, string>,
-): Set<string> {
-  const stale = new Set<string>();
-  for (const binding of activeCredentialBindings(plan)) {
-    const envKey = binding.providerEnvKey;
-    if (typeof envKey === "string" && envKey.length > 0 && !desired.has(envKey)) {
-      stale.add(envKey);
-    }
-  }
-  return stale;
-}
-
-// Env targets this plan owns but no longer renders into. Every channel that
-// renders env lines targets the same Hermes file, and Hermes loads it with
-// override=True, so a credential line left by an older NemoClaw version shadows
-// the value OpenShell injects. Visit the target anyway so staleCredentialEnvKeys
-// can prune it; without this, a channel whose render collapsed to nothing is
-// never cleaned.
-const HERMES_ENV_RENDER_TARGET = "~/.hermes/.env";
-
-function migrationOnlyEnvTargets(
-  plan: SandboxMessagingPlan,
-  rendered: ReadonlyMap<string, SandboxMessagingAgentRenderPlan[]>,
-): readonly string[] {
-  const ownsCredentialEnv =
-    plan.agent === "hermes" &&
-    !rendered.has(HERMES_ENV_RENDER_TARGET) &&
-    activeCredentialBindings(plan).some(
-      (binding) => typeof binding.providerEnvKey === "string" && binding.providerEnvKey.length > 0,
-    );
-  return ownsCredentialEnv ? [HERMES_ENV_RENDER_TARGET] : [];
-}
-
 function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
@@ -437,7 +402,7 @@ function applyEnvLines(
       }
     }
   }
-  const stale = staleCredentialEnvKeys(plan, desired);
+  const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
 
   const written = new Set<string>();
   const output = (existing ?? "")
@@ -452,17 +417,11 @@ function applyEnvLines(
     });
 
   for (const [key, line] of desired) {
-    if (!written.has(key)) output.push(line);
+    // A legacy plan can still render a stale key; appending it would undo the prune.
+    if (!written.has(key) && !stale.has(key)) output.push(line);
   }
   output.push(...rawDesiredLines);
   return output.length > 0 ? `${output.join("\n")}\n` : "";
-}
-
-function readEnvLineKey(line: string): string | null {
-  const index = line.indexOf("=");
-  if (index <= 0) return null;
-  const key = line.slice(0, index).trim();
-  return key.length > 0 ? key : null;
 }
 
 function applyHookBuildFileOutputs(
