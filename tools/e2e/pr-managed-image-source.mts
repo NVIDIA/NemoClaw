@@ -205,7 +205,10 @@ export async function resolvePrManagedImageSource(
     readonly token: string;
     readonly workflowSource: string;
   },
-  request: (path: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
+  request: (path: string) => Promise<unknown> = (apiPath) =>
+    githubRequest(apiPath, input.token, {
+      additionalRepository: input.candidateRepository,
+    }),
 ): Promise<PrManagedImageSource> {
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");

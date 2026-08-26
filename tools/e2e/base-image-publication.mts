@@ -123,6 +123,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 }
 
 export interface GithubRequestOptions {
+  additionalRepository?: string;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -739,8 +740,21 @@ export async function githubRequest(
   token: string,
   options: GithubRequestOptions = {},
 ): Promise<unknown> {
-  if (!path.startsWith(`/repos/${REPOSITORY}/`) || path.includes("\r") || path.includes("\n")) {
-    throw new Error("GitHub API path must stay within the canonical NemoClaw repository");
+  const additionalRepository = options.additionalRepository;
+  if (
+    additionalRepository !== undefined &&
+    (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(additionalRepository) ||
+      additionalRepository.split("/").some((segment) => segment === "." || segment === ".."))
+  ) {
+    throw new Error("additional GitHub API repository is invalid");
+  }
+  const allowedRepositories = [REPOSITORY, ...(additionalRepository ? [additionalRepository] : [])];
+  if (
+    path.includes("\r") ||
+    path.includes("\n") ||
+    !allowedRepositories.some((repository) => path.startsWith(`/repos/${repository}/`))
+  ) {
+    throw new Error("GitHub API path must stay within an allowed repository");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep =

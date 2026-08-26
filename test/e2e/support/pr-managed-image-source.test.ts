@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -22,6 +22,7 @@ import {
   resolvePrManagedImageSource,
   writeManagedImageCatalog,
 } from "../../../tools/e2e/pr-managed-image-source.mts";
+import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
@@ -69,6 +70,7 @@ function unexpectedRequest(requestPath: string): never {
 function requestForChanges(
   changes: Array<{ filename: string; previous_filename?: string }>,
   pullOverrides: Record<string, unknown> = {},
+  candidateRepository = CANDIDATE_REPOSITORY,
 ) {
   const baseEntries = changes.map((change) => ({
     mode: "100644",
@@ -94,11 +96,11 @@ function requestForChanges(
       { sha: BASE_TREE_SHA, tree: baseEntries, truncated: false },
     ],
     [
-      `/repos/${CANDIDATE_REPOSITORY}/git/commits/${CANDIDATE_SHA}`,
+      `/repos/${candidateRepository}/git/commits/${CANDIDATE_SHA}`,
       { sha: CANDIDATE_SHA, tree: { sha: CANDIDATE_TREE_SHA } },
     ],
     [
-      `/repos/${CANDIDATE_REPOSITORY}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`,
+      `/repos/${candidateRepository}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`,
       { sha: CANDIDATE_TREE_SHA, tree: candidateEntries, truncated: false },
     ],
   ]);
@@ -118,6 +120,53 @@ function selectorInput() {
 }
 
 describe("PR managed-image source selection", () => {
+  it("reads a validated external PR source through the default request path", async () => {
+    const candidateRepository = "external-contributor/NemoClaw";
+    const externalInput = { ...selectorInput(), candidateRepository };
+    const request = requestForChanges(
+      [{ filename: "docs/guide.mdx" }],
+      { head: { sha: CANDIDATE_SHA, repo: { full_name: candidateRepository } } },
+      candidateRepository,
+    );
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string) => {
+      requestedUrls.push(input);
+      const requestPath = new URL(input).pathname + new URL(input).search;
+      const value = await request(requestPath);
+      return new Response(JSON.stringify(value), { status: 200 });
+    });
+
+    await expect(resolvePrManagedImageSource(externalInput)).resolves.toBe("managed-image");
+    expect(requestedUrls).toContain(
+      `https://api.github.com/repos/${candidateRepository}/git/commits/${CANDIDATE_SHA}`,
+    );
+  });
+
+  it("rejects a repository other than NemoClaw and the validated PR source before fetch", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    await expect(
+      githubRequest("/repos/other-owner/other-repository/git/commits/" + CANDIDATE_SHA, "token", {
+        additionalRepository: "external-contributor/NemoClaw",
+        fetchImpl,
+      }),
+    ).rejects.toThrow("GitHub API path must stay within an allowed repository");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(["external-contributor/..", "../NemoClaw", "external-contributor/repo\nname"])(
+    "rejects invalid additional repository %j before fetch",
+    async (additionalRepository) => {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+      await expect(
+        githubRequest(`/repos/NVIDIA/NemoClaw/git/commits/${CANDIDATE_SHA}`, "token", {
+          additionalRepository,
+          fetchImpl,
+        }),
+      ).rejects.toThrow("additional GitHub API repository is invalid");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     "Dockerfile",
     "Dockerfile.base",
