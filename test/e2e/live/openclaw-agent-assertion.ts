@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -64,13 +68,25 @@ export async function runOpenClawAgentAssertion(
   const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
     artifactName: `ssh-config-${args.label}`,
     env: commandEnv(),
+    persistArtifacts: false,
     timeoutMs: 30_000,
   });
-  expect(sshConfig.exitCode, text(sshConfig)).toBe(0);
-  const sshConfigPath = await artifacts.writeText(
-    `ssh/${args.label}-${args.sandboxName}.config`,
-    sshConfig.stdout,
-  );
+  expect(
+    sshConfig.exitCode,
+    `OpenShell SSH configuration exited with ${String(sshConfig.exitCode)}`,
+  ).toBe(0);
+  const sshConfigDirectory = await mkdtemp(join(tmpdir(), "nemoclaw-e2e-ssh-"));
+  const sshConfigPath = join(sshConfigDirectory, "config");
+  try {
+    await writeFile(sshConfigPath, sshConfig.stdout, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    await rm(sshConfigDirectory, { force: true, recursive: true });
+    throw error;
+  }
 
   let lastFailure = "";
   let successfulEvidence: OpenClawAgentAssertionEvidence | null = null;
@@ -185,7 +201,7 @@ export async function runOpenClawAgentAssertion(
       }
       return true;
     },
-  });
+  }).finally(() => rm(sshConfigDirectory, { force: true, recursive: true }));
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }

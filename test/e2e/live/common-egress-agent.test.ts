@@ -35,10 +35,7 @@ import {
   runHermesAgentAssertionRetry,
   type OpenClawPublicFetchExpectation,
 } from "./common-egress-agent-helpers.ts";
-import {
-  runOpenClawAgentAssertion,
-  type OpenClawAgentAssertionEvidence,
-} from "./openclaw-agent-assertion.ts";
+import { runOpenClawAgentAssertion } from "./openclaw-agent-assertion.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 //
@@ -927,7 +924,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       });
 
       progress.phase("fetch a fixed public reference with OpenClaw");
-      const publicFetch = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
+      await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
         expected: "PERSONAL_PUBLIC_FETCH_OK",
         label: "c4-agent-personal-public-fetch",
@@ -939,7 +936,6 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         toolEvidenceValidator: (evidence) =>
           assessPersonalPublicFetchToolEvidence(evidence).matches,
       });
-      expect(publicFetch.toolEvidence).toBeDefined();
       await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-personal-public-fetch",

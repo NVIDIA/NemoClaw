@@ -305,7 +305,7 @@ The execution profile owns the credentials available to its target step:
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
-The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory and is removed after the assertion. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
 The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
 
