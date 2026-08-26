@@ -8,7 +8,7 @@ on:
   # advisor secrets available for both internal and fork PRs. The analysis job
   # never executes PR-controlled content and has no write permission.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       base_ref:
@@ -46,7 +46,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}-${{ github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null }}
+  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -72,7 +72,7 @@ jobs:
 
   review-specialists:
     name: Specialist / ${{ matrix.advisor.label }}
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
     permissions:
       actions: read
       checks: read
@@ -356,7 +356,7 @@ jobs:
   publish:
     name: Publish advisor link
     needs: review-specialists
-    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review-specialists.result == 'success' }}
+    if: ${{ always() && github.event_name == 'pull_request_target' && needs.review-specialists.result == 'success' }}
     # Publication is best-effort and must never hide a specialist review failure.
     continue-on-error: true
     permissions:
