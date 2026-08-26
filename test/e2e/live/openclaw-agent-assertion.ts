@@ -48,7 +48,6 @@ export interface OpenClawAgentAssertionOptions {
 
 export interface PersonalStockAssertionResult {
   assessment: PersonalStockToolEvidenceArtifact;
-  asOfRecent: true;
   quote: {
     as_of: string;
     price: number;
@@ -219,7 +218,9 @@ Return these fields:
 - source_url: the exact URL for the paired web_fetch call
 - as_of: the quote's own market or update timestamp
 Copy an extended ISO 8601 source date or timestamp exactly. Convert a compact YYYYMMDD source date to YYYY-MM-DD.
-For a Unix-epoch field such as regularMarketTime, convert that field exactly to ISO 8601.
+If a source value has a calendar date but no clock time, return YYYY-MM-DD. Never add a clock time or timezone to a date-only value.
+For a Unix-epoch field such as regularMarketTime, interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601.
+Before replying, confirm that the exact ISO or date value appears in that same result, or that the exact epoch integer converts to the same instant as as_of.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(
@@ -250,7 +251,6 @@ export async function runPersonalStockAgentAssertion(
   await artifacts.writeJson(`actions/${args.label}-assessment.json`, assessmentArtifact);
   return {
     assessment: assessmentArtifact,
-    asOfRecent: true,
     quote: {
       as_of: quote!.as_of,
       price: quote!.price,
