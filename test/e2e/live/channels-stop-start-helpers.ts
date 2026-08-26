@@ -378,10 +378,14 @@ async function hermesChannelIsActive(
   redactions: string[],
 ): Promise<boolean> {
   const probes: Record<string, string> = {
+    // Telegram and Discord render no token line, for the same reason as Slack
+    // below: OpenShell injects the revision-scoped placeholder into the process
+    // environment, and a rendered line would shadow it. The allowlist line is
+    // what proves the channel still renders.
     telegram:
-      'grep -Eq "^TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN$" /sandbox/.hermes/.env',
+      'grep -Eq "^TELEGRAM_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^TELEGRAM_BOT_TOKEN=" /sandbox/.hermes/.env',
     discord:
-      'grep -Eq "^DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN$" /sandbox/.hermes/.env',
+      'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
     wechat:
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     // Slack renders no token line: OpenShell binds SLACK_* to the policy
@@ -816,9 +820,19 @@ export async function runChannelsStopStartTarget({
     const state = await readOpenClawChannelState(sandbox, "googlechat", "after-remove", redactions);
     expect(openClawChannelIsInert(state), "OpenClaw Google Chat config removed").toBe(true);
   } else {
-    expect(
-      await hermesChannelIsActive(sandbox, "googlechat", "after-remove", redactions),
-      "Hermes Google Chat config removed",
-    ).toBe(false);
+    // Assert absence directly. The active probe already carries a negative
+    // GOOGLE_CHAT_ACCESS_TOKEN conjunct, so inverting it would report success
+    // for exactly the leftover token line this step must catch.
+    const removed = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      'if [ ! -r /sandbox/.hermes/.env ] || ! grep -qE "^GOOGLE_CHAT_" /sandbox/.hermes/.env; then echo yes; else echo no; fi',
+      {
+        artifactName: `config-channel-${AGENT}-googlechat-after-remove-absent`,
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(removed, "read Hermes googlechat after-remove");
+    expect(removed.stdout.trim(), "Hermes Google Chat config removed").toBe("yes");
   }
 }
