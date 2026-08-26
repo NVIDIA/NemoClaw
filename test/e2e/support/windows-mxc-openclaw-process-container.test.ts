@@ -88,6 +88,16 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
   };
 }
 
+function withProcessPlatform(platform: NodeJS.Platform, operation: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  try {
+    operation();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
@@ -313,6 +323,16 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
       /artifact root must be a direct child of the qualification work root/u,
     );
+  });
+
+  it("rejects a nested Windows qualification work root during parsing (#8178)", () => {
+    const { environment } = fixture();
+
+    withProcessPlatform("win32", () => {
+      expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+        /work root must be a drive root/u,
+      );
+    });
   });
 
   it("rejects moving aliases instead of exact digest and revision identities (#8178)", () => {

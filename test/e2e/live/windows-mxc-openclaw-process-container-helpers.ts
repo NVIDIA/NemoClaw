@@ -524,6 +524,17 @@ function requireDirectChild(directory: string, root: string, name: string): void
   }
 }
 
+function requireWindowsDriveRoot(directory: string, platform = process.platform): void {
+  if (platform !== "win32") return;
+  const absolute = path.win32.resolve(directory);
+  if (
+    normalizeWindowsIdentityValue(absolute) !==
+    normalizeWindowsIdentityValue(path.win32.parse(absolute).root)
+  ) {
+    throw new Error("Windows MXC qualification work root must be a drive root");
+  }
+}
+
 export function parseWindowsMxcOpenClawQualificationEnvironment(
   environment: NodeJS.ProcessEnv,
 ): WindowsMxcOpenClawQualificationInputs {
@@ -545,6 +556,7 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
     requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WORK_ROOT"),
     "Windows MXC qualification work root",
   );
+  requireWindowsDriveRoot(workDirectory);
   requireDirectChild(openClawRoot, workDirectory, "OpenClaw artifact root");
 
   return {
@@ -1937,13 +1949,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     release: os.release(),
   });
   if (!host.candidate) throw new Error(host.detail);
-  const workRoot = path.resolve(inputs.workDirectory);
-  if (
-    normalizeWindowsIdentityValue(workRoot) !==
-    normalizeWindowsIdentityValue(path.parse(workRoot).root)
-  ) {
-    throw new Error("Windows MXC qualification work root must be a drive root");
-  }
+  requireWindowsDriveRoot(inputs.workDirectory);
   assertExactIdentities(inputs);
   const powershellPath = trustedWindowsSystemExecutable(
     environment,
