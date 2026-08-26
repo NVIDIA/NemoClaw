@@ -31,7 +31,11 @@ Before creating a PR, verify the branch.
 
    ```bash
    git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
+   git rev-parse --verify refs/remotes/origin/main
    ```
+
+   Both commands must succeed. If the fetch fails or the remote-tracking ref is unavailable, stop
+   publication. Do not validate against a stale trusted-base ref.
 
 2. **Use a feature branch.** Do not create a PR from `main`.
 
