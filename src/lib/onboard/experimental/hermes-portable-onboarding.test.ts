@@ -16,9 +16,13 @@ import {
   hermesPortableReceiptDirectory,
   publishHermesPortableDurablePolicySource,
 } from "./hermes-portable-receipt";
-import { hermesPortableCreatePolicySemanticDigest } from "./hermes-portable-policy-authority";
+import {
+  hermesPortableCreatePolicySemanticDigest,
+  resolveHermesPortableExpectedPolicyBytes,
+} from "./hermes-portable-policy-authority";
 import {
   classifyHermesPortableRegistry,
+  createHermesPortableAuthenticatedHealthCapture,
   createHermesPortableChildEnvironment,
   createHermesPortableReadyRunner,
   createHermesPortableOpenShellCapture,
@@ -28,6 +32,7 @@ import {
   runHermesPortableOnboardingTransaction,
   scopeHermesPortableCreateGatewayArgv,
   shouldManageHermesPortableDashboard,
+  type HermesPortableOnboardingInput,
 } from "./hermes-portable-onboarding";
 import {
   createHermesPortableTestInput,
@@ -239,6 +244,40 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
+  it("runs authenticated health inside the exact OpenShell workload namespace (#9211)", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.from("200\n"),
+      stderr: Buffer.alloc(0),
+    }));
+    const authenticatedHealth = createHermesPortableAuthenticatedHealthCapture(
+      "alpha",
+      "nemoclaw",
+      capture,
+    );
+
+    expect(authenticatedHealth("health-script", 40_000)).toMatchObject({
+      status: 0,
+      stdout: "200\n",
+      stderr: "",
+    });
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-g",
+        "nemoclaw",
+        "--name",
+        "alpha",
+        "--",
+        "python3",
+        "-c",
+        "health-script",
+      ],
+      40_000,
+    );
+  });
+
   it("rejects ambient endpoint selectors before an OpenShell child starts (#9203)", () => {
     const spawn = vi.fn();
     const capture = createHermesPortableOpenShellCapture(
@@ -297,7 +336,7 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
-  it("settles the exact post-create sandbox identity when Ready publication lags (#9211)", async () => {
+  it("settles the exact post-create sandbox identity after the old Ready deadline (#9211)", async () => {
     const present = {
       kind: "present" as const,
       sandboxId: "sandbox-id-1",
@@ -310,8 +349,13 @@ describe("Hermes portable onboarding transaction", () => {
       { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
       present,
     ];
-    const observeSandbox = vi.fn((_timeoutBudgetMs?: number) => observations.shift() ?? present);
     let nowMs = 0;
+    let boundedObservations = 0;
+    const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
+      const observation = observations.shift() ?? present;
+      nowMs += timeoutBudgetMs === undefined ? 0 : ([61_000][boundedObservations++] ?? 0);
+      return observation;
+    });
     const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
       nowMs += milliseconds;
     });
@@ -330,7 +374,7 @@ describe("Hermes portable onboarding transaction", () => {
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
     expect(
       observeSandbox.mock.calls.filter(([timeoutBudgetMs]) => timeoutBudgetMs !== undefined),
-    ).toEqual([[60_000], [59_000], [58_000]]);
+    ).toEqual([[180_000], [118_000], [117_000]]);
     expect(fixture.events[0]).toBe("lock-enter");
     expect(fixture.events.at(-1)).toBe("lock-exit");
   });
@@ -385,7 +429,11 @@ describe("Hermes portable onboarding transaction", () => {
     expect(second.events).not.toContain("create");
     expect(delayResumePoll).toHaveBeenCalledTimes(1);
     expect(delayResumePoll).toHaveBeenCalledWith(1_000);
-    expect(resumeObserveSandbox.mock.calls.slice(0, 3)).toEqual([[undefined], [60_000], [59_000]]);
+    expect(resumeObserveSandbox.mock.calls.slice(0, 3)).toEqual([
+      [undefined],
+      [180_000],
+      [179_000],
+    ]);
   });
 
   it("fails closed when exact post-create Ready publication exceeds its bound (#9211)", async () => {
@@ -410,9 +458,9 @@ describe("Hermes portable onboarding transaction", () => {
     );
 
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(60);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(180);
     expect(observeSandbox.mock.calls.slice(2)).toEqual(
-      Array.from({ length: 60 }, (_value, index) => [60_000 - index * 1_000]),
+      Array.from({ length: 180 }, (_value, index) => [180_000 - index * 1_000]),
     );
     expect(fixture.events).not.toContain("registry");
     expect(fixture.events.at(-1)).toBe("lock-exit");
@@ -421,7 +469,7 @@ describe("Hermes portable onboarding transaction", () => {
   it("counts OpenShell observation time against the total Ready publication deadline (#9211)", async () => {
     let nowMs = 0;
     let observationIndex = 0;
-    const observationDurationsMs = [0, 0, 46_000, 13_000] as const;
+    const observationDurationsMs = [0, 0, 166_000, 13_000] as const;
     const observations = [
       { kind: "absent" as const },
       { kind: "absent" as const },
@@ -446,10 +494,10 @@ describe("Hermes portable onboarding transaction", () => {
       "cannot classify create result: exact OpenShell sandbox is not Ready",
     );
 
-    expect(observeSandbox.mock.calls.slice(2)).toEqual([[60_000], [13_000]]);
+    expect(observeSandbox.mock.calls.slice(2)).toEqual([[180_000], [13_000]]);
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(1);
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
-    expect(nowMs).toBe(60_000);
+    expect(nowMs).toBe(180_000);
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(fixture.events).not.toContain("registry");
   });
@@ -477,7 +525,7 @@ describe("Hermes portable onboarding transaction", () => {
 
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(delaySandboxReadyPublicationPoll).not.toHaveBeenCalled();
-    expect(observeSandbox.mock.calls.slice(2)).toEqual([[60_000]]);
+    expect(observeSandbox.mock.calls.slice(2)).toEqual([[180_000]]);
     expect(fixture.events).not.toContain("registry");
   });
 
@@ -567,6 +615,40 @@ describe("Hermes portable onboarding transaction", () => {
     expect(second.events).not.toContain("create");
     expect(second.events).toContain("temp-cleanup");
     expect(fs.existsSync(policyPath)).toBe(false);
+  });
+
+  it("retains receipt-owned policy when resume regenerates later onboarding policy (#10056)", async () => {
+    const initial = {
+      ...input(),
+      createPolicySourceBytes: Buffer.from(POLICY),
+    };
+    const first = createHermesPortableTransactionFixture(initial, { cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(initial, first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+
+    const regeneratedPolicy = `version: 1
+network_policies:
+  resume-only:
+    name: resume-only
+    endpoints:
+      - host: example.com
+        port: 443
+`;
+    const resumedInput = {
+      ...input(),
+      createPolicySourceBytes: Buffer.from(regeneratedPolicy),
+    };
+    const second = createHermesPortableTransactionFixture(resumedInput);
+
+    const resumed = await runHermesPortableOnboardingTransaction(resumedInput, second.value);
+
+    expect(resumed.active.receipt.phase).toBe("active");
+    expect(resumed.active.receipt.policy.intendedSemanticSha256).toBe(
+      hermesPortableCreatePolicySemanticDigest(Buffer.from(POLICY)),
+    );
+    expect(resumed.created).toBe(true);
+    expect(second.events.filter((event) => event === "create")).toHaveLength(1);
   });
 
   it("rejects changed non-policy create intent on pending reentry before effects (#9203)", async () => {
@@ -908,6 +990,147 @@ describe("Hermes portable onboarding transaction", () => {
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
   });
 
+  it("resumes configuring against the finalized Personal policy authority (#9211)", async () => {
+    const first = deps({ failAfterRegistry: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    const finalizedRegistry = {
+      ...first.value.readRegistry()!,
+      policyTier: "personal",
+      policies: ["personal-open-internet"],
+      policyPresetsFinalized: true,
+    };
+    const expectedPolicy = resolveHermesPortableExpectedPolicyBytes(
+      Buffer.from(POLICY),
+      finalizedRegistry,
+    ).bytes;
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+    const resumed = deps({
+      existingSandbox: true,
+      registryEntry: finalizedRegistry,
+      policySource: expectedPolicy,
+    });
+
+    const completed = await runHermesPortableOnboardingTransaction(input(), resumed.value);
+
+    expect(completed.active.receipt.phase).toBe("active");
+    expect(completed.created).toBe(false);
+    expect(resumed.events).not.toContain("create");
+  });
+
+  it("resumes the current session registration overlay on a configuring row (#9211)", async () => {
+    const fixture = deps({ failAfterRegistry: true, omitRegistryGatewayPort: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    const current = input();
+    expect(
+      fixture.updateRegistry(current.sandboxName, {
+        ...hermesPortableReservationForOnboarding(current),
+        createdAt: "2026-08-25T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    const updatesBeforeResume = fixture.events.filter(
+      (event) => event === "registry-update",
+    ).length;
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+    const resumed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
+
+    expect(resumed.active.receipt.phase).toBe("active");
+    expect(fixture.value.readRegistry()).toMatchObject({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      pendingRouteReservation: true,
+      reservationSessionId: current.inferenceRouteReservation.sessionId,
+    });
+    expect(fixture.events.filter((event) => event === "registry-update")).toHaveLength(
+      updatesBeforeResume + 1,
+    );
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
+  });
+
+  it("rejects a foreign session route overlay on a configuring registry row (#9211)", async () => {
+    const fixture = deps({ failAfterRegistry: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    const reservation = hermesPortableReservationForOnboarding(input());
+    expect(
+      fixture.updateRegistry(input().sandboxName, {
+        ...reservation,
+        createdAt: "2026-08-25T00:00:00.000Z",
+        reservationSessionId: "session-foreign",
+      }),
+    ).toBe(true);
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "inference route reservation is not owned by the current onboarding session",
+    );
+    expect(fixture.value.readRegistry()).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: "session-foreign",
+    });
+  });
+
+  it("resumes configured authority when the retired build-context plan is regenerated (#9211)", async () => {
+    const fixture = deps({ failAfterRegistry: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    const resumedInput = input();
+    resumedInput.buildContext.authority = {
+      ...resumedInput.buildContext.authority,
+      contextManifestSha256: "4".repeat(64),
+    };
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+    const resumed = await runHermesPortableOnboardingTransaction(resumedInput, fixture.value);
+
+    expect(resumed.active.receipt.phase).toBe("active");
+    expect(resumed.created).toBe(false);
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+  });
+
+  it("rejects a regenerated inference route after configured publication (#9211)", async () => {
+    const fixture = deps({ failAfterRegistry: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    const updatesBeforeResume = fixture.podman.mock.calls.filter(
+      ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
+    ).length;
+    const base = input();
+    const changed: HermesPortableOnboardingInput = {
+      ...base,
+      inferenceRouteReservation: {
+        ...base.inferenceRouteReservation,
+        selection: {
+          ...base.inferenceRouteReservation.selection,
+          model: "qwen3:8b",
+        },
+      },
+    };
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+    await expect(runHermesPortableOnboardingTransaction(changed, fixture.value)).rejects.toThrow(
+      "the saved row has another inference route",
+    );
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(
+      fixture.podman.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
+      ),
+    ).toHaveLength(updatesBeforeResume);
+  });
+
   it("rejects a different allowed GPU policy enrichment after configuring publication (#10121)", async () => {
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
     const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
@@ -1057,7 +1280,7 @@ describe("Hermes portable onboarding transaction", () => {
       });
       expect(capture.mock.calls).toEqual([
         [["sandbox", "list", "-g", "nemoclaw"]],
-        [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
+        [["sandbox", "get", "-g", "nemoclaw", "-o", "json", "alpha"]],
       ]);
     },
   );
@@ -1070,7 +1293,7 @@ describe("Hermes portable onboarding transaction", () => {
       { status: 0, stdout: "alpha Ready", stderr: "" },
       {
         status: 0,
-        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Ready\n",
+        stdout: JSON.stringify({ id: "sandbox-id-1", name: "alpha", phase: "Ready" }),
         stderr: "",
       },
     ];
@@ -1085,7 +1308,7 @@ describe("Hermes portable onboarding transaction", () => {
     ).toMatchObject({ kind: "present", sandboxId: "sandbox-id-1" });
     expect(capture.mock.calls).toEqual([
       [["sandbox", "list", "-g", "nemoclaw"], 5_000],
-      [["sandbox", "get", "-g", "nemoclaw", "alpha"], 1_000],
+      [["sandbox", "get", "-g", "nemoclaw", "-o", "json", "alpha"], 1_000],
     ]);
   });
 
@@ -1109,7 +1332,7 @@ describe("Hermes portable onboarding transaction", () => {
       .mockReturnValueOnce({ status: 0, stdout: "alpha Ready", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Ready\n",
+        stdout: JSON.stringify({ id: "sandbox-id-1", name: "alpha", phase: "Ready" }),
         stderr: "",
       });
 
@@ -1117,7 +1340,15 @@ describe("Hermes portable onboarding transaction", () => {
       kind: "present",
       sandboxId: "sandbox-id-1",
     });
-    expect(capture).toHaveBeenLastCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
+    expect(capture).toHaveBeenLastCalledWith([
+      "sandbox",
+      "get",
+      "-g",
+      "nemoclaw",
+      "-o",
+      "json",
+      "alpha",
+    ]);
   });
 
   it("routes generic Ready identity and exec checks through the exact gateway (#9203)", () => {
@@ -1148,7 +1379,7 @@ describe("Hermes portable onboarding transaction", () => {
       .mockReturnValueOnce({ status: 0, stdout: "alpha Creating", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Creating\n",
+        stdout: JSON.stringify({ id: "sandbox-id-1", name: "alpha", phase: "Creating" }),
         stderr: "",
       });
 
@@ -1197,6 +1428,7 @@ describe("Hermes portable onboarding transaction", () => {
       name: "alpha",
       agent: "hermes",
       gatewayName: "nemoclaw",
+      gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
       openshellVersion: "0.0.106",
@@ -1204,6 +1436,16 @@ describe("Hermes portable onboarding transaction", () => {
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });
     expect(classifyHermesPortableRegistry(receipt, matching)).toMatchObject({ kind: "matching" });
+    const { gatewayPort: _gatewayPort, ...withoutGatewayPort } = matching;
+    expect(classifyHermesPortableRegistry(receipt, withoutGatewayPort)).toMatchObject({
+      kind: "matching-without-gateway-port",
+    });
+    expect(
+      classifyHermesPortableRegistry(receipt, { ...matching, gatewayPort: null }),
+    ).toMatchObject({ kind: "conflict" });
+    expect(
+      classifyHermesPortableRegistry(receipt, { ...matching, gatewayPort: 8081 }),
+    ).toMatchObject({ kind: "conflict" });
     expect(
       classifyHermesPortableRegistry(
         receipt,
