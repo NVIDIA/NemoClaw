@@ -33,6 +33,7 @@ import {
   CREDENTIAL_WINDOW_STEPS,
   type CredentialWindowRequestObservation,
   type CredentialWindowRequestStep,
+  credentialWindowProviderDetachArgs,
   credentialWindowRequestId,
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
@@ -772,7 +773,7 @@ test("openshell-credential-generation-window", {
     });
 
     const detach = await sandbox.openshell(
-      ["sandbox", "provider", "detach", SANDBOX_NAME, providerName],
+      credentialWindowProviderDetachArgs(SANDBOX_NAME, providerName),
       {
         artifactName: "credential-window-direct-provider-detach",
         env: openshellEnv(),

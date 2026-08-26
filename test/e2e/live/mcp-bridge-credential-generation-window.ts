@@ -111,6 +111,13 @@ export function credentialWindowRequestId(step: CredentialWindowRequestStep): st
   return `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:${step}`;
 }
 
+export function credentialWindowProviderDetachArgs(
+  sandboxName: string,
+  providerName: string,
+): string[] {
+  return ["sandbox", "provider", "detach", "-g", "nemoclaw", sandboxName, providerName];
+}
+
 export function buildCredentialWindowProviderUpdateArgs(
   providerName: string,
   expiresAtMs: number,
