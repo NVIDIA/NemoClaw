@@ -14,6 +14,15 @@ const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy"
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 
+const CREDENTIAL_FREE_ROUTE_CASES = [
+  ["whatsapp", "enabled", true],
+  ["whatsapp", "disabled", false],
+  ["googlechat", "enabled", true],
+  ["googlechat", "disabled", false],
+  ["teams", "enabled", true],
+  ["teams", "disabled", false],
+] as const;
+
 function parseResultPayload(stdout: string): { error: string } {
   const marker = "__RESULT__";
   const markerIndex = stdout.indexOf(marker);
@@ -23,6 +32,7 @@ function parseResultPayload(stdout: string): { error: string } {
 
 function runPermissivePolicy(options: {
   agent?: "hermes" | "openclaw";
+  disabledChannels?: string[];
   enabledChannels?: string[];
   livePolicy?: string;
   livePolicyStatus?: number;
@@ -61,7 +71,7 @@ function runPermissivePolicy(options: {
         name: options.sandboxName,
         agent: options.agent,
         policies: [],
-        ...(options.enabledChannels
+        ...(options.enabledChannels !== undefined || options.disabledChannels !== undefined
           ? {
               messaging: {
                 schemaVersion: 1,
@@ -70,13 +80,21 @@ function runPermissivePolicy(options: {
                   sandboxName: options.sandboxName,
                   agent: options.agent,
                   workflow: "onboard",
-                  channels: options.enabledChannels.map((channelId) => ({
-                    channelId,
-                    configured: true,
-                    active: true,
-                    disabled: false,
-                  })),
-                  disabledChannels: [],
+                  channels: [
+                    ...(options.enabledChannels ?? []).map((channelId) => ({
+                      channelId,
+                      configured: true,
+                      active: true,
+                      disabled: false,
+                    })),
+                    ...(options.disabledChannels ?? []).map((channelId) => ({
+                      channelId,
+                      configured: true,
+                      active: false,
+                      disabled: true,
+                    })),
+                  ],
+                  disabledChannels: options.disabledChannels ?? [],
                   credentialBindings: [],
                   networkPolicy: { presets: [], entries: [] },
                   agentRender: [],
@@ -230,7 +248,7 @@ describe("applyPermissivePolicy", () => {
       expect(observed.result.stderr).toContain(
         `sandbox '${sandboxName}', channel 'telegram': ` +
           "the live policy has no credential providers; expected 1. Recovery: " +
-          `run \`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance.`,
+          `run \`nemoclaw ${sandboxName} channels add telegram\` and choose rebuild when prompted.`,
       );
       expect(observed.result.stderr).not.toContain("channel 'slack'");
     } finally {
@@ -279,13 +297,31 @@ describe("applyPermissivePolicy", () => {
       expect(observed.result.status).not.toBe(0);
       expect(observed.result.stderr).toContain(
         `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
-          `Recovery: run \`nemoclaw ${sandboxName} channels status\` and follow its reported ` +
-          "repair guidance.",
+          `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\` and choose rebuild ` +
+          "when prompted.",
       );
     } finally {
       observed.cleanup();
     }
   });
+
+  it.each(CREDENTIAL_FREE_ROUTE_CASES)(
+    "keeps the OpenClaw %s route %s in a direct permissive policy (#10153)",
+    (channelId, _state, enabled) => {
+      const observed = runPermissivePolicy({
+        agent: "openclaw",
+        ...(enabled ? { enabledChannels: [channelId] } : { disabledChannels: [channelId] }),
+        policySetStatus: 0,
+        sandboxName: `free-${channelId}`,
+      });
+      try {
+        const policies = YAML.parse(observed.policy).network_policies;
+        expect(policies[channelId] !== undefined).toBe(enabled);
+      } finally {
+        observed.cleanup();
+      }
+    },
+  );
 
   it("retains OpenClaw routes when the live policy has each exact provider set (#10153)", () => {
     const sandboxName = "configured-openclaw";

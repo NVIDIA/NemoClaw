@@ -1486,8 +1486,8 @@ describe("shields command flow", () => {
       }),
     ).toThrow(
       `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
-        `Recovery: run \`nemoclaw ${sandboxName} channels status\` and follow its reported ` +
-        "repair guidance.",
+        `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\` and choose rebuild ` +
+        "when prompted.",
     );
     expect(harness.policySetBodies).toEqual([]);
   });

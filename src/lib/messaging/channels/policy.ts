@@ -8,10 +8,7 @@ import YAML from "yaml";
 import { isValidName } from "../../sandbox-name-contract";
 import { ROOT } from "../../state/paths";
 import type { MessagingAgentId } from "../manifest";
-import {
-  listMessagingPolicyPresetMetadata,
-  listMessagingProviderNamesForChannel,
-} from "./metadata";
+import { listMessagingPolicyPresetMetadata } from "./metadata";
 import {
   enabledPlanChannelIds,
   type EnabledPlanSelection,
@@ -85,11 +82,15 @@ export function materializeMessagingPolicySandboxName(
   return content.replaceAll("{sandboxName}", sandboxName);
 }
 
-interface CredentialBoundMessagingPolicy {
+interface MessagingPolicy {
   readonly channelId: string;
   readonly policyKeys: readonly string[];
   readonly presetName: string;
-  readonly providerNames: readonly string[];
+}
+
+interface MaterializedMessagingPolicy {
+  readonly credentialProviders: ReadonlySet<string>;
+  readonly networkPolicies: Record<string, unknown>;
 }
 
 function parsePolicyMapping(content: string): Record<string, unknown> | null {
@@ -104,24 +105,12 @@ function parsePolicyMapping(content: string): Record<string, unknown> | null {
   return null;
 }
 
-function listCredentialBoundMessagingPolicies(
-  sandboxName: string,
-  agent: MessagingAgentId,
-): CredentialBoundMessagingPolicy[] {
-  return listMessagingPolicyPresetMetadata({ agent }).flatMap((policy) => {
-    const providerNames = listMessagingProviderNamesForChannel(sandboxName, policy.channelId, {
-      agent,
-    });
-    if (providerNames.length === 0) return [];
-    return [
-      {
-        channelId: policy.channelId,
-        policyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
-        presetName: policy.presetName,
-        providerNames,
-      },
-    ];
-  });
+function listMessagingPolicies(agent: MessagingAgentId): MessagingPolicy[] {
+  return listMessagingPolicyPresetMetadata({ agent }).map((policy) => ({
+    channelId: policy.channelId,
+    policyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
+    presetName: policy.presetName,
+  }));
 }
 
 function listNetworkPolicyCredentialProviders(
@@ -153,21 +142,22 @@ function listNetworkPolicyCredentialProviders(
 
 function credentialProviderOmissionReason(
   livePolicy: Record<string, unknown> | null,
-  policy: CredentialBoundMessagingPolicy,
+  policy: MessagingPolicy,
+  expectedProviders: ReadonlySet<string>,
 ): string | null {
   const liveProviders = listNetworkPolicyCredentialProviders(livePolicy, policy.policyKeys);
   if (
-    liveProviders.size === policy.providerNames.length &&
-    policy.providerNames.every((providerName) => liveProviders.has(providerName))
+    liveProviders.size === expectedProviders.size &&
+    [...expectedProviders].every((providerName) => liveProviders.has(providerName))
   ) {
     return null;
   }
   if (liveProviders.size === 0) {
-    return `the live policy has no credential providers; expected ${policy.providerNames.length}`;
+    return `the live policy has no credential providers; expected ${expectedProviders.size}`;
   }
   return (
     `the live policy credential-provider set is partial or mismatched; ` +
-    `expected ${policy.providerNames.length}, found ${liveProviders.size}`
+    `expected ${expectedProviders.size}, found ${liveProviders.size}`
   );
 }
 
@@ -177,19 +167,16 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function loadCredentialBoundPermissivePolicies(
-  policy: CredentialBoundMessagingPolicy,
+function loadMaterializedMessagingPolicy(
+  policy: MessagingPolicy,
   sandboxName: string,
   agent: MessagingAgentId,
-): Record<string, unknown> | null {
+): MaterializedMessagingPolicy | null {
   const content = loadMessagingChannelPolicyPreset(policy.presetName, {
     agent,
     sandboxName,
   });
   const boundPolicy = content ? parsePolicyMapping(content) : null;
-  if (credentialProviderOmissionReason(boundPolicy, policy) !== null) {
-    return null;
-  }
   const networkPolicies = boundPolicy?.network_policies;
   if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
     return null;
@@ -198,12 +185,16 @@ function loadCredentialBoundPermissivePolicies(
     const networkPolicy = objectRecord((networkPolicies as Record<string, unknown>)[policyName]);
     return networkPolicy ? [[policyName, networkPolicy] as const] : [];
   });
-  return entries.length === policy.policyKeys.length ? Object.fromEntries(entries) : null;
+  if (entries.length !== policy.policyKeys.length) return null;
+  return {
+    credentialProviders: listNetworkPolicyCredentialProviders(boundPolicy, policy.policyKeys),
+    networkPolicies: Object.fromEntries(entries),
+  };
 }
 
-function removeCredentialBoundMessagingPolicy(
+function removeMessagingPolicy(
   networkPolicies: Record<string, unknown>,
-  policy: CredentialBoundMessagingPolicy,
+  policy: MessagingPolicy,
 ): void {
   for (const policyName of new Set([policy.presetName, ...policy.policyKeys])) {
     delete networkPolicies[policyName];
@@ -211,12 +202,12 @@ function removeCredentialBoundMessagingPolicy(
 }
 
 /**
- * Keep credential-bound messaging routes only when the live policy proves the
- * complete provider set for an enabled channel. A missing plan rejects the
- * transition when the live policy still carries a messaging provider. Disabled
- * channels and missing, partial, or mismatched provider state omit the route
- * instead of submitting unresolved bindings. Retained route definitions come
- * only from the materialized channel policy file.
+ * Compose every enabled messaging route from its channel-owned policy. Routes
+ * with credential bindings require the exact provider set in the live policy;
+ * routes without bindings do not. A missing plan rejects the transition when
+ * the live policy still carries a messaging provider. Disabled channels and
+ * missing, partial, or mismatched provider state omit the route instead of
+ * submitting unresolved bindings.
  */
 export function composeCredentialBoundMessagingPolicies(
   targetPolicyYaml: string,
@@ -234,7 +225,7 @@ export function composeCredentialBoundMessagingPolicies(
   if (!target) throw new Error("Credential-bound messaging target policy must be a YAML mapping");
   const live = parsePolicyMapping(livePolicyYaml);
   const enabledChannels = messagingPlan ? enabledPlanChannelIds(messagingPlan) : null;
-  const messagingPolicies = listCredentialBoundMessagingPolicies(sandboxName, agent);
+  const messagingPolicies = listMessagingPolicies(agent);
   const targetPolicies = target.network_policies;
   if (!targetPolicies || typeof targetPolicies !== "object" || Array.isArray(targetPolicies)) {
     throw new Error("Credential-bound messaging target policy must contain network_policies");
@@ -242,41 +233,42 @@ export function composeCredentialBoundMessagingPolicies(
   const networkPolicies = targetPolicies as Record<string, unknown>;
   for (const policy of messagingPolicies) {
     const channelId = normalizeMessagingChannelId(policy.channelId);
+    const materializedPolicy = loadMaterializedMessagingPolicy(policy, sandboxName, agent);
     if (enabledChannels === null) {
-      const liveProviderCount = listNetworkPolicyCredentialProviders(
-        live,
-        policy.policyKeys,
-      ).size;
-      if (liveProviderCount > 0) {
+      const liveProviderCount = listNetworkPolicyCredentialProviders(live, policy.policyKeys).size;
+      const routeUsesCredentialBindings =
+        materializedPolicy === null || materializedPolicy.credentialProviders.size > 0;
+      if (routeUsesCredentialBindings && liveProviderCount > 0) {
         throw new Error(
           `Cannot compose the credential-bound messaging route for sandbox '${sandboxName}', ` +
             `channel '${channelId}' because the channel plan is unavailable. Recovery: run ` +
-            `\`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance.`,
+            `\`nemoclaw ${sandboxName} channels add ${channelId}\` and choose rebuild when prompted.`,
         );
       }
-      removeCredentialBoundMessagingPolicy(networkPolicies, policy);
+      removeMessagingPolicy(networkPolicies, policy);
       continue;
     }
     const channelEnabled = enabledChannels.has(channelId);
     if (!channelEnabled) {
-      removeCredentialBoundMessagingPolicy(networkPolicies, policy);
+      removeMessagingPolicy(networkPolicies, policy);
       continue;
     }
 
-    const providerReason = credentialProviderOmissionReason(live, policy);
-    const boundPolicies =
-      providerReason === null
-        ? loadCredentialBoundPermissivePolicies(policy, sandboxName, agent)
+    const providerReason =
+      materializedPolicy && materializedPolicy.credentialProviders.size > 0
+        ? credentialProviderOmissionReason(live, policy, materializedPolicy.credentialProviders)
         : null;
-    removeCredentialBoundMessagingPolicy(networkPolicies, policy);
-    if (!boundPolicies) {
+    removeMessagingPolicy(networkPolicies, policy);
+    if (!materializedPolicy || providerReason !== null) {
       reportOmission?.({
         channelId,
-        reason: providerReason ?? "the credential-bound channel policy could not be materialized",
-        recoveryAction: `run \`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance`,
+        reason: providerReason ?? "the channel policy could not be materialized",
+        recoveryAction:
+          `run \`nemoclaw ${sandboxName} channels add ${channelId}\` ` +
+          "and choose rebuild when prompted",
       });
     } else {
-      Object.assign(networkPolicies, boundPolicies);
+      Object.assign(networkPolicies, materializedPolicy.networkPolicies);
     }
   }
   return YAML.stringify(target);

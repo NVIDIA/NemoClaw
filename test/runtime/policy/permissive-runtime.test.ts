@@ -54,6 +54,15 @@ const MESSAGING_PERMISSIVE_BY_AGENT: Record<MessagingAgentId, string> = {
   openclaw: OPENCLAW_MESSAGING_PERMISSIVE,
 };
 
+const CREDENTIAL_FREE_ROUTE_CASES = [
+  ["whatsapp", "enabled", true],
+  ["whatsapp", "disabled", false],
+  ["googlechat", "enabled", true],
+  ["googlechat", "disabled", false],
+  ["teams", "enabled", true],
+  ["teams", "disabled", false],
+] as const;
+
 const SLACK_PROVIDER_CASES = (["openclaw", "hermes"] as const).flatMap((agent) => {
   const sandboxName = `${agent}-box`;
   const expectedProviders = listMessagingProviderNamesForChannel(sandboxName, "slack", { agent });
@@ -271,6 +280,31 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(YAML.parse(stagedPolicy).network_policies.telegram_bot).toBeUndefined();
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
+
+  it.each(CREDENTIAL_FREE_ROUTE_CASES)(
+    "keeps the OpenClaw %s route %s in Shields down (#10153)",
+    (channelId, _state, enabled) => {
+      let stagedPolicy = "";
+      buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
+        livePolicyYaml: YAML.stringify({ network_policies: {} }),
+        messagingAgent: "openclaw",
+        messagingPlan: enabled
+          ? enabledMessagingSelection(channelId)
+          : {
+              channels: [{ channelId, active: false, disabled: true }],
+              disabledChannels: [channelId],
+            },
+        readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+        sandboxName: "openclaw-box",
+        writeTempPolicy: (yaml) => {
+          stagedPolicy = yaml;
+          return "/staged-openclaw-permissive.yaml";
+        },
+      });
+      const policies = YAML.parse(stagedPolicy).network_policies;
+      expect(policies[channelId] !== undefined).toBe(enabled);
+    },
+  );
 
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
