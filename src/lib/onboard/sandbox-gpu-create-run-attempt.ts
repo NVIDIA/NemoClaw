@@ -118,7 +118,7 @@ async function rollbackNativeGpuFailureForFallback(
     return {};
   }
   const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
-    ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+    ownerCleanupHandoff: "native-gpu-fallback",
   });
   if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
   const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
@@ -533,7 +533,15 @@ export function createSandboxGpuCreateAttemptRunner(
           return false;
         })()
       ) {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        let nativeCleanup: NativeFallbackCleanupEvidence = {};
+        if (nativeCreateRejectedBeforeProgress) {
+          await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        } else {
+          nativeCleanup = await rollbackNativeGpuFailureForFallback(
+            managedLifecycle,
+            runtimePatch,
+          );
+        }
         return {
           ok: false,
           route,
@@ -543,6 +551,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ...(nativeCreateRejectedBeforeProgress
             ? { nativeCreateRejectedBeforeProgress: true as const }
             : {}),
+          ...nativeCleanup,
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -633,7 +642,10 @@ export function createSandboxGpuCreateAttemptRunner(
             }))
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        const nativeCleanup = await rollbackNativeGpuFailureForFallback(
+          managedLifecycle,
+          runtimePatch,
+        );
         return {
           ok: false,
           route,
@@ -642,6 +654,7 @@ export function createSandboxGpuCreateAttemptRunner(
             `Native OpenShell GPU sandbox did not become ready${readiness.failurePhase ? ` (${readiness.failurePhase})` : ""}.`,
           ),
           fallbackEligible: true,
+          ...nativeCleanup,
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
