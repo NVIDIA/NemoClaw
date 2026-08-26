@@ -15,7 +15,10 @@ import { executeSandboxExecCommand } from "./process-recovery";
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
 
 export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
-export type McpAttachedCredentialRevision = Exclude<McpCredentialRevisionObservation, "absent">;
+export type McpAttachedCredentialRevision = Exclude<
+  McpCredentialRevisionObservation,
+  "absent" | "canonical"
+>;
 
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
@@ -162,6 +165,7 @@ export function waitForAttachedMcpCredential(
   );
   let refreshedAfterObservedAbsence = false;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
+  let candidateRevision: McpAttachedCredentialRevision | undefined;
   let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitForMcpBridgeCondition(
     () => {
@@ -182,12 +186,29 @@ export function waitForAttachedMcpCredential(
         lastAttempt = attempt;
       }
       const observation = attempt.kind === "observation" ? attempt.observation : null;
+      // The startup command can expose the identityless canonical placeholder
+      // before the process supervisor receives the attached provider snapshot.
+      // Endpoint-bound credentials become usable only when a fresh exec sees
+      // the revision-scoped placeholder issued by that snapshot.
       const attached =
         observation !== null &&
         observation !== "absent" &&
+        observation !== "canonical" &&
         (options.previousRevision === undefined || observation !== options.previousRevision);
-      if (attached) attachedRevision = observation;
-      return attached;
+      if (!attached) {
+        candidateRevision = undefined;
+        return false;
+      }
+      if (candidateRevision !== observation) {
+        candidateRevision = observation;
+        return false;
+      }
+      // OpenShell can briefly project the revision that preceded a post-policy
+      // provider refresh. Require the same revision from two consecutive fresh
+      // execs so the adapter cannot be committed with a placeholder that is
+      // already being replaced by the provider sidecar.
+      attachedRevision = observation;
+      return true;
     },
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,

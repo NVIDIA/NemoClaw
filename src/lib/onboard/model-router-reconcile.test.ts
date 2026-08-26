@@ -15,7 +15,7 @@ const holder = vi.hoisted(() => ({
 
 // `stopModelRouterProcess` throws a sentinel so each case ends at the
 // reuse decision. Restarting the router is `startModelRouter`'s contract and
-// is covered by `test/onboard-model-router.test.ts`.
+// is covered by `test/onboarding/onboard-model-router.test.ts`.
 vi.mock("./model-router-process", () => ({
   ROUTER_HEALTH_TIMEOUT_MS: 3_000,
   getRouterHealthSnapshot: vi.fn(async () => ({ healthy: true, body: holder.snapshotBody })),

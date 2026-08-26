@@ -55,7 +55,7 @@ const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
 const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
-const HELPER_GUARD_TIMEOUT_MS = 15 * 60_000;
+export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
@@ -365,7 +365,7 @@ function helperTimeoutMs(action: HelperAction): number {
     case "publish":
     case "recover":
     case "rollback":
-      return HELPER_GUARD_TIMEOUT_MS;
+      return DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS;
     case "activate":
     case "release":
       return HELPER_ACTIVATION_TIMEOUT_MS;

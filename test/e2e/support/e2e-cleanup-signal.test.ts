@@ -5,9 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
+import { ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS } from "../fixtures/brev-launchable.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { DockerProbe } from "../fixtures/docker-probe.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -213,6 +215,28 @@ it("the shared cleanup deadline aborts commands without skipping later callbacks
     failures: [],
   });
   expect(cleanup.currentSignal()).toBe(testController.signal);
+});
+
+it("keeps the issue 9880 cleanup signal live through Brev deletion", async () => {
+  vi.useFakeTimers();
+  try {
+    const cleanup = new CleanupRegistry((text) => text, undefined, {
+      timeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
+    });
+    let signalWasLive = false;
+    cleanup.add("confirm Brev workspace absence", async () => {
+      await vi.advanceTimersByTimeAsync(DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS);
+      signalWasLive = !cleanup.currentSignal().aborted;
+    });
+
+    expect(await cleanup.runAll()).toEqual({
+      passed: ["confirm Brev workspace absence"],
+      failures: [],
+    });
+    expect(signalWasLive).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("rejects concurrent cleanup without clearing the active registry", async () => {

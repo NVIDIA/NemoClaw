@@ -574,7 +574,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
-  it("leaves plan state untouched and reports residual gateway state when detach fails", async () => {
+  it("keeps plan state and skips provider delete when rollback detach fails", async () => {
     applyPresetResult = false;
     runOpenshellSpy.mockImplementation((args: string[]) =>
       args.slice(0, 3).join(" ") === "sandbox provider detach"
@@ -586,6 +586,11 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
+    expect(runOpenshellSpy.mock.calls.map(([args]) => args)).not.toContainEqual([
+      "provider",
+      "delete",
+      "test-sb-telegram-bridge",
+    ]);
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
     expect(printedText()).toContain("'nemoclaw test-sb channels remove telegram'");
     expect(callOrder).not.toContain("promptAndRebuild");
@@ -874,7 +879,7 @@ describe("channel preset source-of-truth", () => {
   it.each(knownChannelNames())(
     "channel $name ships a preset that parsePresetPolicyKeys accepts",
     (name) => {
-      const content = policies.loadPreset(name);
+      const content = policies.loadPresetForSandbox("test-sb", name);
       expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
       expect(
         policies.parsePresetPolicyKeys(content!).length,

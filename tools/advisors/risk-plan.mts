@@ -129,7 +129,7 @@ const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualificat
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
 // amd64/arm64 cohort; the positive and adjacent-path cases in
-// test/pr-risk-plan.test.ts keep this inventory intentional and bounded.
+// test/automation/pull-requests/pr-risk-plan.test.ts keep this inventory intentional and bounded.
 const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   ".dockerignore",
