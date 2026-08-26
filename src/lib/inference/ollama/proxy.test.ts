@@ -634,6 +634,7 @@ describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
 
     expect(stderr).toContain("SECURITY PROBE SKIPPED");
     expect(stderr).toContain(OVERRIDE);
+    expect(stderr).toContain("selected backend");
     expect(stderr).toContain("bypasses");
   });
 

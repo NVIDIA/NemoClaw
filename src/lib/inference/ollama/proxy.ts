@@ -359,7 +359,7 @@ const SKIP_BIND_PROBE_ENV = "NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE";
 
 // The proxy process reads its own env (see assertBackendBoundToLoopback in
 // ollama-auth-proxy.mts), but it is spawned with an explicit allowlisted env
-// rather than inheriting the parent's — so an override the operator sets on
+// rather than inheriting the parent's. An override the operator sets on
 // the parent `nemoclaw onboard` command must be forwarded explicitly here to
 // take effect (#10240).
 function buildOllamaAuthProxySpawnEnv(token: string, url: string | null): Record<string, string> {
@@ -386,7 +386,7 @@ function printBindProbeSkipWarning(): void {
   console.error(`  ⚠ SECURITY PROBE SKIPPED: ${SKIP_BIND_PROBE_ENV}=1 disabled the Ollama auth`);
   console.error("    proxy's loopback bind check for this run.");
   console.error(
-    "    Any Ollama daemon on this host reachable on a non-loopback interface bypasses",
+    "    A selected backend reachable on a non-loopback interface bypasses",
   );
   console.error("    the proxy's token check entirely.");
   console.error(`    Unset ${SKIP_BIND_PROBE_ENV} to restore enforcement.`);
