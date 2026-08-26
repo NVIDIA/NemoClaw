@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Pull requests publish exact-head contracts for candidate E2E reuse.
 # Publish complete managed images from exact base-image contracts. Every
 # agent/platform lane pushes and validates only an immutable digest. The
 # aggregate publisher then proves that all three agents have both supported
