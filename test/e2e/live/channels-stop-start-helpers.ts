@@ -382,10 +382,14 @@ async function hermesChannelIsActive(
     // below: OpenShell injects the revision-scoped placeholder into the process
     // environment, and a rendered line would shadow it. The allowlist line is
     // what proves the channel still renders.
+    //
+    // The negative checks match `export KEY=` as well as `KEY=`, because this
+    // file can carry either form and a missed negative passes silently. The
+    // positive checks are left anchored: a missed positive fails loudly.
     telegram:
-      'grep -Eq "^TELEGRAM_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^TELEGRAM_BOT_TOKEN=" /sandbox/.hermes/.env',
+      'grep -Eq "^TELEGRAM_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_TOKEN=" /sandbox/.hermes/.env',
     discord:
-      'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
+      'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
     wechat:
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     // Slack renders no token line: OpenShell binds SLACK_* to the policy
@@ -393,7 +397,7 @@ async function hermesChannelIsActive(
     // with override=True, so a rendered line would shadow them. The allowlist
     // line is what proves the channel still renders.
     slack:
-      'grep -Eq "^SLACK_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^SLACK_(BOT|APP)_TOKEN=" /sandbox/.hermes/.env',
+      'grep -Eq "^SLACK_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?SLACK_(BOT|APP)_TOKEN=" /sandbox/.hermes/.env',
     // The DM policy is derived from the mode and the allowlist rather than
     // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:
@@ -403,7 +407,7 @@ async function hermesChannelIsActive(
     // The access token exists only in the live process environment. A rendered
     // line would shadow the revision-scoped placeholder OpenShell injects.
     googlechat:
-      'grep -Eq "^GOOGLE_CHAT_PROJECT_ID=.+$" /sandbox/.hermes/.env && grep -Eq "^GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/[^/]+/subscriptions/[^/]+$" /sandbox/.hermes/.env && grep -Eq "^GOOGLE_CHAT_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^GOOGLE_CHAT_ACCESS_TOKEN=" /sandbox/.hermes/.env',
+      'grep -Eq "^GOOGLE_CHAT_PROJECT_ID=.+$" /sandbox/.hermes/.env && grep -Eq "^GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/[^/]+/subscriptions/[^/]+$" /sandbox/.hermes/.env && grep -Eq "^GOOGLE_CHAT_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?GOOGLE_CHAT_ACCESS_TOKEN=" /sandbox/.hermes/.env',
   };
   const result = await sandboxSh(
     sandbox,
@@ -826,7 +830,7 @@ export async function runChannelsStopStartTarget({
     const removed = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      'if [ ! -r /sandbox/.hermes/.env ] || ! grep -qE "^GOOGLE_CHAT_" /sandbox/.hermes/.env; then echo yes; else echo no; fi',
+      'if [ ! -r /sandbox/.hermes/.env ] || ! grep -qE "^[[:space:]]*(export[[:space:]]+)?GOOGLE_CHAT_" /sandbox/.hermes/.env; then echo yes; else echo no; fi',
       {
         artifactName: `config-channel-${AGENT}-googlechat-after-remove-absent`,
         redactionValues: redactions,
