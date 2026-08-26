@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef);
   const deterministic = await collectDeterministicContext(
     { baseRef, headRef, headSha, changedFiles, diff },
-    { collectGitHubContext: () => collectGitHubReviewContext({ baseRef, headRef, headSha }) },
+    { collectGitHubContext: () => collectGitHubReviewContext(process.env) },
   );
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
