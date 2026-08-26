@@ -452,19 +452,18 @@ export function reduceOpenClawToolEvidence(
     const expectedMs = Date.parse(expected);
     if (!Number.isFinite(expectedMs)) return false;
     const expectedDate = new Date(expectedMs).toISOString().slice(0, 10);
-    if (
-      text.includes(expectedDate) ||
-      text.includes(expectedDate.replace(/-/gu, "")) ||
-      text.includes(expected)
-    ) {
-      return true;
+    if (/^\d{4}-\d{2}-\d{2}$/u.test(expected)) {
+      const dateTokenMatches = (candidate: string): boolean =>
+        new RegExp(`(?:^|[^0-9])${candidate}(?![0-9]|T|\\s+\\d{2}:)`, "u").test(text);
+      return dateTokenMatches(expectedDate) || dateTokenMatches(expectedDate.replace(/-/gu, ""));
     }
+    if (text.includes(expected)) return true;
     for (const match of text.matchAll(/(?:^|\D)(\d{10}|\d{13})(?!\d)/gu)) {
       const raw = match[1];
       if (!raw) continue;
       const epochMs = Number(raw) * (raw.length === 10 ? 1_000 : 1);
       if (!Number.isFinite(epochMs)) continue;
-      if (new Date(epochMs).toISOString().slice(0, 10) === expectedDate) return true;
+      if (epochMs === expectedMs) return true;
     }
     return false;
   };

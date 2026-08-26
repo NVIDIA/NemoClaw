@@ -371,27 +371,34 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
-    ["an ISO date", "2026-08-17"],
-    ["a compact date", "20260817"],
-    ["an exact ISO timestamp", STOCK_REPLY.as_of],
-    ["a Unix timestamp in seconds", "1786982340"],
-    ["a Unix timestamp in milliseconds", "1786982340000"],
-  ])("accepts %s from the qualifying stock result (#10330)", (_name, timestamp) => {
-    const evidence = reduceOpenClawToolEvidence(
-      stockSessionJsonLines({
-        payload: stockPayload({
-          text: `{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"${timestamp}"}`,
+    { name: "an ISO date", sourceTime: "2026-08-17", asOf: "2026-08-17" },
+    { name: "a compact date", sourceTime: "20260817", asOf: "2026-08-17" },
+    { name: "an exact ISO timestamp", sourceTime: STOCK_REPLY.as_of, asOf: STOCK_REPLY.as_of },
+    { name: "a Unix timestamp in seconds", sourceTime: "1786982340", asOf: STOCK_REPLY.as_of },
+    {
+      name: "a Unix timestamp in milliseconds",
+      sourceTime: "1786982340000",
+      asOf: STOCK_REPLY.as_of,
+    },
+  ])(
+    "accepts $name as quote-time evidence from one paired stock result (#10330)",
+    ({ asOf, sourceTime }) => {
+      const evidence = reduceOpenClawToolEvidence(
+        stockSessionJsonLines({
+          payload: stockPayload({
+            text: `{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"${sourceTime}"}`,
+          }),
         }),
-      }),
-      stockTrajectory(),
-      STOCK_REPLY,
-    );
+        stockTrajectory(),
+        { ...STOCK_REPLY, as_of: asOf },
+      );
 
-    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
-      matches: true,
-      qualifyingWebFetchResults: 1,
-    });
-  });
+      expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+        matches: true,
+        qualifyingWebFetchResults: 1,
+      });
+    },
+  );
 
   it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-reducer-"));
@@ -983,6 +990,26 @@ describe("common-egress agent parsing and classification helpers", () => {
       }),
       trajectory: stockTrajectory(),
       expected: STOCK_REPLY,
+    },
+    {
+      name: "price paired with a shifted same-day timestamp (#10330)",
+      session: stockSessionJsonLines({
+        payload: stockPayload({
+          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"2026-08-17T20:00:00Z"}',
+        }),
+      }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "date-only reply paired with a source timestamp (#10330)",
+      session: stockSessionJsonLines({
+        payload: stockPayload({
+          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"2026-08-17T20:00:00Z"}',
+        }),
+      }),
+      trajectory: stockTrajectory(),
+      expected: { ...STOCK_REPLY, as_of: "2026-08-17" },
     },
   ])("rejects $name", ({ expected, session, trajectory }) => {
     const evidence = reduceOpenClawToolEvidence(session, trajectory, expected);

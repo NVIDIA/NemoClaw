@@ -214,7 +214,12 @@ Reply only after one web_fetch result contains NVDA, a numeric price, and its ma
 Use the price and as_of values from that result. Set source_url to the exact URL for its paired web_fetch call.
 If no result contains all three values, do not return success.
 Reply with one JSON object and no Markdown.
-Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, and as_of to the quote's own market or update timestamp.
+Return these fields:
+- status: NVDA_PERSONAL_AGENT_OK
+- symbol: NVDA
+- price: the quote price as a JSON number
+- source_url: the exact URL for the paired web_fetch call
+- as_of: the quote's own market or update timestamp
 Copy an ISO 8601 source date or timestamp exactly. For a Unix-epoch field such as regularMarketTime, convert that field exactly to ISO 8601.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
