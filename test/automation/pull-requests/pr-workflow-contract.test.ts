@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   type CompositeAction,
@@ -374,10 +375,22 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = String(filterStep?.with?.filters ?? "");
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
+      string,
+      string[]
+    >;
+    const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
-    expect(filters).toContain("src/lib/inference/serving/catalog-loader.ts");
-    expect(filters).toContain("src/lib/inference/serving/generate-catalog.ts");
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/catalog-loader.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/generate-catalog.ts"),
+      ),
+    ).toBe(true);
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
