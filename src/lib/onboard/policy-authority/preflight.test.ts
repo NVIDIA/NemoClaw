@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import { loadAgent } from "../../agent/defs";
 import {
   createOnboardPolicyAuthorityBindings,
@@ -153,8 +154,9 @@ describe("sandbox policy authority preflight", () => {
 
   it("preserves the authority refusal when temporary-policy cleanup also fails (#9833)", () => {
     const cleanup = vi.fn(() => false);
+    let received: unknown;
 
-    expect(() =>
+    try {
       qualifySandboxPolicyAuthority(
         {
           sandboxName: "demo",
@@ -170,8 +172,20 @@ describe("sandbox policy authority preflight", () => {
             effectivePolicy: { network_policies: {} },
           }),
         },
-      ),
-    ).toThrow(/external policy authority to supply/u);
+      );
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(PolicyAuthorityRefusalError);
+    expect(received).toMatchObject({
+      message: expect.stringMatching(/external policy authority to supply/u),
+      cause: expect.any(AggregateError),
+    });
+    expect((received as Error).message).toMatch(
+      /temporary sandbox policy cleanup failed.*remove the temporary sandbox policy before retrying/iu,
+    );
+    expect((received as Error).message).not.toContain("example.com");
     expect(cleanup).toHaveBeenCalledOnce();
   });
 

@@ -802,6 +802,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   buildProviderArgs,
+  policyAuthorityCheckedRunner,
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,

@@ -36,8 +36,8 @@ export class PolicyAuthorityRefusalError extends Error {
   readonly code = POLICY_AUTHORITY_REFUSAL_CODE;
   readonly observedAuthority?: SandboxPolicyAuthority;
 
-  constructor(message: string, observedAuthority?: SandboxPolicyAuthority) {
-    super(message);
+  constructor(message: string, observedAuthority?: SandboxPolicyAuthority, options?: ErrorOptions) {
+    super(message, options);
     this.name = "PolicyAuthorityRefusalError";
     this.observedAuthority = observedAuthority;
   }

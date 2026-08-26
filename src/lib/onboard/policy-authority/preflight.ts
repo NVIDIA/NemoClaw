@@ -11,6 +11,7 @@ import {
   assertRecordedPolicyAuthority,
   inspectGlobalPolicyAuthority,
   inspectSandboxPolicyAuthority,
+  PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
 } from "../../adapters/openshell/policy-authority";
@@ -71,8 +72,28 @@ function readInitialPolicy(policy: InitialSandboxPolicy, operation: string): str
 
 function cleanupRequirement(policy: InitialSandboxPolicy, operation: string): void {
   if (policy.cleanup && policy.cleanup() !== true) {
-    throw new Error(`Refusing to ${operation}: the temporary sandbox policy could not be removed.`);
+    throw new Error(
+      `Temporary sandbox policy cleanup failed while trying to ${operation}. Inspect and remove the temporary sandbox policy before retrying.`,
+    );
   }
+}
+
+function attachCleanupFailure(primaryError: unknown, cleanupError: unknown): Error {
+  const primaryMessage =
+    primaryError instanceof Error ? primaryError.message : "Policy authority validation failed.";
+  const cleanupMessage =
+    cleanupError instanceof Error
+      ? cleanupError.message
+      : "Temporary sandbox policy cleanup failed. Inspect and remove the temporary sandbox policy before retrying.";
+  const cause = new AggregateError(
+    [primaryError, cleanupError],
+    "Policy authority validation and temporary policy cleanup both failed.",
+  );
+  const message = `${primaryMessage} ${cleanupMessage}`;
+  if (primaryError instanceof PolicyAuthorityRefusalError) {
+    return new PolicyAuthorityRefusalError(message, primaryError.observedAuthority, { cause });
+  }
+  return new Error(message, { cause });
 }
 
 /** Resolve and verify policy authority before sandbox lifecycle effects. */
@@ -136,6 +157,7 @@ export function qualifySandboxPolicyAuthority(
     cleanupRequirement(requiredPolicy, input.operation);
   } catch (cleanupError) {
     if (primaryError === undefined) throw cleanupError;
+    throw attachCleanupFailure(primaryError, cleanupError);
   }
   if (primaryError !== undefined) throw primaryError;
   return inspection;
