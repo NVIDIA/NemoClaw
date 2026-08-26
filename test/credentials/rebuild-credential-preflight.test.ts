@@ -15,6 +15,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  managedPolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/managed-policy-receipt-fixture";
 import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -86,6 +91,10 @@ wait();`,
   const gatewayPort = Number(gatewayPortText);
   expect(gatewayPort).toBeLessThanOrEqual(65_535);
   const gatewayName = `nemoclaw-${gatewayPort}`;
+  const managedPolicyState = managedSandboxEntry(sandboxName, agent ?? "openclaw", {
+    gatewayName,
+    gatewayPort,
+  });
 
   fs.writeFileSync(
     path.join(nemoclawDir, "sandboxes.json"),
@@ -103,7 +112,10 @@ wait();`,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
           policies: [],
-          policyAuthority: "nemoclaw-managed",
+          lifecycleGeneration: managedPolicyState.lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: managedPolicyState.lifecycleLiveIdentityFingerprint,
+          policyAuthority: managedPolicyState.policyAuthority,
+          policyCreationReceipt: managedPolicyState.policyCreationReceipt,
           agent,
           ...(agent === "langchain-deepagents-code"
             ? {
@@ -193,17 +205,11 @@ if (a[0] === "sandbox" && a[1] === "get") {
     process.stderr.write("sandbox ${sandboxName} not found\\n");
     process.exit(1);
   }
-  process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");
+  process.stdout.write("Sandbox: ${sandboxName}\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n");
   process.exit(0);
 }
 if (a[0] === "policy" && a[1] === "get" && a.includes("--output") && a.includes("json")) {
-  process.stdout.write(JSON.stringify({
-    scope: "sandbox",
-    sandbox: "${sandboxName}",
-    status: "effective",
-    policy_source: "sandbox",
-    policy: {},
-  }) + "\\n");
+  process.stdout.write(${JSON.stringify(managedPolicyMetadata(sandboxName))} + "\\n");
   process.exit(0);
 }
 if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }

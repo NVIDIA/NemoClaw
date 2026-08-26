@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
+
 type RunResult = {
   error?: unknown;
   output?: string;
@@ -21,9 +23,8 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider = require(
-  "./messaging-bridge-provider"
-) as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -1044,7 +1045,6 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
-
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -1073,24 +1073,35 @@ describe("onboard provider helpers", () => {
   });
 
   it("reports providers changed before bridge refresh throws (#9833)", () => {
+    const cause = new Error("receipt changed");
+    const refusal = new PolicyAuthorityRefusalError(
+      "policy authority changed",
+      "externally-managed",
+      { cause },
+    );
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
-        throw new Error("policy authority changed");
+        throw refusal;
       });
     try {
-      expect(() =>
+      let caught: unknown;
+      try {
         upsertMessagingProviders(
           [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
           () => ({ status: 0, stdout: "", stderr: "" }),
           { bestEffort: true },
-        ),
-      ).toThrow(
-        expect.objectContaining({
-          message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
-          mutatedProviderNames: ["alpha-bridge"],
-        }),
-      );
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(refusal);
+      expect(caught).toMatchObject({
+        cause,
+        observedAuthority: "externally-managed",
+        message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
+        mutatedProviderNames: ["alpha-bridge"],
+      });
     } finally {
       configureRefreshes.mockRestore();
     }

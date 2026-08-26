@@ -17,6 +17,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
+import { managedSandboxEntry } from "../../helpers/managed-policy-receipt-fixture";
 import { testTimeout } from "../../helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
@@ -66,6 +67,10 @@ let dockerInvocationsFile: string;
 let gatewayListener: ReturnType<typeof createServer> | null;
 
 function writeDefaultRegistry(gatewayName: string, gatewayPort: number) {
+  const managedPolicyState = managedSandboxEntry(SANDBOX_NAME, "openclaw", {
+    gatewayName,
+    gatewayPort,
+  });
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
@@ -82,7 +87,10 @@ function writeDefaultRegistry(gatewayName: string, gatewayPort: number) {
           dashboardPort: 28790,
           fromDockerfile: null,
           policies: [],
-          policyAuthority: "nemoclaw-managed",
+          lifecycleGeneration: managedPolicyState.lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: managedPolicyState.lifecycleLiveIdentityFingerprint,
+          policyAuthority: managedPolicyState.policyAuthority,
+          policyCreationReceipt: managedPolicyState.policyCreationReceipt,
         },
       },
     }),
@@ -355,140 +363,144 @@ afterEach(async () => {
 // at "Cannot back up state", and (c) reports the stale state and proceeds to
 // recreate from the preserved registry metadata instead of aborting.
 describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
-  it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
-    timeout: TIMEOUT_MS,
-  }, async () => {
-    gatewayListener = createServer();
-    await new Promise<void>((resolve, reject) => {
-      gatewayListener?.once("error", reject);
-      gatewayListener?.listen(0, "127.0.0.1", resolve);
-    });
-    const gatewayAddress = gatewayListener.address();
-    assert.ok(gatewayAddress && typeof gatewayAddress !== "string");
-    const gatewayPort = gatewayAddress.port;
-    const gatewayName = `nemoclaw-${gatewayPort}`;
-    writeDefaultRegistry(gatewayName, gatewayPort);
-    writeDefaultSession(gatewayName);
-    writeDockerStub(gatewayName, gatewayPort);
-    writeStubOpenshell({
-      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-      status: [{ output: statusConnectedNemoclaw(gatewayName, gatewayPort), exit: 0 }],
-      gatewayInfo: [{ output: gatewayInfoNemoclaw(gatewayName, gatewayPort), exit: 0 }],
-      gatewaySelect: { output: "", exit: 0 },
-      selectFlipsActive: false,
-      sandboxList: "",
-    });
+  it(
+    "after a non-destructive connect, `rebuild --yes` recovers the stale sandbox",
+    {
+      timeout: TIMEOUT_MS,
+    },
+    async () => {
+      gatewayListener = createServer();
+      await new Promise<void>((resolve, reject) => {
+        gatewayListener?.once("error", reject);
+        gatewayListener?.listen(0, "127.0.0.1", resolve);
+      });
+      const gatewayAddress = gatewayListener.address();
+      assert.ok(gatewayAddress && typeof gatewayAddress !== "string");
+      const gatewayPort = gatewayAddress.port;
+      const gatewayName = `nemoclaw-${gatewayPort}`;
+      writeDefaultRegistry(gatewayName, gatewayPort);
+      writeDefaultSession(gatewayName);
+      writeDockerStub(gatewayName, gatewayPort);
+      writeStubOpenshell({
+        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+        status: [{ output: statusConnectedNemoclaw(gatewayName, gatewayPort), exit: 0 }],
+        gatewayInfo: [{ output: gatewayInfoNemoclaw(gatewayName, gatewayPort), exit: 0 }],
+        gatewaySelect: { output: "", exit: 0 },
+        selectFlipsActive: false,
+        sandboxList: "",
+      });
 
-    // Step 3: routine connect must preserve the registry entry.
-    const connect = runCli("connect");
-    assert.equal(connect.status, 1, `connect expected exit 1, got ${connect.status}`);
-    assert.equal(
-      registrySandboxPresent(connect),
-      true,
-      `connect must preserve the registry entry, got: ${JSON.stringify(connect.registry)}`,
-    );
-    assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
-    assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
+      // Step 3: routine connect must preserve the registry entry.
+      const connect = runCli("connect");
+      assert.equal(connect.status, 1, `connect expected exit 1, got ${connect.status}`);
+      assert.equal(
+        registrySandboxPresent(connect),
+        true,
+        `connect must preserve the registry entry, got: ${JSON.stringify(connect.registry)}`,
+      );
+      assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
+      assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
 
-    // Step 4: the previously-suggested rebuild must RECOVER the stale sandbox.
-    // The live `sandbox list` does not report it, so rebuild enters its
-    // stale-recovery path: it locates the preserved registry entry, skips the
-    // impossible backup (instead of dead-ending at "Cannot back up state"),
-    // and proceeds to recreate from the preserved metadata.
-    const repoRoot = path.join(import.meta.dirname, "../../..");
-    const nodeBinDir = path.dirname(process.execPath);
-    const rebuild = spawnSync(
-      process.execPath,
-      [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
-      {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        timeout: TIMEOUT_MS,
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${homeLocalBin}:${nodeBinDir}:/usr/bin:/bin`,
-          NO_COLOR: "1",
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-          NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          // The recreate handoff (onboard --resume) fails fast in this stubbed
-          // HOME — fine: the assertions below target the recovery markers that
-          // are emitted BEFORE the recreate, proving rebuild crossed the
-          // backup gate that previously blocked it.
-          NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
-          NEMOCLAW_PROVIDER_KEY: "",
+      // Step 4: the previously-suggested rebuild must RECOVER the stale sandbox.
+      // The live `sandbox list` does not report it, so rebuild enters its
+      // stale-recovery path: it locates the preserved registry entry, skips the
+      // impossible backup (instead of dead-ending at "Cannot back up state"),
+      // and proceeds to recreate from the preserved metadata.
+      const repoRoot = path.join(import.meta.dirname, "../../..");
+      const nodeBinDir = path.dirname(process.execPath);
+      const rebuild = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          timeout: TIMEOUT_MS,
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${homeLocalBin}:${nodeBinDir}:/usr/bin:/bin`,
+            NO_COLOR: "1",
+            NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+            NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            // The recreate handoff (onboard --resume) fails fast in this stubbed
+            // HOME — fine: the assertions below target the recovery markers that
+            // are emitted BEFORE the recreate, proving rebuild crossed the
+            // backup gate that previously blocked it.
+            NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
+            NEMOCLAW_PROVIDER_KEY: "",
+          },
         },
-      },
-    );
-    const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
-    const installerInvocations = fs
-      .readFileSync(installerInvocationsFile, "utf8")
-      .split("\n")
-      .filter(Boolean);
-    const dockerInvocations = fs
-      .readFileSync(dockerInvocationsFile, "utf8")
-      .split("\n")
-      .filter(Boolean);
+      );
+      const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
+      const installerInvocations = fs
+        .readFileSync(installerInvocationsFile, "utf8")
+        .split("\n")
+        .filter(Boolean);
+      const dockerInvocations = fs
+        .readFileSync(dockerInvocationsFile, "utf8")
+        .split("\n")
+        .filter(Boolean);
 
-    assert.equal(
-      installerInvocations.length,
-      0,
-      `rebuild must not invoke the OpenShell installer, got ${installerInvocations.length} invocation(s)`,
-    );
-    assert.doesNotMatch(
-      rebuildOut,
-      /below minimum required version|Installing OpenShell/,
-      `rebuild must use the fixture OpenShell binaries, got:\n${rebuildOut}`,
-    );
-    assert.doesNotMatch(
-      rebuildOut,
-      /below minimum.*upgrading|missing provider credential rewrite or MCP L7 policy support.*reinstalling/i,
-      `rebuild must not enter the OpenShell upgrade or repair path, got:\n${rebuildOut}`,
-    );
-    assert.doesNotMatch(
-      rebuildOut,
-      /Installing OpenShell from release/,
-      `rebuild must not enter the OpenShell install path, got:\n${rebuildOut}`,
-    );
-    assert.doesNotMatch(
-      rebuildOut,
-      /does not exist/,
-      `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
-    );
-    // The reopened-issue dead-end must be gone.
-    assert.doesNotMatch(
-      rebuildOut,
-      /Cannot back up state/,
-      `rebuild must not dead-end on the stale sandbox (#4497), got:\n${rebuildOut}`,
-    );
-    assert.match(
-      rebuildOut,
-      new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
-      `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
-    );
-    // It must recognize the stale state and skip the impossible backup.
-    assert.match(
-      rebuildOut,
-      /absent from the live OpenShell gateway/,
-      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}\nDocker invocations:\n${dockerInvocations.join("\n")}`,
-    );
-    assert.match(
-      rebuildOut,
-      /No live workspace state to back up/,
-      `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
-    );
-    assert.doesNotMatch(
-      rebuildOut,
-      /Backing up sandbox state/,
-      `rebuild must not attempt backup on a stale sandbox (#4497), got:\n${rebuildOut}`,
-    );
-    // And it must proceed to recreate from the preserved metadata — this line
-    // is printed right before the onboard --resume handoff.
-    assert.match(
-      rebuildOut,
-      /Creating new sandbox with current image/,
-      `rebuild must proceed to recreate the sandbox (#4497), got:\n${rebuildOut}`,
-    );
-  });
+      assert.equal(
+        installerInvocations.length,
+        0,
+        `rebuild must not invoke the OpenShell installer, got ${installerInvocations.length} invocation(s)`,
+      );
+      assert.doesNotMatch(
+        rebuildOut,
+        /below minimum required version|Installing OpenShell/,
+        `rebuild must use the fixture OpenShell binaries, got:\n${rebuildOut}`,
+      );
+      assert.doesNotMatch(
+        rebuildOut,
+        /below minimum.*upgrading|missing provider credential rewrite or MCP L7 policy support.*reinstalling/i,
+        `rebuild must not enter the OpenShell upgrade or repair path, got:\n${rebuildOut}`,
+      );
+      assert.doesNotMatch(
+        rebuildOut,
+        /Installing OpenShell from release/,
+        `rebuild must not enter the OpenShell install path, got:\n${rebuildOut}`,
+      );
+      assert.doesNotMatch(
+        rebuildOut,
+        /does not exist/,
+        `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
+      );
+      // The reopened-issue dead-end must be gone.
+      assert.doesNotMatch(
+        rebuildOut,
+        /Cannot back up state/,
+        `rebuild must not dead-end on the stale sandbox (#4497), got:\n${rebuildOut}`,
+      );
+      assert.match(
+        rebuildOut,
+        new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
+        `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
+      );
+      // It must recognize the stale state and skip the impossible backup.
+      assert.match(
+        rebuildOut,
+        /absent from the live OpenShell gateway/,
+        `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}\nDocker invocations:\n${dockerInvocations.join("\n")}`,
+      );
+      assert.match(
+        rebuildOut,
+        /No live workspace state to back up/,
+        `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
+      );
+      assert.doesNotMatch(
+        rebuildOut,
+        /Backing up sandbox state/,
+        `rebuild must not attempt backup on a stale sandbox (#4497), got:\n${rebuildOut}`,
+      );
+      // And it must proceed to recreate from the preserved metadata — this line
+      // is printed right before the onboard --resume handoff.
+      assert.match(
+        rebuildOut,
+        /Creating new sandbox with current image/,
+        `rebuild must proceed to recreate the sandbox (#4497), got:\n${rebuildOut}`,
+      );
+    },
+  );
 });

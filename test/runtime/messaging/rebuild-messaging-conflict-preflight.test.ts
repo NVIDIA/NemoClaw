@@ -13,6 +13,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  managedPolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -116,21 +121,30 @@ function createConflictFixture() {
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
-  const sandboxEntry = (name: string) => ({
-    name,
-    model: "meta/llama-3.3-70b-instruct",
-    provider: "nvidia-prod",
-    gpuEnabled: false,
-    sandboxGpuMode: "0",
-    gatewayName: "nemoclaw",
-    gatewayPort: 8080,
-    dashboardPort: 18789,
-    fromDockerfile: null,
-    policies: [],
-    policyAuthority: "nemoclaw-managed",
-    agent: null,
-    messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
-  });
+  const sandboxEntry = (name: string) => {
+    const managedPolicyState = managedSandboxEntry(name, "openclaw", {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    return {
+      name,
+      model: "meta/llama-3.3-70b-instruct",
+      provider: "nvidia-prod",
+      gpuEnabled: false,
+      sandboxGpuMode: "0",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      dashboardPort: 18789,
+      fromDockerfile: null,
+      policies: [],
+      lifecycleGeneration: managedPolicyState.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: managedPolicyState.lifecycleLiveIdentityFingerprint,
+      policyAuthority: managedPolicyState.policyAuthority,
+      policyCreationReceipt: managedPolicyState.policyCreationReceipt,
+      agent: null,
+      messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
+    };
+  };
 
   fs.writeFileSync(
     path.join(nemoclawDir, "sandboxes.json"),
@@ -164,15 +178,15 @@ function createConflictFixture() {
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="get")        { process.stdout.write("Name: " + a.at(-1) + "\\nId: sbx-fixture\\nPhase: Ready\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get")        { process.stdout.write("Name: " + a.at(-1) + "\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="policy" && a[1]==="get" && a.includes("--output") && a.includes("json")) {
-  process.stdout.write(JSON.stringify({scope:"sandbox",sandbox:a.at(-1),status:"effective",policy_source:"sandbox",policy:{}}) + "\\n");
+  process.stdout.write(${JSON.stringify(managedPolicyMetadata("my-assistant"))} + "\\n");
   process.exit(0);
 }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"nvidia-prod","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference")                      { process.exit(0); }
@@ -240,22 +254,26 @@ function registryHasSandbox(nemoclawDir: string, name: string): boolean {
 }
 
 describe("rebuild messaging credential conflict preflight (#5954)", () => {
-  it("aborts BEFORE backup/delete when another sandbox shares the Teams credential", {
-    timeout: 90_000,
-  }, () => {
-    const f = createConflictFixture();
-    const result = runRebuild(f.tmpDir);
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+  it(
+    "aborts BEFORE backup/delete when another sandbox shares the Teams credential",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const f = createConflictFixture();
+      const result = runRebuild(f.tmpDir);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
 
-    // Aborted, with the actionable conflict explanation.
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("uses the same teams credential");
-    expect(output).toContain("Aborting");
+      // Aborted, with the actionable conflict explanation.
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("uses the same teams credential");
+      expect(output).toContain("Aborting");
 
-    // Nothing destructive ran: the sandbox is untouched and still registered.
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Old sandbox deleted");
-    expect(output).not.toContain("must not run before the conflict preflight");
-    expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
-  });
+      // Nothing destructive ran: the sandbox is untouched and still registered.
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("must not run before the conflict preflight");
+      expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+    },
+  );
 });

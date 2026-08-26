@@ -130,6 +130,8 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
       sandboxEntryReads: [
         originalEntry, // Initial rebuild target.
         originalEntry, // Exact post-confirmation lock guard.
+        originalEntry, // Managed-policy receipt qualification.
+        originalEntry, // Managed-policy receipt stability read.
         originalEntry, // Messaging config hydration.
         originalEntry, // Messaging-conflict gateway lookup (#5954).
         driftedEntry, // Final pre-backup target verification.
@@ -180,11 +182,15 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
       sandboxEntryReads: [
         originalEntry, // Initial rebuild target.
         originalEntry, // Exact post-confirmation lock guard.
+        originalEntry, // Managed-policy receipt qualification.
+        originalEntry, // Managed-policy receipt stability read.
         originalEntry, // Messaging config hydration.
         originalEntry, // Messaging-conflict gateway lookup (#5954).
         originalEntry, // Final pre-backup target verification.
+        originalEntry, // Destructive-edge receipt qualification.
+        originalEntry, // Destructive-edge receipt stability read.
+        originalEntry, // Destructive-edge authority reread.
         driftedEntry, // Policy-authority reread at the destructive boundary.
-        driftedEntry, // Exact target reread at the destructive boundary.
       ],
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
     });

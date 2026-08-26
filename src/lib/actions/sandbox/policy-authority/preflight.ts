@@ -6,6 +6,7 @@ import YAML from "yaml";
 
 import {
   assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
   assertRecordedPolicyAuthority,
   inspectActiveGlobalPolicy,
   inspectOpenShellSandboxIdentityFingerprint,
@@ -18,6 +19,7 @@ import {
   qualifyGlobalPolicyAuthority,
   qualifySandboxPolicyAuthority,
 } from "../../../onboard/policy-authority/preflight";
+import { parseOpenShellPolicy } from "../../../policy/merge";
 import { isPresetPolicyMap, parseNetworkPolicies } from "../../../policy/preset-parsing";
 import * as registry from "../../../state/registry";
 import { getPersistedSandboxTargetGatewayName } from "../gateway-target";
@@ -53,10 +55,7 @@ export interface PolicyAuthorityInspectionOptions {
 
 export function parseRequiredPolicyDocument(content: string, operation: string): RequiredPolicy {
   try {
-    const parsed: unknown = YAML.parse(content);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as RequiredPolicy;
-    }
+    return parseOpenShellPolicy(content).policy;
   } catch {
     // The common refusal below owns invalid policy document errors.
   }
@@ -139,7 +138,11 @@ function assertPolicyAuthorityRequirements(
 ): void {
   for (const inspection of inspections) {
     for (const requiredPolicy of options.requiredPolicies) {
-      assertExternalPolicyRequirements({
+      const assertRequirements =
+        inspection.authority === "owner-unknown"
+          ? assertObservedPolicyRequirements
+          : assertExternalPolicyRequirements;
+      assertRequirements({
         inspection,
         requiredPolicy,
         operation: options.operation,
