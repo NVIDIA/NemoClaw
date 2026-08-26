@@ -1444,7 +1444,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "creates no messaging providers when enabledChannels is empty",
+    "does not create messaging providers from ambient credentials without a selected plan",
     {
       timeout: 60_000,
     },
@@ -1521,9 +1521,9 @@ const { createSandbox } = require(${onboardPath});
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
-  // Empty array — user deselected all channels
+  // No selected messaging plan — ambient repository credentials are unrelated to this request.
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1554,7 +1554,7 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(
         providerCommands.length,
         0,
-        "no providers should be created when enabledChannels is empty",
+        "no providers should be created without a selected messaging plan",
       );
 
       // Sandbox create should have no --provider flags for messaging bridges

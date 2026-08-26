@@ -22,12 +22,14 @@ function filterEnabledChannelNames(
 
 function filterMessagingProviderRequestsByEnabledChannel(
   requests: readonly SandboxCreateMessagingProviderRequest[],
-  selectedChannelNames: ReadonlySet<string>,
+  selectedChannelNames: ReadonlySet<string> | null,
   disabledChannelNames: ReadonlySet<string>,
 ): SandboxCreateMessagingProviderRequest[] {
   return requests.filter(
     ({ channel }) =>
-      !channel || (selectedChannelNames.has(channel) && !disabledChannelNames.has(channel)),
+      !channel ||
+      ((!selectedChannelNames || selectedChannelNames.has(channel)) &&
+        !disabledChannelNames.has(channel)),
   );
 }
 
@@ -64,7 +66,7 @@ function resolveActiveMessagingChannels({
   | "primaryMessagingCredentialEnvKeys"
   | "reusableMessagingChannels"
 >): string[] {
-  const selectedChannelNames = new Set(enabledChannels ?? []);
+  const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const primaryCredentialEnvKeys = new Set(primaryMessagingCredentialEnvKeys);
   const qrSelectedChannels = resolveQrSelectedChannels(
     [...channels],
@@ -78,12 +80,14 @@ function resolveActiveMessagingChannels({
           .filter(({ credentialConfigured }) => credentialConfigured)
           .flatMap(({ channel, envKey }) => {
             return channel &&
-              selectedChannelNames.has(channel) &&
+              (!selectedChannelNames || selectedChannelNames.has(channel)) &&
               primaryCredentialEnvKeys.has(envKey)
               ? [channel]
               : [];
           }),
-        ...reusableMessagingChannels.filter((channel) => selectedChannelNames.has(channel)),
+        ...reusableMessagingChannels.filter(
+          (channel) => !selectedChannelNames || selectedChannelNames.has(channel),
+        ),
         ...qrSelectedChannels,
       ]),
     ],
@@ -158,7 +162,7 @@ export function resolveSandboxCreateIntent({
   policyTier,
   baselineExclusions = [],
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
-  const selectedChannelNames = new Set(enabledChannels ?? []);
+  const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
     messagingProviderRequests,
     selectedChannelNames,
