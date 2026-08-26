@@ -16,7 +16,7 @@ const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
 
-function runBinding(policyFile: string, protocol = "websocket") {
+function runBinding(policyFile: string, protocol?: string) {
   return spawnSync(
     process.execPath,
     [
@@ -28,7 +28,7 @@ function runBinding(policyFile: string, protocol = "websocket") {
       "e2e-hermes-discord-discord-bridge",
       "host.docker.internal",
       "43117",
-      protocol,
+      ...(protocol === undefined ? [] : [protocol]),
     ],
     { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
   );
@@ -72,7 +72,7 @@ describe("Hermes Discord E2E policy binding", () => {
       ].join("\n"),
     );
 
-    const result = runBinding(policyFile);
+    const result = runBinding(policyFile, "websocket");
 
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
@@ -101,20 +101,7 @@ describe("Hermes Discord E2E policy binding", () => {
     const policyFile = path.join(tempDir, "policy.yaml");
     fs.writeFileSync(policyFile, "version: 1\nnetwork_policies: {}\n");
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--disable-warning=DEP0205",
-        "--import",
-        "tsx",
-        HELPER,
-        policyFile,
-        "e2e-hermes-discord-discord-bridge",
-        "host.docker.internal",
-        "43117",
-      ],
-      { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
-    );
+    const result = runBinding(policyFile, undefined);
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("<protocol>");
