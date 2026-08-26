@@ -147,15 +147,15 @@ function publisherJob(
 function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string, unknown>[] {
   const runAttempt = overrides.runAttempt ?? 1;
   return [
-    publisherJob("Build and push OpenClaw base image", {
+    publisherJob("Manifests / OpenClaw", {
       id: 1,
       run_attempt: runAttempt,
     }),
-    publisherJob("Build and push Hermes base image", {
+    publisherJob("Manifests / Hermes", {
       id: 2,
       run_attempt: runAttempt,
     }),
-    publisherJob("Build and push Deep Agents Code base image", {
+    publisherJob("Manifests / Deep Agents Code", {
       id: 3,
       run_attempt: runAttempt,
     }),
@@ -578,7 +578,7 @@ describe("base-image publication evidence", () => {
 
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
     const jobs = successfulJobs().map((job) =>
-      job.name === "Build and push Hermes base image"
+      job.name === "Manifests / Hermes"
         ? { ...job, status: "in_progress", conclusion: null }
         : job,
     );
@@ -598,7 +598,7 @@ describe("base-image publication evidence", () => {
     "rejects a required publisher that concludes %s before the workflow completes (#9549)",
     (conclusion) => {
       const jobs = successfulJobs().map((job) =>
-        job.name === "Build and push Hermes base image" ? { ...job, conclusion } : job,
+        job.name === "Manifests / Hermes" ? { ...job, conclusion } : job,
       );
 
       expect(() =>
@@ -643,13 +643,13 @@ describe("base-image publication evidence", () => {
     ["missing", successfulJobs().slice(0, 2), /missing required/u],
     [
       "duplicated",
-      [...successfulJobs(), publisherJob("Build and push Hermes base image", { id: 9 })],
+      [...successfulJobs(), publisherJob("Manifests / Hermes", { id: 9 })],
       /duplicated in attempt/u,
     ],
     [
       "failed selected attempt",
       successfulJobs().map((job) =>
-        job.name === "Build and push Hermes base image" ? { ...job, conclusion: "failure" } : job,
+        job.name === "Manifests / Hermes" ? { ...job, conclusion: "failure" } : job,
       ),
       /did not complete successfully/u,
     ],
