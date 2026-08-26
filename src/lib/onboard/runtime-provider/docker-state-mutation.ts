@@ -54,7 +54,8 @@ const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
-const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
+export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS = 6 * 60_000;
+const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
@@ -90,7 +91,7 @@ import time
 
 ROOT = "/run/nemoclaw/runtime-state-mutation"
 MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": 300, "release": 300}
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
 IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
 INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
 PUBLICATION_SETTLE_SECONDS = 5
@@ -367,8 +368,9 @@ function helperTimeoutMs(action: HelperAction): number {
     case "rollback":
       return DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS;
     case "activate":
+      return DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS;
     case "release":
-      return HELPER_ACTIVATION_TIMEOUT_MS;
+      return HELPER_RELEASE_TIMEOUT_MS;
     case "acquire":
     case "assert":
       return HELPER_FAST_TIMEOUT_MS;
