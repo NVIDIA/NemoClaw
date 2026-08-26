@@ -37,7 +37,7 @@ type ResolveManagedImageCatalog = (options: {
 }) => Promise<ManagedImageContractCatalog>;
 
 const EXACT_SOURCE_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-const SOURCE_REVISION_REF_PATTERN = /^[0-9A-Fa-f]{40,64}$/u;
+const SOURCE_REVISION_REF_PATTERN = /^[0-9A-Fa-f]{39,64}$/u;
 
 export interface PrepareSandboxWorkloadSourceInput {
   readonly agentName: string;

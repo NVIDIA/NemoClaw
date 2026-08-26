@@ -123,6 +123,9 @@ describe("sandbox workload preparation", () => {
         installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: "a".repeat(40) }, fixtureRoot),
       ).toThrow("the exact install ref does not match the installed build identity");
       expect(() =>
+        installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: "a".repeat(39) }, fixtureRoot),
+      ).toThrow("is not a supported lowercase 40-character source revision");
+      expect(() =>
         installedManagedImageCatalogRevision(
           { NEMOCLAW_INSTALL_REF: REVISION.toUpperCase() },
           fixtureRoot,
