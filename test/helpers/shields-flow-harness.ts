@@ -51,8 +51,12 @@ export function bindManagedPolicyMutationAuthority(
       .spyOn(policy, "inspectPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
     vi
+      .spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
       .spyOn(policy, "recheckPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
   ];
 }
 

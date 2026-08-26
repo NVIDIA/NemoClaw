@@ -174,7 +174,7 @@ describe("provider inference policy authority", () => {
 
   it("withholds durable inference success when final policy authority changes (#9833)", async () => {
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
-      requirements.operation === "finish successful inference configuration"
+      requirements.operation === "record successful inference configuration"
         ? refuseExternalPolicy()
         : undefined,
     );

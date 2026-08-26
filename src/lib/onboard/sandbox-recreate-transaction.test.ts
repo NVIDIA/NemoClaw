@@ -961,7 +961,11 @@ describe("source registry fingerprint", () => {
         hostLocalInferenceReceipt,
         hostLocalInferenceProvenance,
       };
-      registry.reserveSandboxInferenceRoute("alpha", route);
+      const {
+        hostLocalInferenceReceipt: _reservedReceipt,
+        hostLocalInferenceProvenance: _reservedProvenance,
+        ...registeredRoute
+      } = route;
       registry.registerSandbox({
         name: "alpha",
         agent: "openclaw",
@@ -969,7 +973,7 @@ describe("source registry fingerprint", () => {
         createdAt: ISO,
         imageTag: "nemoclaw/openclaw:2026.3.11",
         lifecycleGeneration: "alpha-generation-1",
-        ...route,
+        ...registeredRoute,
       });
       const journaled = fingerprintSandboxRegistryEntry(
         registry.getSandbox("alpha") as SandboxEntry,

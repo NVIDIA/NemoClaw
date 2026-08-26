@@ -6003,7 +6003,6 @@ function shieldsDownWithoutHostLock(
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
   if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
-  finalizePolicyMutationReceipt(sandboxName, appliedPolicyDocument, policyAuthority);
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
@@ -6011,6 +6010,7 @@ function shieldsDownWithoutHostLock(
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
   try {
+    finalizePolicyMutationReceipt(sandboxName, appliedPolicyDocument, policyAuthority);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }

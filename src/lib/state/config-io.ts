@@ -388,6 +388,7 @@ export function writeConfigFile(filePath: string, data: SerializableConfig): voi
     } finally {
       fs.closeSync(fileDescriptor);
     }
+    fs.rmSync(backupFile, { force: true });
     try {
       fs.linkSync(filePath, backupFile);
       backupCreated = true;

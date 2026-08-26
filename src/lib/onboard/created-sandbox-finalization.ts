@@ -31,7 +31,6 @@ import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestratio
 import { printMessagingProviderMissing } from "./preflight-messages";
 import {
   pendingSandboxPolicyVerificationForBoundary,
-  verifyCreatedSandboxPolicyCreationReceipt,
 } from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type {
@@ -163,7 +162,6 @@ export interface CreatedSandboxCompletionDeps extends Omit<
   "register"
 > {
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
-  readonly verifyCreatedSandboxPolicyCreationReceipt?: typeof verifyCreatedSandboxPolicyCreationReceipt;
 }
 
 export interface CreatedSandboxCompletionActions {
@@ -616,7 +614,6 @@ export function createOnboardCreatedSandboxCompletion(
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
-  verifyPolicyCreationReceipt: typeof verifyCreatedSandboxPolicyCreationReceipt = verifyCreatedSandboxPolicyCreationReceipt,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -719,7 +716,6 @@ export function createOnboardCreatedSandboxCompletion(
       error: console.error,
       exitProcess: (code) => process.exit(code),
       revalidatePolicyAuthority: preparedPolicy.revalidatePolicyAuthority,
-      verifyCreatedSandboxPolicyCreationReceipt: verifyPolicyCreationReceipt,
     },
   );
 }

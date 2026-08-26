@@ -225,24 +225,42 @@ describe("config-io", () => {
   it("synchronizes replacement bytes before rename and the directory after rename", () => {
     const dir = makeTempDir();
     const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
     const openSpy = vi.spyOn(fs, "openSync");
     const syncSpy = vi.spyOn(fs, "fsyncSync");
+    const linkSpy = vi.spyOn(fs, "linkSync");
     const renameSpy = vi.spyOn(fs, "renameSync");
 
     writeConfigFile(file, { durable: true });
 
-    expect(openSpy.mock.calls.map(([target]) => String(target))).toEqual([
-      `${file}.tmp.${String(process.pid)}`,
-      `${file}.tmp.${String(process.pid)}`,
-      dir,
-    ]);
-    expect(syncSpy).toHaveBeenCalledTimes(2);
+    expect(openSpy).toHaveBeenCalledWith(`${file}.tmp.${String(process.pid)}`, "r");
+    expect(openSpy).toHaveBeenCalledWith(dir, fs.constants.O_RDONLY);
+    expect(syncSpy).toHaveBeenCalledTimes(3);
     expect(syncSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      linkSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(linkSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      syncSpy.mock.invocationCallOrder[1]!,
+    );
+    expect(syncSpy.mock.invocationCallOrder[1]).toBeLessThan(
       renameSpy.mock.invocationCallOrder[0]!,
     );
     expect(renameSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      syncSpy.mock.invocationCallOrder[1]!,
+      syncSpy.mock.invocationCallOrder[2]!,
     );
+  });
+
+  it("replaces a stale rollback backup from a reused process ID", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const backupFile = `${file}.rollback.${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    fs.writeFileSync(backupFile, JSON.stringify({ durable: "stale" }), { mode: 0o600 });
+
+    writeConfigFile(file, { durable: "replacement" });
+
+    expect(readConfigFile(file, null)).toEqual({ durable: "replacement" });
+    expect(fs.existsSync(backupFile)).toBe(false);
   });
 
   it("preserves the prior config when temporary-file synchronization fails", () => {

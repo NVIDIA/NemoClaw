@@ -183,9 +183,12 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidenc
   };
   const refuseAfterCreate = (validationError: unknown): never => {
     const compensationErrors = cleanupTemporarySources();
+    const identityGuidance = exactIdentity
+      ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create; it does not make a later name-based delete safe. Follow approved OpenShell recovery guidance.`
+      : " OpenShell did not return a durable identity for comparison. Follow approved OpenShell recovery guidance.";
     compensationErrors.push(
       new Error(
-        `NemoClaw left sandbox '${input.sandboxName}' in place after policy authority validation failed because OpenShell can delete it only by mutable name. Verify its identity before manual cleanup.`,
+        `NemoClaw left sandbox '${input.sandboxName}' in place after policy authority validation failed because OpenShell can delete it only by mutable name.${identityGuidance}`,
       ),
     );
     throw new AggregateError(
@@ -201,6 +204,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidenc
           `OpenShell did not return one exact durable identity for sandbox '${input.sandboxName}'.`,
         );
       }
+      exactIdentity = capturedIdentity;
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `verifying effective policy for sandbox '${input.sandboxName}'`,
@@ -222,7 +226,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidenc
         capturedIdentity,
         `confirming verified effects for sandbox '${input.sandboxName}'`,
       );
-      exactIdentity = capturedIdentity;
       return capturedIdentity;
     } catch (validationError) {
       return refuseAfterCreate(validationError);

@@ -73,27 +73,6 @@ export function pendingSandboxPolicyVerificationForBoundary(
   };
 }
 
-/** Restore only the policy evidence encoded by a validated pending checkpoint. */
-export function policyRegistrationForPendingSandboxVerification(
-  checkpoint: PendingSandboxPolicyVerification,
-): VerifiedSandboxPolicyRegistration {
-  return checkpoint.policyAuthority === "nemoclaw-managed"
-    ? {
-        policyAuthority: "nemoclaw-managed",
-        observedPolicyAuthority: "owner-unknown",
-        policyCreationReceipt: checkpoint.policyCreationReceipt,
-      }
-    : {
-        policyAuthority: "externally-managed",
-        observedPolicyAuthority: checkpoint.observedPolicyAuthority,
-        policyCreationReceipt: null,
-        policyIdentity: {
-          hash: checkpoint.policyHash,
-          activeVersion: checkpoint.policyVersion,
-        },
-      };
-}
-
 function refusal(reason: string): never {
   throw new PolicyAuthorityRefusalError(
     `Cannot record NemoClaw policy ownership: ${reason}. The sandbox remains owner-unknown and policy mutation is disabled.`,

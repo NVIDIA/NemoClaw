@@ -446,6 +446,8 @@ describe("blueprint identity wrapper", () => {
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     const receiptValidation = commands.indexOf("sandbox get -g test-gateway test-sandbox");
     const providerInspection = commands.indexOf("provider get test-provider");
+    expect(receiptValidation).toBeGreaterThanOrEqual(0);
+    expect(providerInspection).toBeGreaterThanOrEqual(0);
     expect(receiptValidation).toBeLessThan(providerInspection);
     expect(commands).not.toContain(
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",

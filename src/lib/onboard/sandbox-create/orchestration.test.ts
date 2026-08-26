@@ -289,7 +289,12 @@ describe("sandbox create policy authority checks", () => {
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: expect.stringContaining("left sandbox 'alpha' in place"),
+          message: expect.stringMatching(
+            new RegExp(
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*does not make a later name-based delete safe.*approved OpenShell recovery guidance`,
+              "u",
+            ),
+          ),
         }),
       ]),
     );
@@ -301,8 +306,7 @@ describe("sandbox create policy authority checks", () => {
     const revalidate = vi.fn();
     const revalidateCreatedSandboxIdentity = vi.fn();
 
-    await expect(
-      runSandboxCreateWithPolicyAuthorityChecks({
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
         sandboxName: "alpha",
         revalidate,
         create: async (verifyCreatedSandbox) => {
@@ -317,9 +321,31 @@ describe("sandbox create policy authority checks", () => {
           throw new Error("sandbox identity changed");
         },
         cleanupTemporarySources: vi.fn(),
-      }),
-    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+      }).catch((caught: unknown) => caught);
 
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringMatching(
+            new RegExp(
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*does not make a later name-based delete safe`,
+              "u",
+            ),
+          ),
+        }),
+      ]),
+    );
+    expect(revalidateCreatedSandboxIdentity).toHaveBeenNthCalledWith(
+      1,
+      exactIdentity,
+      "verifying effective policy for sandbox 'alpha'",
+    );
+    expect(revalidateCreatedSandboxIdentity).toHaveBeenNthCalledWith(
+      2,
+      exactIdentity,
+      "recording verified policy for sandbox 'alpha'",
+    );
     expect(sandboxIdentity).toBe("replacement");
   });
 

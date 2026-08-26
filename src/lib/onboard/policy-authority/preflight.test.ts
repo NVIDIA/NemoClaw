@@ -3,7 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  managedPolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../../../test/helpers/managed-policy-receipt-fixture";
+
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
+import type { SandboxEntry } from "../../state/registry";
 import {
   createOnboardPolicyAuthorityBindings,
   qualifySandboxPolicyAuthority,
@@ -111,6 +118,39 @@ describe("sandbox policy authority preflight", () => {
       sandboxName: "demo",
       gatewayName: "nemoclaw",
     });
+  });
+
+  it.each([
+    ["malformed YAML", "version: [unterminated"],
+    ["non-mapping YAML", "- version: 1"],
+    ["an invalid policy root", "unexpected: true"],
+  ])("rejects %s through the canonical required-policy parser (#9833)", (_case, source) => {
+    const cleanup = vi.fn(() => true);
+
+    expect(() =>
+      qualifySandboxPolicyAuthority(
+        {
+          sandboxName: "demo",
+          gatewayName: "nemoclaw",
+          liveExists: true,
+          recordedAuthorities: ["externally-managed"],
+          prepareRequiredPolicy: () => ({
+            ...requiredPolicy,
+            sourceBytes: Buffer.from(source),
+            cleanup,
+          }),
+          operation: "verify external policy",
+        },
+        {
+          inspectSandboxPolicyAuthority: () => ({
+            authority: "externally-managed",
+            effectivePolicy: { network_policies: {} },
+            policyIdentity: { hash: "sha256:external", activeVersion: 1 },
+          }),
+        },
+      ),
+    ).toThrow(/required sandbox policy is invalid/u);
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it("stops before cleanup-owning callers when external requirements are missing (#9833)", () => {
@@ -226,5 +266,59 @@ describe("sandbox policy authority preflight", () => {
       ).authority,
     ).toBe("nemoclaw-managed");
     expect(prepareRequiredPolicy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a recorded managed owner without a durable gateway port (#9833)", () => {
+    const recorded = {
+      ...managedSandboxEntry("demo"),
+      gatewayPort: undefined,
+    } as unknown as SandboxEntry;
+    const assertGatewayBinding = vi.fn();
+
+    expect(() =>
+      qualifySandboxPolicyAuthority(
+        {
+          sandboxName: "demo",
+          gatewayName: "nemoclaw",
+          liveExists: true,
+          recordedAuthorities: ["nemoclaw-managed"],
+          recordedSandbox: recorded,
+          prepareRequiredPolicy: () => requiredPolicy,
+          operation: "reuse sandbox 'demo'",
+        },
+        {
+          inspectSandboxPolicyAuthority: managedPolicyInspection,
+          assertOpenShellGatewayPortBinding: assertGatewayBinding,
+        },
+      ),
+    ).toThrow(/ownership is not durably verified/u);
+    expect(assertGatewayBinding).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the recorded route becomes pending during live verification (#9833)", () => {
+    const recorded = managedSandboxEntry("demo");
+
+    expect(() =>
+      qualifySandboxPolicyAuthority(
+        {
+          sandboxName: "demo",
+          gatewayName: "nemoclaw",
+          liveExists: true,
+          recordedAuthorities: ["nemoclaw-managed"],
+          recordedSandbox: recorded,
+          readRecordedSandbox: () => ({
+            ...recorded,
+            pendingRouteReservation: true,
+          }),
+          prepareRequiredPolicy: () => requiredPolicy,
+          operation: "reuse sandbox 'demo'",
+        },
+        {
+          inspectSandboxPolicyAuthority: managedPolicyInspection,
+          inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_IDENTITY,
+          assertOpenShellGatewayPortBinding: vi.fn(),
+        },
+      ),
+    ).toThrow(/recorded sandbox policy boundary changed/u);
   });
 });

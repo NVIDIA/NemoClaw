@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
 
 import type { AgentDefinition } from "../../agent/defs";
 import {
@@ -19,7 +18,10 @@ import {
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
 } from "../../adapters/openshell/policy-authority";
-import { assertNemoClawPolicyCreationReceiptMatches } from "../../policy/merge";
+import {
+  assertNemoClawPolicyCreationReceiptMatches,
+  parseOpenShellPolicy,
+} from "../../policy/merge";
 import type { SandboxEntry } from "../../state/registry";
 import { type InitialSandboxPolicy, prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { requiredObservabilityPolicyPresets } from "../observability-policy-presets";
@@ -69,16 +71,11 @@ export function qualifyGlobalPolicyAuthority(
 }
 
 function parseRequiredPolicy(content: string, operation: string): Record<string, unknown> {
-  let parsed: unknown;
   try {
-    parsed = YAML.parse(content);
+    return parseOpenShellPolicy(content).policy;
   } catch {
     throw new Error(`Refusing to ${operation}: the required sandbox policy is invalid.`);
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Refusing to ${operation}: the required sandbox policy is invalid.`);
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function readInitialPolicy(policy: InitialSandboxPolicy, operation: string): string {
@@ -218,10 +215,13 @@ function qualifyRecordedSandboxPolicyAuthority(
   deps: PolicyAuthorityInspectionDeps,
 ): QualifiedSandboxPolicyAuthority {
   const recorded = input.recordedSandbox;
+  const gatewayPort = recorded?.gatewayPort;
   if (
     !recorded?.policyAuthority ||
     recorded.pendingRouteReservation === true ||
     recorded.gatewayName !== input.gatewayName ||
+    typeof gatewayPort !== "number" ||
+    !Number.isSafeInteger(gatewayPort) ||
     typeof recorded.lifecycleGeneration !== "string" ||
     typeof recorded.lifecycleLiveIdentityFingerprint !== "string"
   ) {
@@ -234,7 +234,7 @@ function qualifyRecordedSandboxPolicyAuthority(
     deps.inspectOpenShellSandboxIdentityFingerprint ?? inspectOpenShellSandboxIdentityFingerprint;
   (deps.assertOpenShellGatewayPortBinding ?? assertOpenShellGatewayPortBinding)({
     gatewayName: input.gatewayName,
-    gatewayPort: recorded.gatewayPort as number,
+    gatewayPort,
   });
   const beforeIdentity = inspectIdentity({
     sandboxName: input.sandboxName,
@@ -269,7 +269,7 @@ function qualifyRecordedSandboxPolicyAuthority(
       assertNemoClawPolicyCreationReceiptMatches(recorded.policyCreationReceipt, {
         origin: "sandbox-create",
         gatewayName: input.gatewayName,
-        gatewayPort: recorded.gatewayPort as number,
+        gatewayPort,
         sandboxName: input.sandboxName,
         lifecycleGeneration: recorded.lifecycleGeneration,
         sandboxIdentityFingerprint: afterIdentity,
@@ -288,6 +288,7 @@ function qualifyRecordedSandboxPolicyAuthority(
     : recorded;
   if (
     !confirmedRecorded ||
+    confirmedRecorded.pendingRouteReservation === true ||
     confirmedRecorded.policyAuthority !== recorded.policyAuthority ||
     !isDeepStrictEqual(confirmedRecorded.policyCreationReceipt, recorded.policyCreationReceipt) ||
     confirmedRecorded.lifecycleGeneration !== recorded.lifecycleGeneration ||

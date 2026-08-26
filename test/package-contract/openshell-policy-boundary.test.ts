@@ -153,6 +153,8 @@ describe("OpenShell policy boundary package contract", () => {
       sandbox: "alpha",
       status: "effective",
       policy_source: "global",
+      hash: "sha256:sandbox",
+      active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
     expect(pluginBoundary.parseSandboxPolicyAuthorityMetadata(sandboxMetadata, "alpha")).toEqual(
