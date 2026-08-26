@@ -15,7 +15,7 @@ export default class CredentialsListCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(CredentialsListCommand);
-    const result = await runCredentialsListAction();
+    const result = await runCredentialsListAction(this.config.bin);
     if (result.exitCode !== 0) {
       this.failWithLines(result.failureLines, result.exitCode);
       return;

@@ -99,7 +99,11 @@ export function successResult(): {
   return { exitCode: 0, stdout: "", stderr: "" };
 }
 
-type CommandResult = { exitCode: number; stdout: string; stderr: string };
+export type CommandResult = { exitCode: number; stdout: string; stderr: string };
+
+/** The configured policy used by blueprint runner tests that create a sandbox. */
+export const TEST_SANDBOX_POLICY_PATH = "/tmp/nemoclaw-test-policy.yaml";
+export const TEST_SANDBOX_POLICY = "version: 1\nnetwork_policies: {}\n";
 
 /** The connected gateway identity reported by `openshell status`. */
 export function gatewayStatusResult(gateway = "test-gateway"): CommandResult {
@@ -110,11 +114,36 @@ export function gatewayStatusResult(gateway = "test-gateway"): CommandResult {
   };
 }
 
+/** The stable endpoint binding reported by `openshell gateway info`. */
+export function gatewayInfoResult(port = 8080, host = "127.0.0.1"): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: `Gateway endpoint: http://${host}:${port}\n`,
+    stderr: "",
+  };
+}
+
+/** The immutable identity and lifecycle state reported for one sandbox. */
+export function sandboxIdentityResult(
+  sandboxName: string,
+  id = "sandbox-id-1",
+  phase = "Ready",
+): CommandResult {
+  return {
+    exitCode: 0,
+    stdout: `Name: ${sandboxName}\nId: ${id}\nPhase: ${phase}\n`,
+    stderr: "",
+  };
+}
+
 /** Machine-readable effective policy metadata for one sandbox. */
 export function sandboxPolicyAuthorityResult(
   sandboxName: string,
   authority: "nemoclaw-managed" | "externally-managed" = "nemoclaw-managed",
   networkPolicies: Record<string, unknown> = {},
+  effectivePolicy: Record<string, unknown> = { version: 1, network_policies: networkPolicies },
+  policyHash = "sha256:test-policy",
+  policyVersion = 1,
 ): CommandResult {
   return {
     exitCode: 0,
@@ -123,7 +152,9 @@ export function sandboxPolicyAuthorityResult(
       sandbox: sandboxName,
       status: "effective",
       policy_source: authority === "nemoclaw-managed" ? "sandbox" : "global",
-      policy: { version: 1, network_policies: networkPolicies },
+      hash: policyHash,
+      active_version: policyVersion,
+      policy: effectivePolicy,
     }),
     stderr: "",
   };
@@ -139,6 +170,8 @@ export function globalPolicyAuthorityResult(
       scope: "global",
       status: "loaded",
       policy_source: "global",
+      hash: "sha256:global-policy",
+      active_version: 1,
       policy: { version: 1, network_policies: networkPolicies },
     }),
     stderr: "",
@@ -153,18 +186,81 @@ export function resultWithBlueprintPolicyAuthority(
 ): CommandResult {
   return args.join(" ") === "status"
     ? gatewayStatusResult(gateway)
-    : args.join(" ") === `policy list -g ${gateway} --global --limit 1`
-      ? successResult()
-      : args[0] === "policy" &&
-          args[1] === "get" &&
-          args[2] === "-g" &&
-          args[3] === gateway &&
-          args[4] === "--full" &&
-          args[5] === "--output" &&
-          args[6] === "json" &&
-          typeof args[7] === "string"
-        ? sandboxPolicyAuthorityResult(args[7])
-        : fallback;
+    : args.join(" ") === `gateway info -g ${gateway}`
+      ? gatewayInfoResult()
+      : args.join(" ") === `policy list -g ${gateway} --global --limit 1`
+        ? successResult()
+        : args[0] === "policy" &&
+            args[1] === "get" &&
+            args[2] === "-g" &&
+            args[3] === gateway &&
+            args[4] === "--full" &&
+            args[5] === "--output" &&
+            args[6] === "json" &&
+            typeof args[7] === "string"
+          ? sandboxPolicyAuthorityResult(args[7])
+          : args[0] === "sandbox" &&
+              args[1] === "get" &&
+              args[2] === "-g" &&
+              args[3] === gateway &&
+              typeof args[4] === "string"
+            ? sandboxIdentityResult(args[4])
+            : fallback;
+}
+
+/** Returns configured results for successive calls to one exact command. */
+export function sequentialCommandResult(
+  command: string,
+  results: readonly CommandResult[],
+): (args: readonly string[]) => CommandResult | undefined {
+  let callCount = 0;
+  return (args) => {
+    if (args.join(" ") !== command) return undefined;
+    const result = results[Math.min(callCount, results.length - 1)];
+    callCount += 1;
+    return result;
+  };
+}
+
+/** Tracks the effective sandbox policy after a blueprint policy mutation. */
+export function createMutableSandboxPolicyResult(
+  readMergedPolicy: () => Record<string, unknown>,
+): (args: readonly string[]) => CommandResult {
+  let livePolicy: Record<string, unknown> = { version: 1, network_policies: {} };
+  let livePolicyHash = "sha256:test-policy";
+  let livePolicyVersion = 1;
+  return (args) => {
+    if (args[0] === "policy" && args[1] === "set") {
+      livePolicy = readMergedPolicy();
+      livePolicyHash = "sha256:updated-policy";
+      livePolicyVersion = 2;
+      return successResult();
+    }
+    if (args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox") {
+      return sandboxPolicyAuthorityResult(
+        "test-sandbox",
+        "nemoclaw-managed",
+        (livePolicy.network_policies as Record<string, unknown> | undefined) ?? {},
+        livePolicy,
+        livePolicyHash,
+        livePolicyVersion,
+      );
+    }
+    if (args[0] === "provider" && args[1] === "get" && typeof args[2] === "string") {
+      return {
+        exitCode: 0,
+        stdout: [
+          `Name: ${args[2]}`,
+          "Type: openai",
+          "Credential keys: OPENAI_API_KEY",
+          "Config keys: OPENAI_BASE_URL",
+          "",
+        ].join("\n"),
+        stderr: "",
+      };
+    }
+    return resultWithBlueprintPolicyAuthority(args, successResult());
+  };
 }
 
 /** A failed command result carrying only stderr. */

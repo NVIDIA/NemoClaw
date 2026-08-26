@@ -22,7 +22,7 @@ export interface RunnerFsEntry {
 export const FAKE_HOME = "/fakehome";
 
 /** The deterministic UUID every runner suite mocks crypto.randomUUID() to. */
-export const FIXED_RUN_UUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+export const FIXED_RUN_UUID = "aaaaaaaa-bbbb-4ccc-addd-eeeeeeeeeeee";
 
 /** An in-memory filesystem store with its seeding helpers. */
 export interface RunnerFsStore {
@@ -59,6 +59,8 @@ export interface InMemoryFsOptions {
  */
 export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: InMemoryFsOptions) {
   const spy = options?.spy ?? (<T>(fn: T): T => fn);
+  let nextFd = 100;
+  const openFiles = new Map<number, string>();
   return {
     existsSync: (p: string) => store.has(p),
     mkdirSync: spy((p: string) => void store.set(p, { type: "dir" })),
@@ -68,6 +70,18 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
     },
     writeFileSync: spy((p: string, data: string) => {
       store.set(p, { type: "file", content: String(data) });
+    }),
+    openSync: spy((p: string) => {
+      if (!store.has(p)) return missingEntry(p);
+      const fd = nextFd++;
+      openFiles.set(fd, p);
+      return fd;
+    }),
+    fsyncSync: spy((fd: number) => {
+      if (!openFiles.has(fd)) throw new Error(`EBADF: ${fd}`);
+    }),
+    closeSync: spy((fd: number) => {
+      if (!openFiles.delete(fd)) throw new Error(`EBADF: ${fd}`);
     }),
     renameSync: spy((source: string, destination: string) => {
       const entry = store.get(source);
@@ -139,5 +153,14 @@ export function createStdoutCapture(): StdoutCapture {
     reset: () => {
       chunks.length = 0;
     },
+  };
+}
+
+/** Returns a callback that throws on one numbered invocation. */
+export function throwOnCall(callNumber: number, error: Error): () => void {
+  let calls = 0;
+  return () => {
+    calls += 1;
+    if (calls === callNumber) throw error;
   };
 }

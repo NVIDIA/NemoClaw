@@ -132,7 +132,7 @@ It does not request a broad failed-job or workflow rerun.
 An E2E test can retry an external operation only through its checked-in bounded policy.
 The observer records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored`.
 The `flaky` field is `true` only for `passed-after-retry`.
-`Automation / Recover Platform CI Runner` separately owns one rerun of an eligible `CI / Platform Compatibility` push with authenticated GitHub-hosted runner-loss evidence.
+`Automation / Platform CI Runner` separately owns one rerun of an eligible `CI / Platform Compatibility` push with authenticated GitHub-hosted runner-loss evidence.
 
 After the observer evaluates attempt N, it uploads an artifact named for that
 attempt. The artifact contains one `attempts` entry for each source attempt through

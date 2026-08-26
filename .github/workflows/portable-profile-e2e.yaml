@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Portable Profile on Rootless Linux
+name: E2E / Portable Profile
 
 run-name: "Portable profile rootless E2E for ${{ github.event.pull_request.head.sha || github.sha }}"
 
@@ -48,6 +48,7 @@ concurrency:
 
 jobs:
   rootless-linux:
+    name: Rootless Linux
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     env:
@@ -145,6 +146,7 @@ jobs:
           retention-days: 14
 
   portable-launch:
+    name: Launch, Nested BuildKit, and Permission Restoration
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 75

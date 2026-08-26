@@ -68,6 +68,11 @@ const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
 ];
 
 describe("onboard command options", () => {
+  it("records only explicit APF interceptor selection (#9833)", () => {
+    expect(resolve({ "apf-interceptor": true }).apfInterceptorRequested).toBe(true);
+    expect(resolve({}).apfInterceptorRequested).toBeNull();
+  });
+
   it("resolves a generic serving profile ID without changing defaults (#8384)", () => {
     expect(
       resolve(
@@ -280,6 +285,7 @@ describe("onboard command options", () => {
       resume: true,
       fresh: false,
       recreateSandbox: true,
+      apfInterceptorRequested: null,
       fromDockerfile: dockerfilePath,
       sandboxName: "second-assistant",
       sandboxGpu: "enable",
@@ -327,6 +333,7 @@ describe("onboard command options", () => {
       resume: false,
       fresh: false,
       recreateSandbox: false,
+      apfInterceptorRequested: null,
       fromDockerfile: null,
       sandboxName: null,
       sandboxGpu: null,
@@ -426,7 +433,40 @@ describe("onboard command options", () => {
       noOllamaAutostart: true,
       noGpu: false,
       sandboxGpu: null,
+      toolDisclosure: "direct",
     });
+  });
+
+  it("uses direct disclosure for fresh Portable when the installer exports its generic default (#9211)", async () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_TOOL_DISCLOSURE: "progressive" };
+    const observed: Array<string | null> = [];
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => null,
+      runOnboard: async (options) => {
+        observed.push(options.toolDisclosure);
+      },
+    });
+
+    expect(observed).toEqual(["direct"]);
+    expect(env.NEMOCLAW_TOOL_DISCLOSURE).toBe("progressive");
+  });
+
+  it("keeps an explicit Portable disclosure selection and defers resume to durable state (#9211)", () => {
+    const env = { NEMOCLAW_TOOL_DISCLOSURE: "progressive" };
+
+    expect(
+      resolve({ "experimental-profile": "portable", "tool-disclosure": "progressive" }, { env })
+        .toolDisclosure,
+    ).toBe("progressive");
+    expect(
+      resolve(
+        { "experimental-profile": "portable", resume: true },
+        { env, resumeIntent: { effectiveResume: true, snapshot: null } },
+      ).toolDisclosure,
+    ).toBeNull();
   });
 
   it("allows an exact portable checkpoint profile on resume (#9035)", () => {

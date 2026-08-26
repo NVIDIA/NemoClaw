@@ -45,14 +45,14 @@ export function validateGrowthGuardrailsWorkflowBoundary(
   }
 
   const expectedWorkflow = {
-    name: "Governance / Enforce Codebase Growth Limits",
+    name: "Governance / Codebase Growth",
     on: {
       pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
     },
-    permissions: { contents: "read", "pull-requests": "read" },
+    permissions: { contents: "read" },
     jobs: {
       "codebase-growth-guardrails": {
-        name: "codebase-growth-guardrails",
+        name: "Enforce limits",
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 5,
         steps: [
@@ -71,12 +71,8 @@ export function validateGrowthGuardrailsWorkflowBoundary(
           {
             name: "Test codebase growth guardrails",
             env: {
-              NEMOCLAW_GROWTH_PR: "1",
-              GH_TOKEN: "${{ github.token }}",
               PR_NUMBER: "${{ github.event.pull_request.number }}",
-              REPO: "${{ github.repository }}",
               BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-              HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}",
               HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
             },
             run: TEST_COMMAND + "\n",
