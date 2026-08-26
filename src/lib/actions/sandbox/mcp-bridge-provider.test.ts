@@ -399,6 +399,31 @@ alpha-mcp-slack   generic  1                 0
     expect(exec).toHaveBeenCalledTimes(3);
   });
 
+  it("rejects a stable stale revision before the exact provider mutation is projected", () => {
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
+
+    expect(waitForAttachedMcpCredential("alpha", entry, { expectedRevision: "v12" })).toBe(
+      "v12",
+    );
+    expect(exec).toHaveBeenCalledTimes(4);
+  });
+
   it("does not accept an identityless placeholder as attachment readiness", () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({

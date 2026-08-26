@@ -40,7 +40,9 @@ import {
   detachProvider,
   ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
+  type McpAttachedCredentialRevision,
   type McpCredentialRevisionObservation,
+  type McpProviderInspection,
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
@@ -72,6 +74,18 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+
+function projectedMcpCredentialRevision(
+  providerName: string,
+  inspection: McpProviderInspection,
+): McpAttachedCredentialRevision {
+  if (!inspection.resourceVersion) {
+    throw new McpBridgeError(
+      `OpenShell did not return a usable resource version for MCP provider '${providerName}'.`,
+    );
+  }
+  return `v${inspection.resourceVersion}`;
+}
 
 function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): boolean {
   return (
@@ -435,18 +449,26 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
+    let expectedCredentialRevision: McpAttachedCredentialRevision | undefined;
     if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // OpenShell 0.0.106 can miss a credential update published before the
       // bound policy generation. Republish while that policy is active and
       // before the first readiness exec; the exact provider identity is
       // rechecked before and after this update-only mutation.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
+      const synchronizedProvider = upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
+      expectedCredentialRevision = projectedMcpCredentialRevision(
+        entry.providerName ?? "",
+        synchronizedProvider.inspection,
+      );
     }
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      ...(expectedCredentialRevision !== undefined
+        ? { expectedRevision: expectedCredentialRevision }
+        : {}),
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
@@ -473,7 +495,11 @@ async function addMcpBridgeUnlocked(
           expectedProviderId: entry.providerId,
           requireExisting: true,
         });
-        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+        const synchronized =
+          republished.action === "updated"
+            ? republished.inspection
+            : refreshMcpProviderEnvironment(entry);
+        return projectedMcpCredentialRevision(entry.providerName ?? "", synchronized);
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a
