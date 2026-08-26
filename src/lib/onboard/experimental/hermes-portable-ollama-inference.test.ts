@@ -486,6 +486,7 @@ describe("Hermes Portable Ollama inference activation", () => {
           networkGatewayIp: "10.87.0.1",
           networkListenerIp: PORTABLE_HOST_GATEWAY_IP,
           gpuDevices: [GPU_DEVICE],
+          ollamaContextLength: 64_000,
         },
       });
       const route = prepareManagedRoute(fixture, selection);
@@ -533,6 +534,9 @@ describe("Hermes Portable Ollama inference activation", () => {
     ).toBe(true);
     expect(podmanEvents.some((event) => event.includes("executable=docker"))).toBe(false);
     expect(
+      podmanEvents.some((event) => event.includes("--env OLLAMA_CONTEXT_LENGTH")),
+    ).toBe(true);
+    expect(
       fixture.gatewayProvider
         .calls()
         .every(({ args, timeout }) =>
@@ -576,6 +580,73 @@ describe("Hermes Portable Ollama inference activation", () => {
     await expect(published.prepareGatewayMutation(gatewayMutationInput)).rejects.toThrow(
       "gateway mutation authority changed",
     );
+  });
+
+  it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
+    const fixture = createRuntimeFixture();
+    const selection = fixture.resolve()!;
+    const route = prepareManagedRoute(fixture, selection);
+    route.prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    route.prepared.commit();
+    const durableJournal = gatewayJournal(fixture);
+
+    const reboundResolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-rebound",
+    });
+    const resumed = reboundResolver({
+      ...freshPortableInput,
+      allowPublishedResume: true,
+      recover: true,
+    })!;
+
+    expect(resumed.request).toHaveProperty("resumeReceipt");
+    expect(gatewayJournal(fixture)).toEqual(durableJournal);
+    await expect(resumed.prepareGatewayMutation(gatewayMutationInput)).resolves.toBeDefined();
+    expect(
+      fixture.events.filter((event) =>
+        event.includes("provider create --name ollama-local"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("heals a missing session route marker from exact published authority (#9211)", async () => {
+    const fixture = createRuntimeFixture();
+    const selection = fixture.resolve()!;
+    const route = prepareManagedRoute(fixture, selection);
+    route.prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    route.prepared.commit();
+
+    const healed = fixture.resolve({
+      ...freshPortableInput,
+      allowPublishedResume: true,
+      recover: false,
+    })!;
+
+    expect(healed.request).toHaveProperty("resumeReceipt");
+    expect(healed.request).not.toHaveProperty("recover", true);
+    expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
+    expect(
+      fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
+    ).toHaveLength(1);
+  });
+
+  it("rejects recovery authority without accepted published-resume authority (#9211)", () => {
+    const fixture = createRuntimeFixture();
+
+    expect(() =>
+      fixture.resolve({
+        ...freshPortableInput,
+        allowPublishedResume: false,
+        recover: true,
+      }),
+    ).toThrow("Hermes Portable Ollama recovery authority is inconsistent.");
   });
 
   it("fails before runtime mutation when current CDI authority drifts (#9596)", () => {
