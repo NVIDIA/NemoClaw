@@ -53,7 +53,6 @@ Before creating a PR, verify the branch.
 
 ## Step 2: Select Pre-PR Checks
 
-Do not rerun a local gate when Git hooks already gave the required evidence.
 Select checks that apply to the diff.
 
 ### Review-Driven Repair Closure
@@ -88,32 +87,27 @@ Apply these push conditions:
 
 ### Hook Evidence
 
-Before relying on normal hooks instead of the fallback:
-
-1. Resolve the repository hook directory with `git rev-parse --git-path hooks`.
-2. Confirm that `pre-commit`, `commit-msg`, and `pre-push` are executable.
-3. Confirm that the commit command did not use `--no-verify`.
-4. Confirm that the commit trace records successful `pre-commit` and `commit-msg` results.
-5. Prepare the push command without `--no-verify`.
-
-Do not infer that hooks ran from a successful `git commit` or `git push` command.
-When all five conditions hold, rely on normal hooks for these checks:
+Normal Git hooks provide early feedback:
 
 - `pre-commit` runs cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation.
 - `commit-msg` runs commitlint.
 - `pre-push` runs path-scoped incremental type checks for affected CLI and plugin surfaces plus checked-JavaScript checks.
 
-After the push, record the successful `pre-push` result as verification.
+Do not use a successful `git commit` or `git push` command as proof that these hooks ran.
+Hook installation can be missing, stale, or redirected through `core.hooksPath`.
 
-Run the fallback command before pushing if a hook is missing, not executable, bypassed, failed,
-unrecorded, or uncertain.
-The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff:
+After the final commit, refresh `origin/main` and run this command before every push:
 
 ```bash
 npm run validate:pr
 ```
 
-The fallback compares the branch with the refreshed `origin/main` ref from Step 1.
+The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff.
+It compares the branch with the refreshed `origin/main` ref from Step 1.
+Do not push when the command fails or its result is inconclusive.
+If the command changes a tracked file, commit the file and run the command again.
+Use normal hook results as supplemental evidence. They do not replace this command.
+
 Use `npm run check` for changes to repository-wide validation.
 Examples include hook configuration, formatter configuration, generated-check scripts, and coverage baselines.
 

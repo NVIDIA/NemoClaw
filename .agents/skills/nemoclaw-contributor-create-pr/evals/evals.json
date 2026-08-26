@@ -7,6 +7,7 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Reads the pull request template from the trusted base branch.",
+      "Refreshes `origin/main` and runs `npm run validate:pr` after the final commit and before pushing.",
       "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
     ]
   },
@@ -20,17 +21,6 @@
       "Omits `--assignee` from `gh pr create` because the contributor has no triage permission.",
       "Does not select or add labels and leaves them to the repository triage workflow.",
       "Reports that assignment needs a maintainer instead of retrying the rejected write."
-    ]
-  },
-  {
-    "id": "positive-missing-hook-fallback",
-    "question": "Publish my committed NemoClaw branch. The targeted tests passed, but this checkout has no executable Git hooks.",
-    "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A successful Git command does not prove that a missing hook ran. The publication workflow must run the complete diff fallback before pushing.",
-    "expected_behavior": [
-      "Uses `nemoclaw-contributor-create-pr`.",
-      "Does not treat a successful `git commit` or `git push` command as hook evidence.",
-      "Refreshes `origin/main` and runs `npm run validate:pr` before pushing."
     ]
   },
   {

@@ -444,7 +444,6 @@ describe("repo skill markdown files", () => {
     expect(evals.map(({ id }) => id)).toEqual([
       "positive-publish-branch",
       "positive-triage-permission-absent",
-      "positive-missing-hook-fallback",
       "negative-implementation",
       "negative-review-repair",
       "negative-planning",
@@ -456,7 +455,6 @@ describe("repo skill markdown files", () => {
     for (const id of [
       "positive-publish-branch",
       "positive-triage-permission-absent",
-      "positive-missing-hook-fallback",
       "adversarial-template-override",
       "clean-context-publication",
     ]) {
