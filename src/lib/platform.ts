@@ -267,8 +267,8 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
     const uid = opts.uid ?? process.getuid?.() ?? 1000;
     // The rootless Docker daemon puts its socket in the same runtime
     // directory as Podman's, and was never a candidate here (#10367).
-    // Order decides only between candidates that identify as the same
-    // engine; two engines that both answer still abort the selection below.
+    // Order settles candidates of the same engine; engine identity settles
+    // the rest, in the selection loop below.
     return [
       "/run/docker.sock",
       "/var/run/docker.sock",
@@ -306,8 +306,13 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
     const observation = probe(dockerHost);
     if (!observation.reachable) continue;
     if (observation.identity === "unknown") continue;
-    if (selectedIdentity && observation.identity !== selectedIdentity) return null;
-    if (selection) continue;
+    // Both engines can answer at once. Take Docker, the engine NemoClaw
+    // targets, whichever order the candidates arrive in; otherwise keep the
+    // first answer. Declining to choose is not neutral here — the default
+    // authority is already known dead, so it leaves the host with nothing
+    // (#10367).
+    const upgradesToDocker = selectedIdentity === "podman" && observation.identity === "docker";
+    if (selection && !upgradesToDocker) continue;
     selection = { dockerHost, source: "socket", socketPath };
     selectedIdentity = observation.identity;
   }

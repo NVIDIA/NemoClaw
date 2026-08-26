@@ -257,7 +257,7 @@ describe("platform helpers", () => {
       });
     });
 
-    it("does not select mixed Docker and Podman fallbacks when the default is unreachable (#8816)", () => {
+    it("selects the Docker fallback when Docker and Podman sockets both answer (#8816, #10367)", () => {
       const podmanSocket = "/run/user/1000/podman/podman.sock";
       const dockerSocket = "/var/run/docker.sock";
       const sockets = new Set([podmanSocket, dockerSocket]);
@@ -275,7 +275,39 @@ describe("platform helpers", () => {
                 : { reachable: true, identity: "docker" }
               : { reachable: false, identity: "unknown" },
         }),
-      ).toBe(null);
+      ).toEqual({
+        dockerHost: `unix://${dockerSocket}`,
+        source: "socket",
+        socketPath: dockerSocket,
+      });
+    });
+
+    it("prefers Docker Desktop over an earlier Podman machine socket on macOS (#10367)", () => {
+      // The macOS candidate list probes the Podman machine socket first, so
+      // engine identity, not candidate order, has to decide this host.
+      const home = "/tmp/test-home";
+      const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      const dockerDesktopSocket = path.join(home, ".docker/run/docker.sock");
+      const sockets = new Set([podmanSocket, dockerDesktopSocket]);
+
+      expect(
+        detectDockerHost({
+          env: {},
+          platform: "darwin",
+          home,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? dockerHost.includes("podman")
+                ? { reachable: true, identity: "podman" }
+                : { reachable: true, identity: "docker" }
+              : { reachable: false, identity: "unknown" },
+        }),
+      ).toEqual({
+        dockerHost: `unix://${dockerDesktopSocket}`,
+        source: "socket",
+        socketPath: dockerDesktopSocket,
+      });
     });
 
     it("does not select a reachable fallback with an unknown engine identity (#8816)", () => {
