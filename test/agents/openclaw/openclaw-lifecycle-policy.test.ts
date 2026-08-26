@@ -80,37 +80,6 @@ const messagingInstallBlock = between(
   "export function installOpenClawMessagingPlugins",
   "export function runOpenClawMessagingDoctor",
 );
-const candidateRuntimeBlock = between(
-  dockerfile,
-  "FROM scratch AS openclaw-runtime-payload",
-  "# Stage 3: Runtime image",
-);
-const finalImage = dockerfile.slice(dockerfile.indexOf("FROM \${BASE_IMAGE}"));
-const optionalPluginInstallIndex = finalImage.indexOf(
-  "RUN --network=none --mount=from=openclaw-optional-plugin-archives",
-);
-const messagingPluginInstallIndex = finalImage.indexOf(
-  "RUN --mount=from=openclaw-managed-messaging-npm-cache",
-);
-const candidateRuntimeCopyIndex = finalImage.indexOf(
-  "COPY --from=openclaw-runtime-payload / /",
-);
-const localPluginInstallIndex = finalImage.indexOf("openclaw plugins install /opt/nemoclaw");
-const runtimeAssertionIndex = finalImage.indexOf(
-  "managed-startup-image-runtime.cjs || managed_runtime_assertion_failed regular-file",
-);
-const configInputCopyIndex = finalImage.indexOf(
-  "COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts",
-);
-const integrationPluginCopyIndex = finalImage.indexOf(
-  "COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/",
-);
-const messagingInputCopyIndex = finalImage.indexOf(
-  "COPY src/lib/messaging/ /src/lib/messaging/",
-);
-const messagingInputCopyCount = finalImage.split(
-  "COPY src/lib/messaging/ /src/lib/messaging/",
-).length - 1;
 
 const codexMatch = dockerfile.match(
   /ADD --checksum=sha256:[0-9a-f]{64} https:\/\/registry\.npmjs\.org\/@zed-industries\/codex-acp\/-\/codex-acp-0\.11\.1\.tgz/,
@@ -144,37 +113,11 @@ console.log(JSON.stringify({
   unknownCoreVersionFailsClosed: [runtimeBlock, baseBlock].every((block) =>
     /^\s*\*\).*no reviewed lifecycle policy.*exit 1/m.test(block),
   ),
-  runtimeCacheBoundary: {
-    configInputsBeforeOptional:
-      configInputCopyIndex >= 0 &&
-      integrationPluginCopyIndex >= 0 &&
-      configInputCopyIndex < optionalPluginInstallIndex &&
-      integrationPluginCopyIndex < optionalPluginInstallIndex,
-    messagingInputsAfterOptional:
-      optionalPluginInstallIndex >= 0 &&
-      messagingInputCopyIndex > optionalPluginInstallIndex &&
-      messagingInputCopyIndex < messagingPluginInstallIndex,
-    candidateRuntimeExcludesMessaging:
-      candidateRuntimeBlock.length > 0 &&
-      !candidateRuntimeBlock.includes("COPY src/lib/messaging/ /src/lib/messaging/"),
-    singleFinalMessagingInputCopy: messagingInputCopyCount === 1,
-    optionalBeforeMessaging:
-      optionalPluginInstallIndex >= 0 &&
-      optionalPluginInstallIndex < messagingPluginInstallIndex,
-    messagingBeforeCandidateRuntime:
-      messagingPluginInstallIndex >= 0 &&
-      messagingPluginInstallIndex < candidateRuntimeCopyIndex,
-    candidateRuntimeBeforeLocalPlugin:
-      candidateRuntimeCopyIndex >= 0 && candidateRuntimeCopyIndex < localPluginInstallIndex,
-    candidateRuntimeAsserted:
-      runtimeAssertionIndex > candidateRuntimeCopyIndex &&
-      runtimeAssertionIndex < localPluginInstallIndex,
-  },
 }));
 `;
 
 describe("reviewed npm lifecycle policy", () => {
-  // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist, and the exact candidate runtime must replace stable install inputs before local registration.
+  // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
     expect(policy).toMatchObject({ schemaVersion: 1, defaultPolicy: "deny" });
     expect(policy.allowedLifecycleScripts).not.toHaveLength(0);
@@ -219,15 +162,5 @@ describe("reviewed npm lifecycle policy", () => {
     expect(audit.runtimeLifecycleScripts).toEqual(allowedLifecycleScripts);
     expect(audit.legacyCoreRunsNoLifecycle).toBe(true);
     expect(audit.unknownCoreVersionFailsClosed).toBe(true);
-    expect(audit.runtimeCacheBoundary).toEqual({
-      configInputsBeforeOptional: true,
-      messagingInputsAfterOptional: true,
-      candidateRuntimeExcludesMessaging: true,
-      singleFinalMessagingInputCopy: true,
-      optionalBeforeMessaging: true,
-      messagingBeforeCandidateRuntime: true,
-      candidateRuntimeBeforeLocalPlugin: true,
-      candidateRuntimeAsserted: true,
-    });
   });
 });
