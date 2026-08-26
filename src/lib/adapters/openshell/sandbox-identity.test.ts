@@ -30,6 +30,7 @@ describe("OpenShell sandbox identity parsing", () => {
       createHash("sha256").update("sandbox-alpha").digest("hex"),
     );
     expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nPhase: Ready\n")).toBeNull();
+    expect(fingerprintOpenShellSandboxLiveIdentity("Id: first\nId: second\n")).toBeNull();
   });
 });
 

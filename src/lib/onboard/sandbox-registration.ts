@@ -98,6 +98,8 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  policyAuthority?: SandboxEntry["policyAuthority"];
+  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -277,6 +279,9 @@ export function buildCreatedSandboxRegistryEntry(
       : {}),
     policies: input.appliedPolicies,
     ...(input.policyAuthority !== undefined ? { policyAuthority: input.policyAuthority } : {}),
+    ...(input.policyCreationReceipt !== undefined
+      ? { policyCreationReceipt: input.policyCreationReceipt }
+      : {}),
     baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,

@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isObjectRecord } from "../core/json-types";
+import {
+  parseNemoClawPolicyCreationReceipt,
+  type NemoClawPolicyCreationReceipt,
+} from "../policy/merge";
 import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
   CustomPolicyEntry,
+  RecordedSandboxPolicyAuthority,
   SandboxEntry,
 } from "./registry/types";
 
@@ -19,7 +23,7 @@ const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 /** Keep legacy absence unknown and reject every unrecognized authority value. */
 export function normalizeSandboxPolicyAuthority(
   value: unknown,
-): SandboxPolicyAuthority | undefined {
+): RecordedSandboxPolicyAuthority | undefined {
   if (value === undefined) return undefined;
   if (value === "nemoclaw-managed" || value === "externally-managed") return value;
   throw new Error(
@@ -27,9 +31,46 @@ export function normalizeSandboxPolicyAuthority(
   );
 }
 
+/** Clone one complete policy-creation receipt and reject every partial form. */
+export function cloneSandboxPolicyCreationReceipt(
+  value: unknown,
+): NemoClawPolicyCreationReceipt | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseNemoClawPolicyCreationReceipt(value);
+  } catch {
+    throw new Error(
+      "Sandbox registry contains an invalid policy creation receipt; repair the registry before continuing",
+    );
+  }
+}
+
 /** Remove policy attribution that an external authority owns and normalize managed state. */
 export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxEntry {
-  const policyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+  const requestedPolicyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+  const parsedPolicyCreationReceipt = cloneSandboxPolicyCreationReceipt(
+    entry.policyCreationReceipt,
+  );
+  if (
+    parsedPolicyCreationReceipt &&
+    (parsedPolicyCreationReceipt.sandboxName !== entry.name ||
+      parsedPolicyCreationReceipt.gatewayName !== entry.gatewayName ||
+      parsedPolicyCreationReceipt.gatewayPort !== entry.gatewayPort ||
+      parsedPolicyCreationReceipt.lifecycleGeneration !== entry.lifecycleGeneration ||
+      parsedPolicyCreationReceipt.sandboxIdentityFingerprint !==
+        entry.lifecycleLiveIdentityFingerprint)
+  ) {
+    throw new Error(
+      "Sandbox registry policy creation receipt does not match its gateway and sandbox identity",
+    );
+  }
+  const hasManagedReceipt =
+    requestedPolicyAuthority === "nemoclaw-managed" && parsedPolicyCreationReceipt !== undefined;
+  const policyAuthority =
+    requestedPolicyAuthority === "nemoclaw-managed" && !hasManagedReceipt
+      ? undefined
+      : requestedPolicyAuthority;
+  const policyCreationReceipt = hasManagedReceipt ? parsedPolicyCreationReceipt : undefined;
   const {
     policies: _policies,
     customPolicies: _customPolicies,
@@ -38,6 +79,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
     policyPresetsFinalized: _policyPresetsFinalized,
     policyTier: _policyTier,
     policyAuthority: _policyAuthority,
+    policyCreationReceipt: _policyCreationReceipt,
     ...rest
   } = entry;
   if (policyAuthority === "externally-managed") {
@@ -60,6 +102,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
       : {}),
     ...(entry.policyTier !== undefined ? { policyTier: entry.policyTier } : {}),
     ...(policyAuthority !== undefined ? { policyAuthority } : {}),
+    ...(policyCreationReceipt ? { policyCreationReceipt } : {}),
   };
 }
 

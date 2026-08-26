@@ -19,10 +19,10 @@ export function parseOpenShellSandboxId(output: string): string | null {
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
 export function fingerprintOpenShellSandboxLiveIdentity(output: string): string | null {
-  const clean = String(output).replace(ANSI_RE, "");
-  const match = clean.match(/^\s*Id:\s+(\S+)\s*$/im);
-  if (!match?.[1] || match[1].length > 512) return null;
-  return createHash("sha256").update(match[1]).digest("hex");
+  const sandboxId = parseOpenShellSandboxId(output);
+  return sandboxId === null || sandboxId.length > 512
+    ? null
+    : createHash("sha256").update(sandboxId).digest("hex");
 }
 
 export function resolveOpenShellSandboxId(

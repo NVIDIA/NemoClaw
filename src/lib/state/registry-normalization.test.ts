@@ -91,6 +91,32 @@ describe("sandbox registry normalization", () => {
     };
   };
 
+  const createManagedPolicyEntry = (name: string, policyVersion = 1) => {
+    const gatewayName = "nemoclaw";
+    const gatewayPort = 8080;
+    const lifecycleGeneration = "123e4567-e89b-42d3-a456-426614174983";
+    const lifecycleLiveIdentityFingerprint = "d".repeat(64);
+    return {
+      name,
+      gatewayName,
+      gatewayPort,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint,
+      policyAuthority: "nemoclaw-managed" as const,
+      policyCreationReceipt: {
+        schemaVersion: 1 as const,
+        origin: "sandbox-create" as const,
+        gatewayName,
+        gatewayPort,
+        sandboxName: name,
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: lifecycleLiveIdentityFingerprint,
+        policyHash: `sha256:policy-${String(policyVersion)}`,
+        policyVersion,
+      },
+    };
+  };
+
   it.each([null, [], 42, "invalid"])(
     "treats a non-object top-level registry document as empty: %j",
     async (document) => {
@@ -311,10 +337,15 @@ describe("sandbox registry normalization", () => {
     expect(entry).not.toHaveProperty("policyTier");
   }
 
-  it("round-trips known policy authority while leaving legacy authority unknown (#9833)", async () => {
+  it("round-trips receipt-bound authority while removing a legacy managed claim (#9833)", async () => {
     const registry = await loadRegistryWith({
       legacy: { name: "legacy" },
-      managed: { name: "managed", policyAuthority: "nemoclaw-managed" },
+      legacyManaged: {
+        name: "legacyManaged",
+        policyAuthority: "nemoclaw-managed",
+        policies: ["weather"],
+      },
+      managed: createManagedPolicyEntry("managed"),
       external: { name: "external", policyAuthority: "externally-managed" },
     });
     registry.save(registry.load());
@@ -322,9 +353,17 @@ describe("sandbox registry normalization", () => {
       fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
     ) as { sandboxes: Record<string, Record<string, unknown>> };
     expect(registry.getSandbox("legacy")?.policyAuthority).toBeUndefined();
+    expect(registry.getSandbox("legacyManaged")).toMatchObject({ policies: ["weather"] });
+    expect(registry.getSandbox("legacyManaged")).not.toHaveProperty("policyAuthority");
+    expect(registry.getSandbox("legacyManaged")).not.toHaveProperty("policyCreationReceipt");
     expect(registry.getSandbox("managed")?.policyAuthority).toBe("nemoclaw-managed");
+    expect(registry.getSandbox("managed")?.policyCreationReceipt).toEqual(
+      createManagedPolicyEntry("managed").policyCreationReceipt,
+    );
     expect(registry.getSandbox("external")?.policyAuthority).toBe("externally-managed");
     expect(persisted.sandboxes.legacy).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.legacyManaged).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.legacyManaged).not.toHaveProperty("policyCreationReceipt");
     expect(persisted.sandboxes.managed?.policyAuthority).toBe("nemoclaw-managed");
     expect(persisted.sandboxes.external?.policyAuthority).toBe("externally-managed");
   });
@@ -334,9 +373,9 @@ describe("sandbox registry normalization", () => {
     const registry = await loadRegistryWith({
       legacy: { name: "legacy", ...attribution, policyTier: "strict" },
       managed: {
+        ...createManagedPolicyEntry("managed"),
         name: "managed",
         ...attribution,
-        policyAuthority: "nemoclaw-managed",
         policyTier: "strict",
       },
       external: {
@@ -363,24 +402,127 @@ describe("sandbox registry normalization", () => {
     },
   );
 
-  it("backfills policy authority once without allowing later changes or removal (#9833)", async () => {
-    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+  it("does not backfill NemoClaw ownership and leaves external authority available (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy", policyAuthority: "nemoclaw-managed" },
+    });
 
     expect(() => registry.updateSandbox("legacy", { policyAuthority: "global" as never })).toThrow(
       /invalid policy authority/i,
     );
-    expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
-    expect(() =>
-      registry.updateSandbox("legacy", { policyAuthority: "externally-managed" }),
-    ).toThrow(/policy authority changed/u);
-    expect(() => registry.updateSandbox("legacy", { policyAuthority: undefined })).toThrow(
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toThrow(
+      /outside completed sandbox registration/u,
+    );
+    expect(registry.updateSandbox("legacy", { policyAuthority: "externally-managed" })).toBe(true);
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("externally-managed");
+    expect(() => registry.registerSandbox(createManagedPolicyEntry("legacy"))).toThrow(
       /policy authority changed/u,
     );
-    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
+  });
 
+  it("publishes and rotates only an exact completed policy creation receipt (#9833)", async () => {
+    const registry = await loadRegistryWith({});
+    const managed = createManagedPolicyEntry("managed");
+    const registered = registry.registerSandbox(managed);
+    const replacement = createManagedPolicyEntry("managed", 2).policyCreationReceipt;
+
+    expect(registered.policyCreationReceipt).toEqual(managed.policyCreationReceipt);
+    expect(() => registry.updateSandbox("managed", { policyCreationReceipt: replacement })).toThrow(
+      /outside the receipt rotation transaction/u,
+    );
+    expect(
+      registry.compareAndSetSandboxPolicyCreationReceipt(
+        "managed",
+        { ...managed.policyCreationReceipt, policyVersion: 9 },
+        replacement,
+      ),
+    ).toBe(false);
+    expect(
+      registry.compareAndSetSandboxPolicyCreationReceipt(
+        "managed",
+        managed.policyCreationReceipt,
+        replacement,
+      ),
+    ).toBe(true);
+    expect(registry.getSandbox("managed")?.policyCreationReceipt).toEqual(replacement);
     expect(() =>
-      registry.registerSandbox({ name: "legacy", policyAuthority: "externally-managed" }),
-    ).toThrow(/policy authority changed/u);
+      registry.compareAndSetSandboxPolicyCreationReceipt("managed", replacement, {
+        ...replacement,
+        lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
+      }),
+    ).toThrow(/gateway or sandbox identity/u);
+  });
+
+  it("rejects partial, mismatched, and pending policy creation receipts (#9833)", async () => {
+    const managed = createManagedPolicyEntry("managed");
+    const malformedRegistry = await loadRegistryWith({
+      malformed: {
+        ...createManagedPolicyEntry("malformed"),
+        policyCreationReceipt: { schemaVersion: 1 },
+      },
+    });
+    expect(() => malformedRegistry.getSandbox("malformed")).toThrow(
+      /invalid policy creation receipt/u,
+    );
+
+    const mismatchedRegistry = await loadRegistryWith({
+      managed: {
+        ...managed,
+        gatewayPort: 9090,
+      },
+    });
+    expect(() => mismatchedRegistry.getSandbox("managed")).toThrow(
+      /does not match its gateway and sandbox identity/u,
+    );
+
+    const registry = await loadRegistryWith({});
+    expect(() => registry.registerSandbox(managed, undefined, { pending: true })).toThrow(
+      /pending sandbox registration/u,
+    );
+    expect(() =>
+      registry.registerSandbox({ name: "managed", policyAuthority: "nemoclaw-managed" }),
+    ).toThrow(/without a complete policy creation receipt/u);
+
+    registry.registerSandbox(managed);
+    registry.reserveSandboxInferenceRoute("managed", {
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: "https://api.example.test/v1",
+      credentialEnv: "CUSTOM_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      gatewayName: "nemoclaw",
+    });
+    expect(registry.getSandbox("managed")).toMatchObject({
+      pendingRouteReservation: true,
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: managed.policyCreationReceipt,
+    });
+    registry.restoreSandboxEntry(managed);
+    expect(registry.getSandbox("managed")).toEqual(managed);
+
+    registry.reserveSandboxInferenceRoute("managed", {
+      provider: "compatible-endpoint",
+      model: "model-b",
+      endpointUrl: "https://api.example.test/v1",
+      credentialEnv: "CUSTOM_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      gatewayName: "nemoclaw",
+    });
+    const replacementLifecycle = {
+      ...createManagedPolicyEntry("managed", 2),
+      lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
+      lifecycleLiveIdentityFingerprint: "e".repeat(64),
+    };
+    replacementLifecycle.policyCreationReceipt = {
+      ...replacementLifecycle.policyCreationReceipt,
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      sandboxIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+    };
+    expect(registry.registerSandbox(replacementLifecycle)).toMatchObject({
+      lifecycleGeneration: replacementLifecycle.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: replacementLifecycle.lifecycleLiveIdentityFingerprint,
+      policyCreationReceipt: replacementLifecycle.policyCreationReceipt,
+    });
   });
 
   it("canonicalizes external attribution across registry mutations and recovery (#9833)", async () => {
@@ -442,9 +584,12 @@ describe("sandbox policy authority normalization", () => {
     expect(normalizeSandboxPolicyAuthority(input)).toBe(expected);
   });
 
-  it.each(["sandbox", null, {}])("rejects invalid policy authority %j (#9833)", (input) => {
-    expect(() => normalizeSandboxPolicyAuthority(input)).toThrow(/invalid policy authority/i);
-  });
+  it.each(["sandbox", "owner-unknown", null, {}])(
+    "rejects invalid policy authority %j (#9833)",
+    (input) => {
+      expect(() => normalizeSandboxPolicyAuthority(input)).toThrow(/invalid policy authority/i);
+    },
+  );
 });
 
 describe("custom policy pin receipt normalization (#8176)", () => {

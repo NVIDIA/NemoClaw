@@ -7,11 +7,14 @@ import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
+import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
 import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
+
+export type RecordedSandboxPolicyAuthority = Exclude<SandboxPolicyAuthority, "owner-unknown">;
 
 export interface CustomPolicyEntry {
   name: string;
@@ -121,7 +124,9 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   /** Policy authority for a completed sandbox; absence means unknown. */
-  policyAuthority?: SandboxPolicyAuthority;
+  policyAuthority?: RecordedSandboxPolicyAuthority;
+  /** Exact, secret-free proof that NemoClaw created this sandbox policy. */
+  policyCreationReceipt?: NemoClawPolicyCreationReceipt;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
