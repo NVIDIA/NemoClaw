@@ -83,7 +83,11 @@ function quarantineQualifiedAgent(agent: AgentDefinition) {
     writeReceipt: () => undefined,
     log: () => undefined,
   };
-  return quarantineSandbox(sandbox.name, { reason: "qualification" }, deps);
+  return quarantineSandbox(
+    sandbox.name,
+    { reason: "qualification", idempotencyKey: "qualification" },
+    deps,
+  );
 }
 
 describe("all-agent quarantine qualification", () => {

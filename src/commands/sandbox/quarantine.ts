@@ -33,13 +33,23 @@ export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
 
   public async run(): Promise<unknown> {
     const { args, flags } = await this.parse(SandboxQuarantineCommand);
+    const generatedIdempotencyKey = flags["idempotency-key"] === undefined;
+    const publishGeneratedIdempotencyKey = (key: string): void => {
+      console.error(`  Idempotency key: ${key}`);
+      console.error("  Save this key to reconcile the same request after an interruption.");
+    };
     const request = {
       reason: flags.reason,
       idempotencyKey: flags["idempotency-key"],
     };
     const result = this.jsonEnabled()
-      ? quarantineSandbox(args.sandboxName, request, { log: () => {} })
-      : quarantineSandbox(args.sandboxName, request);
+      ? quarantineSandbox(args.sandboxName, request, {
+          log: () => {},
+          publishGeneratedIdempotencyKey,
+        })
+      : generatedIdempotencyKey
+        ? quarantineSandbox(args.sandboxName, request, { publishGeneratedIdempotencyKey })
+        : quarantineSandbox(args.sandboxName, request);
     this.setExitCode(result.exitCode);
     if (this.jsonEnabled()) return result;
     console.log(`  ${result.message}`);
@@ -50,10 +60,6 @@ export default class SandboxQuarantineCommand extends NemoClawSandboxCommand {
       console.log("  Workspace: preserved");
     }
     if (result.fenceId) console.log(`  Fence: ${result.fenceId}`);
-    if (result.idempotencyKey) {
-      console.log(`  Idempotency key: ${result.idempotencyKey}`);
-      console.log("  Save this key to reconcile the same request after an interruption.");
-    }
     if (result.receiptPath) console.log(`  Receipt: ${result.receiptPath}`);
   }
 }

@@ -1976,7 +1976,10 @@ The reason still passes through your shell command line, so do not include crede
 Use `--idempotency-key <key>` to give retries a stable request identity.
 The receipt stores only the SHA-256 digest of this value.
 The key must be 1 to 256 bytes and must not contain control characters.
-If you omit the flag, the command generates and prints a key.
+If you omit the flag, the command generates a key and writes it to stderr before it persists the fence or starts isolation.
+This publication also occurs with `--json`, so stdout remains the structured result channel.
+If the command cannot publish the generated key, it exits before mutation.
+A supplied key is not printed again.
 
 This release qualifies the default OpenClaw, Hermes, and LangChain Deep Agents Code manifests with the Docker runtime provider.
 An unqualified agent or runtime provider fails before fence persistence and stop operations.

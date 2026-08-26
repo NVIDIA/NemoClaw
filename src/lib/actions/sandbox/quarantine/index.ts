@@ -77,6 +77,7 @@ export interface QuarantineSandboxDeps {
   readonly getSandbox?: typeof getSandboxForQuarantine;
   readonly getAgent?: (name: string, environment: NodeJS.ProcessEnv) => AgentDefinition | null;
   readonly now?: () => Date;
+  readonly publishGeneratedIdempotencyKey?: (key: string) => void;
   readonly randomId?: () => string;
   readonly readReceipt?: typeof readSandboxQuarantineReceipt;
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -122,10 +123,6 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function boundedSafeText(value: unknown, maxBytes: number, fallback: string): string {
-  return boundedSecretFreeText(value, maxBytes, fallback);
-}
-
 function validateIdempotencyKey(value: string): string {
   const key = value.trim();
   if (key.length === 0 || Buffer.byteLength(key, "utf8") > 256 || CONTROL_CHARACTERS.test(key)) {
@@ -146,7 +143,9 @@ function attempt(
     operation,
     outcome,
     attemptedAt: at,
-    ...(detail === undefined ? {} : { detail: boundedSafeText(detail, 512, "operation failed") }),
+    ...(detail === undefined
+      ? {}
+      : { detail: boundedSecretFreeText(detail, 512, "operation failed") }),
   };
 }
 
@@ -314,7 +313,23 @@ function quarantineWithinLifecycleLock(
       options.idempotencyKey ?? (deps.randomId ?? randomUUID)(),
     );
   } catch (error) {
-    return failed(boundedSafeText(error, 512, "Quarantine idempotency key is invalid."));
+    return failed(boundedSecretFreeText(error, 512, "Quarantine idempotency key is invalid."));
+  }
+  if (generatedKey) {
+    try {
+      if (!deps.publishGeneratedIdempotencyKey) {
+        throw new Error("Generated quarantine idempotency key has no publication channel");
+      }
+      deps.publishGeneratedIdempotencyKey(idempotencyKey);
+    } catch (error) {
+      return failed(
+        boundedSecretFreeText(
+          error,
+          512,
+          "Generated quarantine idempotency key could not be published.",
+        ),
+      );
+    }
   }
   const requestIdentity = sha256(idempotencyKey);
   const reasonDigest = sha256(options.reason);
@@ -343,7 +358,7 @@ function quarantineWithinLifecycleLock(
   try {
     agent = resolveQualifiedAgent(sandbox, deps);
   } catch (error) {
-    return failed(boundedSafeText(error, 512, "Sandbox agent manifest is invalid."));
+    return failed(boundedSecretFreeText(error, 512, "Sandbox agent manifest is invalid."));
   }
   if (!agent?.quarantineQualification) {
     return failed(
@@ -360,7 +375,7 @@ function quarantineWithinLifecycleLock(
   );
   if (!resolved.ok)
     return failed(
-      boundedSafeText(
+      boundedSecretFreeText(
         resolved.result.message,
         512,
         "Runtime provider cannot quarantine this sandbox.",
@@ -369,7 +384,7 @@ function quarantineWithinLifecycleLock(
   const providerQuarantine = resolved.bundle.quarantine;
   if (providerQuarantine.supported !== true) {
     return failed(
-      boundedSafeText(
+      boundedSecretFreeText(
         `Runtime provider '${resolved.bundle.identity.id}' does not support quarantine: ${providerQuarantine.reason}`,
         512,
         "Runtime provider does not support quarantine.",
@@ -388,7 +403,7 @@ function quarantineWithinLifecycleLock(
   );
   if (providerPreflight) {
     return failed(
-      boundedSafeText(
+      boundedSecretFreeText(
         providerPreflight.message,
         512,
         "Runtime provider quarantine preflight failed.",
@@ -408,7 +423,7 @@ function quarantineWithinLifecycleLock(
     gatewayName = gateway.name;
     gatewayPort = gateway.port;
   } catch (error) {
-    return failed(boundedSafeText(error, 512, "Sandbox gateway identity is invalid."));
+    return failed(boundedSecretFreeText(error, 512, "Sandbox gateway identity is invalid."));
   }
   if (gatewayPort === null) return failed("Sandbox gateway identity is ambiguous.");
   const receiptPath = sandboxQuarantineReceiptPath(sandboxName, gatewayPort, requestIdentity);
@@ -416,7 +431,9 @@ function quarantineWithinLifecycleLock(
   try {
     priorReceipt = (deps.readReceipt ?? readSandboxQuarantineReceipt)(receiptPath);
   } catch (error) {
-    return failed(boundedSafeText(error, 512, "Cannot safely read the prior quarantine receipt."));
+    return failed(
+      boundedSecretFreeText(error, 512, "Cannot safely read the prior quarantine receipt."),
+    );
   }
   if (priorReceipt) {
     if (
@@ -461,7 +478,7 @@ function quarantineWithinLifecycleLock(
       authority = providerQuarantine.prepare(quarantineInput);
     } catch (error) {
       return failed(
-        boundedSafeText(error, 512, "Exact quarantine authority could not be prepared."),
+        boundedSecretFreeText(error, 512, "Exact quarantine authority could not be prepared."),
       );
     }
   }
@@ -522,7 +539,7 @@ function quarantineWithinLifecycleLock(
     try {
       begun = (deps.beginFence ?? beginSandboxQuarantine)(sandboxName, candidate);
     } catch (error) {
-      return failed(boundedSafeText(error, 512, "Quarantine fence persistence failed."));
+      return failed(boundedSecretFreeText(error, 512, "Quarantine fence persistence failed."));
     }
     if (!("fence" in begun)) {
       return failed("Sandbox registry identity changed before the quarantine fence was persisted.");
@@ -580,10 +597,10 @@ function quarantineWithinLifecycleLock(
       (deps.stopMessaging ?? stopSandboxChannels)(sandboxName, {
         channelStopTransport: resolved.lifecycle.channelStopTransport,
         info: (message) =>
-          lifecycleInput.log(`  ${boundedSafeText(message, 512, "Messaging stop update.")}`),
+          lifecycleInput.log(`  ${boundedSecretFreeText(message, 512, "Messaging stop update.")}`),
         warn: (message) =>
           lifecycleInput.log(
-            `  Warning: ${boundedSafeText(message, 512, "Messaging stop warning.")}`,
+            `  Warning: ${boundedSecretFreeText(message, 512, "Messaging stop warning.")}`,
           ),
       }) === true,
   );
@@ -599,9 +616,11 @@ function quarantineWithinLifecycleLock(
       !isolationPlan.stopServiceAccess ||
       (deps.stopServiceAccess ?? stopAgentForwardPortsForStop)(sandboxName, {
         info: (message) =>
-          lifecycleInput.log(`  ${boundedSafeText(message, 512, "Access stop update.")}`),
+          lifecycleInput.log(`  ${boundedSecretFreeText(message, 512, "Access stop update.")}`),
         warn: (message) =>
-          lifecycleInput.log(`  Warning: ${boundedSafeText(message, 512, "Access stop warning.")}`),
+          lifecycleInput.log(
+            `  Warning: ${boundedSecretFreeText(message, 512, "Access stop warning.")}`,
+          ),
       }) === true,
   );
 
@@ -740,7 +759,7 @@ export function releaseSandboxQuarantine(
     );
     if (!resolved.ok) {
       return failed(
-        boundedSafeText(
+        boundedSecretFreeText(
           resolved.result.message,
           512,
           "Runtime provider cannot validate this quarantine release.",
@@ -750,7 +769,7 @@ export function releaseSandboxQuarantine(
     const providerQuarantine = resolved.bundle.quarantine;
     if (providerQuarantine.supported !== true) {
       return failed(
-        boundedSafeText(
+        boundedSecretFreeText(
           `Runtime provider '${resolved.bundle.identity.id}' cannot validate quarantine release: ${providerQuarantine.reason}`,
           512,
           "Runtime provider cannot validate quarantine release.",
@@ -772,7 +791,11 @@ export function releaseSandboxQuarantine(
       currentAuthority = providerQuarantine.prepare(releaseInput);
     } catch (error) {
       return failed(
-        boundedSafeText(error, 512, "Cannot validate the quarantined runtime before release."),
+        boundedSecretFreeText(
+          error,
+          512,
+          "Cannot validate the quarantined runtime before release.",
+        ),
       );
     }
     if (!sameReleasedTargetAuthority(fence.target, currentAuthority)) {
@@ -794,7 +817,7 @@ export function releaseSandboxQuarantine(
       );
     } catch (error) {
       return failed(
-        `Cannot preserve the quarantine receipt before release: ${boundedSafeText(error, 512, "receipt write failed")}`,
+        `Cannot preserve the quarantine receipt before release: ${boundedSecretFreeText(error, 512, "receipt write failed")}`,
       );
     }
     const releasedAt = (deps.now ?? (() => new Date()))().toISOString();
@@ -807,7 +830,7 @@ export function releaseSandboxQuarantine(
         status: "partial",
         message:
           `Sandbox '${sandboxName}' quarantine release could not persist its final receipt; ` +
-          `the fence remains active: ${boundedSafeText(error, 512, "receipt write failed")}`,
+          `the fence remains active: ${boundedSecretFreeText(error, 512, "receipt write failed")}`,
         fenceId,
         receiptPath,
       };

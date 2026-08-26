@@ -185,7 +185,9 @@ The receipt stores the SHA-256 digest of the idempotency key, not the key itself
 It also stores only the SHA-256 digest of the operator reason, not the original text.
 Use the same reason and idempotency key to reconcile an interrupted or partial request.
 A different key conflicts with the active fence.
-If you omit `--idempotency-key`, the command generates one and prints it after the operation.
+If you omit `--idempotency-key`, the command generates one and writes it to stderr before it persists the fence or stops anything.
+Save that key for retry.
+If the command cannot publish the generated key, it exits before mutation.
 
 Run status to confirm the quarantine phase and fence ID.
 

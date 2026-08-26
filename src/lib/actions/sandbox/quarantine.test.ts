@@ -267,6 +267,50 @@ describe("sandbox quarantine", () => {
     expect(test.order).not.toContain("dashboard-stop");
   });
 
+  it("refuses to fence when a generated retry key cannot be published (#10140)", () => {
+    const test = harness();
+
+    const result = quarantineSandbox("alpha", { reason: "incident investigation" }, test.deps);
+
+    expect(result.status).toBe("failed");
+    expect(test.beginFence).not.toHaveBeenCalled();
+    expect(test.stop).not.toHaveBeenCalled();
+  });
+
+  it("reconciles an interrupted fence with the caller-retained idempotency key (#10140)", () => {
+    const test = harness();
+    const request = { reason: "incident investigation" };
+    let publishedKey: string | undefined;
+    const interruptAfterFence = vi.fn((sandboxName: string, fence: SandboxQuarantineFence) => {
+      expect(publishedKey).toBe(FENCE_ID);
+      test.beginFence(sandboxName, fence);
+      throw new Error("simulated interruption after durable fence publication");
+    });
+
+    const interrupted = quarantineSandbox("alpha", request, {
+      ...test.deps,
+      beginFence: interruptAfterFence,
+      publishGeneratedIdempotencyKey: (key) => {
+        publishedKey = key;
+      },
+    });
+
+    expect(interrupted.status).toBe("failed");
+    expect(publishedKey).toBe(FENCE_ID);
+    expect(test.current().quarantine?.fenceId).toBe(FENCE_ID);
+    expect(test.stop).not.toHaveBeenCalled();
+
+    const reconciled = quarantineSandbox(
+      "alpha",
+      { ...request, idempotencyKey: publishedKey },
+      test.deps,
+    );
+
+    expect(reconciled.status).toBe("quarantined");
+    expect(reconciled.exitCode).toBe(0);
+    expect(test.stop).toHaveBeenCalledOnce();
+  });
+
   it("observes a timed-out stop and leaves a partial fence without rollback (#10140)", () => {
     const test = harness({ workloadFails: true });
 
