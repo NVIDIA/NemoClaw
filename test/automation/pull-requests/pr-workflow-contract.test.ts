@@ -375,10 +375,15 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(
       Object.entries(workflow.jobs)
-        .filter(([, job]) => job.permissions?.packages === "read")
-        .map(([jobName]) => jobName)
-        .sort(),
-    ).toEqual(["build-typecheck", "cli-test-shards", "installer-integration", "plugin-tests"]);
+        .filter(([, job]) => job.permissions?.packages !== undefined)
+        .map(([jobName, job]) => [jobName, job.permissions?.packages] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ).toEqual([
+      ["build-typecheck", "read"],
+      ["cli-test-shards", "read"],
+      ["installer-integration", "read"],
+      ["plugin-tests", "read"],
+    ]);
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
