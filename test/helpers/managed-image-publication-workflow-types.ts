@@ -13,6 +13,7 @@ export type Step = {
 };
 
 export type Action = {
+  inputs?: Record<string, { default?: string | boolean; description?: string; required?: boolean }>;
   outputs?: Record<string, { description?: string; value?: string }>;
   runs?: { steps?: Step[] };
 };

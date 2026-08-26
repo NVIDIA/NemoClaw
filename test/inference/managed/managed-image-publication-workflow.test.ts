@@ -416,9 +416,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain(
-      "git describe --tags --match 'v*' \"$CANDIDATE_SHA\"",
-    );
+    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
@@ -958,7 +956,7 @@ fi
     const steps = publisher.steps ?? [];
 
     [...steps, ...(promoter.steps ?? [])]
-      .filter((candidate) => candidate.uses)
+      .filter((candidate) => candidate.uses && !candidate.uses.startsWith("./"))
       .forEach((action) => {
         expect(action.uses, action.name).toMatch(fullShaAction);
       });
@@ -985,7 +983,7 @@ fi
 
     const guard = step(publisher, "Validate production build args");
     const releaseIdentity = step(publisher, "Resolve managed image release identity");
-    const build = step(publisher, "Build and push managed image by digest");
+    const build = step(publisher, "Publish and validate managed image by digest");
     const validate = step(publisher, "Validate exact managed image before promotion");
     const evidence = step(publisher, "Capture exact managed image publication evidence");
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
@@ -995,11 +993,11 @@ fi
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
-    expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
+    expect(build.uses).toBe("./.github/actions/publish-managed-image-digest");
     expect(build.with).toMatchObject({
-      context: ".",
       file: "${{ matrix.dockerfile }}",
-      platforms: "${{ matrix.platform }}",
+      platform: "${{ matrix.platform }}",
+      image: "${{ env.REGISTRY }}/${{ matrix.image }}",
       "build-args":
         "BASE_IMAGE=${{ steps.base.outputs.ref }}\nTARGETARCH=${{ matrix.arch }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
       provenance: "mode=max",
