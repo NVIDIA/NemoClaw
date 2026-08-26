@@ -80,6 +80,11 @@ const messagingInstallBlock = between(
   "export function installOpenClawMessagingPlugins",
   "export function runOpenClawMessagingDoctor",
 );
+const candidateRuntimeBlock = between(
+  dockerfile,
+  "FROM scratch AS openclaw-runtime-payload",
+  "# Stage 3: Runtime image",
+);
 const finalImage = dockerfile.slice(dockerfile.indexOf("FROM \${BASE_IMAGE}"));
 const optionalPluginInstallIndex = finalImage.indexOf(
   "RUN --network=none --mount=from=openclaw-optional-plugin-archives",
@@ -103,6 +108,9 @@ const integrationPluginCopyIndex = finalImage.indexOf(
 const messagingInputCopyIndex = finalImage.indexOf(
   "COPY src/lib/messaging/ /src/lib/messaging/",
 );
+const messagingInputCopyCount = finalImage.split(
+  "COPY src/lib/messaging/ /src/lib/messaging/",
+).length - 1;
 
 const codexMatch = dockerfile.match(
   /ADD --checksum=sha256:[0-9a-f]{64} https:\/\/registry\.npmjs\.org\/@zed-industries\/codex-acp\/-\/codex-acp-0\.11\.1\.tgz/,
@@ -145,6 +153,9 @@ console.log(JSON.stringify({
     messagingInputsAfterOptional:
       messagingInputCopyIndex > optionalPluginInstallIndex &&
       messagingInputCopyIndex < messagingPluginInstallIndex,
+    candidateRuntimeExcludesMessaging:
+      !candidateRuntimeBlock.includes("COPY src/lib/messaging/ /src/lib/messaging/"),
+    singleFinalMessagingInputCopy: messagingInputCopyCount === 1,
     optionalBeforeMessaging:
       optionalPluginInstallIndex >= 0 &&
       optionalPluginInstallIndex < messagingPluginInstallIndex,
@@ -209,6 +220,8 @@ describe("reviewed npm lifecycle policy", () => {
     expect(audit.runtimeCacheBoundary).toEqual({
       configInputsBeforeOptional: true,
       messagingInputsAfterOptional: true,
+      candidateRuntimeExcludesMessaging: true,
+      singleFinalMessagingInputCopy: true,
       optionalBeforeMessaging: true,
       messagingBeforeCandidateRuntime: true,
       candidateRuntimeBeforeLocalPlugin: true,
