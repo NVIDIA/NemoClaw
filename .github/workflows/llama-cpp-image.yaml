@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Build and Publish llama.cpp Server Image
+name: Images / llama.cpp Server
 
 on:
   pull_request:
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   config:
-    name: Compile declarative image configuration
+    name: Configuration / Compile
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -89,7 +89,7 @@ jobs:
         run: node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts
 
   pr-build:
-    name: Build native llama.cpp server (${{ matrix.arch }})
+    name: PR / Build and validate / ${{ matrix.arch }}
     needs: config
     if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
@@ -250,7 +250,7 @@ jobs:
           trap - EXIT
 
   publication-gate:
-    name: Validate trusted publication request
+    name: Publish / Validate request
     needs: config
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-24.04
@@ -327,7 +327,7 @@ jobs:
           printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
 
   publish-platform:
-    name: Publish native llama.cpp digest (${{ matrix.arch }})
+    name: Publish / Publish digest / ${{ matrix.arch }}
     needs: [config, publication-gate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -497,7 +497,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
 
   assemble-candidate:
-    name: Assemble exact llama.cpp candidate index
+    name: Publish / Assemble candidate
     needs: [config, publication-gate, publish-platform]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -639,7 +639,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
 
   scan-candidate:
-    name: Scan llama.cpp digest (${{ matrix.arch }})
+    name: Publish / Scan image / ${{ matrix.arch }}
     needs: [config, publication-gate, assemble-candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -694,7 +694,7 @@ jobs:
           exit 1
 
   attest-candidate:
-    name: Attest and sign exact llama.cpp candidate
+    name: Publish / Attest and sign
     needs: [config, publication-gate, assemble-candidate, scan-candidate]
     permissions:
       attestations: write
@@ -710,7 +710,7 @@ jobs:
       sbom_format: ${{ needs.config.outputs.publication_sbom_format }}
 
   verify-candidate:
-    name: Verify evidence and emit publication receipt
+    name: Publish / Verify evidence
     needs:
       [
         config,

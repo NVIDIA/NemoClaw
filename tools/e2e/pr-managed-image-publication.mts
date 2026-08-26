@@ -24,7 +24,7 @@ import {
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const WORKFLOW_FILE = "managed-images.yaml";
-const WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
+const WORKFLOW_NAME = "Images / Managed Images";
 const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;

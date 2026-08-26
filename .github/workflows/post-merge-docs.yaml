@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs / Author Post-Merge Catch-Up
+name: Docs / Post-Merge Updates
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   gate:
-    name: Select documentation PR ownership
+    name: Select ownership
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: read
@@ -48,7 +48,7 @@ jobs:
           fi
 
   author:
-    name: Author and review documentation catch-up
+    name: Author and review
     needs: gate
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.automate == 'true' }}
     runs-on: ubuntu-24.04
@@ -146,7 +146,7 @@ jobs:
           retention-days: 3
 
   publish:
-    name: Publish documentation catch-up
+    name: Publish
     needs: author
     runs-on: ubuntu-24.04
     timeout-minutes: 10

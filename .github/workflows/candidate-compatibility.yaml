@@ -31,6 +31,7 @@ concurrency:
 
 jobs:
   resolve:
+    name: Resolve candidate and plan qualification
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -108,6 +109,7 @@ jobs:
           retention-days: 30
 
   deterministic:
+    name: Run deterministic qualification
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -247,6 +249,7 @@ jobs:
         run: exit 1
 
   live:
+    name: Run live qualification
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -372,6 +375,7 @@ jobs:
         run: exit 1
 
   evidence:
+    name: Finalize and enforce qualification result
     if: ${{ always() && needs.resolve.result == 'success' }}
     needs:
       - resolve

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Release / Production Brev Image Dispatch
+name: Release / Production Brev Image
 
 on:
   push:
@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   dispatch-production-image:
+    name: Dispatch
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

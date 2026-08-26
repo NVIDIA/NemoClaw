@@ -16,6 +16,7 @@ permissions: {}
 
 jobs:
   evaluate:
+    name: Classify attempt
     if: >-
       ${{
       github.run_attempt == 1 &&
@@ -68,6 +69,7 @@ jobs:
           retention-days: 14
 
   report-same-commit-reliability:
+    name: Report same-commit reliability
     needs: evaluate
     if: >-
       ${{

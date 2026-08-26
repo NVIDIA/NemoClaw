@@ -13,7 +13,7 @@
 #
 # See: https://docs.gha-runners.nvidia.com/platform/onboarding/pull-request-testing/
 
-name: E2E / Self-Hosted PR Qualification
+name: E2E / Self-Hosted PR
 
 on:
   push:
@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   select-llama-cpp-generic-gpu:
+    name: llama.cpp / Select PR coverage and verify base-image publication
     runs-on: ubuntu-latest
     timeout-minutes: 55
     permissions:
@@ -123,7 +124,7 @@ jobs:
           node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
   llama-cpp-generic-gpu:
-    name: llama.cpp on generic NVIDIA GPU
+    name: llama.cpp / NVIDIA GPU
     needs: select-llama-cpp-generic-gpu
     if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
@@ -182,6 +183,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   build-sandbox-images:
+    name: Sandbox Images / Build / amd64
     runs-on: linux-amd64-cpu4
     timeout-minutes: 45
     steps:
@@ -227,6 +229,7 @@ jobs:
           if-no-files-found: error
 
   build-sandbox-images-arm64:
+    name: Sandbox Images / Build / arm64
     runs-on: linux-arm64-cpu4
     timeout-minutes: 45
     steps:
@@ -251,6 +254,7 @@ jobs:
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
 
   test-e2e-sandbox:
+    name: Sandbox / Run E2E suite
     runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -273,6 +277,7 @@ jobs:
         run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
 
   test-e2e-gateway-isolation:
+    name: Sandbox / Gateway Isolation and glibc Lifecycle
     runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -312,6 +317,7 @@ jobs:
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
 
   test-e2e-port-overrides:
+    name: Sandbox / Port Overrides
     runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     needs: build-sandbox-images
@@ -334,6 +340,7 @@ jobs:
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh
 
   test-non-root-sandbox-smoke:
+    name: Sandbox / Non-Root Startup
     runs-on: linux-amd64-cpu4
     timeout-minutes: 5
     needs: build-sandbox-images
