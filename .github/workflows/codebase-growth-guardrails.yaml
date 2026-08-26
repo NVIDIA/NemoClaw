@@ -5,8 +5,8 @@ name: Governance / Enforce Codebase Growth Limits
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow
-# data-only: do not check out or execute PR code. It reads the exact PR
-# commit as inert Git objects.
+# data-only: do not check out or execute PR code. It reads the commit as
+# inert Git objects.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
