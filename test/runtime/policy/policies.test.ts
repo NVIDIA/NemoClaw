@@ -8,6 +8,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  managedPolicyMetadata,
+  managedRegistrationSource,
+  managedSandboxEntry,
+  parseResultPayload,
+  POLICY_HASH,
+  POLICY_VERSION,
+  SANDBOX_ID,
+  SANDBOX_IDENTITY,
+} from "./managed-policy-receipt-fixture";
+
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -35,29 +46,17 @@ function requirePresetContent(content: string | null): string {
   return content;
 }
 
-function parseResultPayload(stdout: string): any {
-  const marker = "__RESULT__";
-  const markerIndex = stdout.indexOf(marker);
-  expect(markerIndex).toBeGreaterThanOrEqual(0);
-  return JSON.parse(stdout.slice(markerIndex + marker.length));
-}
-
-function managedPolicyMetadata(sandboxName: string): string {
-  return JSON.stringify({
-    scope: "sandbox",
-    sandbox: sandboxName,
-    status: "effective",
-    policy_source: "sandbox",
-    policy: { version: 1, network_policies: {} },
-  });
-}
-
 describe("policies", () => {
   beforeEach(() => {
     vi.spyOn(policyAuthorityModule, "inspectSandboxPolicyAuthority").mockReturnValue({
-      authority: "nemoclaw-managed",
+      authority: "owner-unknown",
       effectivePolicy: {},
+      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
     });
+    vi.spyOn(policyAuthorityModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+      SANDBOX_IDENTITY,
+    );
+    vi.spyOn(registryForTest, "compareAndSetSandboxPolicyCreationReceipt").mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -174,7 +173,7 @@ describe("policies", () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "test-sandbox", policies: [] });
+${managedRegistrationSource("test-sandbox")}
 const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
@@ -188,12 +187,20 @@ process.stdout.write("\n__RESULT__" + JSON.stringify({
         `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: test-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
     printf '%s\n' ${JSON.stringify(managedPolicyMetadata("test-sandbox"))}
     exit 0
   fi
-  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
+  else
+    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  fi
   exit 0
 fi
 if [ "$1 $2" = "policy set" ]; then
@@ -252,7 +259,7 @@ exit 1
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+${managedRegistrationSource("hermes-sandbox", "hermes")}
 const result = policies.applyPresets("hermes-sandbox", ["discord"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
@@ -264,12 +271,20 @@ process.stdout.write("\n__RESULT__" + JSON.stringify({
         fakeOpenshell,
         `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
     printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
-  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
+  else
+    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  fi
   exit 0
 fi
 if [ "$1 $2" = "policy set" ]; then
@@ -336,7 +351,7 @@ exit 1
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+${managedRegistrationSource("hermes-sandbox", "hermes")}
 const result = policies.applyPresets("hermes-sandbox", ["wechat"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
@@ -348,12 +363,20 @@ process.stdout.write("\n__RESULT__" + JSON.stringify({
         fakeOpenshell,
         `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
     printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
-  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
+  else
+    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  fi
   exit 0
 fi
 if [ "$1 $2" = "policy set" ]; then
@@ -415,12 +438,9 @@ exit 1
       );
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const sandboxSpy = vi.spyOn(registryForTest, "getSandbox").mockReturnValue({
-        name: "test-sandbox",
-        agent: "openclaw",
-        policies: [],
-        policyAuthority: "nemoclaw-managed",
-      });
+      const sandboxSpy = vi
+        .spyOn(registryForTest, "getSandbox")
+        .mockReturnValue(managedSandboxEntry("test-sandbox"));
       vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       try {
         try {
@@ -705,12 +725,9 @@ exit 1
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      const sandboxSpy = vi.spyOn(registryForTest, "getSandbox").mockReturnValue({
-        name: "my-assistant",
-        agent: "openclaw",
-        policies: [],
-        policyAuthority: "nemoclaw-managed",
-      });
+      const sandboxSpy = vi
+        .spyOn(registryForTest, "getSandbox")
+        .mockReturnValue(managedSandboxEntry("my-assistant"));
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
         throw new Error("__test_exit__");
       }) as never);
@@ -761,10 +778,7 @@ exit 1
         .mockReturnValue(fakeOpenshell);
       savedGetSandbox = registryModule.getSandbox;
       savedAddCustomPolicy = registryModule.addCustomPolicy;
-      registryModule.getSandbox = (name: string) => ({
-        name,
-        policyAuthority: "nemoclaw-managed",
-      });
+      registryModule.getSandbox = (name: string) => managedSandboxEntry(name);
       registryModule.addCustomPolicy = () => true;
     });
 
@@ -845,9 +859,24 @@ network_policies:
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
+      const appliedPolicyPath = path.join(tmpHome, "applied-policy.yaml");
       fs.writeFileSync(
         fakeOpenshell,
-        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        `#!/bin/sh
+if [ "$1 $2" = "policy set" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then cp "$2" ${JSON.stringify(appliedPolicyPath)}; break; fi
+    shift
+  done
+  exit 0
+fi
+if [ -f ${JSON.stringify(appliedPolicyPath)} ]; then
+  cat ${JSON.stringify(appliedPolicyPath)}
+else
+  printf 'version: 1\nnetwork_policies: {}\n'
+fi
+exit 0
+`,
         { mode: 0o755 },
       );
       origHome = process.env.HOME;
@@ -892,7 +921,7 @@ network_policies:
         expect(addSpy).not.toHaveBeenCalled();
         const combined = errors.join("\n");
         expect(combined).toContain("my-assistant");
-        expect(combined).toContain("could not record policy authority");
+        expect(combined).toContain("policy authority is unavailable");
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();
@@ -914,7 +943,7 @@ network_policies:
         expect(updateSpy).not.toHaveBeenCalled();
         const combined = errors.join("\n");
         expect(combined).toContain("my-assistant");
-        expect(combined).toContain("could not record policy authority");
+        expect(combined).toContain("policy authority is unavailable");
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();
@@ -922,7 +951,7 @@ network_policies:
     });
 
     it("applies a well-formed custom preset and records it verbatim (#9406)", () => {
-      let sandbox: Record<string, unknown> = { name: "my-assistant" };
+      let sandbox: Record<string, unknown> = managedSandboxEntry("my-assistant");
       registryModule.getSandbox = () => sandbox;
       registryModule.updateSandbox = (_name: string, updates: Record<string, unknown>) => {
         sandbox = { ...sandbox, ...updates };

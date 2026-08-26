@@ -42,7 +42,7 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
     expect(WARMUP_TIMEOUT_MS).toBe(30_000);
     expect(typeof WARMUP_TIMEOUT_MS).toBe("number");
     expect(WARMUP_TIMEOUT_MS).toBeGreaterThan(0);
-    expect(WARMUP_PROBE_TIMEOUT_S).toBe(5);
+    expect(WARMUP_PROBE_TIMEOUT_S).toBe(10);
   });
 
   it("stays within the bounds the contract budgeted for finalization latency", () => {
@@ -240,28 +240,28 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=ambient-force-marker",
         "export NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING=ambient-clone-marker",
         "export NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT=ambient-settlement-marker",
-        'printf \'consumed\\n\' > "$NEMOCLAW_TEST_PROXY_SOURCE_LOG"',
+        "printf 'consumed\\n' > \"$NEMOCLAW_TEST_PROXY_SOURCE_LOG\"",
         "",
       ].join("\n"),
       { mode: 0o444 },
     );
     fs.writeFileSync(
       path.join(binDir, "openclaw"),
-        [
-          "#!/bin/sh",
-          "{",
-          "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
-          "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
-          "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
-          "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
-          "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
-          "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
-          "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
-          "  printf 'argv=%s\\n' \"$*\"",
-          '} > "$NEMOCLAW_TEST_CALL_LOG"',
-          "exit 1",
-          "",
-        ].join("\n"),
+      [
+        "#!/bin/sh",
+        "{",
+        "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
+        "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
+        "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
+        "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
+        "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
+        "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
+        "  printf 'argv=%s\\n' \"$*\"",
+        '} > "$NEMOCLAW_TEST_CALL_LOG"',
+        "exit 1",
+        "",
+      ].join("\n"),
       { mode: 0o700 },
     );
 

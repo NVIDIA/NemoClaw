@@ -15,7 +15,10 @@ import {
 } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
-const ENV_WRAPPER = path.join(import.meta.dirname, "../../../scripts/lib/entrypoint-env-wrapper.sh");
+const ENV_WRAPPER = path.join(
+  import.meta.dirname,
+  "../../../scripts/lib/entrypoint-env-wrapper.sh",
+);
 const TIRITH_FINALIZER = path.join(
   import.meta.dirname,
   "../../..",
@@ -43,6 +46,19 @@ function extractRuntimeShellEnvBlock(src: string): string {
   return src.slice(start, end).trimEnd();
 }
 
+function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const start = src.indexOf('HERMES_DIR="/sandbox/.hermes"');
+  const end = src.indexOf("\nHERMES_HASH_FILE=", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return spawnSync(
+    "bash",
+    ["-c", `${src.slice(start, end)}\nprintf '%s\\n' "$HERMES_LAZY_INSTALL_TARGET"`],
+    { encoding: "utf-8", env: childEnv, timeout: 5000 },
+  );
+}
+
 function extractDashboardPortBootstrap(src: string): string {
   const start = src.indexOf('NEMOCLAW_CMD=("$@")');
   const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
@@ -60,7 +76,9 @@ function runHermesDashboardPortBootstrap(env: Record<string, string | undefined>
     scriptPath,
     [
       "#!/usr/bin/env bash",
-      "set -euo pipefail",
+      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
+      // This fixture deliberately starts with no command arguments.
+      "set -eo pipefail",
       "set --",
       extractDashboardPortBootstrap(src),
       'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
@@ -753,6 +771,20 @@ describe("agents/hermes/start.sh sandbox init bootstrap", () => {
 });
 
 describe("agents/hermes/start.sh runtime shell env", () => {
+  it("defaults the managed lazy dependency target without replacing an explicit target (#9211)", () => {
+    const { HERMES_LAZY_INSTALL_TARGET: _ignored, ...envWithoutTarget } = process.env;
+    const defaulted = runHermesLazyInstallTargetBootstrap(envWithoutTarget);
+    const preserved = runHermesLazyInstallTargetBootstrap({
+      ...process.env,
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/custom-lazy-packages",
+    });
+
+    expect(defaulted.status, defaulted.stderr).toBe(0);
+    expect(defaulted.stdout.trim()).toBe("/sandbox/.hermes/lazy-packages");
+    expect(preserved.status, preserved.stderr).toBe(0);
+    expect(preserved.stdout.trim()).toBe("/sandbox/custom-lazy-packages");
+  });
+
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
     const escapedCaFile = bashPrintfQ(run.caFile);
@@ -991,7 +1023,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).not.toContain(rawToken);
   });
 
-  it("checks the .env secret boundary before MCP integrity", () => {
+  it("reconciles mutable hashes after the env boundary and before MCP integrity (#9203)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = spawnSync(
       "bash",
@@ -999,16 +1031,17 @@ describe("agents/hermes/start.sh env secret boundary", () => {
         "-c",
         [
           "set -euo pipefail",
+          "hash_state=stale",
           'trace() { printf "%s\\n" "$1"; }',
           "verify_config_integrity_if_locked() { trace integrity; }",
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
-          "inspect_hermes_mcp_integrity() { trace mcp-integrity; }",
+          'inspect_hermes_mcp_integrity() { [ "$hash_state" = current ] || return 1; trace mcp-integrity; }',
           "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "apply_shields_up_runtime_env() { trace shields-env; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
           "refresh_hermes_provider_placeholders() { trace placeholders; }",
-          "refresh_hermes_runtime_config_hashes() { trace hashes; }",
+          "refresh_hermes_runtime_config_hashes() { trace hashes; hash_state=current; }",
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
           extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
@@ -1023,6 +1056,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stdout.trim().split("\n")).toEqual([
       "integrity",
       "env-boundary",
+      "hashes",
       "mcp-integrity",
       "lazy-dependencies",
       "api-key",

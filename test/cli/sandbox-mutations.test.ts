@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
+import {
+  managedPolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/managed-policy-receipt-fixture";
 
 import { runWithEnv, runWithInput, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
@@ -23,17 +28,22 @@ function writePolicyMutationOpenshellStub(home: string): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   const openshell = path.join(localBin, "openshell");
+  const appliedPolicy = path.join(home, "applied-policy.yaml");
   fs.writeFileSync(
     openshell,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      `  printf 'Name: alpha\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n'`,
+      "  exit 0",
+      "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
       '  if [[ " $* " == *" --output json "* ]]; then',
-      '    sandbox="${@: -1}"',
-      '    printf \'{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n\' "$sandbox"',
+      `    printf '%s\\n' ${JSON.stringify(managedPolicyMetadata("alpha"))}`,
       "    exit 0",
       "  fi",
+      `  if [ -f ${JSON.stringify(appliedPolicy)} ]; then cat ${JSON.stringify(appliedPolicy)}; exit 0; fi`,
       "  cat <<'YAML'",
       "version: 1",
       "network_policies:",
@@ -44,6 +54,13 @@ function writePolicyMutationOpenshellStub(home: string): string {
       "  exit 0",
       "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "set" ]; then',
+      '  while [ "$#" -gt 0 ]; do',
+      '    if [ "$1" = "--policy" ]; then',
+      `      cp "$2" ${JSON.stringify(appliedPolicy)}`,
+      "      break",
+      "    fi",
+      "    shift",
+      "  done",
       "  exit 0",
       "fi",
       'printf "unexpected openshell args: %s\\n" "$*" >&2',
@@ -121,7 +138,7 @@ describe("CLI dispatch", () => {
 
   it("keeps public policy-add/remove built-in mutation routes", ({ testHome }) => {
     const { home } = testHome;
-    writeSandboxRegistry(home);
+    writeSandboxRegistry(home, managedSandboxEntry("alpha"));
     const openshell = writePolicyMutationOpenshellStub(home);
 
     const add = runWithEnv(
