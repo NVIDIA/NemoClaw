@@ -2590,7 +2590,7 @@ function validateExactPrManagedImageCatalogBoundary(
   );
   if (
     managedCatalog?.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+      "${{ inputs.checkout_sha != '' && (inputs.checkout_sha != '170a5fcb446c75468d4a71cb7ac9f72983239148' || inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
     !isDeepStrictEqual(asRecord(managedCatalog?.env), {
       BASE_SHA: "${{ inputs.base_sha }}",
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",

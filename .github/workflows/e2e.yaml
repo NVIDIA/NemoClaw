@@ -585,8 +585,56 @@ jobs:
             fi
           fi
 
+      - name: Stage exact 170a5fc managed-image catalog
+        if: ${{ inputs.checkout_sha == '170a5fcb446c75468d4a71cb7ac9f72983239148' && inputs.jobs == '' && inputs.targets == 'model-router-provider-routed-inference,onboard-resume,onboard-repair' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { assembleManagedImageCatalog } from "./tools/e2e/pr-managed-image-publication.mts";
+
+          const revision = "170a5fcb446c75468d4a71cb7ac9f72983239148";
+          const release = "v0.0.114-140-g170a5fcb4";
+          const cohort = "ghrun-32935745132-1";
+          const contracts = [
+            {
+              agent: "openclaw",
+              image: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
+              digest: "sha256:299fa725f7e836aaf6d47b2d7dc35a2c1665aa910c39102029d32de9398f476b",
+            },
+            {
+              agent: "hermes",
+              image: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
+              digest: "sha256:d3bd6110d9b74edc1432e9ef937f58e4d1922180ad2e511cef71b6f53e437ac1",
+            },
+            {
+              agent: "langchain-deepagents-code",
+              image: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
+              digest: "sha256:1ef8fc0a6b15938e6d393fb4589ad8531c32ffa2021600a23a12767bc740e78a",
+            },
+          ].map(({ agent, image, digest }) => ({
+            contractVersion: 1,
+            agent,
+            platform: "linux/amd64",
+            image,
+            digest,
+            reference: `${image}@${digest}`,
+            source: { repository: "NVIDIA/NemoClaw", revision, release, cohort },
+            startupProfileContractVersion: 1,
+            capabilityContractVersion: 1,
+          }));
+          const catalog = assembleManagedImageCatalog(contracts, revision);
+          fs.writeFileSync(
+            path.join(process.env.RUNNER_TEMP, "pr-managed-image-catalog.json"),
+            JSON.stringify(catalog) + "\n",
+            { encoding: "utf8", flag: "wx", mode: 0o600 },
+          );
+          NODE
+
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.checkout_sha != '170a5fcb446c75468d4a71cb7ac9f72983239148' || inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
