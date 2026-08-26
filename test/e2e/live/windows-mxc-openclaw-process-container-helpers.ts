@@ -1072,7 +1072,7 @@ while (healthObserved && gateway.exitCode === null && !existsSync(stopPath)) {
   await sleep(250);
 }
 
-if (gateway.exitCode === null) {
+if (gateway.exitCode === null && !gatewaySpawnFailed) {
   gateway.kill();
   await Promise.race([
     new Promise((resolve) => gateway.once("exit", resolve)),
@@ -1455,7 +1455,10 @@ export function classifyWindowsMxcOpenClawStartupObservation(
   if (result.gatewayExitedBeforeReadiness === true) {
     return { outcome: "exited-before-readiness", gatewayExitCode, versionExitCode };
   }
-  return { outcome: "health-timeout", gatewayExitCode, versionExitCode };
+  if (result.healthObserved === false) {
+    return { outcome: "health-timeout", gatewayExitCode, versionExitCode };
+  }
+  return { outcome: "not-observed", gatewayExitCode, versionExitCode };
 }
 
 export function classifyWindowsMxcForwardHealthObservation(
