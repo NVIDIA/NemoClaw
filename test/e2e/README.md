@@ -307,7 +307,7 @@ The Personal public-fetch shard exercises ordinary onboarding with an explicit P
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
 The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the source hostname and protocol plus bounded counts for tool use, final status, exact-target matching, and fixed-content matching.
-The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and search-provider use, permit public access from curl, and deny loopback and link-local targets.
+The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.

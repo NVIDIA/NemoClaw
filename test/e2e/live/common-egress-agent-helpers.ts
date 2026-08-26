@@ -68,6 +68,8 @@ export interface OpenClawToolEvidence {
   toolCalls: OpenClawToolRecord[];
   toolExecutions: OpenClawToolRecord[];
   toolResults: OpenClawToolRecord[];
+  unexpectedWebFetchCalls: number;
+  unexpectedWebFetchResults: number;
   webFetchResults: OpenClawWebFetchResultEvidence[];
 }
 
@@ -79,6 +81,8 @@ export interface PersonalPublicFetchToolEvidenceAssessment {
   projectedTargetEvidence: boolean;
   publicHttpsTargets: OpenClawToolTarget[];
   qualifyingWebFetchResults: number;
+  unexpectedWebFetchCalls: number;
+  unexpectedWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
 }
@@ -95,6 +99,8 @@ export interface PersonalPublicFetchToolEvidenceArtifact {
   projectedTargetEvidence: boolean;
   publicHttpsTargets: OpenClawToolTarget[];
   qualifyingWebFetchResults: number;
+  unexpectedWebFetchCalls: number;
+  unexpectedWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
   webFetchResultCounts: {
@@ -417,6 +423,13 @@ export function reduceOpenClawToolEvidence(
     }
     return null;
   };
+  const expectedUrl = normalizedUrl(expectedFetch?.url);
+  const expectedContent =
+    typeof expectedFetch?.content === "string" &&
+    expectedFetch.content.length > 0 &&
+    expectedFetch.content.length <= 1_000
+      ? expectedFetch.content
+      : null;
   const trajectoryDocuments = parseJsonLines(trajectoryJsonLines, "trajectory");
   const projectedMessages: unknown[] = [];
   for (const document of trajectoryDocuments) {
@@ -433,6 +446,8 @@ export function reduceOpenClawToolEvidence(
   const controlTargetViolationIds = new Set<string>();
   const sessionCallIds = new Set<string>();
   const sessionToolNames = new Set<string>();
+  const unexpectedWebFetchCallIds = new Set<string>();
+  let anonymousSessionCallIndex = 0;
   for (const document of sessionDocuments) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
@@ -443,12 +458,17 @@ export function reduceOpenClawToolEvidence(
       if (block?.type !== "toolCall") continue;
       const id = normalizedId(block.id ?? block.toolCallId ?? block.tool_call_id);
       const name = normalizedName(block.name ?? block.toolName ?? block.tool_name);
+      const argumentsValue = block.arguments ?? block.input ?? block.args;
       if (name) {
         if (sessionToolNames.size < MAX_RECORDS || sessionToolNames.has(name)) {
           sessionToolNames.add(name);
         } else {
           addError("session tool name limit exceeded");
         }
+      }
+      if (name === "web_fetch" && normalizedUrl(directUrlFrom(argumentsValue)) !== expectedUrl) {
+        unexpectedWebFetchCallIds.add(id ?? `session:${anonymousSessionCallIndex}`);
+        anonymousSessionCallIndex += 1;
       }
       if (!id) {
         if (name === "tool_call" || name === "tool_describe") {
@@ -457,7 +477,6 @@ export function reduceOpenClawToolEvidence(
         continue;
       }
       sessionCallIds.add(id);
-      const argumentsValue = block.arguments ?? block.input ?? block.args;
       const allowedControlTarget = isAllowedWebFetchControlTarget(argumentsValue);
       if ((name === "tool_call" || name === "tool_describe") && !allowedControlTarget) {
         controlTargetViolationIds.add(id);
@@ -535,10 +554,14 @@ export function reduceOpenClawToolEvidence(
       }
       const directUrl = directUrlFrom(argumentsValue);
       const target = targetFrom(argumentsValue);
+      const requestedUrl = normalizedUrl(directUrl);
+      if (name === "web_fetch" && requestedUrl !== expectedUrl) {
+        unexpectedWebFetchCallIds.add(id);
+      }
       callsById.set(id, {
         maxCharsWithinLimit: maxCharsWithinLimitFrom(argumentsValue),
         name,
-        requestedUrl: normalizedUrl(directUrl),
+        requestedUrl,
         ...(target ? { target } : {}),
       });
     }
@@ -552,13 +575,6 @@ export function reduceOpenClawToolEvidence(
     toolCalls.push({ name });
   }
 
-  const expectedUrl = normalizedUrl(expectedFetch?.url);
-  const expectedContent =
-    typeof expectedFetch?.content === "string" &&
-    expectedFetch.content.length > 0 &&
-    expectedFetch.content.length <= 1_000
-      ? expectedFetch.content
-      : null;
   const pairedProjectedTargetCallIds = new Set<string>();
   const toolResults: OpenClawToolRecord[] = [];
   const webFetchResults: OpenClawWebFetchResultEvidence[] = [];
@@ -601,6 +617,9 @@ export function reduceOpenClawToolEvidence(
     });
   }
   const projectedTargetEvidence = pairedProjectedTargetCallIds.size > 0;
+  const unexpectedWebFetchResults = webFetchResults.filter(
+    ({ expectedUrlMatches }) => !expectedUrlMatches,
+  ).length;
 
   const finalStatuses = new Set<string>();
   const toolExecutions: OpenClawToolRecord[] = [];
@@ -632,6 +651,8 @@ export function reduceOpenClawToolEvidence(
     toolCalls,
     toolExecutions,
     toolResults,
+    unexpectedWebFetchCalls: unexpectedWebFetchCallIds.size,
+    unexpectedWebFetchResults,
     webFetchResults,
   };
 }
@@ -674,6 +695,8 @@ export function parseOpenClawToolEvidence(raw: string): OpenClawToolEvidence {
     !Array.isArray(parsed.toolCalls) ||
     !Array.isArray(parsed.toolExecutions) ||
     !Array.isArray(parsed.toolResults) ||
+    !Number.isInteger(parsed.unexpectedWebFetchCalls) ||
+    !Number.isInteger(parsed.unexpectedWebFetchResults) ||
     !Array.isArray(parsed.webFetchResults)
   ) {
     throw new Error("OpenClaw reduced tool evidence has an invalid schema");
@@ -771,6 +794,8 @@ export function assessPersonalPublicFetchToolEvidence(
       evidence.errors.length === 0 &&
       evidence.controlTargetViolations === 0 &&
       evidence.finalStatuses.includes("success") &&
+      evidence.unexpectedWebFetchCalls === 0 &&
+      evidence.unexpectedWebFetchResults === 0 &&
       webFetchCalls.length > 0 &&
       webFetchExecutions.length > 0 &&
       publicHttpsTargets.length > 0 &&
@@ -780,6 +805,8 @@ export function assessPersonalPublicFetchToolEvidence(
     projectedTargetEvidence: evidence.projectedTargetEvidence,
     publicHttpsTargets,
     qualifyingWebFetchResults: qualifyingWebFetchResults.length,
+    unexpectedWebFetchCalls: evidence.unexpectedWebFetchCalls,
+    unexpectedWebFetchResults: evidence.unexpectedWebFetchResults,
     webFetchCalls: webFetchCalls.length,
     webFetchExecutions: webFetchExecutions.length,
   };
@@ -818,6 +845,8 @@ export function projectPersonalPublicFetchToolEvidenceArtifact(
     projectedTargetEvidence: evidence.projectedTargetEvidence,
     publicHttpsTargets: assessment.publicHttpsTargets,
     qualifyingWebFetchResults: assessment.qualifyingWebFetchResults,
+    unexpectedWebFetchCalls: assessment.unexpectedWebFetchCalls,
+    unexpectedWebFetchResults: assessment.unexpectedWebFetchResults,
     webFetchCalls: assessment.webFetchCalls,
     webFetchExecutions: assessment.webFetchExecutions,
     webFetchResultCounts,
@@ -860,6 +889,8 @@ export async function validateOpenClawAgentAttemptEvidence(
         `webFetchCalls=${assessment.webFetchCalls}`,
         `webFetchExecutions=${assessment.webFetchExecutions}`,
         `qualifying=${assessment.qualifyingWebFetchResults}`,
+        `unexpectedWebFetchCalls=${assessment.unexpectedWebFetchCalls}`,
+        `unexpectedWebFetchResults=${assessment.unexpectedWebFetchResults}`,
         `webFetchResults=${counts.total}`,
         `expectedContentMatches=${counts.expectedContentMatches}`,
         `expectedUrlMatches=${counts.expectedUrlMatches}`,

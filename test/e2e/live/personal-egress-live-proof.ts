@@ -94,19 +94,19 @@ export async function assertPersonalRuntimeEgress(
   const policyYaml = parseOpenShellPolicy(policy.stdout).yamlBody;
   expect(policyYaml).toContain("personal_open_internet");
 
-  const keyless = await sandbox.execShell(
+  const absentSearchCredentials = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
-      'test -z "${BRAVE_API_KEY:-}" && test -z "${TAVILY_API_KEY:-}" && printf "PERSONAL_KEYLESS_FETCH_OK\\n"',
+      'test -z "${BRAVE_API_KEY:-}" && test -z "${TAVILY_API_KEY:-}" && printf "PERSONAL_SEARCH_CREDENTIALS_ABSENT\\n"',
     ),
     {
-      artifactName: `${artifactPrefix}-keyless-fetch`,
+      artifactName: `${artifactPrefix}-absent-search-credentials`,
       env: commandEnv(),
       timeoutMs: 30_000,
     },
   );
-  expect(keyless.exitCode, text(keyless)).toBe(0);
-  expect(keyless.stdout).toContain("PERSONAL_KEYLESS_FETCH_OK");
+  expect(absentSearchCredentials.exitCode, text(absentSearchCredentials)).toBe(0);
+  expect(absentSearchCredentials.stdout).toContain("PERSONAL_SEARCH_CREDENTIALS_ABSENT");
 
   phases.beforePublicFetch?.();
   const publicFetch = await sandbox.execShell(

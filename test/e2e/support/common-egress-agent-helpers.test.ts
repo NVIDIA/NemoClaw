@@ -316,6 +316,8 @@ describe("common-egress agent parsing and classification helpers", () => {
       toolCalls: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolExecutions: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolResults: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
+      unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchResults: 0,
       webFetchResults: [
         {
           expectedContentMatches: true,
@@ -423,6 +425,23 @@ describe("common-egress agent parsing and classification helpers", () => {
       forbiddenProviderMentions: ["brave"],
       forbiddenToolNames: ["web_search"],
       matches: false,
+    });
+  });
+
+  it("rejects projected evidence that hides a different public fetch target", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        extraToolArguments: { maxChars: 8_000, url: "https://example.com/" },
+        extraToolName: "web_fetch",
+      }),
+      directPublicFetchTrajectoryWithProjection(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 1,
+      unexpectedWebFetchCalls: 1,
     });
   });
 
@@ -551,7 +570,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       payload: publicFetchPayload(),
     },
     {
-      name: "a search-provider-backed projected fetch",
+      name: "a Brave Search-backed projected fetch",
       projectedTargetName: "web_fetch",
       payload: publicFetchPayload({
         externalContent: {
@@ -602,7 +621,7 @@ describe("common-egress agent parsing and classification helpers", () => {
     },
   );
 
-  it("projects upload-safe public-fetch evidence and keeps diagnostics aggregate-only", async () => {
+  it("projects public-fetch evidence without fetched content or URL queries and keeps diagnostics aggregate-only", async () => {
     const providerSentinel = "brave";
     const toolSentinel = "tool-secret-sentinel";
     const evidence = reduceOpenClawToolEvidence(
@@ -630,6 +649,8 @@ describe("common-egress agent parsing and classification helpers", () => {
       forbiddenToolCount: 1,
       matches: false,
       publicHttpsTargets: [{ hostname: "www.wikidata.org", protocol: "https:" }],
+      unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchResults: 0,
       webFetchResultCounts: {
         expectedContentMatches: 1,
         expectedUrlMatches: 1,
@@ -780,7 +801,7 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
   });
 
-  it("rejects search-provider and non-public fetch trajectories", () => {
+  it("rejects Brave Search or Tavily Search and non-public fetch trajectories", () => {
     const evidence = reduceOpenClawToolEvidence(
       [
         JSON.stringify({
@@ -838,7 +859,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       trajectory: publicFetchTrajectory(),
     },
     {
-      name: "a search-provider result",
+      name: "a Brave Search provider result",
       session: publicFetchSessionJsonLines({
         payload: publicFetchPayload({
           externalContent: {

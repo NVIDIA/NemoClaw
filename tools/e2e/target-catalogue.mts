@@ -611,7 +611,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^common-egress.+C3.+$",
   }),
   commonEgressTarget({
-    displayName: "Networking: Personal permits a keyless public fetch",
+    displayName: "Networking: Personal fetches public data without a search credential",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public Wikidata endpoint",
     profile: "nvidia-inference",
     runnerComparison: false,
