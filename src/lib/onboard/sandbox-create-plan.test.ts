@@ -788,11 +788,18 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: null,
     });
 
-    const plan = materializeHermesPortableCreatePlan({
-      intent,
-      fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
-      policyAuthority: "nemoclaw-managed",
-    });
+    const plan = materializeHermesPortableCreatePlan(
+      {
+        intent,
+        fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
+        policyAuthority: "nemoclaw-managed",
+      },
+      () => ({
+        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        appliedPresets: [],
+        sourceBytes: Buffer.from("sandbox: {}"),
+      }),
+    );
     const configIndex = plan.createArgs.indexOf("--driver-config-json");
 
     expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({

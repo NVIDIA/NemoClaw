@@ -16,6 +16,8 @@ import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
+type PlanHermesPortableInitialSandboxPolicy =
+  typeof import("./initial-policy").planHermesPortableInitialSandboxPolicy;
 
 const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   type: "tmpfs",
@@ -397,11 +399,15 @@ export function materializeSandboxCreatePlan({
 }
 
 /** Build the schema-5 create plan without provider, filesystem, Docker, or prebuild effects. */
-export function materializeHermesPortableCreatePlan(input: {
-  readonly intent: SandboxCreateIntent;
-  readonly fromRef: string;
-  readonly policyAuthority: SandboxPolicyAuthority;
-}): SandboxCreatePlan {
+export function materializeHermesPortableCreatePlan(
+  input: {
+    readonly intent: SandboxCreateIntent;
+    readonly fromRef: string;
+    readonly policyAuthority: SandboxPolicyAuthority;
+  },
+  planInitialSandboxPolicy: PlanHermesPortableInitialSandboxPolicy =
+    getHermesPortableInitialSandboxPolicy,
+): SandboxCreatePlan {
   const { intent, fromRef, policyAuthority } = input;
   if (policyAuthority !== "nemoclaw-managed") {
     throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
@@ -421,7 +427,7 @@ export function materializeHermesPortableCreatePlan(input: {
       "Hermes portable create intent includes an effect that is not owned by its schema-5 receipt.",
     );
   }
-  const initialSandboxPolicy = getHermesPortableInitialSandboxPolicy(
+  const initialSandboxPolicy = planInitialSandboxPolicy(
     intent.policy.basePolicyPath,
     [...intent.policy.activeMessagingChannels],
     {
