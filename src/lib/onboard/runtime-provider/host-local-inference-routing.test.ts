@@ -291,7 +291,6 @@ describe("provider-neutral host-local inference startup routing", () => {
       "https://inference.local/v1",
       "https://inference.local/v1",
       "https://inference.local/v1",
-      "https://inference.local/v1",
     ]);
   });
 

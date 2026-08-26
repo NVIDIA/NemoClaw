@@ -26,7 +26,6 @@ export const HOST_LOCAL_INFERENCE_APPLICATIONS = [
   "openclaw",
   "hermes",
   "langchain-deepagents-code",
-  "pi",
 ] as const;
 
 export type HostLocalInferenceApplication = (typeof HOST_LOCAL_INFERENCE_APPLICATIONS)[number];
@@ -214,7 +213,7 @@ export interface HostLocalInferenceStartupRoute {
   readonly gatewayProvider: "ollama-local" | "vllm-local" | "llama-cpp-local";
   /** Provider registration target visible inside the OpenShell gateway. */
   readonly gatewayProviderBaseUrl: string;
-  /** Stable inference route shared by OpenClaw, Hermes, Deep Agents Code, and Pi. */
+  /** Stable inference route shared by OpenClaw, Hermes, and Deep Agents Code. */
   readonly applicationBaseUrl: typeof HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL;
 }
 

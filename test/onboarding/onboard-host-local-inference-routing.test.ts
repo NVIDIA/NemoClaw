@@ -37,7 +37,7 @@ const NETWORK_GATEWAY_IP = "10.89.0.1";
 const NETWORK_AUTHORITY = "3".repeat(64);
 const MODEL = "qwen3.5-9b";
 const SANDBOX = "host-local-agent";
-const APPLICATIONS = ["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const;
+const APPLICATIONS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const PUBLISHED_RESUME_ROLLBACK_CASES = APPLICATIONS.flatMap((application) =>
   (["running", "stopped"] as const).map((stateAtEntry) => ({ application, stateAtEntry })),
 );
