@@ -57,6 +57,7 @@ import {
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
   restartBridgeWithoutHostSecret,
+  retryOpenClawBaselineScopeOnboardFailure,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
@@ -137,23 +138,31 @@ async function onboardAgent(
     artifactName: "precleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
   });
-  const result = await host.nemoclaw(
-    buildMcpBridgeOnboardArgs(),
-    {
-      artifactName: options.artifactName,
-      env: buildMcpBridgeOnboardEnv({
-        agent: options.agent,
-        compatibleKey: COMPATIBLE_KEY,
-        compatibleModel: COMPATIBLE_MODEL,
-        corporateCaBundle,
-        endpointUrl,
-        envOverlay: options.envOverlay,
-        sandboxName: options.sandboxName,
+  const args = buildMcpBridgeOnboardArgs();
+  const commandOptions = {
+    artifactName: options.artifactName,
+    env: buildMcpBridgeOnboardEnv({
+      agent: options.agent,
+      compatibleKey: COMPATIBLE_KEY,
+      compatibleModel: COMPATIBLE_MODEL,
+      corporateCaBundle,
+      endpointUrl,
+      envOverlay: options.envOverlay,
+      sandboxName: options.sandboxName,
+    }),
+    redactionValues: [COMPATIBLE_KEY],
+    timeoutMs: 20 * 60_000,
+  };
+  const result = await retryOpenClawBaselineScopeOnboardFailure({
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    initialResult: await host.nemoclaw(args, commandOptions),
+    retry: () =>
+      host.nemoclaw(args, {
+        ...commandOptions,
+        artifactName: `${options.artifactName}-baseline-scope-retry`,
       }),
-      redactionValues: [COMPATIBLE_KEY],
-      timeoutMs: 20 * 60_000,
-    },
-  );
+  });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
   expectManagedImageQualificationReceipt(options.sandboxName);
 }
