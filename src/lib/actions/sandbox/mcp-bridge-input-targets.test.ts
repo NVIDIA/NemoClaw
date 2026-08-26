@@ -170,6 +170,7 @@ const policies = require("./src/lib/policy/index.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
@@ -196,7 +197,18 @@ replace(provider, "upsertMcpProvider", () => ({
 }));
 replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
-replace(provider, "waitForAttachedMcpCredential", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", () => "v1");
+replace(processRecovery, "executeSandboxCommand", (_sandbox, command) => ({
+  status: 0,
+  stdout: command === "command -v mcporter" ? "/usr/bin/mcporter\\n" : command.includes('"config", "get"') ? "registered\\n" : "",
+  stderr: "",
+}));
+replace(processRecovery, "executeSandboxExecCommand", () => ({
+  status: 0,
+  stdout: "v1\\n",
+  stderr: "",
+}));
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",

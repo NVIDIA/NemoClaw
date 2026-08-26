@@ -81,7 +81,10 @@ import {
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
-import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import {
+  buildRevisionScopedMcpAuthorizationPattern,
+  MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+} from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
 
@@ -527,17 +530,18 @@ async function assertDeepAgentsConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
+  const authorizationPattern = buildRevisionScopedMcpAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "python3 - <<'PY'",
-    "import json, pathlib",
+    "import json, pathlib, re",
     "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
     "assert entry['type'] == 'http'",
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
+    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");
