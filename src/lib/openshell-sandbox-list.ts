@@ -87,6 +87,14 @@ export async function captureSandboxListWithGatewayRecovery(
     };
   }
 
+  if (options.gatewayName && targetRecoveryAttempted) {
+    return {
+      result: initial,
+      recoveryAttempted: true,
+      recoverySucceeded: true,
+    };
+  }
+
   const recovery = await recoverNamedGatewayRuntime(recoveryOptions);
   if (!recovery.recovered) {
     return { result: initial, recoveryAttempted: true, recoverySucceeded: false };

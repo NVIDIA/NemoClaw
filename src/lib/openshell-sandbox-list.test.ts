@@ -374,6 +374,32 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(observer.listSandboxes).not.toHaveBeenCalled();
   });
 
+  it("does not repeat a completed named gateway recovery after observation fails (#10421)", async () => {
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: true });
+    const result = {
+      ok: false,
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      },
+    } as const;
+    const observer = observerReturning(result);
+
+    await expect(
+      captureSandboxListWithGatewayRecovery({
+        gatewayName: "nemoclaw-12345",
+        observer,
+      }),
+    ).resolves.toEqual({
+      result,
+      recoveryAttempted: true,
+      recoverySucceeded: true,
+    });
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
+    expect(observer.listSandboxes).toHaveBeenCalledOnce();
+  });
+
   it("classifies protobuf mismatch before recovery or generic failure handling", async () => {
     const issue: OpenShellStateRpcIssue = {
       kind: "protobuf_mismatch",
