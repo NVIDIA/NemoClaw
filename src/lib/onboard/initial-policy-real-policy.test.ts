@@ -30,6 +30,7 @@ type PolicyRule = {
 type PolicyEndpoint = {
   host?: string;
   port?: number;
+  path?: string;
   access?: string;
   protocol?: string;
   enforcement?: string;
@@ -461,7 +462,7 @@ describe("initial sandbox policy real preset merge", () => {
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
-  it("materializes separate Hermes Slack bot and app credential bindings", () => {
+  it("uses a more specific route for the Hermes Slack app credential binding (#10155)", () => {
     const sandboxName = "hermes-slack-e2e";
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(
@@ -477,11 +478,15 @@ describe("initial sandbox policy real preset merge", () => {
     );
 
     expect(slackCom).toHaveLength(2);
-    expect(slackCom[0]).toMatchObject({
-      credential_binding: { provider: `${sandboxName}-slack-app` },
-      rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
-    });
-    expect(slackCom[1]?.credential_binding?.provider).toBe(`${sandboxName}-slack-bridge`);
+    expect(
+      slackCom.map((endpoint) => ({
+        path: endpoint.path,
+        provider: endpoint.credential_binding?.provider,
+      })),
+    ).toEqual([
+      { path: "/api/apps.connections.open", provider: `${sandboxName}-slack-app` },
+      { path: undefined, provider: `${sandboxName}-slack-bridge` },
+    ]);
     expect(websocketEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
       `${sandboxName}-slack-app`,
       `${sandboxName}-slack-app`,

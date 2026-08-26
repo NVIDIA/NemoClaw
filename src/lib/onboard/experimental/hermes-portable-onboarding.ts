@@ -242,7 +242,7 @@ export function createHermesPortableReadyCapture(
   };
 }
 
-/** Route every generic create-readiness command through exact schema-5 authority. */
+/** Route create readiness and failed-create cleanup through exact schema-5 authority. */
 export function createHermesPortableReadyRunner(
   sandboxName: string,
   gatewayName: string,
@@ -254,16 +254,21 @@ export function createHermesPortableReadyRunner(
         ? ["sandbox", "list", "-g", gatewayName]
         : args[0] === "sandbox" && args[1] === "get" && args.length === 3 && args[2] === sandboxName
           ? ["sandbox", "get", "-g", gatewayName, args[2]!]
-          : args.length === 6 &&
-              args[0] === "sandbox" &&
-              args[1] === "exec" &&
-              args[2] === "--name" &&
-              args[3] === sandboxName &&
-              args[4] === "--" &&
-              args[5] === "true"
-            ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
-            : null;
-    if (!scoped) fail("create readiness attempted an unsupported OpenShell command");
+          : args[0] === "sandbox" &&
+              args[1] === "delete" &&
+              args.length === 3 &&
+              args[2] === sandboxName
+            ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
+            : args.length === 6 &&
+                args[0] === "sandbox" &&
+                args[1] === "exec" &&
+                args[2] === "--name" &&
+                args[3] === sandboxName &&
+                args[4] === "--" &&
+                args[5] === "true"
+              ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
+              : null;
+    if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
 }

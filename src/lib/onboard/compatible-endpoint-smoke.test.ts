@@ -230,6 +230,34 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
+  it("withholds sandbox-route success output when policy authority changes during proof (#9833)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(() =>
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "smoke-sandbox",
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3-ultra",
+        runOpenshell,
+        redact: (value) => value,
+        messagingChannels: ["telegram"],
+        beforeSuccess: () => {
+          throw new Error("policy authority changed");
+        },
+      }),
+    ).toThrow("policy authority changed");
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(log.mock.calls.flat().join("\n")).not.toContain(
+      "Compatible endpoint responds through inference.local",
+    );
+    log.mockRestore();
+  });
+
   it("budgets the canonical outer timeout for both tool proofs and direct denial", () => {
     const runOpenshell = vi
       .fn()

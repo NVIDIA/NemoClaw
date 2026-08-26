@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
@@ -69,6 +70,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
+  policyAuthority?: SandboxPolicyAuthority;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -274,6 +276,7 @@ export function buildCreatedSandboxRegistryEntry(
         }
       : {}),
     policies: input.appliedPolicies,
+    ...(input.policyAuthority !== undefined ? { policyAuthority: input.policyAuthority } : {}),
     baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
