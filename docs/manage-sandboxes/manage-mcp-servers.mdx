@@ -84,7 +84,7 @@ Bounded partial results set `truncated` to `true` and include a redacted `detail
 
 ## Verify Credential Resolution
 
-Provider presence and metadata cannot prove that OpenShell rewrites `openshell:resolve:env:KEY` when a request leaves the sandbox.
+Provider presence and metadata cannot prove that OpenShell rewrites the recorded resolver placeholder when a request leaves the sandbox.
 `mcp status <server>` requests a differential wire-level credential-resolution probe by default.
 
 Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one matching credential key.

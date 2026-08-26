@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import * as policies from "../../../src/lib/policy";
 
@@ -38,11 +39,22 @@ function runScenario({
   const openshell = path.join(root, "openshell");
   fs.writeFileSync(currentPolicyPath, currentPolicy);
   fs.writeFileSync(callsPath, "");
+  const policyMetadata = JSON.stringify({
+    scope: "sandbox",
+    sandbox: "alpha",
+    status: "effective",
+    policy_source: "sandbox",
+    policy: YAML.parse(currentPolicy),
+  });
   fs.writeFileSync(
     openshell,
     `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1 $2" = "policy get" ]; then
+  if [[ " $* " == *" --output json "* ]]; then
+    printf '%s\n' ${JSON.stringify(policyMetadata)}
+    exit 0
+  fi
   printf 'Version: 1\nHash: test\n---\n'
   cat ${JSON.stringify(currentPolicyPath)}
   exit 0

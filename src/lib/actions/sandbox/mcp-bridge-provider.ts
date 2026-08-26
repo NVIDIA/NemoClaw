@@ -34,7 +34,10 @@ export {
   providerDetachChangedState,
   upsertMcpProvider,
 } from "./mcp-bridge-provider-mutation";
-export type { McpCredentialRevisionObservation } from "./mcp-bridge-provider-readiness";
+export type {
+  McpAttachedCredentialRevision,
+  McpCredentialRevisionObservation,
+} from "./mcp-bridge-provider-readiness";
 export {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,

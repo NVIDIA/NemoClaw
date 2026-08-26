@@ -64,10 +64,16 @@ describe("OpenShell policy boundary package contract", () => {
 
   it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
     const cliPolicy = require("../../dist/lib/policy/merge.js") as {
+      assertExternalPolicyRequirementContainment: (...args: unknown[]) => void;
+      assertMatchingPolicyAuthority: (recorded: unknown, observed: unknown) => void;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseSandboxPolicyAuthorityMetadata: (
+        raw: string,
+        sandboxName: string,
+      ) => { authority: string; effectivePolicy: Record<string, unknown> };
       withoutProviderComposedPolicies: (
         policies: Record<string, unknown>,
       ) => Record<string, unknown>;
@@ -82,10 +88,13 @@ describe("OpenShell policy boundary package contract", () => {
         path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
       ).href
     )) as {
+      assertExternalPolicyRequirementContainment: typeof cliPolicy.assertExternalPolicyRequirementContainment;
+      assertMatchingPolicyAuthority: typeof cliPolicy.assertMatchingPolicyAuthority;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseSandboxPolicyAuthorityMetadata: typeof cliPolicy.parseSandboxPolicyAuthorityMetadata;
       withoutProviderComposedPolicies: (
         policies: Record<string, unknown>,
       ) => Record<string, unknown>;
@@ -93,7 +102,10 @@ describe("OpenShell policy boundary package contract", () => {
     };
     const canonicalBoundary =
       require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+        assertExternalPolicyRequirementContainment: typeof cliPolicy.assertExternalPolicyRequirementContainment;
+        assertMatchingPolicyAuthority: typeof cliPolicy.assertMatchingPolicyAuthority;
         parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
+        parseSandboxPolicyAuthorityMetadata: typeof cliPolicy.parseSandboxPolicyAuthorityMetadata;
         stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
       };
     expect(
@@ -118,6 +130,25 @@ describe("OpenShell policy boundary package contract", () => {
     expect(cliPolicy.parseOpenShellPolicy).toBe(canonicalBoundary.parseOpenShellPolicy);
     expect(cliPolicy.stripProviderComposedPolicies).toBe(
       canonicalBoundary.stripProviderComposedPolicies,
+    );
+    expect(cliPolicy.parseSandboxPolicyAuthorityMetadata).toBe(
+      canonicalBoundary.parseSandboxPolicyAuthorityMetadata,
+    );
+    expect(cliPolicy.assertMatchingPolicyAuthority).toBe(
+      canonicalBoundary.assertMatchingPolicyAuthority,
+    );
+    expect(cliPolicy.assertExternalPolicyRequirementContainment).toBe(
+      canonicalBoundary.assertExternalPolicyRequirementContainment,
+    );
+    const sandboxMetadata = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "global",
+      policy: { version: 1, network_policies: {} },
+    });
+    expect(pluginBoundary.parseSandboxPolicyAuthorityMetadata(sandboxMetadata, "alpha")).toEqual(
+      canonicalBoundary.parseSandboxPolicyAuthorityMetadata(sandboxMetadata, "alpha"),
     );
 
     const pluginRunner = await import(
