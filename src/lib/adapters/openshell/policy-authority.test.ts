@@ -179,6 +179,27 @@ describe("OpenShell policy authority inspection", () => {
     ]);
   });
 
+  it("reads active global policy metadata through the default production boundary (#9833)", () => {
+    const policy = { version: 1, network_policies: { required: { endpoints: ["api.test"] } } };
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult("global revision 7"))
+      .mockReturnValueOnce(captureResult(JSON.stringify(globalMetadata({ policy }))));
+
+    expect(inspectActiveGlobalPolicy()).toEqual({
+      state: "active",
+      inspection: {
+        authority: "externally-managed",
+        effectivePolicy: policy,
+        policyIdentity: { hash: "global-policy", activeVersion: 7 },
+      },
+    });
+    expect(captureOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["policy", "list", "--global", "--limit", "1"],
+      ["policy", "get", "--global", "--full", "--output", "json"],
+    ]);
+  });
+
   it("treats a superseded global revision as absent authority (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(captureResult("global revision 7"))

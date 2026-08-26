@@ -479,7 +479,28 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
   );
   const receipt = require(receiptPath);
+  const apfPolicyRegistration = (input) => {
+    if (options.apfInterceptorRequested !== true) {
+      throw new Error("integration fixture received unexpected APF policy verification");
+    }
+    options.onVerifyCreatedPolicy?.(input);
+    return {
+      policyAuthority: "externally-managed",
+      observedPolicyAuthority: "owner-unknown",
+      policyCreationReceipt: null,
+      policyIdentity: {
+        hash: "fixture-policy",
+        activeVersion: 1,
+      },
+    };
+  };
   Object.defineProperties(receipt, {
+    verifyCreatedApfInterceptorPolicyRegistration: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: apfPolicyRegistration,
+    },
     verifyCreatedSandboxPolicyRegistration: {
       configurable: true,
       enumerable: true,

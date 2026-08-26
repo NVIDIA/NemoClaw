@@ -16,7 +16,11 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
-import { reportSandboxCreateFailure } from "./created-sandbox-failure";
+import {
+  persistAndReportRetainedApfSandboxRecovery,
+  reportSandboxCreateFailure,
+  type RetainedApfSandboxRecoveryEvidence,
+} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -26,6 +30,7 @@ import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
   ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
   ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeOnboardRouting,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
 } from "./managed-bootstrap/runtime-create";
@@ -67,6 +72,14 @@ const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
+
+/** Reject caller policy flags while leaving workload arguments after `--` untouched. */
+export function assertPolicylessSandboxCreateArgv(argv: readonly string[]): void {
+  const createArgs = argv.slice(0, argv.indexOf("--") < 0 ? argv.length : argv.indexOf("--"));
+  if (createArgs.some((arg) => arg === "--policy" || arg.startsWith("--policy="))) {
+    throw new Error("APF interceptor sandbox creation must not supply a caller policy.");
+  }
+}
 
 type OpenShellCommandResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
@@ -262,6 +275,172 @@ class ManagedBootstrapCreateStreamFailure extends Error {
   }
 }
 
+function persistApfCreateFailureRecovery(
+  input: SandboxGpuCreateFlowInput,
+  captureRecovery: () => {
+    readonly retainedSandboxRecovery?: RetainedApfSandboxRecoveryEvidence;
+  },
+): void {
+  if (!input.requirePolicylessCreate) return;
+  const persist = input.persistRetainedApfSandboxRecovery;
+  const evidence = captureRecovery().retainedSandboxRecovery;
+  if (!persist || !evidence) {
+    throw new Error(
+      "APF interceptor sandbox creation returned no create-attempt recovery authority.",
+    );
+  }
+  persistAndReportRetainedApfSandboxRecovery({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    failureDescription: "sandbox creation failed",
+    evidence,
+    persist,
+  });
+}
+
+function captureRetainedApfSandboxRecovery(
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+  createAttemptNonce: string | null,
+): { readonly retainedSandboxRecovery?: RetainedApfSandboxRecoveryEvidence } {
+  if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
+  let liveIdentityFingerprint: string | null = null;
+  try {
+    const sandboxId = resolveCreatedOpenShellSandboxId({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      createAttemptNonce,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    });
+    liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+  } catch {
+    // The nonce remains durable recovery evidence when identity lookup is unavailable.
+  }
+  return {
+    retainedSandboxRecovery: {
+      createAttemptNonce,
+      liveIdentityFingerprint,
+    },
+  };
+}
+
+function recordNativeCreateFallbackEvidence(input: {
+  readonly route: SelectedDockerGpuRoute;
+  readonly gpuRoutePlan: SandboxGpuCreateFlowInput["gpuRoutePlan"];
+  readonly nativeFallbackHasCleanBaseline: boolean;
+  readonly createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+  readonly managedRouting: ManagedBootstrapRuntimeOnboardRouting | undefined;
+  readonly inspectNativeRuntime: () => NativeRuntimeSnapshot | null;
+  readonly prebuildImageRef: string | null;
+  readonly state: SandboxGpuCreateAttemptState;
+}): boolean {
+  if (
+    input.route !== "native" ||
+    input.gpuRoutePlan !== "native-with-fallback" ||
+    !input.nativeFallbackHasCleanBaseline
+  ) {
+    return false;
+  }
+  const routingFailure = input.managedRouting
+    ? input.managedRouting.isNativeCreateRoutingFailure(
+        input.createResult.output,
+        input.createResult.sawProgress,
+      )
+    : sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(input.createResult.output, {
+        sawProgress: input.createResult.sawProgress,
+      });
+  if (routingFailure) {
+    input.state.allowUnbuiltCompatibilitySource = input.prebuildImageRef === null;
+    return true;
+  }
+  const snapshot = input.inspectNativeRuntime();
+  if (!snapshot) return false;
+  const trustedRuntimeError = input.managedRouting
+    ? input.managedRouting.isTrustedNativeRuntimeError(snapshot.stateError)
+    : sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError);
+  if (!trustedRuntimeError) return false;
+  input.state.nativeRuntimeSnapshot = snapshot;
+  return true;
+}
+
+async function handleFailedSandboxCreate(input: {
+  readonly route: SelectedDockerGpuRoute;
+  readonly flow: SandboxGpuCreateFlowInput;
+  readonly createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+  readonly managedIncompleteCreateRecovered: boolean;
+  readonly nativeFallbackHasCleanBaseline: boolean;
+  readonly managedRouting: ManagedBootstrapRuntimeOnboardRouting | undefined;
+  readonly inspectNativeRuntime: () => NativeRuntimeSnapshot | null;
+  readonly state: SandboxGpuCreateAttemptState;
+  readonly runtimePatch: ManagedBootstrapRuntimePatch;
+  readonly captureRetainedSandboxRecovery: () => ReturnType<
+    typeof captureRetainedApfSandboxRecovery
+  >;
+  readonly printCreateFailureDiagnostics: NonNullable<
+    SandboxGpuCreateFlowDeps["printCreateFailureDiagnostics"]
+  >;
+}) {
+  const failure = classifySandboxCreateFailure(input.createResult.output);
+  if (failure.kind === "sandbox_create_incomplete") {
+    console.warn("");
+    if (input.managedIncompleteCreateRecovered) {
+      console.warn(
+        `  Create stream exited with code ${input.createResult.status}; the exact durable sandbox reached Ready, and onboarding is continuing with final checks.`,
+      );
+    } else {
+      console.warn(
+        `  Create stream exited with code ${input.createResult.status} after sandbox was created.`,
+      );
+      console.warn("  Checking whether the sandbox reaches Ready state...");
+    }
+    return null;
+  }
+  if (
+    recordNativeCreateFallbackEvidence({
+      route: input.route,
+      gpuRoutePlan: input.flow.gpuRoutePlan,
+      nativeFallbackHasCleanBaseline: input.nativeFallbackHasCleanBaseline,
+      createResult: input.createResult,
+      managedRouting: input.managedRouting,
+      inspectNativeRuntime: input.inspectNativeRuntime,
+      prebuildImageRef: input.flow.prebuild.imageRef,
+      state: input.state,
+    })
+  ) {
+    await input.runtimePatch.rollbackManagedStartupAfterCreateFailure();
+    return {
+      ok: false,
+      route: input.route,
+      stage: "create",
+      error: new Error("Native OpenShell GPU sandbox creation was rejected."),
+      fallbackEligible: true,
+      ...input.captureRetainedSandboxRecovery(),
+    } as const;
+  }
+  await input.runtimePatch.rollbackManagedStartupAfterCreateFailure();
+  persistApfCreateFailureRecovery(input.flow, input.captureRetainedSandboxRecovery);
+  reportSandboxCreateFailure(
+    {
+      sandboxName: input.flow.sandboxName,
+      createStatus: input.createResult.status,
+      createOutput: input.createResult.output,
+      restoreBackupPath: input.flow.restoreBackupPath,
+      createArgs: input.flow.prebuild.createArgs,
+    },
+    {
+      classifyCreateFailure: classifySandboxCreateFailure,
+      printCreateFailureDiagnostics: input.printCreateFailureDiagnostics,
+      printRecoveryHints: input.flow.requirePolicylessCreate
+        ? () => undefined
+        : printSandboxCreateRecoveryHints,
+      warn: (message) => console.warn(message),
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+    },
+  );
+  return null;
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -332,9 +511,12 @@ export function createSandboxGpuCreateAttemptRunner(
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
+    if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     const createAttemptNonce = deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+    const captureRetainedSandboxRecovery = () =>
+      captureRetainedApfSandboxRecovery(input, deps, createAttemptNonce);
     const attemptArgv = createAttemptNonce
       ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
       : unboundAttemptArgv;
@@ -560,78 +742,20 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!state.firstCreateOutput) state.firstCreateOutput = createResult.output;
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     if (createResult.status !== 0) {
-      const failure = classifySandboxCreateFailure(createResult.output);
-      if (failure.kind === "sandbox_create_incomplete") {
-        console.warn("");
-        if (managedIncompleteCreateRecovered) {
-          console.warn(
-            `  Create stream exited with code ${createResult.status}; the exact durable sandbox reached Ready, and onboarding is continuing with final checks.`,
-          );
-        } else {
-          console.warn(
-            `  Create stream exited with code ${createResult.status} after sandbox was created.`,
-          );
-          console.warn("  Checking whether the sandbox reaches Ready state...");
-        }
-      } else if (
-        route === "native" &&
-        input.gpuRoutePlan === "native-with-fallback" &&
-        nativeFallbackHasCleanBaseline &&
-        (() => {
-          if (
-            managedRouting
-              ? managedRouting.isNativeCreateRoutingFailure(
-                  createResult.output,
-                  createResult.sawProgress,
-                )
-              : sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(createResult.output, {
-                  sawProgress: createResult.sawProgress,
-                })
-          ) {
-            state.allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
-            return true;
-          }
-          const snapshot = inspectNativeRuntime();
-          if (
-            snapshot &&
-            (managedRouting
-              ? managedRouting.isTrustedNativeRuntimeError(snapshot.stateError)
-              : sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError))
-          ) {
-            state.nativeRuntimeSnapshot = snapshot;
-            return true;
-          }
-          return false;
-        })()
-      ) {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-        return {
-          ok: false,
-          route,
-          stage: "create",
-          error: new Error("Native OpenShell GPU sandbox creation was rejected."),
-          fallbackEligible: true,
-        } as const;
-      } else {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-        reportSandboxCreateFailure(
-          {
-            sandboxName: input.sandboxName,
-            createStatus: createResult.status,
-            createOutput: createResult.output,
-            restoreBackupPath: input.restoreBackupPath,
-            createArgs: input.prebuild.createArgs,
-          },
-          {
-            classifyCreateFailure: classifySandboxCreateFailure,
-            printCreateFailureDiagnostics,
-            printRecoveryHints: printSandboxCreateRecoveryHints,
-            warn: (message) => console.warn(message),
-            error: (message) => console.error(message),
-            exitProcess: (code) => process.exit(code),
-          },
-        );
-      }
+      const failureResult = await handleFailedSandboxCreate({
+        route,
+        flow: input,
+        createResult,
+        managedIncompleteCreateRecovered,
+        nativeFallbackHasCleanBaseline,
+        managedRouting,
+        inspectNativeRuntime,
+        state,
+        runtimePatch,
+        captureRetainedSandboxRecovery,
+        printCreateFailureDiagnostics,
+      });
+      if (failureResult) return failureResult;
     }
     if (!createdSandboxVerified && deferPostCreateEffects) {
       if (!createAttemptNonce) {
@@ -739,6 +863,7 @@ export function createSandboxGpuCreateAttemptRunner(
             `Native OpenShell GPU sandbox did not become ready${readiness.failurePhase ? ` (${readiness.failurePhase})` : ""}.`,
           ),
           fallbackEligible: true,
+          ...captureRetainedSandboxRecovery(),
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -805,6 +930,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
               ),
               fallbackEligible: true,
+              ...captureRetainedSandboxRecovery(),
               ...nativeCleanup,
             } as const;
           }

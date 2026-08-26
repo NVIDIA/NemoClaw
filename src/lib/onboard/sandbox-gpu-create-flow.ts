@@ -7,6 +7,10 @@ import { redactFull } from "../security/redact";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime-authority";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
+import {
+  persistAndReportRetainedApfSandboxRecovery,
+  type RetainedApfSandboxRecovery,
+} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
@@ -209,6 +213,10 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Reject every initial or fallback create attempt that carries a caller policy. */
+  requirePolicylessCreate?: true;
+  /** Durably retain exact APF create-attempt recovery evidence before a fallback refusal exits. */
+  persistRetainedApfSandboxRecovery?: (recovery: RetainedApfSandboxRecovery) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -260,6 +268,19 @@ export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
   readonly route: SelectedDockerGpuRoute;
+}
+
+export type { RetainedApfSandboxRecovery } from "./created-sandbox-failure";
+
+/** Refuse APF fallback when OpenShell can remove the failed sandbox only by mutable name. */
+export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
+  return {
+    safe: false,
+    reason: `APF-selected sandbox '${sandboxName}' cannot be deleted by mutable name for a compatibility retry`,
+    deleteStatus: null,
+    sandboxPresent: null,
+    containerIds: null,
+  } as const;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -335,6 +356,16 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  if (
+    input.requirePolicylessCreate &&
+    (!input.verifyCreatedSandboxBeforeEffects ||
+      !input.revalidateVerifiedSandboxBeforeEffect ||
+      !input.persistRetainedApfSandboxRecovery)
+  ) {
+    throw new Error(
+      "APF interceptor sandbox creation requires exact post-create verification and durable fallback recovery.",
+    );
+  }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(
     input.portableLifecycle === true,
@@ -376,6 +407,9 @@ export async function runSandboxGpuCreateFlow(
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
       cleanupNativeFailure: (failure) => {
+        if (input.requirePolicylessCreate) {
+          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
+        }
         return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
           input.sandboxName,
           failure,
@@ -493,6 +527,25 @@ export async function runSandboxGpuCreateFlow(
           ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
           : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
+    if (input.requirePolicylessCreate) {
+      const persistRetainedApfSandboxRecovery = input.persistRetainedApfSandboxRecovery;
+      if (!persistRetainedApfSandboxRecovery) {
+        throw new Error("APF interceptor sandbox creation requires durable fallback recovery.");
+      }
+      const evidence = gpuCreateOutcome.retainedSandboxRecovery;
+      if (!evidence) {
+        throw new Error(
+          "APF interceptor sandbox creation returned no create-attempt recovery evidence.",
+        );
+      }
+      persistAndReportRetainedApfSandboxRecovery({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        failureDescription: "native GPU fallback stopped",
+        evidence,
+        persist: persistRetainedApfSandboxRecovery,
+      });
+    }
     process.exit(1);
   }
 

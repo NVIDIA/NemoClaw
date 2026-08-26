@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  formatRetainedApfSandboxRecoveryReceipt,
+  persistAndReportRetainedApfSandboxRecovery,
   reportSandboxCreateFailure,
   reportSandboxReadinessFailure,
   type SandboxCreateFailureReportDeps,
@@ -11,7 +13,79 @@ import {
   type SandboxReadinessFailureReportDeps,
   type SandboxReadinessFailureReportOptions,
 } from "./created-sandbox-failure";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
+
+afterEach(resetOnboardResumeHintForTests);
+
+describe("retained APF sandbox recovery", () => {
+  const createAttemptNonce = "a".repeat(62);
+
+  it.each([
+    ["identifiable", "b".repeat(64)],
+    ["label-only", null],
+  ])(
+    "persists bounded exact %s evidence and suppresses generic resume",
+    (_caseName, fingerprint) => {
+      const logs: string[] = [];
+      const persist = vi.fn(() => true);
+
+      persistAndReportRetainedApfSandboxRecovery({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        failureDescription: "sandbox creation failed",
+        evidence: { createAttemptNonce, liveIdentityFingerprint: fingerprint },
+        persist,
+        log: (message) => logs.push(message),
+      });
+
+      const receipt = formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce,
+        liveIdentityFingerprint: fingerprint,
+      });
+      expect(receipt.length).toBeLessThanOrEqual(240);
+      expect(persist).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce,
+        liveIdentityFingerprint: fingerprint,
+        message: receipt,
+      });
+      expect(logs.join("\n")).toContain("onboard --fresh --apf-interceptor --name <new-sandbox>");
+      expect(logs.join("\n")).not.toContain("onboard --resume");
+      const genericRecovery: string[] = [];
+      printOnboardResumeHint(false, (line) => genericRecovery.push(line));
+      expect(genericRecovery).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["returns false", () => false],
+    [
+      "throws",
+      () => {
+        throw new Error("injected persistence failure");
+      },
+    ],
+  ])("reports blocked recovery when persistence %s", (_caseName, persist) => {
+    const logs: string[] = [];
+
+    expect(() =>
+      persistAndReportRetainedApfSandboxRecovery({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        failureDescription: "sandbox creation failed",
+        evidence: { createAttemptNonce, liveIdentityFingerprint: null },
+        persist,
+        log: (message) => logs.push(message),
+      }),
+    ).not.toThrow();
+
+    expect(logs.join("\n")).toContain(
+      "APF recovery is blocked because NemoClaw could not save this create-attempt evidence",
+    );
+  });
+});
 
 class ExitSignal extends Error {
   constructor(readonly code: number) {

@@ -8,6 +8,7 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
+import type { RetainedApfSandboxRecoveryEvidence } from "./created-sandbox-failure";
 import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
   ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
@@ -36,6 +37,7 @@ export type SandboxGpuCreateAttemptFailure = {
   stage: SandboxGpuCreateFailureStage;
   error: unknown;
   fallbackEligible: boolean;
+  retainedSandboxRecovery?: RetainedApfSandboxRecoveryEvidence;
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
   nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };

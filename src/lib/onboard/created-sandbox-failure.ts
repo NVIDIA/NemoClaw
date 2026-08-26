@@ -1,8 +1,76 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import { redact } from "../security/redact";
+import { noteOnboardResumeHintShown, onboardFreshRecoveryCommand } from "./resume-hint";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
+
+export interface RetainedApfSandboxRecoveryEvidence {
+  readonly createAttemptNonce: string;
+  readonly liveIdentityFingerprint: string | null;
+}
+
+export interface RetainedApfSandboxRecovery extends RetainedApfSandboxRecoveryEvidence {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  /** Compact, secret-free evidence that must survive session normalization unchanged. */
+  readonly message: string;
+}
+
+/** Format exact APF recovery authority within the persisted failure-message bound. */
+export function formatRetainedApfSandboxRecoveryReceipt(
+  evidence: RetainedApfSandboxRecoveryEvidence,
+): string {
+  return (
+    `APF retained sandbox: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}; ` +
+    `live-identity-sha256=${evidence.liveIdentityFingerprint ?? "unresolved"}`
+  );
+}
+
+/** Persist APF recovery authority before reporting identity-bound operator guidance. */
+export function persistAndReportRetainedApfSandboxRecovery(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly failureDescription: string;
+  readonly evidence: RetainedApfSandboxRecoveryEvidence;
+  readonly persist: (recovery: RetainedApfSandboxRecovery) => boolean;
+  readonly log?: (message: string) => void;
+}): void {
+  const log = input.log ?? ((message: string) => console.error(message));
+  const identity = input.evidence.liveIdentityFingerprint
+    ? `Durable sandbox identity fingerprint: ${input.evidence.liveIdentityFingerprint}. Use it only to compare the surviving sandbox with this create attempt.`
+    : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+  const guidance =
+    `APF sandbox '${input.sandboxName}' may have been retained after ${input.failureDescription}. ` +
+    `${identity} Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.evidence.createAttemptNonce}. ` +
+    "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
+  const recovery: RetainedApfSandboxRecovery = {
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    createAttemptNonce: input.evidence.createAttemptNonce,
+    liveIdentityFingerprint: input.evidence.liveIdentityFingerprint,
+    message: formatRetainedApfSandboxRecoveryReceipt(input.evidence),
+  };
+
+  noteOnboardResumeHintShown();
+  let persisted = false;
+  try {
+    persisted = input.persist(recovery);
+  } catch {
+    persisted = false;
+  }
+  log(`  ${guidance}`);
+  if (!persisted) {
+    log(
+      "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+    );
+  }
+  log(
+    "  After an OpenShell administrator confirms identity-bound cleanup, start a new APF attempt:",
+  );
+  log(`    ${onboardFreshRecoveryCommand(false)} --apf-interceptor --name <new-sandbox>`);
+}
 
 export type SandboxCreateFailureReportOptions = {
   sandboxName: string;
