@@ -1036,7 +1036,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         );
         expect(result.stdout).toContain(
-          `Reusing reviewed base mcporter ${PINNED_MCPORTER_VERSION} with exact lock provenance`,
+          `Reusing reviewed base mcporter ${PINNED_MCPORTER_VERSION} with matching lock provenance`,
         );
         expect(calls).not.toContain(`npm view mcporter@${PINNED_MCPORTER_VERSION} dist.integrity`);
         expect(calls).not.toContain("npm --prefix ");
