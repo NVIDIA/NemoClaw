@@ -16,10 +16,16 @@ function expectQualificationReceipt(
   expectedConfiguration: WindowsMxcOpenClawQualificationReceipt["configuration"],
   expectedCleanup: WindowsMxcOpenClawQualificationReceipt["cleanup"],
 ): void {
+  expect(receipt.schemaVersion).toBe(3);
   expect(receipt.verdict).toBe("pass");
   expect(receipt.configuration).toEqual(expectedConfiguration);
   expect(receipt.checks.forwardAuthenticatedHealth).toBe(true);
   expect(receipt.checks.forwardedChatExactReply).toBe(true);
+  expect(receipt.startup).toEqual({
+    outcome: "ready",
+    gatewayExitCode: null,
+    versionExitCode: 0,
+  });
   expect(receipt.cleanup).toEqual(expectedCleanup);
 }
 

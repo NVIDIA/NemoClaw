@@ -16,6 +16,7 @@ import {
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
@@ -484,10 +485,53 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain('message.role === "user"');
     expect(agent).toContain("if (gateway.pid !== undefined)");
     expect(agent).toContain('gateway.once("error"');
+    expect(agent).toContain("gatewaySpawnFailed = true");
+    expect(agent).toContain("gatewayExitCode: Number.isInteger(gateway.exitCode)");
     expect(agent).toContain("writeFileSync(outcomePath");
     expect(agent).toContain('"gateway",\n    "health"');
     expect(agent).not.toContain('"--token"');
+    expect(agent).not.toContain("gatewaySpawnError");
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
+  });
+
+  it.each([
+    {
+      expected: { outcome: "ready", gatewayExitCode: null, versionExitCode: 0 },
+      result: { healthObserved: true, versionExitCode: 0 },
+    },
+    {
+      expected: { outcome: "spawn-failed", gatewayExitCode: null, versionExitCode: 0 },
+      result: { gatewaySpawnFailed: true, versionExitCode: 0 },
+    },
+    {
+      expected: {
+        outcome: "exited-before-readiness",
+        gatewayExitCode: 3221225794,
+        versionExitCode: 0,
+      },
+      result: {
+        gatewayExitCode: 3221225794,
+        gatewayExitedBeforeReadiness: true,
+        versionExitCode: 0,
+      },
+    },
+    {
+      expected: { outcome: "health-timeout", gatewayExitCode: null, versionExitCode: null },
+      result: {
+        gatewayExitCode: "C:\\sensitive\\path",
+        gatewaySpawnError: "token-bearing raw diagnostic",
+        versionExitCode: 1.5,
+      },
+    },
+  ])("classifies bounded secret-free startup evidence for $expected.outcome (#8178)", ({
+    expected,
+    result,
+  }) => {
+    const observation = classifyWindowsMxcOpenClawStartupObservation(result);
+
+    expect(observation).toEqual(expected);
+    expect(JSON.stringify(observation)).not.toContain("sensitive");
+    expect(JSON.stringify(observation)).not.toContain("token-bearing");
   });
 
   it("renders a syntactically valid native OpenClaw probe agent (#8178)", () => {
