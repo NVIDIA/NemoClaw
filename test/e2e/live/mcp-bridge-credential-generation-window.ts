@@ -24,7 +24,7 @@ export const CREDENTIAL_WINDOW_STEPS = {
   fallbackAfterEviction: "fallback-after-eviction",
   deniedAfterKeyRemoval: "denied-after-key-removal",
   deniedAfterDetach: "denied-after-detach",
-  fallbackAfterRestart: "fallback-after-restart",
+  deniedAfterReadd: "denied-after-readd",
   stop: "stop",
 } as const;
 
@@ -34,7 +34,7 @@ export type CredentialWindowRequestStep =
   | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterEviction"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterKeyRemoval"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterDetach"]
-  | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterRestart"];
+  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterReadd"];
 
 export interface CredentialWindowRequestObservation {
   readonly step: CredentialWindowRequestStep;
@@ -49,7 +49,7 @@ const CREDENTIAL_WINDOW_REQUEST_STEPS: readonly CredentialWindowRequestStep[] = 
   CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
   CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
   CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
-  CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
+  CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
 ];
 
 export function parseCredentialWindowRequestObservation(
@@ -111,13 +111,6 @@ export function credentialWindowRequestId(step: CredentialWindowRequestStep): st
   return `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:${step}`;
 }
 
-export function credentialWindowProviderDetachArgs(
-  sandboxName: string,
-  providerName: string,
-): string[] {
-  return ["sandbox", "provider", "detach", "-g", "nemoclaw", sandboxName, providerName];
-}
-
 export function buildCredentialWindowProviderUpdateArgs(
   providerName: string,
   expiresAtMs: number,
@@ -176,7 +169,7 @@ const requestSteps = new Set([
   config.steps.fallbackAfterEviction,
   config.steps.deniedAfterKeyRemoval,
   config.steps.deniedAfterDetach,
-  config.steps.fallbackAfterRestart,
+  config.steps.deniedAfterReadd,
 ]);
 const seen = new Set();
 const outcomes = [];

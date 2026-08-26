@@ -17,7 +17,6 @@ import {
   CREDENTIAL_WINDOW_PATHS,
   CREDENTIAL_WINDOW_ROTATION_COUNT,
   CREDENTIAL_WINDOW_STEPS,
-  credentialWindowProviderDetachArgs,
   credentialWindowRequestId,
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
@@ -54,7 +53,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach));
-    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart));
+    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.stop));
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });
@@ -254,18 +253,6 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });
 
-  it("scopes provider detach to the NemoClaw gateway (#10155)", () => {
-    expect(credentialWindowProviderDetachArgs("sandbox", "provider")).toEqual([
-      "sandbox",
-      "provider",
-      "detach",
-      "-g",
-      "nemoclaw",
-      "sandbox",
-      "provider",
-    ]);
-  });
-
   it("keeps the live target on the reviewed agent and mutation boundaries", () => {
     const liveTarget = fs.readFileSync(
       "test/e2e/live/openshell-credential-generation-window.test.ts",
@@ -276,7 +263,9 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain('["nemoclaw-start", "node", "-e"');
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry");
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval");
-    expect(liveTarget).toContain("credentialWindowProviderDetachArgs(SANDBOX_NAME, providerName)");
+    expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "remove", SERVER_NAME]');
+    expect(liveTarget).toMatch(/\[\s*SANDBOX_NAME,\s*"mcp",\s*"add",\s*SERVER_NAME,/u);
+    expect(liveTarget).not.toContain('["sandbox", "provider", "detach"');
     expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "restart", SERVER_NAME]');
     expect(liveTarget).toContain('[SANDBOX_NAME, "rebuild", "--yes"]');
     expect(liveTarget).toContain('!request.auth.includes("openshell:resolve:env")');
