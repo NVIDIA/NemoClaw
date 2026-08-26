@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { legacyCredentialAliases } from "../../../credentials/store";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -141,6 +142,7 @@ function realStageSandboxCredentialProviders(
     redact: (input) => input,
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,
+    legacyCredentialAliases,
     normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),

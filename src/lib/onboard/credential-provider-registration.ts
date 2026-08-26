@@ -42,6 +42,7 @@ export interface CredentialProviderRegistrationDeps {
   redact(input: string): string;
   getGatewayName(): string;
   getCredential(name: string): string | null;
+  legacyCredentialAliases(envName: string): readonly string[];
   normalizeCredentialValue(value: unknown): string;
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
@@ -169,16 +170,25 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       options,
     );
     if (result.ok && credentialEnv) {
-      const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
-      if (stagedValue !== undefined) {
+      // The legacy file can carry the value under an alias of the canonical
+      // credential env (NVIDIA_API_KEY for NVIDIA_INFERENCE_API_KEY), which
+      // resolveProviderCredential resolves transparently. Account the alias
+      // too, or the staged key never looks migrated and the plaintext file
+      // survives an onboard that used it (#10373).
+      const migrationKeys = [credentialEnv, ...deps.legacyCredentialAliases(credentialEnv)].filter(
+        (key) => deps.stagedLegacyValues.has(key),
+      );
+      if (migrationKeys.length > 0) {
         options.revalidatePolicyRequirements?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
-        if (upsertedValue === stagedValue) {
-          deps.migratedLegacyKeys.add(credentialEnv);
-        } else {
-          deps.migratedLegacyKeys.delete(credentialEnv);
+        for (const key of migrationKeys) {
+          if (upsertedValue === deps.stagedLegacyValues.get(key)) {
+            deps.migratedLegacyKeys.add(key);
+          } else {
+            deps.migratedLegacyKeys.delete(key);
+          }
         }
         deps.persistMigratedLegacyKeys();
       }

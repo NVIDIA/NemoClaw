@@ -195,6 +195,15 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
+/**
+ * Legacy env keys whose staged value can satisfy `envName`. Migration
+ * accounting needs this because the legacy file names the alias while the
+ * gateway registers the canonical key (#10373).
+ */
+export function legacyCredentialAliases(envName: string): readonly string[] {
+  return LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? [];
+}
+
 function getLegacyCredentialAlias(envName: string): string | null {
   for (const alias of LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? []) {
     const value = getCredential(alias);
@@ -442,9 +451,8 @@ export function removeLegacyCredentialsFile(): void {
 
 /**
  * Securely remove the legacy plaintext credentials.json *iff* it carries
- * no migratable credential payload — i.e. it's an empty `{}`, contains
- * only keys outside `KNOWN_CREDENTIAL_ENV_KEYS`, or every allowlisted key
- * has a blank/non-string value. Used by the onboard completion path to
+ * no payload at all — i.e. it's empty, whitespace-only, an empty `{}`, or
+ * every value is a blank string. Used by the onboard completion path to
  * clean up the stale empty file left behind on upgrades from pre-gateway
  * NemoClaw versions (#3105).
  *
@@ -500,11 +508,12 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
       return false;
     }
 
-    const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!allowed.has(key)) continue;
-      if (typeof value !== "string") continue;
-      if (normalizeCredentialValue(value)) {
+    // Any surviving value is payload this sweep did not migrate, whether or
+    // not NemoClaw recognizes its key. Keys outside KNOWN_CREDENTIAL_ENV_KEYS
+    // used to be treated as absent, so a file holding only unrecognized
+    // secrets was destroyed without ever being read (#10373).
+    for (const value of Object.values(parsed as Record<string, unknown>)) {
+      if (typeof value !== "string" || normalizeCredentialValue(value)) {
         return false;
       }
     }

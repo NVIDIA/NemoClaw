@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  legacyCredentialAliases,
   removeLegacyCredentialsFile,
   stageLegacyCredentialsToEnv,
 } from "../../src/lib/credentials/store.js";
@@ -141,6 +142,7 @@ describe("legacy credential reconciliation", () => {
             redact: (input) => input,
             getGatewayName: () => "nemoclaw",
             getCredential: (name) => process.env[name] ?? null,
+            legacyCredentialAliases,
             normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,

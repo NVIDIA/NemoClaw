@@ -554,18 +554,30 @@ describe("removeLegacyCredentialsFileIfEmpty post-upgrade cleanup (#3105)", () =
     expect(fs.existsSync(legacyFile)).toBe(false);
   });
 
-  it("removes a file containing only unknown keys", async () => {
+  it("keeps a file whose only content is an unrecognized credential (#10373)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    fs.writeFileSync(legacyFile, JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }), {
-      mode: 0o600,
-    });
+    const payload = JSON.stringify({ FAKE_PROVIDER_TOKEN: "x" });
+    fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
 
     const credentials = await importCredentialsModule(home);
-    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
-    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.readFileSync(legacyFile, "utf-8")).toBe(payload);
+  });
+
+  it("keeps a file holding a non-string value it cannot classify (#10373)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const payload = JSON.stringify({ OPENAI_API_KEY: { nested: "secret" } });
+    fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.readFileSync(legacyFile, "utf-8")).toBe(payload);
   });
 
   it("removes a file where every allowlisted value is blank/whitespace", async () => {
