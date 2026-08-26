@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
@@ -465,11 +466,23 @@ function validateStateMutationSurface(providerId: string, surface: Record<string
 }
 
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
-  if (surface.supported === true) {
+  if (surface.supported !== true) return;
+  if (surface.bootstrapKind === "managed-image") {
     requireFunction(surface, "createAuthorityStore", "bootstrap");
     requireFunction(surface, "createLifecycle", "bootstrap");
     requireFunction(surface, "createOnboardRouting", "bootstrap");
+    return;
   }
+  if (surface.bootstrapKind === "native-artifact") {
+    if (surface.contractVersion !== RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION) {
+      throw new RuntimeProviderRegistrationError(
+        "native-artifact bootstrap has an unsupported contract version",
+      );
+    }
+    requireFunction(surface, "run", "bootstrap");
+    return;
+  }
+  throw new RuntimeProviderRegistrationError("bootstrap has an unsupported kind");
 }
 
 function validateSnapshotSurface(providerId: string, surface: Record<string, unknown>): void {
