@@ -32,22 +32,20 @@ const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-fake-slack-pairing-
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-fake-slack-pairing-e2e";
 const LIVE_TIMEOUT_MS = 55 * 60_000;
 
-function readSlackCapture(captureFile: string): Record<string, unknown>[] {
-  return fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-}
-
 function assertSlackCapture(
-  restCaptureFile: string,
-  websocketCaptureFile: string,
+  captureFiles: string[],
   expectedCode: string,
   expectedUser: string,
 ): void {
-  const ws = readSlackCapture(websocketCaptureFile)
+  const rows = captureFiles.flatMap((captureFile) =>
+    fs
+      .readFileSync(captureFile, "utf8")
+      .trim()
+      .split(/\n+/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>),
+  );
+  const ws = rows
     .filter(
       (row) => row.event === "websocket-message" && row.messageType === "socket_mode_client_hello",
     )
@@ -56,7 +54,7 @@ function assertSlackCapture(
   expect(ws?.tokenMatchesExpected, "Slack xapp websocket token rewrite").toBe(true);
   expect(ws?.tokenLooksPlaceholder, "Slack xapp placeholder leaked").toBe(false);
 
-  const post = readSlackCapture(restCaptureFile)
+  const post = rows
     .filter((row) => row.event === "request" && row.path === "/api/chat.postMessage")
     .at(-1);
   expect(post, "fake Slack did not capture chat.postMessage").toBeTruthy();
@@ -75,9 +73,7 @@ function assertSlackCapture(
   ).toBe(true);
 }
 
-test(
-  "OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval",
-  {
+test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -89,8 +85,7 @@ test(
       "approve the Slack code through connect-shell",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -130,7 +125,7 @@ test(
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
 
-    await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Slack pairing");
+  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Slack pairing");
 
   progress.phase("install the Slack-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(
@@ -173,7 +168,7 @@ test(
     redactions,
     "rest",
   );
-  const fakeSlackWebsocket = await startFakeSlackApi(
+  const fakeSlackWebSocket = await startFakeSlackApi(
     host,
     cleanup,
     env,
@@ -189,7 +184,6 @@ test(
     protocol: "rest",
     rewrite: "request-body-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-bridge`,
-    credentialKey: "SLACK_BOT_TOKEN",
     env,
     redactions,
     artifactName: "apply-slack-rest-policy",
@@ -197,11 +191,10 @@ test(
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlackWebsocket,
+    api: fakeSlackWebSocket,
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-app`,
-    credentialKey: "SLACK_APP_TOKEN",
     env,
     redactions,
     artifactName: "apply-slack-websocket-policy",
@@ -213,14 +206,13 @@ test(
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackRestPort: fakeSlackRest.port,
-    fakeSlackWebsocketPort: fakeSlackWebsocket.port,
+    fakeSlackPort: fakeSlackRest.port,
+    fakeSlackWebSocketPort: fakeSlackWebSocket.port,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
   assertSlackCapture(
-    fakeSlackRest.captureFile,
-    fakeSlackWebsocket.captureFile,
+    [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
     code,
     PAIRING_USER.slack,
   );
@@ -234,5 +226,4 @@ test(
     code,
     redactions,
   });
-  },
-);
+});

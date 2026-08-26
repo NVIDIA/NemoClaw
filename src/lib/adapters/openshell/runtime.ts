@@ -18,7 +18,8 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
-export { resolveOpenshell } from "./resolve";
+export { classifyManagedGatewayEndpointBinding } from "./client";
+export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */
@@ -32,6 +33,7 @@ type RunnerOptions = {
   includeStreams?: boolean;
   timeout?: number;
   killSignal?: NodeJS.Signals;
+  killProcessTreeOnTimeout?: boolean;
   maxBuffer?: number;
 };
 
@@ -60,6 +62,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     ignoreError: opts.ignoreError,
     timeout: opts.timeout,
     killSignal: opts.killSignal,
+    killProcessTreeOnTimeout: opts.killProcessTreeOnTimeout,
     maxBuffer: opts.maxBuffer,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
@@ -80,6 +83,8 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     includeStderr: opts.includeStderr,
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
+    killSignal: opts.killSignal,
+    killProcessTreeOnTimeout: opts.killProcessTreeOnTimeout,
     maxBuffer: opts.maxBuffer,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
@@ -99,6 +104,8 @@ export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions 
     includeStderr: opts.includeStderr,
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
+    killSignal: opts.killSignal,
+    killProcessTreeOnTimeout: opts.killProcessTreeOnTimeout,
     maxBuffer: opts.maxBuffer,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),

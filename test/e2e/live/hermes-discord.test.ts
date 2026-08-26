@@ -18,7 +18,11 @@ import {
   hermesDiscordHttpProxyWebSocketUrl,
   HERMES_DISCORD_REST_PROOF_SOURCE,
 } from "./hermes-discord-proxy.ts";
-import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
+import {
+  assertDiscordGatewayCapture,
+  type FakeDockerApi,
+  startFakeDockerApi,
+} from "./messaging-providers-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   expectExitZero,
@@ -184,22 +188,6 @@ async function applyHermesFakeDiscordPolicy(options: {
     providerName,
     redactionValues: options.redactions,
   });
-}
-
-function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify?.tokenMatchesExpected, "Discord host-side token rewrite").toBe(true);
-  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked to fake Gateway").toBe(false);
-  expect(JSON.stringify(rows), "fake Gateway capture must not persist the raw token").not.toContain(
-    expectedToken,
-  );
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`

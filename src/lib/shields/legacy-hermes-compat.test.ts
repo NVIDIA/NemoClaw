@@ -19,6 +19,7 @@ import {
   writeBoundForwardPolicy,
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
+import * as shieldsFlow from "../../../test/helpers/shields-flow-harness";
 
 import { testTimeout } from "../../../test/helpers/timeouts";
 
@@ -252,11 +253,13 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
+      ...shieldsFlow.bindManagedPolicyMutationAuthority(policy),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),
         agent: "hermes",
         openshellDriver: "docker",
+        policyAuthority: "nemoclaw-managed",
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),
@@ -557,7 +560,6 @@ describe("legacy Hermes shields compatibility", () => {
     expect(() =>
       shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true),
     ).not.toThrow();
-
     const guardCommands = dockerExecSpy.mock.calls
       .map(commandFromCall)
       .filter((cmd) => cmd.includes(HERMES_GUARD));
@@ -579,10 +581,8 @@ describe("legacy Hermes shields compatibility", () => {
       ),
     ).toBe(true);
   });
-
   it("pins one capability decision across policy and config mutation", () => {
     installExecResponses(CURRENT_GUARD_HELP);
-
     expect(() =>
       shields.shieldsDown("current-hermes", {
         throwOnError: true,

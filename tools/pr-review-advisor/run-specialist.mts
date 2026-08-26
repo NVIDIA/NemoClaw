@@ -52,7 +52,7 @@ export function renderSpecialistSummary(interest: AdvisorInterest, text: string)
     .split("-")
     .map((part) => part[0]!.toUpperCase() + part.slice(1))
     .join(" / ");
-  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. Synthesis publishes the final review.\n\n${text.trim()}\n`;
+  return `# PR Review Advisor — ${title} specialist\n\n> Complete specialist review for maintainers and review agents.\n\n${text.trim()}\n`;
 }
 
 export function writeSpecialistSummary(
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef);
   const deterministic = await collectDeterministicContext(
     { baseRef, headRef, headSha, changedFiles, diff },
-    { collectGitHubContext: () => collectGitHubReviewContext({ baseRef, headRef, headSha }) },
+    { collectGitHubContext: () => collectGitHubReviewContext(process.env) },
   );
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;

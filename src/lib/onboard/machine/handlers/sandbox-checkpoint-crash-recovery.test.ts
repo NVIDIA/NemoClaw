@@ -240,9 +240,10 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.stopStale).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
-      pendingRouteReservation: undefined,
-    });
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      session.sessionId,
+    );
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
@@ -1344,9 +1345,10 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
     expect(recordStateSkipped).toHaveBeenCalledTimes(1);
-    expect(resumedRun.calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
-      pendingRouteReservation: undefined,
-    });
+    expect(resumedRun.calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      persistedSession.sessionId,
+    );
     expect(
       resumedRun.calls.updateSandbox.mock.calls.some(([, updates]) =>
         Object.prototype.hasOwnProperty.call(updates, "provider"),

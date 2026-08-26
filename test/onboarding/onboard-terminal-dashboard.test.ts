@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
   command: string;
@@ -46,10 +47,7 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeExecutable(
-    path.join(fakeBin, "openshell"),
-    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
-  );
+  writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -57,6 +55,7 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
@@ -109,6 +108,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
+    sandboxName,
+  });
+  if (createdIdentity !== null) return createdIdentity;
   commands.push({ command: normalized, env: null });
   if (
     normalized.includes(
@@ -126,7 +129,7 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return scenario === "reuse"
-      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
+      ? [sandboxName, "Id: fixture-created-sandbox"].join(String.fromCharCode(10))
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
@@ -136,14 +139,14 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? {
+    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
         dashboardPort: 18789,
         observabilityEnabled: false,
         toolDisclosure: "progressive",
-      }
+      })
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
@@ -155,6 +158,16 @@ registry.updateSandbox = (name, updates) => {
 };
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
+const createFixture =
+  scenario === "create"
+    ? fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+        sandboxName,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        registerSandbox: (entry) => registerCalls.push(entry),
+        updateSandbox: (name, updates) => updateCalls.push({ name, updates }),
+      })
+    : null;
 
 childProcess.spawn = (...args) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
@@ -178,7 +191,26 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.test:19000";
   process.env.NEMOCLAW_DASHBOARD_PORT = "19000";
-  const resultName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null, null, agent);
+  const createArgs = [
+    null,
+    "gpt-5.4",
+    "nvidia-prod",
+    null,
+    sandboxName,
+    null,
+    null,
+    null,
+    agent,
+    null,
+    null,
+    null,
+    [],
+  ];
+  const resultName = await createSandbox(
+    ...(createFixture
+      ? fixtureMocks.sandboxCreateArgsWithVerifiedReservation(createArgs, createFixture)
+      : createArgs),
+  );
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
   clearInterval(keepAlive);
 })().catch((error) => {

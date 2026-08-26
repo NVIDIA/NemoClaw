@@ -29,7 +29,7 @@ import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding/identity";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type { ManagedStartupWorkspaceRoot } from "../managed-startup/state-roots";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import {
   normalizePodmanLogicalMounts,
   resolvePodmanStorageGraphRoot,
@@ -2298,10 +2298,11 @@ function createLifecycle(
 
 export function createPodmanManagedBootstrapSurface(
   engine: PodmanBoundContainerEngine,
-): Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }> {
+): RuntimeProviderManagedImageBootstrapSurface {
   return Object.freeze({
     providerId: PROVIDER_ID,
     supported: true,
+    bootstrapKind: "managed-image",
     createAuthorityStore: ({ stateRoot }: { readonly stateRoot: string }) =>
       createPodmanManagedBootstrapAuthorityStore(stateRoot),
     createLifecycle: (input: ManagedBootstrapRuntimeCreateLifecycleInput) =>

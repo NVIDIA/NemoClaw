@@ -3,6 +3,7 @@
 
 import type { BaselineExclusionEntry } from "../state/registry";
 import type { SandboxHostMount } from "../state/registry/types";
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { ManagedStateVolumeMount } from "./managed-workload/managed-state-volumes";
@@ -98,11 +99,20 @@ export type MaterializeSandboxCreatePlanInput = {
   managedStateMounts?: readonly ManagedStateVolumeMount[];
   /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
   managedStateMountDriverId?: string | null;
+  policyAuthority: SandboxPolicyAuthority;
+  /** Keep provider mutations and attachments behind the exact post-create policy gate. */
+  deferSandboxEffectsUntilPolicyVerification?: boolean;
   messagingTokenDefs: MessagingTokenDef[];
-  runProviderPreDeleteCleanup(): void;
+  runProviderPreDeleteCleanup(
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting: true; allowedSandboxes: readonly [string] },
+    options: {
+      replaceExisting: true;
+      allowedSandboxes: readonly [string];
+      revalidatePolicyRequirements?(operation: string): void;
+    },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;

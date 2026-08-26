@@ -32,7 +32,6 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
 import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclusion";
 import { redact } from "../../security/redact";
-import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import {
   buildGatewayInferenceGetArgs,
@@ -438,7 +437,7 @@ export async function collectSandboxStatusSnapshot(
     sb !== null &&
     usesManagedProviderGateway(sb) &&
     (sb.agent ?? "openclaw") === "openclaw" &&
-    parseSandboxPhase(lookup.output || "") === "Ready" &&
+    lookup.phase === "Ready" &&
     !opts.preflight?.failure;
   let recoveredManagedGateway = false;
   if (
@@ -611,12 +610,14 @@ export async function collectSandboxStatusSnapshot(
       const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
       await retryUntilAsync(
         async () => {
-          gatewayChain = await probe(sandboxName);
+          gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
           invocation =
             gatewayChain?.ok && canProbeInvocation
               ? runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
+                    gatewayName: gatewayName ?? undefined,
+                    ...(sb?.agent === "langchain-deepagents-code" ? { agentName: sb.agent } : {}),
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
@@ -648,7 +649,10 @@ export async function collectSandboxStatusSnapshot(
       gatewayChain = null;
       invocation = null;
     }
-    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
+    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
+      agentName: sb?.agent ?? null,
+      provider: invocationRoute.provider ?? null,
+    });
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
@@ -723,7 +727,7 @@ async function buildSandboxStatusReport(
     lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
       ? getSandboxDockerRuntime(sandboxName)
       : null;
-  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,

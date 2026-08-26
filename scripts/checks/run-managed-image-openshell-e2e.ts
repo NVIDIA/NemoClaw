@@ -38,8 +38,8 @@ import {
   managedStartupWorkspaceRoot,
 } from "../../src/lib/onboard/managed-startup/state-roots.ts";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
@@ -71,6 +71,7 @@ import {
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
 const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
 const MANAGED_AGENT_BASE_POLICIES: Record<ShippedManagedImageAgent, readonly string[]> = {
@@ -908,7 +909,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
     onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
     await onboard.startGatewayForRecovery({
-      gatewayName: "nemoclaw",
+      gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
     configureLocalInferenceRoute(onboard, input, process.env);
@@ -1013,7 +1014,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ...createDockerRuntimeProviderBundle(),
       bootstrap: createDockerManagedBootstrapSurface("docker"),
     } as RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
@@ -1028,6 +1029,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           initialGpuRoute: gpuEnabled ? "native" : "none",
           compatibilityPolicyPath: null,
           dockerDriverGateway: true,
+          gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           sandboxReadyTimeoutSecs: 240,
           createArgv: launch.createArgv,

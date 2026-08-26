@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
+import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-} from "../managed-image/contract";
-import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
-import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
-  type RuntimeProviderBootstrapSurface,
+  type RuntimeProviderManagedImageBootstrapSurface,
   type RuntimeProviderCleanupInput,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -124,12 +122,8 @@ function unsupported(providerId: string, reason: string) {
 
 function createLazyPodmanManagedBootstrapSurface(
   engine: PodmanBoundContainerEngine,
-): Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }> {
-  type SupportedBootstrapSurface = Extract<
-    RuntimeProviderBootstrapSurface,
-    { readonly supported: true }
-  >;
-  const surface = (): SupportedBootstrapSurface => {
+): RuntimeProviderManagedImageBootstrapSurface {
+  const surface = (): RuntimeProviderManagedImageBootstrapSurface => {
     const { createPodmanManagedBootstrapSurface } =
       require("../managed-bootstrap/podman-runtime") as typeof import("../managed-bootstrap/podman-runtime");
     return createPodmanManagedBootstrapSurface(engine);
@@ -137,13 +131,15 @@ function createLazyPodmanManagedBootstrapSurface(
   return Object.freeze({
     providerId: "podman",
     supported: true,
+    bootstrapKind: "managed-image",
     createAuthorityStore: (
-      input: Parameters<SupportedBootstrapSurface["createAuthorityStore"]>[0],
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createAuthorityStore"]>[0],
     ) => surface().createAuthorityStore(input),
-    createLifecycle: (input: Parameters<SupportedBootstrapSurface["createLifecycle"]>[0]) =>
-      surface().createLifecycle(input),
+    createLifecycle: (
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createLifecycle"]>[0],
+    ) => surface().createLifecycle(input),
     createOnboardRouting: (
-      input: Parameters<SupportedBootstrapSurface["createOnboardRouting"]>[0],
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createOnboardRouting"]>[0],
     ) => surface().createOnboardRouting(input),
   });
 }

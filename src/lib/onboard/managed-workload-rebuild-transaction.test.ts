@@ -293,6 +293,7 @@ function operationsHarness(
   providerId: string,
   events: string[],
   failAt: FailurePhase = null,
+  previousLiveIdentityFingerprint = "fingerprint-old",
 ): ManagedWorkloadRebuildProviderOperations {
   const bound = {
     schemaVersion: 1 as const,
@@ -303,7 +304,7 @@ function operationsHarness(
     ...bound,
     previousRuntimeHandle: "runtime-old-exact",
     preparationHandle: "preparation-exact",
-    previousLiveIdentityFingerprint: "fingerprint-old",
+    previousLiveIdentityFingerprint,
   };
   const staged: StagedManagedWorkloadReplacement = {
     ...bound,
@@ -372,13 +373,19 @@ function transactionHarness(
   providerId: string,
   failAt: FailurePhase = null,
   platform: (typeof PLATFORMS)[number] = "linux/amd64",
+  previousEntryOverrides: Partial<SandboxEntry> = {},
 ) {
   const events: string[] = [];
-  const oldEntry = previousEntry(agent, providerId, platform);
+  const oldEntry = { ...previousEntry(agent, providerId, platform), ...previousEntryOverrides };
   let currentEntry = structuredClone(oldEntry);
   let providerPreparationCompleted = false;
   let ambiguousPersistenceReadback = false;
-  const operations = operationsHarness(providerId, events, failAt);
+  const operations = operationsHarness(
+    providerId,
+    events,
+    failAt,
+    oldEntry.lifecycleLiveIdentityFingerprint,
+  );
   const prepare = operations.prepare;
   operations.prepare = vi.fn(async (plan) => {
     const prepared = await prepare(plan);
@@ -717,6 +724,33 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.events.some((event) => event === "abort-preparation:transaction-1")).toBe(
       phase === "prepare" || phase === "create",
     );
+  });
+
+  it("publishes a replacement without carrying the previous policy receipt (#9833)", async () => {
+    const lifecycleGeneration = "00000000-0000-4000-8000-000000000001";
+    const sandboxIdentityFingerprint = "a".repeat(64);
+    const harness = transactionHarness("openclaw", "mxc", null, "linux/amd64", {
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sandboxName: "rebuild-openclaw",
+        lifecycleGeneration,
+        sandboxIdentityFingerprint,
+        policyHash: "policy-old",
+        policyVersion: 1,
+      },
+    });
+
+    const result = await harness.run();
+
+    expect(result.entry.lifecycleGeneration).toBe("generation-new");
+    expect(result.entry).not.toHaveProperty("policyAuthority");
+    expect(result.entry).not.toHaveProperty("policyCreationReceipt");
   });
 
   it("rolls back a not-ready replacement by exact staged handle", async () => {

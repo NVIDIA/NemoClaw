@@ -193,20 +193,59 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
     ["Node version", (value) => (gateSteps(value)[2].with!["node-version"] = 20)],
-    ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
-    ["verifier token", (value) => (gateSteps(value)[3].env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}")],
+    [
+      "pairing condition",
+      (value) =>
+        (gateStep(
+          value,
+          "Resolve Deep Agents Code base publication for the exact PR managed image",
+        ).if = "${{ always() }}"),
+    ],
+    [
+      "pairing catalog",
+      (value) =>
+        (gateStep(
+          value,
+          "Resolve Deep Agents Code base publication for the exact PR managed image",
+        ).env!["MANAGED_IMAGE_CATALOG"] = "${{ inputs.catalog }}"),
+    ],
+    [
+      "pairing verifier",
+      (value) =>
+        (gateStep(
+          value,
+          "Resolve Deep Agents Code base publication for the exact PR managed image",
+        ).run = "node unreviewed.mts"),
+    ],
+    [
+      "verifier condition",
+      (value) =>
+        (gateStep(value, "Verify applicable base-image publication").if = "${{ always() }}"),
+    ],
+    [
+      "verifier token",
+      (value) =>
+        (gateStep(value, "Verify applicable base-image publication").env!.GITHUB_TOKEN =
+          "${{ secrets.TOKEN }}"),
+    ],
     [
       "verifier SHA",
-      (value) => (gateSteps(value)[3].env!.EXPECTED_SHA = "${{ inputs.checkout_sha }}"),
+      (value) =>
+        (gateStep(value, "Verify applicable base-image publication").env!.EXPECTED_SHA =
+          "${{ inputs.checkout_sha }}"),
     ],
     [
       "managed-image publication requirement",
-      (value) => (gateSteps(value)[3].env!.REQUIRE_MANAGED_IMAGE_PUBLICATION = "0"),
+      (value) =>
+        (gateStep(value, "Verify applicable base-image publication").env![
+          "REQUIRE_MANAGED_IMAGE_PUBLICATION"
+        ] = "0"),
     ],
     [
       "verifier command",
       (value) => {
-        gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
+        gateStep(value, "Verify applicable base-image publication").run =
+          "node tools/e2e/base-image-publication.mts";
       },
     ],
     [
@@ -229,6 +268,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
+    ["publication matrix dependency", (value) => delete value.jobs["base-image-publication"].needs],
     [
       "matrix publication dependency",
       (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),

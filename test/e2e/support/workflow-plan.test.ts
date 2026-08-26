@@ -90,7 +90,6 @@ function expectExplicitCatalogueCoverage(): void {
 describe("E2E workflow plan", () => {
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
-
     expect(plan).toEqual(buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker"] }));
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(
@@ -154,7 +153,6 @@ describe("E2E workflow plan", () => {
     const catalogueIds = Object.values(plan.catalogueMatrices)
       .flat()
       .map((row) => row.id);
-
     expect(plan.matrix.map((row) => row.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
       "ubuntu-repo-cloud-openclaw",
@@ -186,7 +184,6 @@ describe("E2E workflow plan", () => {
       "openshell-credential-generation-window",
     ]);
   });
-
   it("omits only targets whose optional credential is unavailable", () => {
     const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
     const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
@@ -279,6 +276,19 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
+  });
+
+  it("routes both Pi qualification targets through the NVIDIA API key profile", () => {
+    const targetIds = ["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"];
+    const plan = buildE2eWorkflowPlan({ targets: targetIds.join(",") });
+
+    expect(targetIds.map((id) => catalogueTarget(id).profile)).toEqual([
+      "nvidia-api",
+      "nvidia-api",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual(targetIds);
+    expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
 
   it.each(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"])(

@@ -121,6 +121,7 @@ describe("protected managed-image runtime contract", () => {
         runtimeProvider: {
           bootstrap: {
             supported: true,
+            bootstrapKind: "managed-image",
             createAuthorityStore: () => authorityStore,
           },
         },

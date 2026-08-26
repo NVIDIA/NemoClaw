@@ -26,10 +26,14 @@ const {
   clearNimContainerBeforeRetry,
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
+  assertSelectionMutationAuthority,
+  credentialMutationGuardFor,
+  withCredentialMutationGuard,
   resolveCompatibleEndpointSelection,
   selectFeaturedModelAfterCredentialPrompt,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
+const setupNimRoutedSelection: typeof import("./onboard/inference-providers/routed-selection") = require("./onboard/inference-providers/routed-selection");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -1821,64 +1825,6 @@ type RemoteProviderSelectionArgs = {
   recoverySessionId: string | null | undefined;
 };
 
-async function handleRoutedSelection(
-  state: SetupNimSelectionState,
-): Promise<SetupNimSelectionResult> {
-  const bp = loadBlueprintProfile("routed");
-  if (!bp || bp.router?.enabled !== true) {
-    console.error("  Router is not enabled in nemoclaw-blueprint/blueprint.yaml.");
-    if (isNonInteractive()) process.exit(1);
-    return "retry-selection";
-  }
-
-  state.provider = bp.provider_name || "nvidia-router";
-  state.model = bp.model;
-  const { HOST_GATEWAY_URL } = require("./inference/local");
-  const routerEndpointUrl = bp.endpoint || "";
-  state.endpointUrl = routerEndpointUrl;
-  if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {
-    const u = new URL(routerEndpointUrl);
-    state.endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
-  }
-  state.preferredInferenceApi = "openai-completions";
-  state.assertRouteCompatible?.();
-
-  const routerCredentialEnv =
-    bp.router?.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
-  state.credentialEnv = routerCredentialEnv;
-  const routedCredential =
-    hydrateCredentialEnv(routerCredentialEnv) ||
-    normalizeCredentialValue(bp.credential_default || "");
-  if (routedCredential) {
-    saveCredential(routerCredentialEnv, routedCredential);
-  }
-  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
-  if (isNonInteractive()) {
-    if (!resolveProviderCredential(routerCredentialEnv)) {
-      console.error(
-        `  ${routerCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for Model Router in non-interactive mode.`,
-      );
-      process.exit(1);
-    }
-  } else if (!resolveProviderCredential(routerCredentialEnv)) {
-    console.log("");
-    console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
-    console.log("  Get one at https://build.nvidia.com");
-    console.log("");
-    const routerCredentialResult = await credentialPrompt.ensureNamedCredential(
-      routerCredentialEnv,
-      "Model Router API key",
-      null,
-    );
-    if (credentialPrompt.returningToProviderSelection(routerCredentialResult)) {
-      return "retry-selection";
-    }
-  }
-
-  console.log(`  ✓ Using Model Router: ${state.provider} / ${state.model}`);
-  return "selected";
-}
-
 async function handleNimLocalSelection(
   gpu: ReturnType<typeof nim.detectGpu>,
   args: Pick<
@@ -1952,12 +1898,18 @@ async function handleNimLocalSelection(
       console.error("  NGC API Key is required for Local NIM.");
       process.exit(1);
     }
+    assertSelectionMutationAuthority(state, "register the NIM container credential");
     if (!nim.dockerLoginNgc(ngcKey)) {
       console.error("  Failed to login to NGC registry. Check your API key and try again.");
       console.log("");
       ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
       if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
-      if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
+      if (!ngcKey) {
+        console.error("  NGC login failed. Cannot pull NIM images.");
+        process.exit(1);
+      }
+      assertSelectionMutationAuthority(state, "register the NIM container credential");
+      if (!nim.dockerLoginNgc(ngcKey)) {
         console.error("  NGC login failed. Cannot pull NIM images.");
         process.exit(1);
       }
@@ -1977,9 +1929,11 @@ async function handleNimLocalSelection(
   }
 
   console.log(`  Pulling NIM image for ${catalogModel}...`);
+  assertSelectionMutationAuthority(state, "install the local NIM runtime");
   nim.pullNimImage(catalogModel);
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
+  assertSelectionMutationAuthority(state, "start the local NIM runtime");
   state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
     ngcApiKey: ngcApiKey ?? undefined,
   });
@@ -2087,6 +2041,7 @@ async function handleRemoteProviderSelection(
     );
     if (state.hermesAuthMethod === HERMES_AUTH_METHOD_API_KEY) {
       state.credentialEnv = HERMES_NOUS_API_KEY_CREDENTIAL_ENV;
+      assertSelectionMutationAuthority(state, "stage the Hermes provider credential");
       stageNousApiKeyProviderEnv();
       if (isNonInteractive()) {
         if (!resolveHermesNousApiKey()) {
@@ -2094,6 +2049,7 @@ async function handleRemoteProviderSelection(
           process.exit(1);
         }
       } else {
+        assertSelectionMutationAuthority(state, "register the Hermes provider credential");
         const hermesKeyResult = await ensureHermesNousApiKeyEnv();
         if (credentialPrompt.returningToProviderSelection(hermesKeyResult)) {
           return "retry-selection";
@@ -2105,6 +2061,7 @@ async function handleRemoteProviderSelection(
     const recordedHermesToolGateways = sandboxName
       ? normalizeHermesToolGatewaySelections(registry.getSandbox(sandboxName)?.hermesToolGateways)
       : null;
+    assertSelectionMutationAuthority(state, "configure Hermes provider credentials");
     state.hermesToolGateways = await setupHermesToolGateways(
       state.provider,
       state.hermesAuthMethod,
@@ -2151,6 +2108,7 @@ async function handleRemoteProviderSelection(
   }
   hydrateCredentialEnv(state.credentialEnv);
   if (selected.key === "build") {
+    assertSelectionMutationAuthority(state, "stage the NVIDIA provider credential");
     providerKeyBridge.stageBuildProviderKeyBridge();
     let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
@@ -2164,6 +2122,7 @@ async function handleRemoteProviderSelection(
       state.skipHostInferenceSmoke = reuseGatewayCredential;
       state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
     } else {
+      assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
       apiKeyNavigation = await ensureApiKey();
     }
     state.model = await selectFeaturedModelAfterCredentialPrompt(
@@ -2181,6 +2140,10 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
+    assertSelectionMutationAuthority(
+      state,
+      `stage inference provider ${JSON.stringify(state.provider)} credential`,
+    );
     providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
@@ -2207,6 +2170,10 @@ async function handleRemoteProviderSelection(
       compatibleNoAuth &&
       (!isNonInteractive() ||
         (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
+    assertSelectionMutationAuthority(
+      state,
+      `register inference provider ${JSON.stringify(state.provider)} credential`,
+    );
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
@@ -2218,6 +2185,7 @@ async function handleRemoteProviderSelection(
       isNonInteractive,
       promptInputModel,
       replaceNamedCredential,
+      credentialMutationGuard: credentialMutationGuardFor(state),
       exitProcess: (code) => process.exit(code),
       error: (message) => console.error(message),
       log: (message) => console.log(message),
@@ -2264,6 +2232,10 @@ async function handleRemoteProviderSelection(
           },
         );
     } else {
+      assertSelectionMutationAuthority(
+        state,
+        `register inference provider ${JSON.stringify(state.provider)} credential`,
+      );
       const credentialResult = await credentialPrompt.ensureNamedCredential(
         selectedCredentialEnv,
         compatibleNoAuth
@@ -2272,6 +2244,7 @@ async function handleRemoteProviderSelection(
         remoteConfig.helpUrl,
         openrouterSelection.credentialValidatorForProvider(selected.key),
         compatibleNoAuth,
+        credentialMutationGuardFor(state),
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
@@ -2377,11 +2350,11 @@ async function handleRemoteProviderSelection(
           state.credentialEnv,
           "Please choose a provider/model again.",
           remoteConfig.helpUrl,
-          {
+          withCredentialMutationGuard(state, {
             requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
             skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
             authMode: getProbeAuthMode(state.provider),
-          },
+          }),
         ),
     });
     if (buildValidation.retrySelection) return "retry-selection";
@@ -2437,7 +2410,18 @@ function getSetupNimDeps(): SetupNimDeps {
     installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
     selectVllmModelFromEnv: vllmInference.selectVllmModelFromEnv,
-    handleRoutedSelection,
+    handleRoutedSelection: (state) =>
+      setupNimRoutedSelection.handleRoutedSelection(state, {
+        modelRouter,
+        localInference,
+        urlUtils,
+        credentials,
+        hydrateCredentialEnv,
+        providerKeyBridge,
+        isNonInteractive,
+        exitProcess: (code): never => process.exit(code),
+        credentialPrompt,
+      }),
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
     ...reasoningMode.compatibleEndpointReasoningClearDeps,
@@ -2621,6 +2605,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureFinalizationAgentDashboardForward,
   ensureFinalizationDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
@@ -2853,6 +2838,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             nonInteractive: isNonInteractive(),
             authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
             servingProfileProvenance: opts.servingProfileProvenance ?? null,
+            apfInterceptorRequested: opts.apfInterceptorRequested ?? null,
+            recreateSandboxRequested: RECREATE_SANDBOX,
             checkpointProfile: lockedRuntime.checkpointProfile,
             portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
@@ -2918,7 +2905,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         );
         process.exit(1);
       }
-
       registerIncompleteOnboardExitHandlerForSession(
         onboardSession,
         () => completed || preserveIncompleteSession,
@@ -3014,7 +3000,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resumeHasResolvedGpuIntent: false,
         requestedGpuPassthrough: opts.gpu === true,
       };
-
+      const policyAuthorityBindings =
+        sandboxCreateOrchestration.createOnboardPolicyAuthorityBindings(
+          sandboxCreateOrchestrationRuntime,
+          opts.policyTier,
+        );
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -3054,10 +3044,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getInitialGatewayReuseState: () =>
           selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
-        assertGatewayReadiness: async () => {
-          await onboardPreflightGatewayAuthority.collectGatewayReadiness();
-        },
+        assertGatewayReadiness: () =>
+          onboardPreflightGatewayAuthority.collectGatewayReadiness().then(() => undefined),
         gatewayName: GATEWAY_NAME,
+        bindPolicyAuthority: policyAuthorityBindings.bindPolicyAuthority,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,
         gatewayDeps: {
@@ -3098,7 +3088,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
-
       // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
@@ -3133,11 +3122,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           isRoutedInferenceProvider,
           providerExistsInGateway,
           replaceNamedCredential,
-          resumeManagedLlamaCppRuntime: (sandboxName) =>
-            setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, {
-              gatewayPort: GATEWAY_PORT,
-              runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle(),
-            }),
+          resumeManagedLlamaCppRuntime: setupNimFlow.bindManagedLlamaCppResume(GATEWAY_PORT),
         },
         providerInference: {
           gatewayName: GATEWAY_NAME,
@@ -3153,6 +3138,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           deps: {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
+            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
@@ -3165,6 +3151,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               assertRouteCompatible,
               canProbeRoute,
               recoverySessionId,
+              revalidatePolicyRequirements,
             ) =>
               setupNim(
                 g,
@@ -3176,6 +3163,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 assertRouteCompatible,
                 canProbeRoute,
                 recoverySessionId,
+                revalidatePolicyRequirements,
               ),
             setupInference,
             resolveHostLocalInferenceStartupSelection:
@@ -3227,9 +3215,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
-
         sandbox: {
           gatewayName: GATEWAY_NAME,
+          apfInterceptorRequested: session?.apfInterceptorRequested === true,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
           ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
@@ -3286,6 +3274,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
             providerMatchesGatewayCredential,
+            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,
             selectResourceProfileForSandbox: () =>
@@ -3310,6 +3299,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+            finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>
@@ -3341,10 +3331,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         branchState: agent ? "agent_setup" : "openclaw",
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        revalidatePolicyRequirements: policyAuthorityBindings.revalidatePolicyRequirements,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: () => ({
-            ...{ step, runCaptureOpenshell, captureOpenshell },
+          agentSetupContext: (revalidatePolicyRequirements) => ({
+            ...{ step, runCaptureOpenshell, captureOpenshell, revalidatePolicyRequirements },
             openshellShellCommand,
             openshellBinary: getOpenshellBinary(),
             buildSandboxConfigSyncScript,
@@ -3355,13 +3346,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepFailed,
             skippedStepMessage,
           }),
-          ensureAgentDashboardForward: (name, selectedAgent) =>
-            selectedAgent
-              ? ensureAgentDashboardForward(name, selectedAgent, {
-                  beforeForwardPort: (port) =>
-                    hermesApiPortReservationScope.releaseBeforeForward(selectedAgent.name, port),
-                })
-              : 0,
+          ensureAgentDashboardForward: (name, selectedAgent, revalidate) =>
+            ensureFinalizationAgentDashboardForward(
+              name,
+              selectedAgent,
+              revalidate,
+              hermesApiPortReservationScope,
+            ),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
@@ -3406,10 +3397,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
-          ensureAgentDashboardForward: (name, selectedAgent) =>
-            selectedAgent
-              ? ensureAgentDashboardForward(name, selectedAgent)
-              : ensureFinalizationDashboardForward(name),
+          ensureAgentDashboardForward: ensureFinalizationAgentDashboardForward,
           setDefaultSandbox: registry.setDefault,
           verifyWebSearchInsideSandbox,
           toSessionUpdates,

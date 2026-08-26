@@ -148,7 +148,6 @@ describe("initial onboard flow phases", () => {
         runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
         assertOnboardHostReadiness: vi.fn(),
-        assertRuntimeProviderHealthy: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
         skippedStepMessage: vi.fn(),
@@ -163,6 +162,7 @@ describe("initial onboard flow phases", () => {
       getInitialGatewayReuseState: () => "healthy",
       assertGatewayReadiness: vi.fn(async () => undefined),
       gatewayName: "nemoclaw",
+      bindPolicyAuthority: async (_gatewayName, session) => session,
       recreateSandbox: () => false,
       gatewayDeps: {
         resolveGatewayOwner: () =>
@@ -403,10 +403,6 @@ describe("initial onboard flow phases", () => {
         assertOnboardHostReadiness: vi.fn(() => {
           calls.push("assert-host-readiness");
         }),
-        assertRuntimeProviderHealthy: vi.fn(() => {
-          calls.push("validate-gpu-preflight");
-          calls.push("assert-bridge-dns");
-        }),
         resolveSandboxGpuConfig: vi.fn((detectedGpu) => {
           calls.push("resolve-gpu-config");
           return config(detectedGpu);
@@ -435,6 +431,7 @@ describe("initial onboard flow phases", () => {
         calls.push("assert-gateway-readiness");
       }),
       gatewayName: "nemoclaw",
+      bindPolicyAuthority: async (_gatewayName, gatewaySession) => gatewaySession,
       recreateSandbox: () => false,
       gatewayDeps: {
         resolveGatewayOwner: () =>
@@ -539,7 +536,6 @@ describe("initial onboard flow phases", () => {
       "assert-gateway-readiness",
       "assert-host-readiness",
       "validate-gpu-preflight",
-      "assert-bridge-dns",
       "resolve-gpu-config",
       "ensure-resume-preflight-port",
       "commit-agent-transition",
@@ -619,33 +615,33 @@ describe("initial onboard flow phases", () => {
   it.each(["complete", "failed"] as const)(
     "rejects terminal %s sessions before initial repair effects",
     async (state) => {
-    const phase: OnboardSequencePhase<Context> = {
-      state: "preflight",
-      run: vi.fn((ctx) => ({
-        context: ctx,
-        result: advanceTo("gateway", { metadata: { state: "preflight" } }),
-      })),
-    };
+      const phase: OnboardSequencePhase<Context> = {
+        state: "preflight",
+        run: vi.fn((ctx) => ({
+          context: ctx,
+          result: advanceTo("gateway", { metadata: { state: "preflight" } }),
+        })),
+      };
 
-    await expect(
-      runInitialOnboardFlowSlice({
-        context: context({ resume: true }),
-        runtime: runtime(
-          createSession({
-            machine: {
-              version: 1,
-              state,
-              stateEnteredAt: "2026-06-09T00:00:00.000Z",
-              revision: 7,
-            },
-          }),
-        ),
-        phases: [phase],
-        resume: true,
-        recordRepairEvent: repairRecorder(),
-      }),
-    ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
-    expect(phase.run).not.toHaveBeenCalled();
+      await expect(
+        runInitialOnboardFlowSlice({
+          context: context({ resume: true }),
+          runtime: runtime(
+            createSession({
+              machine: {
+                version: 1,
+                state,
+                stateEnteredAt: "2026-06-09T00:00:00.000Z",
+                revision: 7,
+              },
+            }),
+          ),
+          phases: [phase],
+          resume: true,
+          recordRepairEvent: repairRecorder(),
+        }),
+      ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
+      expect(phase.run).not.toHaveBeenCalled();
     },
   );
 

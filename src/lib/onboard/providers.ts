@@ -46,6 +46,17 @@ function isMessagingProviderBindingConflict(error) {
   return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
 }
 
+function attachMutatedProviderNames(error, names) {
+  if (names.length === 0) return error;
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const existing = Array.isArray(failure.mutatedProviderNames) ? failure.mutatedProviderNames : [];
+  failure.mutatedProviderNames = [...new Set([...existing, ...names])];
+  const providerNames = failure.mutatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
+  const diagnostic = `Provider registration changed gateway state for ${providerNames} before the operation stopped. Inspect those providers before retrying.`;
+  if (!failure.message.includes(diagnostic)) failure.message = `${failure.message} ${diagnostic}`;
+  return failure;
+}
+
 // ── Constants ────────────────────────────────────────────────────
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -457,6 +468,23 @@ function providerExistsInGateway(name, _runOpenshell) {
 }
 
 /**
+ * Recheck the caller's policy receipt immediately before each OpenShell
+ * provider command. Commands in one provider operation can be separated by
+ * probes and recovery work, so one outer check is not sufficient.
+ * @param {Function} runOpenshell
+ * @param {((operation: string) => void)|undefined} revalidatePolicyRequirements
+ * @param {string} operation
+ * @returns {Function}
+ */
+function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements, operation) {
+  if (!revalidatePolicyRequirements) return runOpenshell;
+  return (...args) => {
+    revalidatePolicyRequirements(operation);
+    return runOpenshell(...args);
+  };
+}
+
+/**
  * Create or update an OpenShell provider in the gateway.
  *
  * Checks whether the provider already exists via `openshell provider get`;
@@ -473,16 +501,21 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const exists = options.knownExists ?? providerExistsInGateway(name, _runOpenshell);
+  const runOpenshell = policyAuthorityCheckedRunner(
+    _runOpenshell,
+    options.revalidatePolicyRequirements,
+    `inspect or change provider ${JSON.stringify(name)}`,
+  );
+  const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
   if (
     exists &&
     options.requireExactBinding &&
     !options.replaceExisting &&
-    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, _runOpenshell), {
+    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, runOpenshell), {
       name,
       type,
       credentialKey: credentialEnv,
@@ -498,7 +531,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
     const r = deleteProviderWithRecovery(name, {
-      runOpenshell: _runOpenshell,
+      runOpenshell,
       allowedSandboxes: options.allowedSandboxes,
     });
     if (!r.ok) {
@@ -524,7 +557,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   const includeCredential = action === "create" || credentialValueAvailable;
   const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const result = _runOpenshell(args, runOpts);
+  const result = runOpenshell(args, runOpts);
   if (result.status !== 0) {
     const output =
       compactText(redact(`${result.stderr || ""}`)) ||
@@ -565,10 +598,15 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
+  const runMessagingBridgeOpenshell = policyAuthorityCheckedRunner(
+    _runOpenshell,
+    options.revalidatePolicyRequirements,
+    "inspect or change a messaging bridge provider",
+  );
   // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
   // the uniform create loop, ordered around `provider create`:
   //
@@ -589,7 +627,10 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
   if (options.requireExactBindings && !options.replaceExisting) {
-    const bindingFailures = preflightMessagingProviderBindings(tokenDefs, _runOpenshell);
+    const bindingFailures = preflightMessagingProviderBindings(
+      tokenDefs,
+      runMessagingBridgeOpenshell,
+    );
     if (bindingFailures.length > 0) {
       const message = bindingFailures
         .map(({ name, message: failure }) => `${name}: ${failure}`)
@@ -603,15 +644,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   }
 
   const messagingBridgeProvider = require("./messaging-bridge-provider");
-  if (
-    tokenDefs.some(
-      ({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    )
-  ) {
+  if (tokenDefs.some(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)) {
     try {
       ensureMessagingCredentialProviderProfile({
         root: ROOT,
-        runOpenshell: _runOpenshell,
+        runOpenshell: runMessagingBridgeOpenshell,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -622,10 +659,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   }
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
-    runOpenshell: _runOpenshell,
+    runOpenshell: runMessagingBridgeOpenshell,
     redact,
   });
   const upserted = [];
+  const mutatedProviderNames = [];
   const failures = [];
   for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
@@ -634,7 +672,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
       const inspection = inspectGatewayCredentialOnlyProviderBinding(
         { name, type: providerType, credentialKey: envKey },
-        _runOpenshell,
+        runMessagingBridgeOpenshell,
       );
       if (inspection.kind === "indeterminate") {
         result = {
@@ -652,32 +690,38 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         knownExists = inspection.kind !== "missing";
       }
     }
-    result ??= upsertProvider(
-      name,
-      providerType || "generic",
-      envKey,
-      null,
-      { [envKey]: token },
-      _runOpenshell,
-      {
-        replaceExisting: Boolean(options.replaceExisting),
-        knownExists,
-        allowedSandboxes: options.allowedSandboxes,
-        requireExactBinding: Boolean(options.requireExactBindings && providerType),
-      },
-    );
-    if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-      const verified = inspectGatewayCredentialOnlyProviderBinding(
-        { name, type: providerType, credentialKey: envKey },
+    try {
+      result ??= upsertProvider(
+        name,
+        providerType || "generic",
+        envKey,
+        null,
+        { [envKey]: token },
         _runOpenshell,
+        {
+          replaceExisting: Boolean(options.replaceExisting),
+          knownExists,
+          allowedSandboxes: options.allowedSandboxes,
+          revalidatePolicyRequirements: options.revalidatePolicyRequirements,
+          requireExactBinding: Boolean(options.requireExactBindings && providerType),
+        },
       );
-      if (verified.kind !== "exact") {
-        result = {
-          ok: false,
-          status: 1,
-          message: `OpenShell did not confirm messaging provider '${name}' after mutation.`,
-        };
+      if (result.ok) mutatedProviderNames.push(name);
+      if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+        const verified = inspectGatewayCredentialOnlyProviderBinding(
+          { name, type: providerType, credentialKey: envKey },
+          runMessagingBridgeOpenshell,
+        );
+        if (verified.kind !== "exact") {
+          result = {
+            ok: false,
+            status: 1,
+            message: `OpenShell did not confirm messaging provider '${name}' after mutation.`,
+          };
+        }
       }
+    } catch (error) {
+      throw attachMutatedProviderNames(error, mutatedProviderNames);
     }
     if (!result.ok) {
       if (options.bestEffort) {
@@ -692,32 +736,39 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   if (failures.length > 0) {
     const message = failures.map(({ name, message }) => `${name}: ${message}`).join("; ");
     if (failures.every(({ reason }) => reason === "binding-conflict")) {
-      throw new MessagingProviderBindingConflictError(message, upserted);
+      throw new MessagingProviderBindingConflictError(message, mutatedProviderNames);
     }
     throw new Error(message);
   }
   // Gateway-side token minting is configured AFTER the providers exist (best-effort,
   // self-gates without a bridge token def). Secret material stays gateway-side —
   // never written into the sandbox.
-  const refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
-    runOpenshell: _runOpenshell,
-    redact,
-    getCredential,
-    env: process.env,
-    normalizeCredentialValue,
-  });
+  let refreshResult;
+  try {
+    refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
+      runOpenshell: runMessagingBridgeOpenshell,
+      redact,
+      getCredential,
+      env: process.env,
+      normalizeCredentialValue,
+    });
+  } catch (error) {
+    throw attachMutatedProviderNames(error, mutatedProviderNames);
+  }
   // Fail-closed: an active bridge channel whose gateway token minting was not
   // configured can receive webhooks but cannot authenticate outbound replies.
   // Surface it instead of reporting a fully-configured channel (bestEffort/rollback
   // paths report residual work by throwing; the normal path exits like a failed
   // provider upsert above).
   if (refreshResult && !refreshResult.ok) {
-    if (options.bestEffort) {
-      throw new Error("Failed to configure gateway token minting for a messaging bridge.");
-    }
-    console.error(
-      "\n  ✗ Gateway token minting for a messaging bridge was not configured; aborting.",
+    const failure = attachMutatedProviderNames(
+      new Error("Failed to configure gateway token minting for a messaging bridge."),
+      mutatedProviderNames,
     );
+    if (options.bestEffort) {
+      throw failure;
+    }
+    console.error(`\n  ✗ ${failure.message}`);
     process.exit(1);
   }
   return upserted;
@@ -751,6 +802,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   buildProviderArgs,
+  policyAuthorityCheckedRunner,
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,

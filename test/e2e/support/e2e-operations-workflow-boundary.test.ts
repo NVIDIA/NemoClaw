@@ -33,7 +33,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
-
   it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
@@ -50,7 +49,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload cold-onboard performance evidence",
     );
   });
-
   it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
@@ -537,11 +535,48 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
+        expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
+        expect(authentication.run).not.toContain("Authorization:");
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
     },
   );
+
+  it.each([
+    ["a denied public PR metadata request", "return 22"],
+    ["malformed public PR metadata", `printf '%s' '{'`],
+  ])("fails closed for %s", (_caseName, curlResult) => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const prefix = ["curl() {", `  ${curlResult}`, "}"].join("\n");
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BASE_SHA: "b".repeat(40),
+          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+          CHECKOUT_SHA: "a".repeat(40),
+          EXPECTED_WORKFLOW_SHA: "c".repeat(40),
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          INCLUDE_LAUNCHABLE: "false",
+          JOBS: "",
+          PR_NUMBER: "42",
+          WORKFLOW_EVENT: "workflow_dispatch",
+          WORKFLOW_REF: "refs/heads/main",
+          WORKFLOW_SHA: "c".repeat(40),
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+  });
 
   it.each([
     [
@@ -760,7 +795,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-manual-pr-matrix-"));
     const output = join(directory, "output");
     const summary = join(directory, "summary");
-
     try {
       writeFileSync(output, "");
       writeFileSync(summary, "");
@@ -780,7 +814,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const controllerTestMatrix = controllerOutput
         .find((line) => line.startsWith("test_matrix="))!
         .slice("test_matrix=".length);
-
       writeFileSync(output, "");
       const plannerResult = spawnSync(
         "bash",
@@ -835,7 +868,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       rmSync(directory, { recursive: true, force: true });
     }
   });
-
   it.each([
     ["inference-routing job", "inference-routing", ""],
     ["managed-image-protected-runtime job", "managed-image-protected-runtime", ""],

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import YAML from "yaml";
 import {
   createShieldsFlowHarness,
+  externalPolicyAuthorityInspection,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -31,11 +32,56 @@ function sandboxCommandFailure(
 }
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
+function mockManagedPolicyAuthority(sandboxName: string): void {
+  const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
+  const policyAuthority = requireSource(
+    "../adapters/openshell/policy-authority.js",
+  ) as typeof import("../adapters/openshell/policy-authority.js");
+  const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+  vi.spyOn(registry, "getSandbox").mockReturnValue({
+    name: sandboxName,
+    openshellDriver: "docker",
+    policyAuthority: "nemoclaw-managed",
+  });
+  vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: { version: 1, network_policies: {} },
+    policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
+  });
+  const receipt = {
+    authority: "nemoclaw-managed" as const,
+    authorityRecordedNow: false,
+    gatewayName: "nemoclaw",
+    inspection: {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
+    },
+  };
+  vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "inspectPolicyRecoveryAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined);
+}
+
 describe("shields policy transition", () => {
   let homeDir: string;
   let runSpy: MockInstance;
   let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
+
+  function writePolicySnapshot(sandboxName: string, fileName: string): string {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, fileName);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath }),
+    );
+    return snapshotPath;
+  }
 
   beforeEach(() => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-policy-transition-"));
@@ -70,6 +116,7 @@ describe("shields policy transition", () => {
     });
     vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockReturnValue(Buffer.alloc(0));
     vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
+    mockManagedPolicyAuthority("openclaw");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -81,6 +128,63 @@ describe("shields policy transition", () => {
     delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
     delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
     fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("rechecks policy authority immediately before direct snapshot restore (#9833)", () => {
+    const sandboxName = "openclaw";
+    const snapshotPath = writePolicySnapshot(sandboxName, "policy-snapshot-authority-race.yaml");
+    const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+    vi.mocked(policy.recheckPolicyMutationAuthority).mockImplementation(() => {
+      throw new Error("OpenShell policy authority changed during snapshot restore");
+    });
+
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /policy authority changed/,
+    );
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses external authority before Shields snapshot recovery (#9833)", () => {
+    const sandboxName = "openclaw";
+    const snapshotPath = writePolicySnapshot(sandboxName, "policy-snapshot-external.yaml");
+    const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+    vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue({
+      authority: "externally-managed",
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "externally-managed",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:external", activeVersion: 1 },
+      },
+    });
+
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /does not match.*canonical JSON SHA-256 [a-f0-9]{64}; network policy keys: "test"/su,
+    );
+    expect(runSpy).not.toHaveBeenCalled();
+
+    const matchingExternalAuthority = {
+      authority: "externally-managed" as const,
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "externally-managed" as const,
+        effectivePolicy: { version: 1, network_policies: { test: {} } },
+        policyIdentity: { hash: "sha256:external", activeVersion: 1 },
+      },
+    };
+    vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue(matchingExternalAuthority);
+    vi.mocked(policy.inspectPolicyRecoveryAuthority)
+      .mockReturnValueOnce(matchingExternalAuthority)
+      .mockReturnValue({
+        ...matchingExternalAuthority,
+        authority: "nemoclaw-managed",
+        inspection: { ...matchingExternalAuthority.inspection, authority: "nemoclaw-managed" },
+      });
+    expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
+      /Policy authority changed.*canonical JSON SHA-256 [a-f0-9]{64}.*Stop without applying.*Restore the recorded externally managed authority.*NemoClaw will not change policy authority/su,
+    );
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
@@ -135,6 +239,51 @@ describe("shields down policy rejection", () => {
       }),
     });
   }
+
+  it("stops Shields down before mutation when policy is externally managed (#9833)", () => {
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      policyAuthorityInspection: externalPolicyAuthorityInspection,
+      sandboxEntry: {
+        name: "openclaw",
+        openshellDriver: "docker",
+        policyAuthority: "externally-managed",
+      },
+    });
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
+      "externally managed",
+    );
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.dockerSpawnCalls).toEqual([]);
+  });
+
+  it("pins Shields policy inspection, reads, and writes to the recorded gateway (#9833)", () => {
+    const gatewayName = "nemoclaw-18080";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+      sandboxEntry: {
+        name: "openclaw",
+        gatewayName,
+        gatewayPort: 18080,
+        openshellDriver: "docker",
+        policyAuthority: "nemoclaw-managed",
+      },
+    });
+
+    harness.shieldsDown("openclaw", { throwOnError: true });
+
+    expect(harness.policyAuthoritySpy).toHaveBeenCalledWith("openclaw", "lower Shields");
+    const policyCommands = [...harness.runCaptureSpy.mock.calls, ...harness.runSpy.mock.calls]
+      .map(([command]) => command)
+      .filter((command) => Array.isArray(command) && command.includes("policy"));
+    expect(policyCommands.length).toBeGreaterThan(0);
+    expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
+    expect(harness.policyReceiptFinalizeSpy).toHaveBeenCalledWith(
+      "openclaw",
+      expect.stringContaining("network_policies"),
+      expect.objectContaining({ gatewayName }),
+    );
+  });
 
   it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
     const harness = createRejectedPolicyHarness();
@@ -588,6 +737,7 @@ describe("shields config lock without a shipped config hash", () => {
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
     restoreStateDirLockPostureSpy = vi.spyOn(stateDirLock, "restoreStateDirLockPosture");
+    mockManagedPolicyAuthority("dcode-safety");
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -846,6 +996,9 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     const runner = requireSource("../runner.js") as typeof import("../runner.js");
     const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
     const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../adapters/openshell/policy-authority.js");
     const policySetBodies: string[] = [];
 
     vi.spyOn(runner, "runCapture").mockReturnValue(
@@ -861,7 +1014,27 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "openclaw",
       openshellDriver: "docker",
+      policyAuthority: "nemoclaw-managed",
     });
+    vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
+    });
+    const authorityReceipt = {
+      authority: "nemoclaw-managed" as const,
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: {
+        authority: "nemoclaw-managed" as const,
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
+      },
+    };
+    vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(authorityReceipt);
+    vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(authorityReceipt);
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined);
 
     const shields = requireSource(SHIELDS_MODULE) as typeof import("./index.js");
     return { applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot, policySetBodies };

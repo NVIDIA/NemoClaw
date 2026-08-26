@@ -8,6 +8,7 @@ export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
 
 export type OpenShellSandboxOwnershipLabel = {
   readonly label: string;
@@ -33,9 +34,9 @@ const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
 type DockerSandboxContainerQueryDeps = Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun">;
 
-function sandboxContainerFilterArgs(sandboxName: string): string[] {
+function sandboxContainerFilterArgs(sandboxName: string, sandboxNamespace?: string): string[] {
   const ownership = resolveOpenShellSandboxOwnershipLabel();
-  return [
+  const args = [
     "ps",
     "-a",
     "--no-trunc",
@@ -44,6 +45,10 @@ function sandboxContainerFilterArgs(sandboxName: string): string[] {
     "--filter",
     `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
   ];
+  if (sandboxNamespace !== undefined) {
+    args.push("--filter", `label=${OPENSHELL_SANDBOX_NAMESPACE_LABEL}=${sandboxNamespace}`);
+  }
+  return args;
 }
 
 function commandResultText(result: {
@@ -82,6 +87,7 @@ export function queryOpenShellDockerSandboxContainers(
   sandboxName: string,
   deps: DockerSandboxContainerQueryDeps = {},
   timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+  sandboxNamespace?: string,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
   const requestedTimeoutMs =
@@ -92,11 +98,14 @@ export function queryOpenShellDockerSandboxContainers(
     1,
     Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
   );
-  const result = run([...sandboxContainerFilterArgs(sandboxName), "--format", "{{.ID}}"], {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: boundedTimeoutMs,
-  });
+  const result = run(
+    [...sandboxContainerFilterArgs(sandboxName, sandboxNamespace), "--format", "{{.ID}}"],
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: boundedTimeoutMs,
+    },
+  );
   if (Number(result.status ?? 1) !== 0) {
     return {
       ok: false,

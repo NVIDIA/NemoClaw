@@ -170,7 +170,6 @@ const policies = require("./src/lib/policy/index.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
-const providerReadiness = require("./src/lib/actions/sandbox/mcp-bridge-provider-readiness.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
@@ -196,9 +195,9 @@ replace(provider, "upsertMcpProvider", () => ({
   },
 }));
 replace(provider, "attachProvider", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v-before-private-target-update");
 replace(provider, "refreshMcpProviderEnvironment", () => {});
-replace(providerReadiness, "observeMcpCredentialRevision", () => "absent");
-replace(providerReadiness, "waitForAttachedMcpCredential", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", () => "v-after-private-target-update");
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
 import {
   applyFakePolicy,
   approveAndAssertPairing,
-  assertDiscordGatewayCapture,
   assertOpenClawStateRoot,
   cleanupPairingSandbox,
   DISCORD_DM_CHANNEL,
@@ -33,9 +33,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-disc-pair";
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN ?? "test-fake-discord-pairing-e2e";
 const LIVE_TIMEOUT_MS = 55 * 60_000;
 
-test(
-  "OpenClaw Discord pairing request is shared with connect-shell approval",
-  {
+test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -47,8 +45,7 @@ test(
       "approve the Discord code through connect-shell",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -84,7 +81,7 @@ test(
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-discord-pairing");
 
-    await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Discord pairing");
+  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Discord pairing");
 
   progress.phase("install the Discord-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(
@@ -112,26 +109,20 @@ test(
   expectExitZero(provider, "Discord provider exists");
 
   const configScript =
-    "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); proxy=cfg.get('proxy') or {}; print(json.dumps({'token': account.get('token',''), 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'accountProxy': account.get('proxy',''), 'managedProxy': proxy.get('proxyUrl','')}))";
-    const config = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      `python3 -c ${shellQuote(configScript)}`,
-      {
+    "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); proxy=cfg.get('proxy') or {}; print(json.dumps({'hasToken': 'token' in account, 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'accountProxy': account.get('proxy',''), 'managedProxy': proxy.get('proxyUrl','')}))";
+  const config = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(configScript)}`, {
     artifactName: "discord-openclaw-config",
     redactionValues: redactions,
-      },
-    );
+  });
   expectExitZero(config, "Discord OpenClaw config");
   const configSummary = JSON.parse(config.stdout.trim()) as {
-    token: string;
+    hasToken: boolean;
     dmPolicy: string;
     allowFrom: string[];
     accountProxy: string;
     managedProxy: string;
   };
-  expect(configSummary.token).toContain("openshell:resolve:env:");
-  expect(configSummary.token).toContain("DISCORD_BOT_TOKEN");
+  expect(configSummary.hasToken, "Discord config must omit the token field").toBe(false);
   expect(configSummary.dmPolicy).not.toBe("allowlist");
   expect(configSummary.accountProxy, "Discord account proxy").toBe("");
   expect(configSummary.managedProxy, "OpenClaw managed proxy").toMatch(/^http:\/\//);
@@ -139,13 +130,7 @@ test(
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);
 
   progress.phase("route Discord Gateway traffic through the managed policy");
-    const fakeGateway = await startFakeDiscordGateway(
-      host,
-      cleanup,
-      env,
-      DISCORD_TOKEN,
-      redactions,
-    );
+  const fakeGateway = await startFakeDiscordGateway(host, cleanup, env, DISCORD_TOKEN, redactions);
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
@@ -153,7 +138,6 @@ test(
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-discord-bridge`,
-    credentialKey: "DISCORD_BOT_TOKEN",
     env,
     redactions,
     artifactName: "apply-discord-gateway-policy",
@@ -164,13 +148,12 @@ test(
     port: fakeGateway.port,
     redactions,
   });
-  expectExitZero(gatewayProof, "Discord Gateway protocol proof");
-  expect(resultText(gatewayProof)).toContain("UPGRADE");
-  expect(resultText(gatewayProof)).toContain("HELLO");
-  expect(resultText(gatewayProof)).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  expect(gatewayProof).toContain("UPGRADE");
+  expect(gatewayProof).toContain("HELLO");
+  expect(gatewayProof).toContain("IDENTIFY_SENT_PLACEHOLDER");
   assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
-  expect(resultText(gatewayProof)).toContain("READY");
-  expect(resultText(gatewayProof)).toContain("HEARTBEAT_ACK");
+  expect(gatewayProof).toContain("READY");
+  expect(gatewayProof).toContain("HEARTBEAT_ACK");
 
   progress.phase("issue a Discord pairing request");
   const issue = await issuePairingRequest({
@@ -199,5 +182,4 @@ test(
     code: pairing.code,
     redactions,
   });
-  },
-);
+});

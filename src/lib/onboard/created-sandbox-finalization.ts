@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type {
   OpenClawImagePluginInstall,
@@ -34,7 +35,14 @@ import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-port
 import { warnIfLandlockUnsupported } from "./landlock-warning";
 import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
 import { printMessagingProviderMissing } from "./preflight-messages";
+import {
+  pendingSandboxPolicyVerificationForBoundary,
+} from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
+import type {
+  VerifiedSandboxPolicyBoundary,
+  VerifiedSandboxPolicyRegistration,
+} from "./types";
 import type { SelectionDrift } from "./selection-drift";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 import {
@@ -50,6 +58,7 @@ import type {
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
+  gatewayName?: string;
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
   targetAgentType: string;
@@ -63,6 +72,7 @@ export type CreatedSandboxFinalizationOptions = {
 };
 
 export type CreatedSandboxFinalizationDeps = {
+  revalidatePolicyAuthority?(operation: string): void;
   discoverFreshOpenClawImagePluginInstalls(
     sandboxName: string,
   ): OpenClawManagedExtensionDiscoveryResult;
@@ -99,11 +109,20 @@ type RegistrationSeed = Omit<
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
+  | "verifiedCreate"
 >;
 
 export interface CreatedSandboxCompletionOptions {
   readonly finalization: CreatedSandboxFinalizationOptions;
   readonly registration: RegistrationSeed;
+  readonly policy: {
+    readonly initialPolicyPath: string;
+    readonly compatibilityPolicyPath: string | null;
+    readonly getVerifiedPolicyBoundary: () => VerifiedSandboxPolicyBoundary;
+    readonly getVerifiedCreateRegistrationAuthority: () => NonNullable<
+      CreatedSandboxRegistrationInput["verifiedCreate"]
+    >;
+  };
   readonly gpu: {
     readonly config: Parameters<
       typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
@@ -127,7 +146,9 @@ export interface CreatedSandboxCompletionOptions {
       chatUiUrl: string,
       options: Pick<
         DashboardForwardOptions,
-        "rollbackSandboxOnFailure" | "preservedSiblingForwards"
+        | "rollbackSandboxOnFailure"
+        | "preservedSiblingForwards"
+        | "revalidatePolicyAuthority"
       > & { rollbackSandboxOnFailure: true },
     ) => number;
     readonly getForwardPort: (chatUiUrl: string) => string;
@@ -136,6 +157,7 @@ export interface CreatedSandboxCompletionOptions {
       state: HermesDashboardOnboardState,
       sandboxName: string,
       rollback: true,
+      revalidatePolicyAuthority?: (operation: string) => void,
     ) => void;
   };
   readonly workload: Omit<
@@ -188,6 +210,11 @@ export function createOnboardCreatedSandboxRegistration(input: {
   ) => {
     if (!created && !configuredReceipt) {
       throw new Error("Sandbox registration requires create or Hermes receipt authority.");
+    }
+    if (!created) {
+      throw new Error(
+        "Hermes portable resume cannot publish sandbox authority without a verified create checkpoint from this process.",
+      );
     }
     input.cleanupBuildContext();
     const providerGpuDisposition = !input.sandboxGpuEnabled
@@ -242,9 +269,13 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly armCancelRollback: (sandboxName: string) => void;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
+    readonly revalidatePolicyAuthority: (operation: string) => void;
+    readonly applyVmDnsMonkeypatch?: typeof applyOnboardVmDnsMonkeypatch;
   },
 ): string {
+  deps.revalidatePolicyAuthority(`completing sandbox '${input.sandboxName}'`);
   restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
+  deps.revalidatePolicyAuthority(`starting DNS setup for sandbox '${input.sandboxName}'`);
   if (input.runtimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     deps.runFile(
@@ -252,11 +283,17 @@ export function completeOrdinaryOnboardSandboxCreation(
       [path.join(deps.scriptsDir, "setup-dns-proxy.sh"), deps.gatewayName, input.sandboxName],
       { ignoreError: true },
     );
+    deps.revalidatePolicyAuthority(`applying DNS settings for sandbox '${input.sandboxName}'`);
   }
-  applyOnboardVmDnsMonkeypatch(input.sandboxName, input.runtimeFields);
+  (deps.applyVmDnsMonkeypatch ?? applyOnboardVmDnsMonkeypatch)(
+    input.sandboxName,
+    input.runtimeFields,
+    { revalidatePolicyAuthority: deps.revalidatePolicyAuthority },
+  );
   for (const provider of input.messagingProviders) {
     if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
   }
+  deps.revalidatePolicyAuthority(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
   warnIfLandlockUnsupported(deps);
   if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
@@ -314,6 +351,10 @@ export function createCreatedSandboxCompletionActions(
         log: console.log,
       },
       created.runtimePatch,
+      () =>
+        deps.revalidatePolicyAuthority?.(
+          `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        ),
     );
   }
   function recordHermesGpuProof(): void {
@@ -323,19 +364,33 @@ export function createCreatedSandboxCompletionActions(
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
+    deps.revalidatePolicyAuthority?.(
+      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
       preservedSiblingForwards: options.dashboard.preservedSiblingForwards,
+      revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
     });
+    deps.revalidatePolicyAuthority?.(
+      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
       chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
     }
     process.env.CHAT_UI_URL = chatUiUrl;
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
+    deps.revalidatePolicyAuthority?.(
+      `configuring Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+    );
     options.dashboard.ensureHermesForward(
       hermesDashboardState,
       options.finalization.sandboxName,
       true,
+      deps.revalidatePolicyAuthority,
+    );
+    deps.revalidatePolicyAuthority?.(
+      `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
   }
   return {
@@ -348,47 +403,132 @@ export function createCreatedSandboxCompletionActions(
       lifecycle,
       inferenceRouteReservation,
     ) => {
+      const verifiedLifecycle = lifecycle.revalidate(
+        lifecycle.capture(resolveLifecycleRegistrationFields()),
+      );
+      const verifiedPolicyBoundary = options.policy.getVerifiedPolicyBoundary();
+      assertVerifiedPolicyBoundaryMatchesLifecycle(
+        verifiedPolicyBoundary,
+        options.finalization.sandboxName,
+        options.registration.gatewayName,
+        options.registration.gatewayPort,
+        verifiedLifecycle,
+      );
+      deps.revalidatePolicyAuthority?.(
+        `finalizing verified policy for sandbox '${options.finalization.sandboxName}'`,
+      );
       if (providerGpuDisposition === "created") {
+        deps.revalidatePolicyAuthority?.(
+          `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        );
         await verifyCreatedProviderGpu(created!);
       } else if (providerGpuDisposition === "hermes") {
+        deps.revalidatePolicyAuthority?.(
+          `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
+        );
         recordHermesGpuProof();
       }
-      if (manageDashboard) await finalizeDashboard();
+      if (manageDashboard) {
+        deps.revalidatePolicyAuthority?.(
+          `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+        );
+        await finalizeDashboard();
+      }
       const resolved = managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
         ...options.workload,
         registryImageRef: created?.registryImageRef ?? configuredReceipt?.container.imageId ?? null,
         firstCreateOutput: created?.firstCreateOutput ?? "",
         createOutput: created?.createResult.output ?? "",
       });
-      const verifiedLifecycle = lifecycle.revalidate(
-        lifecycle.capture(resolveLifecycleRegistrationFields()),
+      const finalLifecycle = lifecycle.revalidate(verifiedLifecycle);
+      assertVerifiedPolicyBoundaryMatchesLifecycle(
+        verifiedPolicyBoundary,
+        options.finalization.sandboxName,
+        options.registration.gatewayName,
+        options.registration.gatewayPort,
+        finalLifecycle,
       );
-      return finalizeCreatedSandbox(options.finalization, {
-        ...deps,
-        register: (openclawImagePluginInstalls) =>
-          (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
-            ...options.registration,
-            runtimeFields: {
-              ...options.registration.runtimeFields,
-              sandboxGpuProof:
-                options.gpu.config.sandboxGpuProof ??
-                options.registration.runtimeFields.sandboxGpuProof,
-              openshellVersion:
-                configuredReceipt?.openshellExecutableAuthority.version ??
-                options.registration.runtimeFields.openshellVersion,
-            },
-            hermesPortableLifecycle: configuredReceipt !== null,
-            imageTag: resolved.resolvedImageTag,
-            workload: resolved.workloadReceipt,
-            openclawImagePluginInstalls,
-            hermesDashboardState,
-            dashboardPort,
-            ...verifiedLifecycle,
-            inferenceRouteReservation,
-          }),
-      });
+      deps.revalidatePolicyAuthority?.(
+        `publishing sandbox '${options.finalization.sandboxName}' registry authority`,
+      );
+      const verifiedPolicyRegistration = verifiedPolicyBoundary.registration;
+      return finalizeCreatedSandbox(
+        { ...options.finalization, gatewayName: options.registration.gatewayName },
+        {
+          ...deps,
+          register: (openclawImagePluginInstalls) => {
+            const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
+            assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
+            return (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
+              ...options.registration,
+              runtimeFields: {
+                ...options.registration.runtimeFields,
+                sandboxGpuProof:
+                  options.gpu.config.sandboxGpuProof ??
+                  options.registration.runtimeFields.sandboxGpuProof,
+                openshellVersion:
+                  configuredReceipt?.openshellExecutableAuthority.version ??
+                  options.registration.runtimeFields.openshellVersion,
+              },
+              hermesPortableLifecycle: configuredReceipt !== null,
+              imageTag: resolved.resolvedImageTag,
+              workload: resolved.workloadReceipt,
+              openclawImagePluginInstalls,
+              hermesDashboardState,
+              dashboardPort,
+              ...finalLifecycle,
+              appliedPolicies:
+                verifiedPolicyRegistration.policyAuthority === "externally-managed"
+                  ? []
+                  : options.registration.appliedPolicies,
+              policyAuthority: verifiedPolicyRegistration.policyAuthority,
+              ...(verifiedPolicyRegistration.policyAuthority === "nemoclaw-managed"
+                ? {
+                    policyCreationReceipt:
+                      verifiedPolicyRegistration.policyCreationReceipt,
+                  }
+                : {}),
+              inferenceRouteReservation,
+              verifiedCreate,
+            });
+          },
+        },
+      );
     },
   };
+}
+
+function assertVerifiedCreateMatchesPolicyBoundary(
+  boundary: VerifiedSandboxPolicyBoundary,
+  verifiedCreate: NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>,
+): void {
+  if (
+    !isDeepStrictEqual(
+      verifiedCreate.checkpoint,
+      pendingSandboxPolicyVerificationForBoundary(boundary),
+    )
+  ) {
+    throw new Error("Verified sandbox create checkpoint does not match final policy authority.");
+  }
+}
+
+function assertVerifiedPolicyBoundaryMatchesLifecycle(
+  boundary: VerifiedSandboxPolicyBoundary,
+  sandboxName: string,
+  gatewayName: string,
+  gatewayPort: number,
+  lifecycle: CreatedSandboxLifecycleRegistration,
+): VerifiedSandboxPolicyRegistration {
+  if (
+    boundary.sandboxName !== sandboxName ||
+    boundary.gatewayName !== gatewayName ||
+    boundary.gatewayPort !== gatewayPort ||
+    boundary.lifecycleGeneration !== lifecycle.lifecycleGeneration ||
+    boundary.lifecycleLiveIdentityFingerprint !== lifecycle.lifecycleLiveIdentityFingerprint
+  ) {
+    throw new Error("Verified sandbox policy authority does not match the final lifecycle.");
+  }
+  return boundary.registration;
 }
 
 type OnboardCreateIntent = {
@@ -434,10 +574,21 @@ type OnboardGatewayBinding = {
   readonly gatewayName: string;
   readonly gatewayPort: number;
 };
-type OnboardPreparedPolicy = Pick<
+type OnboardPreparedPolicy = Omit<
+  Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
-  "initialSandboxPolicy" | "policyTier" | "dashboardRemoteBindPrepared"
->;
+  "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
+  >,
+  "policyAuthority"
+> & {
+  readonly policyAuthority: NonNullable<SandboxEntry["policyAuthority"]>;
+  readonly compatibilityPolicyPath: string | null;
+  readonly getVerifiedPolicyBoundary: () => VerifiedSandboxPolicyBoundary;
+  readonly getVerifiedCreateRegistrationAuthority: () => NonNullable<
+    CreatedSandboxRegistrationInput["verifiedCreate"]
+  >;
+  readonly revalidatePolicyAuthority: (operation: string) => void;
+};
 
 /** Assemble the exact post-Ready owners without adding an onboarding decision. */
 export function createOnboardCreatedSandboxCompletion(
@@ -515,7 +666,11 @@ export function createOnboardCreatedSandboxCompletion(
         agent,
         agentVersionKnown: !fromDockerfile,
         portableLifecycle,
-        appliedPolicies: preparedPolicy.initialSandboxPolicy.appliedPresets,
+        appliedPolicies:
+          preparedPolicy.policyAuthority === "externally-managed"
+            ? []
+            : preparedPolicy.initialSandboxPolicy.appliedPresets,
+        policyAuthority: preparedPolicy.policyAuthority,
         toolDisclosure: policyRegistration.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
         ...(agentFlags.isManagedDcodeAgent
@@ -533,6 +688,13 @@ export function createOnboardCreatedSandboxCompletion(
         hermesApiPort,
         ...gateway,
         hostMounts: resolvedCreateIntent.hostMounts,
+      },
+      policy: {
+        initialPolicyPath: preparedPolicy.initialSandboxPolicy.policyPath,
+        compatibilityPolicyPath: preparedPolicy.compatibilityPolicyPath,
+        getVerifiedPolicyBoundary: preparedPolicy.getVerifiedPolicyBoundary,
+        getVerifiedCreateRegistrationAuthority:
+          preparedPolicy.getVerifiedCreateRegistrationAuthority,
       },
       gpu: {
         config: gpuConfig,
@@ -575,6 +737,7 @@ export function createOnboardCreatedSandboxCompletion(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
+      revalidatePolicyAuthority: preparedPolicy.revalidatePolicyAuthority,
     },
   );
 }
@@ -584,6 +747,12 @@ export function finalizeCreatedSandbox(
   options: CreatedSandboxFinalizationOptions,
   deps: CreatedSandboxFinalizationDeps,
 ): SandboxEntry | void {
+  const reportUnregisteredSandboxRecovery = (): void => {
+    deps.error(
+      `  NemoClaw left unregistered sandbox '${options.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
+    );
+    deps.error("  Verify its durable identity before manual cleanup; do not act by name alone.");
+  };
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.discoverOpenClawImagePluginInstalls === true) {
     const discovery = deps.discoverFreshOpenClawImagePluginInstalls(options.sandboxName);
@@ -592,8 +761,7 @@ export function finalizeCreatedSandbox(
         `  OpenClaw image plugin discovery failed for sandbox '${options.sandboxName}': ${discovery.error}`,
       );
       deps.error("  State was not restored and registry metadata was not updated.");
-      deps.error("  Remove the unregistered sandbox before retrying:");
-      deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+      reportUnregisteredSandboxRecovery();
       deps.error("  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.");
       if (options.restoreBackupPath) deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
@@ -607,6 +775,7 @@ export function finalizeCreatedSandbox(
         ? "  Restoring workspace state from pre-upgrade backup..."
         : "  Restoring workspace state from pre-recreate backup...",
     );
+    deps.revalidatePolicyAuthority?.(`restoring files for sandbox '${options.sandboxName}'`);
     const restore = deps.restoreRecreatedSandboxState(
       options.sandboxName,
       options.restoreBackupPath,
@@ -618,6 +787,9 @@ export function finalizeCreatedSandbox(
           : {}),
       },
     );
+    deps.revalidatePolicyAuthority?.(
+      `reporting restored state for sandbox '${options.sandboxName}'`,
+    );
     if (restore.success) {
       deps.note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
@@ -628,8 +800,7 @@ export function finalizeCreatedSandbox(
           `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
-        deps.error("  Remove the unregistered sandbox before retrying:");
-        deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+        reportUnregisteredSandboxRecovery();
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
         return deps.exitProcess(1);
       }
@@ -640,8 +811,7 @@ export function finalizeCreatedSandbox(
         deps.error(
           "  The sandbox still exists, but registry metadata was not updated because a future rebuild would be unsafe.",
         );
-        deps.error("  Remove the unregistered sandbox before retrying:");
-        deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+        reportUnregisteredSandboxRecovery();
         deps.error("  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.");
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
         return deps.exitProcess(1);
@@ -652,7 +822,22 @@ export function finalizeCreatedSandbox(
       // - Source-fix constraint: rollback must span sandbox creation and external copies.
       // - Regression: the partial-workspace-restore test validates fresh config before registration.
       // - Removal: drop this fallback when restore failure can roll back sandbox creation atomically.
-      deps.error(`  Warning: partial restore. Manual recovery: ${options.restoreBackupPath}`);
+      deps.error(
+        `  Warning: workspace state restore was incomplete for sandbox '${options.sandboxName}'.`,
+      );
+      if (restore.failedDirs.length > 0) {
+        deps.error(`  Failed directories: ${restore.failedDirs.join(", ")}`);
+      }
+      if (restore.failedFiles.length > 0) {
+        deps.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+      }
+      if (restore.error) deps.error(`  Restore reason: ${restore.error}`);
+      deps.error(
+        "  Workspace state restoration did not complete. Registry metadata was not updated.",
+      );
+      reportUnregisteredSandboxRecovery();
+      deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+      return deps.exitProcess(1);
     }
   }
 
@@ -671,8 +856,7 @@ export function finalizeCreatedSandbox(
       deps.error(
         "  A NemoClaw rebuild is unsafe here because no verified registry metadata exists.",
       );
-      deps.error("  Remove the unregistered sandbox before retrying:");
-      deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+      reportUnregisteredSandboxRecovery();
       deps.error("  Then rerun the original `nemoclaw onboard` command.");
       if (options.restoreBackupPath) {
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
@@ -681,5 +865,6 @@ export function finalizeCreatedSandbox(
     }
   }
 
+  deps.revalidatePolicyAuthority?.(`registering sandbox '${options.sandboxName}'`);
   return deps.register(freshOpenClawImagePluginInstalls);
 }

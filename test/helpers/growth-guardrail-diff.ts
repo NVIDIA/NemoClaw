@@ -5,7 +5,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { assertRepositoryName, createPrBlobClient, type PullRequestFile } from "./pr-blob-client";
+export type PullRequestFile = {
+  readonly filename: string;
+  readonly previous_filename?: string | null;
+  readonly status?: string;
+};
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
@@ -144,45 +148,56 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function cachedBlobReader(
-  client: ReturnType<typeof createPrBlobClient>,
-  repository: string,
-  revision: string,
-): GrowthGuardrailDiff["readBase"] {
-  const cache = new Map<string, string | null>();
-  return async (paths) => {
-    const missing = [...new Set(paths)].filter((file) => !cache.has(file));
-    const fetched = await client.fetchBlobs(repository, revision, missing);
-    for (const [file, source] of fetched) cache.set(file, source);
-    return new Map(paths.map((file) => [file, cache.get(file) ?? null]));
-  };
+function assertPullNumber(value: string): void {
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Error("PR_NUMBER must be a positive integer");
 }
 
-async function loadPullRequestDiff(): Promise<GrowthGuardrailDiff> {
-  const token = requiredEnvironment("GH_TOKEN");
-  const repository = requiredEnvironment("REPO");
+function assertCommitSha(sha: string, label: string): void {
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${label} must be a full commit SHA`);
+}
+
+function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
+  execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", `refs/pull/${prNumber}/head`], {
+    cwd: REPO_ROOT,
+    stdio: "ignore",
+  });
+  const fetchedHead = execFileSync("git", ["rev-parse", "FETCH_HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
+}
+
+function loadPullRequestDiff(): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
-  const headRepository = requiredEnvironment("HEAD_REPO");
   const headSha = requiredEnvironment("HEAD_SHA");
-  assertRepositoryName(repository, "REPO");
-  assertRepositoryName(headRepository, "HEAD_REPO");
-  const client = createPrBlobClient({ token });
-  const files = await client.getPullFiles(repository, prNumber);
-  const readBase = cachedBlobReader(client, repository, baseSha);
-  const readHead = cachedBlobReader(client, headRepository, headSha);
+  assertPullNumber(prNumber);
+  assertCommitSha(baseSha, "BASE_SHA");
+  assertCommitSha(headSha, "HEAD_SHA");
+  fetchPullHead(prNumber, headSha);
+  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
 
   return {
-    files,
-    readBase,
-    readHead,
+    files: parseChangedFiles(changed),
+    async readBase(paths) {
+      return readFiles(paths, (file) => readGitFile(baseSha, file));
+    },
+    async readHead(paths) {
+      return readFiles(paths, (file) => readGitFile(headSha, file));
+    },
   };
 }
 
 export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
-  return process.env.NEMOCLAW_GROWTH_PR === "1"
-    ? loadPullRequestDiff()
-    : Promise.resolve(loadLocalDiff());
+  return Promise.resolve(process.env.PR_NUMBER ? loadPullRequestDiff() : loadLocalDiff());
 }
 
-export const testOnly = { parseAncestorProbe, parseChangedFiles, selectLocalComparisonBase };
+export const testOnly = {
+  parseAncestorProbe,
+  parseChangedFiles,
+  selectLocalComparisonBase,
+};
