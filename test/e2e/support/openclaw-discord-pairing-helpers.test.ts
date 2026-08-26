@@ -299,6 +299,41 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     );
   });
 
+  it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "xapp-raw-slack-token" },
+  ])("rejects a $name Slack app credential before network access", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      encoding: "utf8",
+      env: { ...process.env, SLACK_APP_TOKEN: value },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
+    );
+    expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+    expect(result.stderr).not.toContain("xapp-raw-slack-token");
+  });
+
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
     const captureFile = path.join(tmp, "capture.jsonl");

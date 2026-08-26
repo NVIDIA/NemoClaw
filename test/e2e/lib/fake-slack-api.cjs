@@ -249,7 +249,6 @@ server.on("upgrade", (req, socket) => {
     ].join("\r\n"),
   );
   record({ event: "websocket-upgrade", path: pathname });
-  socket.write(encodeServerText(JSON.stringify({ type: "hello" })));
 
   let buffer = Buffer.alloc(0);
   let sentEvent = false;

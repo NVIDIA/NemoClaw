@@ -355,18 +355,14 @@ console.log("DISCORD_PAIRING_E2E_RESULT " + JSON.stringify({ code: result.code, 
 NODE
 `.replace("__LOAD_CONVERSATION_RUNTIME_SOURCE__", LOAD_CONVERSATION_RUNTIME_SOURCE);
 
-// Source-of-truth boundary: the Slack live probe owns only validation for its
-// localized fake API port and proxy environment because those values are injected
-// by the Vitest harness before the probe opens direct Node socket/http clients.
-// Invalid state: a malformed fake port or proxy env, or a proxy destination other
-// than the NemoClaw/OpenShell gateway proxy emitted by scripts/nemoclaw-start.sh,
-// would otherwise hide the real pairing failure behind a low-level network error
-// or route the fake Slack websocket through an unexpected host. Source-fix
-// constraint: do not change global sandbox proxy generation for this probe; fail
-// closed here before network access. Support tests cover malformed values and an
-// unexpected-but-valid HTTP proxy host. Remove this localized parser once the
-// Slack probe delegates Socket Mode/REST traffic to a shared fake-provider client
-// instead of hand-rolled sockets.
+// Source-of-truth boundary: the Slack live probe validates its localized fake API
+// ports, proxy environment, and the revision-scoped credential references issued
+// to the sandbox before it opens direct Node socket/http clients. Invalid state
+// would otherwise hide the real pairing failure behind a low-level network error,
+// route the fake Slack websocket through an unexpected host, or send a credential
+// reference that OpenShell must reject for an endpoint-bound provider. Remove this
+// localized parser once the Slack probe delegates Socket Mode/REST traffic to a
+// shared fake-provider client instead of hand-rolled sockets.
 export const SLACK_PROBE_INPUT_VALIDATION_SOURCE = String.raw`
 function parseFakeSlackPort(envKey = "FAKE_SLACK_API_PORT") {
   const raw = process.env[envKey] || "";
@@ -388,6 +384,14 @@ function parseProxyTarget() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("HTTP proxy port for Slack pairing probe is invalid");
   if (parsed.hostname !== "10.200.0.1" || port !== 3128) throw new Error("unexpected HTTP proxy for Slack pairing probe");
   return { host: parsed.hostname, port };
+}
+function parseManagedCredentialReference(name) {
+  if (name !== "SLACK_APP_TOKEN" && name !== "SLACK_BOT_TOKEN") throw new Error("unexpected Slack credential reference name");
+  const value = process.env[name] || "";
+  if (!new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + name + "$").test(value)) {
+    throw new Error(name + " must be the revision-scoped OpenShell credential reference issued to the sandbox");
+  }
+  return value;
 }
 `;
 
@@ -443,6 +447,7 @@ function receiveSlackSocketEvent() {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT");
   const proxy = parseProxyTarget();
+  const appToken = parseManagedCredentialReference("SLACK_APP_TOKEN");
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
     const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
@@ -476,7 +481,7 @@ function receiveSlackSocketEvent() {
         }
         upgraded = true;
         framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN" })));
+        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: appToken })));
       } else {
         framed = Buffer.concat([framed, chunk]);
       }
@@ -486,7 +491,6 @@ function receiveSlackSocketEvent() {
         framed = framed.slice(frame.totalLength);
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
-        if (envelope.type === "hello") continue;
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
         clearTimeout(timer);
         socket.end();
@@ -501,7 +505,7 @@ function receiveSlackSocketEvent() {
 function postPairingReply(text, channel) {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort();
-  const token = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  const token = parseManagedCredentialReference("SLACK_BOT_TOKEN");
   const data = new URLSearchParams({ token, channel, text }).toString();
   return new Promise((resolve, reject) => {
     const req = http.request({
