@@ -17,7 +17,7 @@ export function writeOkOpenshell(
     : "";
   writeExecutable(
     path.join(fakeBin, "openshell"),
-    `#!/usr/bin/env bash\n${sandboxGet}if [ "\${1:-}" = sandbox ] && [ "\${2:-}" = ssh-config ]; then printf "Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n" "\${3:-sandbox}"; fi\nexit 0\n`,
+    `#!/usr/bin/env bash\n${sandboxGet}if [ "\${1:-}" = policy ] && [ "\${2:-}" = get ]; then printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "\${!#}"; fi\nif [ "\${1:-}" = sandbox ] && [ "\${2:-}" = ssh-config ]; then printf "Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n" "\${3:-sandbox}"; fi\nexit 0\n`,
   );
   writeExecutable(
     path.join(fakeBin, "ssh"),

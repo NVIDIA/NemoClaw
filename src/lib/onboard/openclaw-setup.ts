@@ -21,6 +21,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     sandboxName: string,
     model: string,
     provider: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
@@ -43,6 +44,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       }
     }
 
+    revalidatePolicyRequirements?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };
 }

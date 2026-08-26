@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
@@ -28,6 +29,7 @@ import {
   type HostLocalLlamaCppLifecycle,
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
+import { persistedEngineAuthorityPath } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
@@ -46,6 +48,7 @@ import {
 } from "./managed-installer.test-support";
 import {
   createManagedLlamaCppReceiptWriter,
+  loadManagedLlamaCppApiKey,
   loadOrCreateManagedLlamaCppApiKey,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
@@ -157,6 +160,34 @@ function selection(): ResolvedLlamaCppInferenceSelection {
     )!.digest,
     preset: preset!,
     recipe: recipe! as ResolvedLlamaCppInferenceSelection["recipe"],
+  };
+}
+
+function verifiedArtifact(selected: ResolvedLlamaCppInferenceSelection, homeDir: string) {
+  const hostPath = path.join(homeDir, "model.gguf");
+  fs.writeFileSync(hostPath, "fixture", { mode: 0o600 });
+  const identity = fs.lstatSync(hostPath, { bigint: true });
+  return {
+    digest: selected.recipe.spec.model.files[0]!.digest,
+    filesystemIdentity: {
+      ctimeNs: identity.ctimeNs,
+      dev: identity.dev,
+      ino: identity.ino,
+      mtimeNs: identity.mtimeNs,
+      size: identity.size,
+    },
+    hostPath,
+    sizeBytes: selected.recipe.spec.model.files[0]!.sizeBytes,
+  };
+}
+
+function dormantManagedLifecycle(): DockerLlamaCppManagedLifecycle {
+  const receipt = { schemaVersion: 1 } as HostLocalInferenceReceipt;
+  return {
+    recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
+    resume: vi.fn(() => receipt),
+    runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
+    start: vi.fn(() => receipt),
   };
 }
 
@@ -416,43 +447,139 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
-  it.each([
-    "podman",
-    "unsupported-runtime",
-  ])("rejects the %s provider before any Docker or installer mutation", async (providerId) => {
+  it("stops after acquisition when policy authority refuses activation (#9833)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
-    const pullImage = vi.fn();
-    const acquireGguf = vi.fn();
-    const verifyGguf = vi.fn();
-    const checkPort = vi.fn();
-    const runtimeProvider = createInMemoryRuntimeProviderBundle({
-      providerId,
-      workloadProfile: TEST_WORKLOAD_PROFILE,
-    });
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const harness = engineHarness();
+    harness.images.add(selected.recipe.spec.runtime.image);
+    harness.images.add(selected.recipe.spec.readiness.probeImage);
+    const lifecycle = dormantManagedLifecycle();
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new PolicyAuthorityRefusalError(
+          "External policy authority must supply the managed llama.cpp entry.",
+        );
+      });
 
     await expect(
       installManagedLlamaCpp(selected, {
         sandboxName: "spark-agent",
         homeDir,
-        runtimeProvider,
-        pullImage: pullImage as never,
-        acquireGguf: acquireGguf as never,
-        verifyGguf: verifyGguf as never,
-        checkPort: checkPort as never,
+        runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
+        verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
+        checkPort: vi.fn(async () => ({ ok: true })),
         log: vi.fn(),
+        revalidatePolicyRequirements,
       }),
-    ).resolves.toEqual({
-      ok: false,
-      reason: `Runtime provider '${providerId}' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.`,
-    });
+    ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
 
-    expect(pullImage).not.toHaveBeenCalled();
-    expect(acquireGguf).not.toHaveBeenCalled();
-    expect(verifyGguf).not.toHaveBeenCalled();
-    expect(checkPort).not.toHaveBeenCalled();
-    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      1,
+      "reserve the managed llama.cpp runtime",
+    );
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      2,
+      "activate the managed llama.cpp runtime",
+    );
+    expect(fs.existsSync(paths.ownerPath)).toBe(false);
+    expect(
+      fs.existsSync(persistedEngineAuthorityPath(paths.stateDir, "host-local-inference")),
+    ).toBe(false);
+    expect(loadManagedLlamaCppApiKey(paths)).toBeNull();
+    expect(lifecycle.recoverUnfinished).not.toHaveBeenCalled();
+    expect(lifecycle.start).not.toHaveBeenCalled();
+    expect(lifecycle.resume).not.toHaveBeenCalled();
   });
+
+  it("rechecks a resumed runtime before lifecycle recovery or credentials (#9833)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const paths = managedLlamaCppStatePaths(homeDir);
+    reserveManagedLlamaCppOwner(paths, {
+      schemaVersion: 1,
+      sandboxName: "spark-agent",
+      catalogDigest: selected.catalogDigest,
+      presetDigest: selected.presetDigest,
+      recipeDigest: selected.recipeDigest,
+      recipeId: selected.recipe.metadata.id,
+    });
+    const harness = engineHarness();
+    harness.images.add(selected.recipe.spec.runtime.image);
+    harness.images.add(selected.recipe.spec.readiness.probeImage);
+    const lifecycle = dormantManagedLifecycle();
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new PolicyAuthorityRefusalError(
+          "External policy authority must supply the managed llama.cpp entry.",
+        );
+      });
+
+    await expect(
+      resumeManagedLlamaCppRuntime("spark-agent", {
+        homeDir,
+        runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
+        verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
+        checkPort: vi.fn(async () => ({ ok: true })),
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
+
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      1,
+      "inspect the managed llama.cpp runtime",
+    );
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      2,
+      "recover the managed llama.cpp runtime",
+    );
+    expect(loadManagedLlamaCppApiKey(paths)).toBeNull();
+    expect(lifecycle.recoverUnfinished).not.toHaveBeenCalled();
+    expect(lifecycle.start).not.toHaveBeenCalled();
+    expect(lifecycle.resume).not.toHaveBeenCalled();
+  });
+
+  it.each(["podman", "unsupported-runtime"])(
+    "rejects the %s provider before any Docker or installer mutation",
+    async (providerId) => {
+      const selected = selection();
+      const homeDir = temporaryHome();
+      const pullImage = vi.fn();
+      const acquireGguf = vi.fn();
+      const verifyGguf = vi.fn();
+      const checkPort = vi.fn();
+      const runtimeProvider = createInMemoryRuntimeProviderBundle({
+        providerId,
+        workloadProfile: TEST_WORKLOAD_PROFILE,
+      });
+
+      await expect(
+        installManagedLlamaCpp(selected, {
+          sandboxName: "spark-agent",
+          homeDir,
+          runtimeProvider,
+          pullImage: pullImage as never,
+          acquireGguf: acquireGguf as never,
+          verifyGguf: verifyGguf as never,
+          checkPort: checkPort as never,
+          log: vi.fn(),
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        reason: `Runtime provider '${providerId}' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.`,
+      });
+
+      expect(pullImage).not.toHaveBeenCalled();
+      expect(acquireGguf).not.toHaveBeenCalled();
+      expect(verifyGguf).not.toHaveBeenCalled();
+      expect(checkPort).not.toHaveBeenCalled();
+      expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+    },
+  );
 
   it("rejects the real Podman provider before engine, acquisition, or state mutation", async () => {
     const selected = selection();

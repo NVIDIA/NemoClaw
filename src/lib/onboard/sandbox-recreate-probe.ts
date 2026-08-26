@@ -33,6 +33,10 @@ export interface SandboxRecreateTarget {
   readonly gatewayPort: number;
 }
 
+export type SandboxGatewayPresence = "present" | "missing";
+
+type SandboxGatewayPresenceTarget = Pick<SandboxRecreateTarget, "sandboxName" | "gatewayName">;
+
 export type SandboxRecreateObserver = (target: SandboxRecreateTarget) => SandboxRecreateObservation;
 
 /**
@@ -63,6 +67,29 @@ export function isExplicitMissingSandboxGatewayOutput(
       "i",
     ).test(clean) ||
     new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "i").test(clean)
+  );
+}
+
+/** Observe only whether the named sandbox exists on its recorded gateway. */
+export function observeSandboxPresenceOnGateway(
+  target: SandboxGatewayPresenceTarget,
+): SandboxGatewayPresence {
+  const probe = captureOpenshell(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
+  const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
+  const failedCleanly =
+    !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
+  if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
+    return "missing";
+  }
+  if (probe.status === 0 && stdout.length > 0) return "present";
+  throw new Error(
+    `Cannot inspect sandbox '${target.sandboxName}' on gateway '${target.gatewayName}': OpenShell reported neither presence nor explicit absence.`,
   );
 }
 
