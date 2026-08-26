@@ -1179,7 +1179,7 @@ function validateFreeStandingJobSelector(
       ? ["generate-matrix", "openshell-dev-artifact"]
       : jobName === "cloud-onboard"
         ? ["base-image-publication", "generate-matrix"]
-      : "generate-matrix";
+        : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1305,7 +1305,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job.name !== "Shared E2E (${{ matrix.id }})") {
+  if (job.name !== "Credential-Free / ${{ matrix.id }}") {
     errors.push("shared E2E job name must expose the test ID");
   }
   if (job.needs !== "generate-matrix") {
@@ -1900,7 +1900,7 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  if (job.name !== "Exact staging Brev Launchable") {
+  if (job.name !== "Brev Launchable / Test staging image") {
     errors.push("staging-brev-launchable must identify the exact Launchable E2E contract");
   }
   if (job.needs !== "generate-matrix") {
@@ -2050,7 +2050,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
 function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = STAGING_BREV_IDENTITY_JOB_ID;
   const job = asRecord(jobs[jobName]);
-  if (job.name !== "Exact staging Brev Launchable identity") {
+  if (job.name !== "Brev Launchable / Verify staging image identity") {
     errors.push(`${jobName} must identify the exact image and runtime identity contract`);
   }
   if (job.needs !== "generate-matrix") {
@@ -2838,12 +2838,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(
-    errors,
-    generateSteps,
-    generate,
-    generateCheckout,
-  );
+  validateExactPrManagedImageCatalogBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -2884,7 +2879,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
-  if (liveTargets.name !== "${{ matrix.label }}") {
+  if (liveTargets.name !== "Live / ${{ matrix.label }}") {
     errors.push("live job name must expose the semantic matrix label");
   }
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {

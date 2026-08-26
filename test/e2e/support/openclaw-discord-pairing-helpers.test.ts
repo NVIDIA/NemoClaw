@@ -17,6 +17,7 @@ import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
+  SLACK_PAIRING_SCRIPT,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
@@ -284,6 +285,53 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain('"\\r\\n"');
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it("uses distinct ports on the OpenShell host for Slack REST and websocket traffic", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function receiveSlackSocketEvent() {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
+    );
+  });
+
+  it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "xapp-raw-slack-token" },
+  ])("rejects a $name Slack app credential before network access", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      encoding: "utf8",
+      env: { ...process.env, SLACK_APP_TOKEN: value },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
+    );
+    expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+    expect(result.stderr).not.toContain("xapp-raw-slack-token");
   });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
