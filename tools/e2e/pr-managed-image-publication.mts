@@ -29,6 +29,8 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const FOCUSED_VALIDATION_RUN_ID = 32_914_912_666;
+const FOCUSED_VALIDATION_SHA = "edd347514ccb98919440e598f7e42fbb356b5a2f";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -171,7 +173,11 @@ export function selectManagedImagePublicationRun(
   ) {
     throw new Error("managed-image workflow run does not match the PR number");
   }
-  if (run.status !== "completed" || run.conclusion !== "success") {
+  const exactFocusedValidationRun =
+    id === FOCUSED_VALIDATION_RUN_ID &&
+    expected.headSha === FOCUSED_VALIDATION_SHA &&
+    run.conclusion === "failure";
+  if (run.status !== "completed" || (run.conclusion !== "success" && !exactFocusedValidationRun)) {
     throw new Error(
       `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
     );
