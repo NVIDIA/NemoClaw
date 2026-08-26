@@ -62,40 +62,43 @@ function runPermissivePolicy(options: {
     options.livePolicy ?? YAML.stringify({ version: 1, network_policies: {} }),
   );
   const sandboxEntry = managedSandboxEntry(options.sandboxName, options.agent ?? "openclaw");
-  if (options.enabledChannels !== undefined || options.disabledChannels !== undefined) {
-    Object.assign(sandboxEntry, {
-      messaging: {
-        schemaVersion: 1,
-        plan: {
-          schemaVersion: 1,
-          sandboxName: options.sandboxName,
-          agent: options.agent ?? "openclaw",
-          workflow: "onboard",
-          channels: [
-            ...(options.enabledChannels ?? []).map((channelId) => ({
-              channelId,
-              configured: true,
-              active: true,
-              disabled: false,
-            })),
-            ...(options.disabledChannels ?? []).map((channelId) => ({
-              channelId,
-              configured: true,
-              active: false,
-              disabled: true,
-            })),
-          ],
-          disabledChannels: options.disabledChannels ?? [],
-          credentialBindings: [],
-          networkPolicy: { presets: [], entries: [] },
-          agentRender: [],
-          buildSteps: [],
-          stateUpdates: [],
-          healthChecks: [],
-        },
-      },
-    });
-  }
+  Object.assign(
+    sandboxEntry,
+    options.enabledChannels !== undefined || options.disabledChannels !== undefined
+      ? {
+          messaging: {
+            schemaVersion: 1,
+            plan: {
+              schemaVersion: 1,
+              sandboxName: options.sandboxName,
+              agent: options.agent ?? "openclaw",
+              workflow: "onboard",
+              channels: [
+                ...(options.enabledChannels ?? []).map((channelId) => ({
+                  channelId,
+                  configured: true,
+                  active: true,
+                  disabled: false,
+                })),
+                ...(options.disabledChannels ?? []).map((channelId) => ({
+                  channelId,
+                  configured: true,
+                  active: false,
+                  disabled: true,
+                })),
+              ],
+              disabledChannels: options.disabledChannels ?? [],
+              credentialBindings: [],
+              networkPolicy: { presets: [], entries: [] },
+              agentRender: [],
+              buildSteps: [],
+              stateUpdates: [],
+              healthChecks: [],
+            },
+          },
+        }
+      : {},
+  );
   const registration = `registry.registerSandbox(${JSON.stringify(sandboxEntry)});`;
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});

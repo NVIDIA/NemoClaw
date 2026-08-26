@@ -14,6 +14,7 @@ import {
   managedMcpPolicy,
   managedMcpSandbox,
   type ShieldsFlowHarnessOptions,
+  writeExpiredShieldsFixture as writeExpiredShieldsFixtureState,
   writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -39,48 +40,13 @@ function writeExpiredShieldsFixture(
   reason: string,
   ownerState: "dead" | "live",
 ) {
-  const liveOwner = ownerState === "live";
-  const sandboxName = "openclaw";
-  const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-  const snapshotPath = path.join(stateDir, `snapshot-${processToken.slice(0, 8)}.yaml`);
-  const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-  const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
-  fs.writeFileSync(
-    path.join(stateDir, `shields-${sandboxName}.json`),
-    JSON.stringify({
-      shieldsDown: true,
-      shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-      shieldsDownTimeout: 60,
-      shieldsDownReason: reason,
-      shieldsDownPolicy: "permissive",
-      shieldsPolicySnapshotPath: snapshotPath,
-    }),
+  return writeExpiredShieldsFixtureState(
+    tmpDir,
+    currentProcessStartIdentity,
+    processToken,
+    reason,
+    ownerState,
   );
-  fs.writeFileSync(
-    timerMarkerPath,
-    JSON.stringify({
-      pid: liveOwner ? 2_147_483_647 : 4242,
-      sandboxName,
-      snapshotPath,
-      restoreAt: new Date(Date.now() - 60_000).toISOString(),
-      processToken,
-    }),
-  );
-  fs.writeFileSync(
-    transitionLockPath,
-    JSON.stringify({
-      version: 1,
-      sandboxName,
-      pid: liveOwner ? process.pid : 4242,
-      processStartIdentity: liveOwner ? currentProcessStartIdentity : "dead-timer",
-      command: liveOwner ? "shields down" : "shields auto-restore",
-      acquiredAtMs: Date.now() - 60_000,
-      takeoverToken: processToken,
-    }),
-  );
-  return { stateDir, timerMarkerPath, transitionLockPath };
 }
 
 describe("shields command flow", () => {
