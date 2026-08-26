@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -31,7 +32,9 @@ export const HERMES_PORTABLE_TEST_POLICY = "version: 1\nnetwork_policies: {}\n";
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = "b".repeat(64);
 const SANDBOX_ID = "sandbox-id-1";
-export const HERMES_PORTABLE_TEST_LIVE_IDENTITY = "live-identity-1";
+export const HERMES_PORTABLE_TEST_LIVE_IDENTITY = createHash("sha256")
+  .update(SANDBOX_ID)
+  .digest("hex");
 const ROUTE_SESSION_ID = "session-alpha";
 
 export function makeHermesPortableCheckoutPrivate(root: string): void {

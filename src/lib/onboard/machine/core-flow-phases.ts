@@ -232,6 +232,7 @@ export function createSandboxOnboardFlowPhase<
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
+      deferSandboxEffectsUntilPolicyVerification: true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
