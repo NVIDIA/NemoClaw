@@ -9,6 +9,7 @@ import * as openshellRuntimeModule from "./runtime";
 import {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
+  inspectActiveGlobalPolicy,
   inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
@@ -121,6 +122,38 @@ describe("OpenShell policy authority inspection", () => {
       "--output",
       "json",
       "alpha",
+    ]);
+  });
+
+  it("reads an active global policy through the bounded selected-gateway boundary (#9833)", () => {
+    const policy = { version: 1, network_policies: { required: { endpoints: ["api.test"] } } };
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult("global revision 7"))
+      .mockReturnValueOnce(
+        captureResult(
+          JSON.stringify({
+            scope: "global",
+            status: "loaded",
+            policy_source: "global",
+            hash: "global-policy",
+            active_version: 7,
+            policy,
+          }),
+        ),
+      );
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toEqual({
+      state: "active",
+      inspection: {
+        authority: "externally-managed",
+        effectivePolicy: policy,
+        policyIdentity: { hash: "global-policy", activeVersion: 7 },
+      },
+    });
+    expect(captureOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["policy", "list", "-g", "nemoclaw-18080", "--global", "--limit", "1"],
+      ["policy", "get", "-g", "nemoclaw-18080", "--global", "--full", "--output", "json"],
     ]);
   });
 
