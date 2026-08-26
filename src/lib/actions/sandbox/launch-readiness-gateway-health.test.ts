@@ -41,7 +41,7 @@ describe("launch-readiness gateway health scope", () => {
     ]);
   });
 
-  it("pins Hermes readiness checks to its recorded OpenShell gateway", async () => {
+  it("pins Hermes readiness checks to its recorded OpenShell gateway (#10302)", async () => {
     const gatewayHealth = vi.fn(async () => true);
     const forwardsHealthy = vi.fn(() => true);
     const inferenceProbe = vi.fn(() => ({

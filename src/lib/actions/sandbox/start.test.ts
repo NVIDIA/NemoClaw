@@ -767,7 +767,7 @@ describe("startSandbox", () => {
     );
   });
 
-  it("pins a Hermes start probe to its recorded OpenShell gateway", async () => {
+  it("pins a Hermes start probe to its recorded OpenShell gateway (#10302)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
@@ -794,6 +794,7 @@ describe("startSandbox", () => {
       {},
       30_000,
     );
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );

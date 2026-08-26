@@ -104,7 +104,7 @@ describe("sandbox inference invocation probe", () => {
     );
   });
 
-  it("pins a Hermes invocation to its recorded OpenShell gateway", () => {
+  it("pins a Hermes invocation to its recorded OpenShell gateway (#10302)", () => {
     const execute = vi.fn(() => ({
       status: 0,
       stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',

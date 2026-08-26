@@ -651,7 +651,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 
-  it("pins Hermes status health to its recorded OpenShell gateway", async () => {
+  it("pins Hermes status health to its recorded OpenShell gateway (#10302)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -685,6 +685,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
       gatewayName: "nemoclaw-19080",
     });
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
