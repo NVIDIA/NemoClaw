@@ -8,6 +8,7 @@
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+export { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   runBoundedRetry,
   type BoundedRetryResult,
@@ -17,11 +18,6 @@ import {
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;
-
-interface AgentJsonDoc {
-  payloads?: Array<{ text?: unknown }>;
-  result?: { payloads?: Array<{ text?: unknown }> };
-}
 
 interface ChatCompletionLike {
   choices?: Array<{
@@ -269,46 +265,6 @@ export function runOpenClawAgentAssertionRetry(
 
 export function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function parseAgentJsonDocs(raw: string): AgentJsonDoc[] {
-  try {
-    const parsed = JSON.parse(raw) as AgentJsonDoc | AgentJsonDoc[];
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    // Invalid state: `openclaw agent --json` has emitted both single JSON
-    // documents and log-prefixed streams across versions. Source boundary:
-    // OpenClaw CLI stdout framing inside the sandbox, outside this NemoClaw
-    // migration. Source-fix constraint: keep this test local and legacy-script
-    // compatible instead of rewriting shared fixtures or patching OpenClaw from
-    // a migration PR. Removal condition: supported OpenClaw versions guarantee
-    // a strict single JSON document with payload text on stdout.
-  }
-
-  const docs: AgentJsonDoc[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] !== "{") continue;
-    for (let end = index + 1; end <= raw.length; end += 1) {
-      try {
-        const parsed = JSON.parse(raw.slice(index, end)) as AgentJsonDoc | AgentJsonDoc[];
-        docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-        index = end - 1;
-        break;
-      } catch {
-        // Keep extending the candidate slice until it becomes valid JSON.
-      }
-    }
-  }
-  return docs;
-}
-
-export function parseOpenClawAgentText(raw: string): string {
-  return parseAgentJsonDocs(raw)
-    .flatMap((doc) => doc.payloads ?? doc.result?.payloads ?? [])
-    .map((payload) => payload.text)
-    .filter((value): value is string => typeof value === "string")
-    .join("\n")
-    .trim();
 }
 
 /**

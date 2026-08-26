@@ -294,6 +294,14 @@ describe("common-egress agent parsing and classification helpers", () => {
     ).toContain("REFERENCE_AGENT_OK");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify([
+          { payloads: [{ text: "FIRST_AGENT_REPLY" }] },
+          { result: { payloads: [{ text: "SECOND_AGENT_REPLY" }] } },
+        ]),
+      ),
+    ).toBe("FIRST_AGENT_REPLY\nSECOND_AGENT_REPLY");
+    expect(
+      parseOpenClawAgentText(
         `openclaw log line\n${JSON.stringify({
           result: { payloads: [{ text: "HERMES_REFERENCE_AGENT_OK" }] },
         })}\n`,
