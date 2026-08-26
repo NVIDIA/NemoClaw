@@ -39,10 +39,11 @@ export function createTarball(
   // write: O_EXCL refuses a path another local user pre-planted (file or
   // symlink). tar streams to stdout redirected into this descriptor, and the
   // mode is set with fchmod on the same descriptor, so no step after the
-  // claim reopens the path by name. An attacker who can unlink entries in
-  // the output directory can still make the final rename fail or misplace
-  // the bundle (denial of service), but can never make us write through a
-  // planted symlink (#10195).
+  // claim reopens the path by name. The final rename is checked against the
+  // held descriptor's identity before it runs, so an attacker who can unlink
+  // entries in the output directory can still make publication fail
+  // (denial of service), but can never make us publish through a planted
+  // symlink or write through one (#10195).
   let fd: number;
   try {
     fd = openSync(
