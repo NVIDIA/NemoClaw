@@ -30,6 +30,7 @@ type MutableJob = Record<string, unknown> & {
   outputs?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
   steps?: MutableStep[];
+  with?: Record<string, unknown>;
 };
 
 type MutableWorkflow = {
@@ -277,6 +278,16 @@ describe("base-image publication workflow boundary (#7372)", () => {
     [
       "live managed-image revision",
       (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "catalogue managed-image revision",
+      (value) =>
+        (value.jobs["catalogue-nvidia-inference"].with!.managed_image_revision =
+          "${{ inputs.checkout_sha }}"),
+    ],
+    [
+      "catalogue publication dependency",
+      (value) => (value.jobs["catalogue-nvidia-inference"].needs = ["generate-matrix"]),
     ],
     [
       "cloud-onboard publication dependency",
