@@ -18,6 +18,7 @@ import {
   applyManagedSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
   hasManagedMcpRebuildHandoff,
+  proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
@@ -59,6 +60,29 @@ describe("managed MCP rebuild handoff", () => {
 });
 
 describe("authoritative rebuild policy carry-forward", () => {
+  it("proves the journaled source before legacy policy metadata backfill (#10115)", () => {
+    const events: string[] = [];
+    const runtime = { acceptedTarget: false };
+
+    expect(
+      proveRecreateSourceBeforePolicyCarryForward({
+        createRecreateRuntime: () => {
+          events.push("prove-source");
+          return runtime;
+        },
+        carryForward: () => {
+          events.push("backfill-policy-authority");
+          events.push("carry-forward-policy-presets");
+        },
+      }),
+    ).toBe(runtime);
+    expect(events).toEqual([
+      "prove-source",
+      "backfill-policy-authority",
+      "carry-forward-policy-presets",
+    ]);
+  });
+
   it("preserves an intentionally empty managed preset selection (#9792)", () => {
     const note = vi.fn();
     const applyRecreatePolicyCarryForward = vi.fn();

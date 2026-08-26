@@ -669,20 +669,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agentCreateInput.hermesPortableLifecycle,
       resolvedPolicyAuthority,
     );
-    backfillExistingSandboxPolicyAuthority({
-      sandboxName,
-      existingEntry,
-      policyAuthority: resolvedPolicyAuthority,
-      updateSandbox: registry.updateSandbox,
-    });
     onboardSession.updateSession((session) => {
       session.policyAuthority = resolvedPolicyAuthority;
       if (resolvedPolicyAuthority === "externally-managed") session.policyPresets = null;
     });
-    // Prove the preserved source row before replacing its stale preset list.
-    // Policy carry-forward is an owned post-delete mutation, but applying it
-    // before recreate recovery makes the journal correctly reject that row as
-    // changed before the replacement can be created.
+    // Prove the preserved source row before recording policy authority or replacing
+    // its stale preset list. Both are owned post-delete mutations, but applying either
+    // before recreate recovery makes the journal correctly reject the changed row.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
@@ -696,7 +689,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           getSandboxRecreateObservation,
           note,
         ),
-      carryForward: () =>
+      carryForward: () => {
+        backfillExistingSandboxPolicyAuthority({
+          sandboxName,
+          existingEntry,
+          policyAuthority: resolvedPolicyAuthority,
+          updateSandbox: registry.updateSandbox,
+        });
         applyAbsentSandboxRebuildPolicyCarryForward(
           {
             sandboxName,
@@ -709,7 +708,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               revalidatePolicyAuthority(false, operation),
           },
           policyPresetCarry.applyRecreatePolicyCarryForward,
-        ),
+        );
+      },
     });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
