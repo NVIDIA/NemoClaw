@@ -473,6 +473,30 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- The focused coverage blob name and its upload artifact must stay aligned so the trusted merge retains observed command-builder execution
+  it("keeps policy command coverage in a separate mergeable report", () => {
+    const run = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Run policy command coverage supplement",
+    );
+    const upload = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Upload policy command coverage supplement",
+    );
+
+    expect(run.if).toBe("${{ inputs.shard == '1' }}");
+    expect(run.run).toContain("src/lib/policy/commands.test.ts");
+    expect(run.run).toContain('--shard="1/1"');
+    expect(run.run).toContain("--reporter=blob");
+    expect(run.run).toContain("blob-policy-command-ratchet.json");
+    expect(upload.if).toBe("${{ inputs.shard == '1' && success() }}");
+    expect(upload.with).toMatchObject({
+      name: "cli-blob-report-policy-command-ratchet",
+      path: ".vitest-reports/blob-policy-command-ratchet.json",
+      "if-no-files-found": "error",
+    });
+  });
+
   const coverageEntrypointCases = [
     {
       action: sharedActions.cliCoverageShard,

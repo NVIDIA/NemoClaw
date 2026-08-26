@@ -162,6 +162,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps policy command coverage in a separate mergeable report",
+      "category": "compatibility"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"

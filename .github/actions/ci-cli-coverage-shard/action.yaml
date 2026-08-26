@@ -176,11 +176,37 @@ runs:
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
 
+    # The V8 provider can replace earlier function counts when the same source
+    # is loaded in several isolated workers. Keep the exact 100%-ratcheted
+    # policy command test in one separate report so the final merge retains its
+    # observed execution instead of an uncovered later copy.
+    - name: Run policy command coverage supplement
+      if: ${{ inputs.shard == '1' }}
+      shell: bash
+      run: |
+        npx vitest run --project cli src/lib/policy/commands.test.ts \
+          --shard="1/1" \
+          --reporter=blob \
+          --outputFile.blob=".vitest-reports/blob-policy-command-ratchet.json" \
+          --coverage \
+          --coverage.reporter=json-summary \
+          --coverage.reportsDirectory="coverage/cli/policy-command-ratchet" \
+          --coverage.include="src/lib/policy/commands.ts"
+
     - name: Upload CLI shard blob report
       if: ${{ always() && steps.validate-shard-inputs.outcome == 'success' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: cli-blob-report-${{ inputs.shard }}
         path: .vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json
+        if-no-files-found: error
+        retention-days: 1
+
+    - name: Upload policy command coverage supplement
+      if: ${{ inputs.shard == '1' && success() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: cli-blob-report-policy-command-ratchet
+        path: .vitest-reports/blob-policy-command-ratchet.json
         if-no-files-found: error
         retention-days: 1
