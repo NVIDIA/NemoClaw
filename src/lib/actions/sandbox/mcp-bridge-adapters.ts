@@ -35,6 +35,7 @@ import {
 import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 
 const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
+const MAX_CREDENTIAL_REVISION_REGISTRATIONS = 2;
 
 export {
   buildDeepAgentsMcpRegisterCommand,
@@ -187,39 +188,53 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   );
   let credentialRevision = initialCredentialRevision;
   let replaceExisting = options.replaceExisting === true;
-  let registrationRequired = true;
-  let stableObservations = 0;
-  const converged = waitForMcpBridgeCondition(
-    () => {
-      if (registrationRequired) {
-        registerAgentAdapter(sandboxName, adapter, entry, envValues, {
-          replaceExisting,
-          teardownRollback: options.teardownRollback === true,
-          credentialRevision,
-        });
-        registrationRequired = false;
-      }
-      const observation = observeMcpCredentialRevision(sandboxName, entry);
-      if (observation === "absent" || observation === "canonical") {
-        throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
-      }
-      if (observation !== credentialRevision) {
-        credentialRevision = observation;
-        replaceExisting = true;
-        registrationRequired = true;
-        stableObservations = 0;
-        return false;
-      }
-      stableObservations += 1;
-      return stableObservations >= STABLE_CREDENTIAL_REVISION_OBSERVATIONS;
-    },
-    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
-    1_000,
-  );
-  if (!converged) {
-    throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+  for (
+    let registration = 1;
+    registration <= MAX_CREDENTIAL_REVISION_REGISTRATIONS;
+    registration += 1
+  ) {
+    registerAgentAdapter(sandboxName, adapter, entry, envValues, {
+      replaceExisting,
+      teardownRollback: options.teardownRollback === true,
+      credentialRevision,
+    });
+    let candidateRevision: McpAttachedCredentialRevision | undefined;
+    let stableObservations = 0;
+    let observedRevision: McpAttachedCredentialRevision | undefined;
+    const stable = waitForMcpBridgeCondition(
+      () => {
+        const observation = observeMcpCredentialRevision(sandboxName, entry);
+        if (observation === "absent" || observation === "canonical") {
+          throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
+        }
+        if (candidateRevision !== observation) {
+          candidateRevision = observation;
+          stableObservations = 1;
+          return false;
+        }
+        stableObservations += 1;
+        if (stableObservations < STABLE_CREDENTIAL_REVISION_OBSERVATIONS) {
+          return false;
+        }
+        observedRevision = observation;
+        return true;
+      },
+      Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
+      1_000,
+    );
+    if (!stable || observedRevision === undefined) {
+      throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+    }
+    if (observedRevision === credentialRevision) {
+      return credentialRevision;
+    }
+    if (registration === MAX_CREDENTIAL_REVISION_REGISTRATIONS) {
+      throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+    }
+    credentialRevision = observedRevision;
+    replaceExisting = true;
   }
-  return credentialRevision;
+  throw mcpAdapterCredentialRevisionUnstableError(entry.server);
 }
 
 export function unregisterAgentAdapter(

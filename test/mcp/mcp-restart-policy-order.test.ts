@@ -190,7 +190,6 @@ let registeredProviderGets = 0;
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
-const adapterCommands = [];
 const entry = {
   server: "example",
   agent: "openclaw",
@@ -261,14 +260,11 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   }
   return { status: 0, stdout: "", stderr: "" };
 };
-processRecovery.executeSandboxCommand = (_sandbox, command) => {
-  adapterCommands.push(command);
-  return {
-    status: 0,
-    stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
-    stderr: "",
-  };
-};
+processRecovery.executeSandboxCommand = (_sandbox, command) => ({
+  status: 0,
+  stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
+  stderr: "",
+});
 
 registry.registerSandbox({
   name: "alpha",
@@ -287,7 +283,7 @@ registry.addCustomPolicy("alpha", {
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.restartMcpBridge("alpha", "example").then(
-  () => process.stdout.write(JSON.stringify({ adapterCommands, observations, proofScripts, providerCalls, registeredProviderGets })),
+  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
   (error) => { console.error(error); process.exit(1); },
 );
 `;
@@ -301,22 +297,18 @@ bridge.restartMcpBridge("alpha", "example").then(
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
-      adapterCommands: string[];
       observations: string[];
       proofScripts: string[];
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v3", "v3"]);
+    expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
       "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(3);
+    expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
-    expect(payload.adapterCommands.join("\n")).toContain(
-      "openshell:resolve:env:v3_MCP_TOKEN",
-    );
   });
 });

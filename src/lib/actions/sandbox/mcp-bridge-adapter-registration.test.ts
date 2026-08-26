@@ -380,4 +380,34 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).toThrow("credential revision did not stabilize");
   });
+
+  it("fails closed when both bounded registrations advance the revision", () => {
+    mocks.observeMcpCredentialRevision
+      .mockReturnValueOnce("v11")
+      .mockReturnValueOnce("v11")
+      .mockReturnValueOnce("v11")
+      .mockReturnValue("v12");
+    mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+      command === "command -v mcporter"
+        ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
+        : command.includes("config' 'add")
+          ? commandSuccess
+          : registered,
+    );
+
+    expect(() =>
+      registerAgentAdapterAtCurrentCredentialRevision(
+        "alpha",
+        "mcporter",
+        { ...baseEntry, agent: "openclaw", adapter: "mcporter" },
+        {},
+        "v10",
+      ),
+    ).toThrow("credential revision did not stabilize");
+    expect(
+      mocks.executeSandboxCommand.mock.calls.filter(([, command]) =>
+        String(command).includes("config' 'add"),
+      ),
+    ).toHaveLength(2);
+  });
 });
