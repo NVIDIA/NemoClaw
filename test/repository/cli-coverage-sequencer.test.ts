@@ -95,14 +95,10 @@ describe("stable CLI coverage sharding", () => {
     ]);
     const withRemoval = assignmentOwners(entries.slice(1));
 
-    expect(
-      entries.every((entry) => Object.is(withAddition.get(entry.key), baseline.get(entry.key))),
-    ).toBe(true);
-    expect(
-      entries
-        .slice(1)
-        .every((entry) => Object.is(withRemoval.get(entry.key), baseline.get(entry.key))),
-    ).toBe(true);
+    expect(entries.every((entry) =>
+        Object.is(withAddition.get(entry.key), baseline.get(entry.key)))).toBe(true);
+    expect(entries.slice(1).every((entry) =>
+        Object.is(withRemoval.get(entry.key), baseline.get(entry.key)))).toBe(true);
   });
 
   it("keeps recorded project and path keys on their stable shards", () => {
@@ -120,10 +116,10 @@ describe("stable CLI coverage sharding", () => {
 
     expect(Object.fromEntries(owners)).toEqual({
       "cli:src/lib/example.test.ts": 6,
-      "e2e-support:test/e2e/support/example.test.ts": 3,
-      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 1,
-      "integration:test/credentials/local-credential-helper-fields.test.ts": 7,
-      "integration:test/regular-0.test.ts": 2,
+      "e2e-support:test/e2e/support/example.test.ts": 1,
+      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 2,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 5,
+      "integration:test/regular-0.test.ts": 5,
     });
   });
 
@@ -141,7 +137,9 @@ describe("stable CLI coverage sharding", () => {
     );
     expect(integrationEntries.length).toBeGreaterThan(0);
 
-    const weights = assignStableShards(integrationEntries, 12).map((shard) => shard.totalWeightMs);
+    const weights = assignStableShards(integrationEntries, 12).map(
+      (shard) => shard.totalWeightMs,
+    );
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
     expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.1);

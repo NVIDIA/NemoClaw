@@ -678,29 +678,33 @@ startGateway(null).catch((error) => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const childProcess = require("node:child_process");
+	const runner = require(${runnerPath});
+	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+	const registry = require(${registryPath});
+	const fixtureMocks = require(${onboardScriptMocksPath});
+	const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+	  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
+	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
+	  name: "my-assistant",
+	  toolDisclosure: "progressive",
+	});
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -754,7 +758,10 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
-    assert.match(result.stdout, /\[reuse\] Skipping sandbox \(my-assistant\)/);
+    assert.match(
+      result.stdout,
+      /Existing provider\/model selection is unreadable; reusing sandbox\./,
+    );
   });
 
   it("accepts gateway inference when system inference is separately not configured", async () => {

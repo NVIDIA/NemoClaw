@@ -36,7 +36,7 @@ import {
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -79,8 +79,9 @@ type ManagedProfileInput = Omit<
 >;
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
-type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
-type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+type BootstrapProvider = RuntimeProviderBundle & {
+  readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+};
 
 export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 
@@ -97,7 +98,7 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
     readonly runtimeProvider: RuntimeProviderBundle | null;
   },
   deps: ManagedHermesStateVolumeDeps = {},
-): ManagedHermesStateVolumeOnboardLifecycle | null {
+): ManagedHermesStateVolumeOnboardLifecycle {
   const scope = prepareManagedHermesStateVolume(
     {
       agentName: input.agentName,
@@ -107,13 +108,12 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
     },
     deps,
   );
-  if (!scope) return null;
   return {
     materializeSandboxCreatePlan(input, materialize) {
-      return materialize({ ...input, managedStateMount: scope.mount });
+      return materialize({ ...input, managedStateMount: scope?.mount });
     },
     commit() {
-      scope.commit();
+      scope?.commit();
     },
   };
 }
@@ -209,7 +209,11 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
 }
 
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
-  if (!provider || !provider.bootstrap.supported) {
+  if (
+    !provider ||
+    !provider.bootstrap.supported ||
+    provider.bootstrap.bootstrapKind !== "managed-image"
+  ) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
   }
   return provider as BootstrapProvider;
@@ -353,8 +357,9 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly plan: {
     readonly intent: SandboxCreateIntent;
     readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
+    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: () => void;
+    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -386,6 +391,7 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
+  readonly activateDeferredProviderEffects: SandboxCreatePlan["activateDeferredProviderEffects"];
   readonly initialGpuRoute: SelectedDockerGpuRoute;
   readonly sandboxReadyTimeoutSecs: number;
   readonly buildId: string;
@@ -427,6 +433,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     intent: input.plan.intent,
     fromRef,
     policyAuthority: input.plan.policyAuthority,
+    deferSandboxEffectsUntilPolicyVerification:
+      input.plan.deferSandboxEffectsUntilPolicyVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -490,8 +498,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
       ...patchInput,
-      // An explicit path to the checked-in agent Dockerfile is staged as a
-      // generated build context. Preserve that origin at patch time.
+      // An explicit path to the checked-in agent Dockerfile is staged through
+      // the trusted agent builder. Preserve that classification at patch time.
       fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
@@ -516,6 +524,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
+    activateDeferredProviderEffects: createPlan.activateDeferredProviderEffects,
     initialGpuRoute,
     sandboxReadyTimeoutSecs,
     buildId,

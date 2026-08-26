@@ -335,8 +335,8 @@ describe("core onboard flow phases", () => {
       return durableSession;
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const authority = args.at(-2) as { sessionId?: unknown } | null;
-      const createIntent = args.at(-1) as {
+      const authority = args.at(-3) as { sessionId?: unknown } | null;
+      const createIntent = args.at(-2) as {
         endpointSource?: InferenceEndpointSource | null;
       };
       const reservation = getSandbox(sandboxName);
@@ -511,8 +511,9 @@ describe("core onboard flow phases", () => {
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       }),
     );
-    expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       compatibleEndpointReasoning: "true",
+      deferSandboxEffectsUntilPolicyVerification: true,
       resolved: {
         inferenceProvider: "compatible-endpoint",
         extraProviders: ["current-provider"],
@@ -538,10 +539,78 @@ describe("core onboard flow phases", () => {
     const providerResult = await providerPhase.run(context({ agent: { name: "hermes" } }));
     await sandboxPhase.run(providerResult.context);
 
-    expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       rebuildPreservedEnv,
       rebuildPolicyPresets,
     });
+  });
+
+  it("defers normal-entry credential provider effects until policy verification and checkpoint publication", async () => {
+    const events: string[] = [];
+    const stageSandboxCredentialProviders = vi.fn(async () => {
+      events.push("credential-provider-effect");
+      return [];
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const createIntent = args.at(-2) as {
+        deferSandboxEffectsUntilPolicyVerification?: boolean;
+        resolved?: { policy?: { basePolicyPath?: string } };
+      };
+      const runVerifiedEffects = args.at(-1) as
+        | ((context: {
+            revalidatePolicyRequirements: (operation: string) => void;
+          }) => Promise<void>)
+        | undefined;
+      expect(createIntent).toMatchObject({
+        deferSandboxEffectsUntilPolicyVerification: true,
+        resolved: { policy: { basePolicyPath: "/repo/policy.yaml" } },
+      });
+      expect(runVerifiedEffects).toEqual(expect.any(Function));
+      expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+      events.push("policy-verified", "checkpoint-published");
+      await runVerifiedEffects?.({
+        revalidatePolicyRequirements: () => events.push("policy-checkpoint-revalidated"),
+      });
+      return "created-sandbox";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      sandboxDeps: { createSandbox, stageSandboxCredentialProviders },
+    });
+
+    const providerResult = await providerPhase.run(context());
+    await sandboxPhase.run(providerResult.context);
+
+    expect(events).toEqual([
+      "policy-verified",
+      "checkpoint-published",
+      "policy-checkpoint-revalidated",
+      "credential-provider-effect",
+    ]);
+  });
+
+  it.each([
+    ["post-create policy verification", "policy verification refused"],
+    ["durable checkpoint publication", "checkpoint publication refused"],
+  ])("withholds normal-entry provider effects when %s fails", async (_boundary, failure) => {
+    const stageSandboxCredentialProviders = vi.fn(async () => []);
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const createIntent = args.at(-2) as {
+        deferSandboxEffectsUntilPolicyVerification?: boolean;
+      };
+      const runVerifiedEffects = args.at(-1);
+      expect(createIntent.deferSandboxEffectsUntilPolicyVerification).toBe(true);
+      expect(runVerifiedEffects).toEqual(expect.any(Function));
+      expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+      throw new Error(failure);
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      sandboxDeps: { createSandbox, stageSandboxCredentialProviders },
+    });
+
+    const providerResult = await providerPhase.run(context());
+    await expect(sandboxPhase.run(providerResult.context)).rejects.toThrow(failure);
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {
