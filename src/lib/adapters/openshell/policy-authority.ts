@@ -7,14 +7,11 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import { buildPolicyGetFullJsonArgs } from "../../policy/commands";
 import {
-  assertExternalPolicyRequirementContainment,
-  assertMatchingPolicyAuthority,
   type OpenShellPolicyAuthority,
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
-} from "../../policy/merge";
+} from "../../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 import * as openshellRuntime from "./runtime";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
@@ -133,7 +130,15 @@ export function inspectSandboxPolicyAuthority({
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
   const raw = capturePolicyQuery(
-    buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
+    [
+      "policy",
+      "get",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--full",
+      "--output",
+      "json",
+      validatedSandboxName,
+    ],
     "sandbox",
     "machine-readable policy",
   );
@@ -143,56 +148,6 @@ export function inspectSandboxPolicyAuthority({
     failInspection(
       "sandbox",
       error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
-    );
-  }
-}
-
-function operationLabel(operation: string): string {
-  return typeof operation === "string" && operation.trim().length > 0
-    ? operation.trim()
-    : "continue the policy-dependent operation";
-}
-
-/** Refuse a lifecycle operation when its durable and observed authority disagree. */
-export function assertRecordedPolicyAuthority(
-  recorded: unknown,
-  observed: unknown,
-  operation: string,
-): void {
-  const label = operationLabel(operation);
-  try {
-    assertMatchingPolicyAuthority(recorded, observed);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "policy authority is invalid";
-    const observedAuthority =
-      observed === "nemoclaw-managed" || observed === "externally-managed" ? observed : undefined;
-    throw new PolicyAuthorityRefusalError(`Refusing to ${label}: ${detail}.`, observedAuthority);
-  }
-}
-
-/**
- * Verify that an externally supplied policy contains each required entry and
- * section without claiming ownership. Unrelated external entries are allowed.
- */
-export function assertExternalPolicyRequirements({
-  inspection,
-  requiredPolicy,
-  operation,
-  sandboxName,
-}: {
-  readonly inspection: SandboxPolicyAuthorityInspection;
-  readonly requiredPolicy: JsonObject;
-  readonly operation: string;
-  readonly sandboxName?: string;
-}): void {
-  const label = operationLabel(operation);
-  const target = sandboxName ? ` for sandbox ${JSON.stringify(sandboxName)}` : "";
-  try {
-    assertExternalPolicyRequirementContainment(inspection, requiredPolicy);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${label}${target}: ${detail}. Ask the external policy authority to supply the exact required entries.`,
     );
   }
 }

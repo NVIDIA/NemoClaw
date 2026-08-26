@@ -11,17 +11,6 @@ import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-// Namespace access keeps resolveOpenshell spyable in focused policy tests.
-import {
-  assertExternalPolicyRequirements,
-  assertRecordedPolicyAuthority,
-  inspectSandboxPolicyAuthority,
-  isExternalPolicyAuthorityRefusalError as isExternalAuthorityRefusalError,
-  isPolicyAuthorityRefusalError as isAuthorityRefusalError,
-  PolicyAuthorityRefusalError,
-  type SandboxPolicyAuthority,
-  type SandboxPolicyAuthorityInspection,
-} from "../adapters/openshell/policy-authority";
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
@@ -76,6 +65,16 @@ import {
   type PolicyValue,
   parseNetworkPolicies,
 } from "./preset-parsing";
+import {
+  assertExternalPolicyRequirements,
+  assertRecordedPolicyAuthority,
+  inspectSandboxPolicyAuthority,
+  isExternalPolicyAuthorityRefusalError as isExternalAuthorityRefusalError,
+  isPolicyAuthorityRefusalError as isAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+  type SandboxPolicyAuthority,
+  type SandboxPolicyAuthorityInspection,
+} from "./policy-authority";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";

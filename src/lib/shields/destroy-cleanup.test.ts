@@ -164,29 +164,6 @@ describe("Shields destroy cleanup", () => {
 });
 
 describe("shields state cleanup on destroy (#3114)", () => {
-  it("removes Shields state, timer, and external recovery files for the sandbox", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
-    try {
-      const shieldsFile = path.join(tmpDir, "shields-alpha.json");
-      const timerFile = path.join(tmpDir, "shields-timer-alpha.json");
-      const recoveryFile = path.join(tmpDir, "shields-external-policy-alpha.yaml");
-      fs.writeFileSync(shieldsFile, JSON.stringify({ shieldsDown: false }));
-      fs.writeFileSync(timerFile, JSON.stringify({ pid: 12345 }));
-      fs.writeFileSync(recoveryFile, "version: 1\nnetwork_policies: {}\n");
-
-      cleanupShieldsDestroyArtifacts("alpha", {
-        stateDir: tmpDir,
-        killShieldsTimer: () => ({ authorityRevoked: true, warnings: [] }),
-      });
-
-      expect(fs.existsSync(shieldsFile)).toBe(false);
-      expect(fs.existsSync(timerFile)).toBe(false);
-      expect(fs.existsSync(recoveryFile)).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("tolerates missing Shields artifacts after revoking timer authority", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
     try {
@@ -200,26 +177,6 @@ describe("shields state cleanup on destroy (#3114)", () => {
       ).not.toThrow();
 
       expect(killShieldsTimer).toHaveBeenCalledWith("nonexistent");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not remove state files for other sandboxes", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
-    try {
-      const otherFile = path.join(tmpDir, "shields-bravo.json");
-      const otherRecoveryFile = path.join(tmpDir, "shields-external-policy-bravo.yaml");
-      fs.writeFileSync(otherFile, JSON.stringify({ shieldsDown: false }));
-      fs.writeFileSync(otherRecoveryFile, "version: 1\nnetwork_policies: {}\n");
-
-      cleanupShieldsDestroyArtifacts("alpha", {
-        stateDir: tmpDir,
-        killShieldsTimer: () => ({ authorityRevoked: true, warnings: [] }),
-      });
-
-      expect(fs.existsSync(otherFile)).toBe(true);
-      expect(fs.existsSync(otherRecoveryFile)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

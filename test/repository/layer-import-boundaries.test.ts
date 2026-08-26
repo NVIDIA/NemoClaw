@@ -73,6 +73,23 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it("keeps OpenShell adapters independent from policy modules (#9833)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/adapters/openshell", "policy"),
+      'import { buildPolicyGetCommand } from "../../policy/commands";\nexport { buildPolicyGetCommand };\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail:
+            "OpenShell adapters must not import policy module src/lib/policy/commands.ts",
+          rule: "openshell-adapters-no-policy",
+        }),
+      ]),
+    );
+  });
+
   it("blocks bare fs imports in messaging manifests (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/lib/messaging/manifest", "bare-fs"),

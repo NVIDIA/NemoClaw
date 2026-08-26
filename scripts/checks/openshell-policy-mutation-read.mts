@@ -124,7 +124,6 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "full",
         failureHandling: "unclassified",
       },
-      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;

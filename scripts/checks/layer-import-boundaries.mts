@@ -254,6 +254,19 @@ function checkActionFile(absPath: string, repoPath: string, violations: Violatio
 
 function checkAdapterFile(absPath: string, repoPath: string, violations: Violation[]): void {
   for (const ref of collectImportRefs(absPath)) {
+    if (repoPath.startsWith("src/lib/adapters/openshell/")) {
+      const policyTarget = importTargetsForbiddenLayer(absPath, ref, ["src/lib/policy/"]);
+      if (policyTarget) {
+        addViolation(
+          violations,
+          repoPath,
+          ref.line,
+          ref.column,
+          "openshell-adapters-no-policy",
+          `OpenShell adapters must not import policy module ${policyTarget}`,
+        );
+      }
+    }
     const target = importTargetsForbiddenLayer(absPath, ref, ["src/commands/"], true);
     if (target) {
       addViolation(
