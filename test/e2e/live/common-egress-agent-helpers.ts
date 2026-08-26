@@ -273,6 +273,18 @@ export function parseOpenClawAgentText(raw: string): string {
     .trim();
 }
 
+function hasValidCalendarDate(value: string): boolean {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/u.exec(value) ?? /^(\d{4})(\d{2})(\d{2})$/u.exec(value);
+  if (!match) return true;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && day >= 1 && day <= (daysInMonth[month - 1] ?? 0);
+}
+
 /**
  * Reduce OpenClaw session and trajectory JSONL to bounded proof that one
  * successful direct web_fetch result supports the expected quote. Fetched
@@ -450,6 +462,7 @@ export function reduceOpenClawToolEvidence(
     return false;
   };
   const timestampMatches = (text: string, sourceTimestamp: string, asOf: string): boolean => {
+    if (!hasValidCalendarDate(sourceTimestamp) || !hasValidCalendarDate(asOf)) return false;
     const asOfMs = Date.parse(asOf);
     if (!Number.isFinite(asOfMs)) return false;
     if (/^\d{4}-\d{2}-\d{2}$/u.test(sourceTimestamp)) {
@@ -742,6 +755,7 @@ export function buildOpenClawToolEvidenceReducerScript(
   return [
     '"use strict"',
     'const fs = require("node:fs")',
+    hasValidCalendarDate.toString(),
     `const reduce = ${reduceOpenClawToolEvidence.toString()}`,
     `const expectedStock = ${JSON.stringify(expectedStock)}`,
     "const [sessionPath, trajectoryPath] = process.argv.slice(1)",
@@ -957,10 +971,12 @@ export function parseNvdaPersonalStockReply(raw: string): NvdaPersonalStockReply
         /^(?:\d{8}|\d{10}|\d{13}|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?)$/u.test(
           parsed.source_timestamp,
         ) &&
+        hasValidCalendarDate(parsed.source_timestamp) &&
         typeof parsed.as_of === "string" &&
         /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/u.test(
           parsed.as_of,
         ) &&
+        hasValidCalendarDate(parsed.as_of) &&
         Number.isFinite(Date.parse(parsed.as_of))
       ) {
         return parsed as NvdaPersonalStockReply;

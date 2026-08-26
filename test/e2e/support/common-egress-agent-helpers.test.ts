@@ -389,36 +389,36 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
-    { name: "an ISO date", sourceTime: "2026-08-17", asOf: "2026-08-17" },
-    { name: "a compact date", sourceTime: "20260817", asOf: "2026-08-17" },
-    { name: "an exact ISO timestamp", sourceTime: STOCK_REPLY.as_of, asOf: STOCK_REPLY.as_of },
+    { name: "accepts an ISO date", source: "2026-08-17", iso: "2026-08-17" },
+    { name: "accepts a compact date", source: "20260817", iso: "2026-08-17" },
+    { name: "accepts an exact ISO timestamp", source: STOCK_REPLY.as_of, iso: STOCK_REPLY.as_of },
     {
-      name: "an equivalent normalized ISO timestamp",
-      sourceTime: STOCK_REPLY.as_of,
-      asOf: "2026-08-17T15:59:00.000Z",
+      name: "accepts an equivalent normalized ISO timestamp",
+      source: STOCK_REPLY.as_of,
+      iso: "2026-08-17T15:59:00.000Z",
     },
-    { name: "a Unix timestamp in seconds", sourceTime: "1786982340", asOf: STOCK_REPLY.as_of },
+    { name: "accepts a Unix timestamp in seconds", source: "1786982340", iso: STOCK_REPLY.as_of },
     {
-      name: "a Unix timestamp in milliseconds",
-      sourceTime: "1786982340000",
-      asOf: STOCK_REPLY.as_of,
+      name: "accepts a Unix timestamp in milliseconds",
+      source: "1786982340000",
+      iso: STOCK_REPLY.as_of,
     },
+    { name: "rejects an impossible date", source: "2026-02-30", iso: "2026-02-30", matches: false },
   ])(
-    "accepts $name as quote-time evidence from one paired stock result (#10330)",
-    ({ asOf, sourceTime }) => {
+    "$name as quote-time evidence from one paired stock result (#10330)",
+    ({ iso, matches = true, source }) => {
       const evidence = reduceOpenClawToolEvidence(
         stockSessionJsonLines({
           payload: stockPayload({
-            text: `{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"${sourceTime}"}`,
+            text: `{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"${source}"}`,
           }),
         }),
         stockTrajectory(),
-        { ...STOCK_REPLY, as_of: asOf, source_timestamp: sourceTime },
+        { ...STOCK_REPLY, as_of: iso, source_timestamp: source },
       );
-
       expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
-        matches: true,
-        qualifyingWebFetchResults: 1,
+        matches,
+        qualifyingWebFetchResults: matches ? 1 : 0,
       });
     },
   );
@@ -939,6 +939,7 @@ describe("common-egress agent parsing and classification helpers", () => {
 
   it.each([
     ["a malformed", "2026-08-17T15:59:00Z-invalid"],
+    ["an impossible", "2026-02-30"],
     ["a missing", undefined],
   ])("rejects a stock reply with %s source timestamp (#10330)", (_reason, source_timestamp) => {
     expect(
