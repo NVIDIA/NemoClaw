@@ -544,7 +544,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(
       "If either digest differs, do not execute the helper; delete both temporary files and stop.",
     );
-    expect(promptSource).toContain("exact environment-variable names and exact command argv");
+    expect(promptSource).toContain("every environment-variable name and the complete command argv");
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("--execution-profile isolated");
     expect(promptSource).toContain("--execution-profile account-home --cwd");

@@ -1024,7 +1024,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
         expect(result.status).toBe(0);
         expect(result.stdout).toContain(
-          `Reusing reviewed base OpenClaw ${PINNED_OPENCLAW_VERSION} with exact provenance`,
+          `Reusing reviewed base OpenClaw ${PINNED_OPENCLAW_VERSION} with matching reviewed provenance`,
         );
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
