@@ -693,10 +693,11 @@ lanes:
 The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
 `mcp-bridge-dev`, and `openshell-credential-generation-window` remain on
 `ubuntu-latest`; unrelated jobs retain their existing runner assignments.
-The credential-generation window runs as an independent fresh-runner job in
-parallel with the stable MCP agent matrix. Empty-selector dispatches and
-explicit `mcp-bridge` selections run both jobs, while the credential-window job
-keeps its own exact-release provenance, secret scan, and artifact.
+The credential-generation window runs as an independent fresh-runner job after
+the trusted planner and applicable base-image publication check, in parallel
+with the stable MCP agent matrix. Empty-selector dispatches and explicit
+`mcp-bridge` selections run both jobs, while the credential-window job keeps
+its own exact-release provenance, secret scan, and artifact.
 Before setting the variable, an organization owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and

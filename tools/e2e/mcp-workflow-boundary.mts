@@ -841,8 +841,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
+    JSON.stringify(["base-image-publication", "generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on its trusted image and matrix producers without MCP serialization`,
   );
   requireEqual(
     errors,
@@ -873,6 +873,8 @@ function validateCredentialWindowJob(
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu Docker host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
+    E2E_MANAGED_IMAGE_REVISION:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",

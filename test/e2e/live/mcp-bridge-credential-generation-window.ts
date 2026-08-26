@@ -213,6 +213,11 @@ const request = (step) => new Promise((resolve) => {
         errorCode: statusCode === null ? "MISSING_STATUS" : null,
       });
     });
+    response.on("close", () => {
+      if (!response.readableEnded) {
+        finish({ outcome: "denied", statusCode: null, errorCode: "PREMATURE_CLOSE" });
+      }
+    });
   });
   outbound.on("error", (error) => finish({
     outcome: "denied",
