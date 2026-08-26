@@ -4,6 +4,7 @@
 import {
   assertExternalPolicyRequirementContainment as assertCanonicalExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority as assertCanonicalMatchingPolicyAuthority,
+  parseGlobalPolicyAuthorityMetadata as parseCanonicalGlobalPolicyAuthorityMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata as parseCanonicalSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
@@ -19,6 +20,8 @@ import type { JsonObject } from "../core/json-types";
 // CommonJS wrapper is compiled. Keep this file implementation-free.
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
 export const stripProviderComposedPolicies = stripCanonicalProviderComposedPolicies;
+export const parseGlobalPolicyAuthorityMetadata =
+  parseCanonicalGlobalPolicyAuthorityMetadata;
 export const parseSandboxPolicyAuthorityMetadata =
   parseCanonicalSandboxPolicyAuthorityMetadata;
 export const assertMatchingPolicyAuthority = assertCanonicalMatchingPolicyAuthority;

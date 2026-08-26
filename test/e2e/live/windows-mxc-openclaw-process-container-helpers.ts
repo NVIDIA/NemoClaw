@@ -17,6 +17,7 @@ import {
   type ChildProcessProgress,
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
 
 type QualificationProgress = ChildProcessProgress & {
   hasReached(label: string): boolean;
@@ -30,6 +31,8 @@ const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 180_000;
 const TERMINATION_TIMEOUT_MS = 15_000;
+const FORWARD_HEALTH_READINESS_ATTEMPTS = 12;
+const FORWARD_HEALTH_READINESS_DELAY_MS = 1_000;
 const WINDOWS_PROCESS_ENVIRONMENT_NAMES = [
   "ComSpec",
   "LOCALAPPDATA",
@@ -64,8 +67,6 @@ const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_TOKEN",
   "PATH",
   "SYSTEMROOT",
-  "TEMP",
-  "TMP",
   "WINDIR",
 ] as const;
 
@@ -105,6 +106,25 @@ export type CommandResult = {
   readonly stdout: string;
 };
 
+export type WindowsMxcForwardHealthObservation = "ready" | "relay-not-ready" | "terminal";
+
+export interface WindowsMxcForwardHealthReadinessEvidence {
+  readonly schemaVersion: 1;
+  readonly operation: "windows-mxc-forward-authenticated-health";
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly attempts: readonly {
+    readonly attempt: number;
+    readonly outcome: WindowsMxcForwardHealthObservation;
+  }[];
+  readonly outcome: "ready" | "terminal" | "exhausted";
+}
+
+export interface WindowsMxcForwardHealthReadinessResult {
+  readonly command: CommandResult;
+  readonly evidence: WindowsMxcForwardHealthReadinessEvidence;
+}
+
 export interface WindowsProcessIdentity {
   readonly commandLine: string;
   readonly creationDate: string;
@@ -134,8 +154,19 @@ type QualificationChecks = {
   readonly workloadTerminatedByDelete: boolean;
 };
 
+export type WindowsMxcOpenClawStartupObservation = {
+  readonly outcome:
+    | "not-observed"
+    | "spawn-failed"
+    | "exited-before-readiness"
+    | "health-timeout"
+    | "ready";
+  readonly gatewayExitCode: number | null;
+  readonly versionExitCode: number | null;
+};
+
 export interface WindowsMxcOpenClawQualificationReceipt {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly classification: "inactive-candidate";
   readonly backend: "process_container";
   readonly configuration: {
@@ -169,6 +200,7 @@ export interface WindowsMxcOpenClawQualificationReceipt {
     readonly wxcExecSha256: string;
   };
   readonly checks: QualificationChecks;
+  readonly startup: WindowsMxcOpenClawStartupObservation;
   readonly cleanup: {
     readonly boundedStopMarkerNeeded: boolean;
     readonly emergencyProcessTerminationNeeded: boolean;
@@ -288,24 +320,36 @@ export async function runWindowsMxcForwardCleanup(input: {
   readonly processStopped: boolean;
 }> {
   const failures: unknown[] = [];
-  let emergencyTerminationNeeded = input.childWasRunning && input.sandboxDeleteAccepted;
+  let emergencyTerminationNeeded = false;
   let listenerStopped = false;
   let processStopped = false;
 
-  try {
-    await input.stopChild();
-  } catch (error) {
-    failures.push(error);
+  if (input.childWasRunning && input.sandboxDeleteAccepted) {
+    try {
+      processStopped = await input.waitForProcessExit();
+    } catch (error) {
+      failures.push(error);
+    }
+    emergencyTerminationNeeded = !processStopped;
+  }
+  if (!processStopped) {
+    try {
+      await input.stopChild();
+    } catch (error) {
+      failures.push(error);
+    }
   }
   try {
     if (await input.terminateTrustedProcessIfAlive()) emergencyTerminationNeeded = true;
   } catch (error) {
     failures.push(error);
   }
-  try {
-    processStopped = await input.waitForProcessExit();
-  } catch (error) {
-    failures.push(error);
+  if (!processStopped) {
+    try {
+      processStopped = await input.waitForProcessExit();
+    } catch (error) {
+      failures.push(error);
+    }
   }
   try {
     listenerStopped = await input.waitForListenerClosed();
@@ -352,7 +396,7 @@ function buildWindowsMxcSetupFailureReceipt(
   localArtifactsRemoved: boolean,
 ): WindowsMxcOpenClawQualificationReceipt {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -399,6 +443,11 @@ function buildWindowsMxcSetupFailureReceipt(
       sandboxCreateAccepted: false,
       sandboxDeleteAccepted: false,
       workloadTerminatedByDelete: false,
+    },
+    startup: {
+      outcome: "not-observed",
+      gatewayExitCode: null,
+      versionExitCode: null,
     },
     cleanup: {
       boundedStopMarkerNeeded: false,
@@ -462,6 +511,30 @@ function requireDescendant(file: string, root: string, name: string): void {
   }
 }
 
+function requireDirectChild(directory: string, root: string, name: string): void {
+  const relative = path.relative(root, directory);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    relative.includes(path.sep)
+  ) {
+    throw new Error(`${name} must be a direct child of the qualification work root`);
+  }
+}
+
+function requireWindowsDriveRoot(directory: string, platform = process.platform): void {
+  if (platform !== "win32") return;
+  const absolute = path.win32.resolve(directory);
+  if (
+    normalizeWindowsIdentityValue(absolute) !==
+    normalizeWindowsIdentityValue(path.win32.parse(absolute).root)
+  ) {
+    throw new Error("Windows MXC qualification work root must be a drive root");
+  }
+}
+
 export function parseWindowsMxcOpenClawQualificationEnvironment(
   environment: NodeJS.ProcessEnv,
 ): WindowsMxcOpenClawQualificationInputs {
@@ -479,6 +552,12 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
   );
   requireDescendant(nodePath, openClawRoot, "OpenClaw Node.js executable");
   requireDescendant(entryPath, openClawRoot, "OpenClaw entrypoint");
+  const workDirectory = realDirectory(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WORK_ROOT"),
+    "Windows MXC qualification work root",
+  );
+  requireWindowsDriveRoot(workDirectory);
+  requireDirectChild(openClawRoot, workDirectory, "OpenClaw artifact root");
 
   return {
     artifactDirectory: realDirectory(
@@ -492,10 +571,7 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
       }
       return "wxc-host-prep-prepare-system-drive" as const;
     })(),
-    workDirectory: realDirectory(
-      requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WORK_ROOT"),
-      "Windows MXC qualification work root",
-    ),
+    workDirectory,
     expected: {
       nemoClawRevision: expectedPattern(environment, "NEMOCLAW_E2E_EXPECTED_SHA", REVISION_PATTERN),
       nodeSha256: expectedPattern(environment, "NEMOCLAW_WINDOWS_MXC_NODE_SHA256", SHA256_PATTERN),
@@ -754,6 +830,12 @@ export function renderWindowsMxcGatewayConfig(input: {
   readonly targetPort: number;
   readonly wxcExecPath: string;
 }): string {
+  const sandboxTempDirectory = path.join(input.shareDirectory, "temp");
+  const agentEnvironment = [
+    ...AGENT_ENVIRONMENT_NAMES,
+    `TEMP=${sandboxTempDirectory}`,
+    `TMP=${sandboxTempDirectory}`,
+  ];
   return [
     "[openshell.drivers.mxc]",
     `wxc_exec_path = ${tomlString(input.wxcExecPath)}`,
@@ -766,7 +848,7 @@ export function renderWindowsMxcGatewayConfig(input: {
     `  ${tomlString(path.join(input.shareDirectory, "probe-agent.mjs"))},`,
     "]",
     "agent_env = [",
-    ...AGENT_ENVIRONMENT_NAMES.map((name) => `  ${JSON.stringify(name)},`),
+    ...agentEnvironment.map((value) => `  ${tomlString(value)},`),
     "]",
     "pc_least_privilege = false",
     'pc_capabilities = ["privateNetworkClientServer"]',
@@ -989,16 +1071,16 @@ const gateway = spawn(
   ],
   { env, stdio: "ignore", windowsHide: true },
 );
-let gatewaySpawnError = null;
-gateway.once("error", (error) => {
-  gatewaySpawnError = error instanceof Error ? error.message : String(error);
+let gatewaySpawnFailed = false;
+gateway.once("error", () => {
+  gatewaySpawnFailed = true;
 });
 if (gateway.pid !== undefined) writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
 
 let healthObserved = false;
 let lastHealth = { exitCode: null, stdout: "", stderr: "" };
 const deadline = Date.now() + 120000;
-while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError === null) {
+while (Date.now() < deadline && gateway.exitCode === null && !gatewaySpawnFailed) {
   lastHealth = await run([
     entry,
     "gateway",
@@ -1017,8 +1099,9 @@ while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError =
 const result = {
   controlWrite: true,
   deniedWrite,
+  gatewayExitCode: Number.isInteger(gateway.exitCode) ? gateway.exitCode : null,
   gatewayExitedBeforeReadiness: gateway.exitCode !== null,
-  gatewaySpawnError,
+  gatewaySpawnFailed,
   healthObserved,
   openClawVersion: version.stdout.trim(),
   versionExitCode: version.exitCode,
@@ -1032,7 +1115,7 @@ while (healthObserved && gateway.exitCode === null && !existsSync(stopPath)) {
   await sleep(250);
 }
 
-if (gateway.exitCode === null) {
+if (gateway.exitCode === null && !gatewaySpawnFailed) {
   gateway.kill();
   await Promise.race([
     new Promise((resolve) => gateway.once("exit", resolve)),
@@ -1381,6 +1464,150 @@ export function parseOpenClawHealthResult(output: string): boolean {
   return typeof value === "object" && value !== null && "ok" in value && value.ok === true;
 }
 
+export function windowsMxcOpenClawStartupPreconditionsPass(input: {
+  readonly filesystemControlWrite: boolean;
+  readonly filesystemDeniedWrite: boolean;
+  readonly openClawHealth: boolean;
+  readonly openClawProcessPresentWhileReady: boolean;
+  readonly registryPresentWhileReady: boolean;
+  readonly versionExitCode: number | null;
+}): boolean {
+  return (
+    input.filesystemControlWrite &&
+    input.filesystemDeniedWrite &&
+    input.openClawHealth &&
+    input.openClawProcessPresentWhileReady &&
+    input.registryPresentWhileReady &&
+    input.versionExitCode === 0
+  );
+}
+
+function boundedExitCode(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
+export function classifyWindowsMxcOpenClawStartupObservation(
+  result: Record<string, unknown>,
+): WindowsMxcOpenClawStartupObservation {
+  const gatewayExitCode = boundedExitCode(result.gatewayExitCode);
+  const versionExitCode = boundedExitCode(result.versionExitCode);
+  if (result.healthObserved === true) {
+    return { outcome: "ready", gatewayExitCode, versionExitCode };
+  }
+  if (result.gatewaySpawnFailed === true) {
+    return { outcome: "spawn-failed", gatewayExitCode, versionExitCode };
+  }
+  if (result.gatewayExitedBeforeReadiness === true) {
+    return { outcome: "exited-before-readiness", gatewayExitCode, versionExitCode };
+  }
+  if (result.healthObserved === false) {
+    return { outcome: "health-timeout", gatewayExitCode, versionExitCode };
+  }
+  return { outcome: "not-observed", gatewayExitCode, versionExitCode };
+}
+
+export function classifyWindowsMxcForwardHealthObservation(
+  result: CommandResult,
+): WindowsMxcForwardHealthObservation {
+  let value: unknown;
+  try {
+    value = parseEmbeddedJson(result.stdout, "OpenClaw health output");
+  } catch {
+    return "terminal";
+  }
+  if (result.exitCode === 0 && parseOpenClawHealthResult(result.stdout)) return "ready";
+  if (
+    result.exitCode !== 0 &&
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    typeof value.error === "object" &&
+    value.error !== null &&
+    "type" in value.error &&
+    value.error.type === "gateway_transport_error" &&
+    "kind" in value.error &&
+    value.error.kind === "closed" &&
+    "code" in value.error &&
+    value.error.code === 1006 &&
+    "reason" in value.error &&
+    value.error.reason === "no close reason"
+  ) {
+    return "relay-not-ready";
+  }
+  return "terminal";
+}
+
+export async function observeWindowsMxcForwardHealthReadiness(input: {
+  readonly probe: (attempt: number) => Promise<CommandResult>;
+  readonly attempts?: number;
+  readonly delayMs?: number;
+  readonly forwardActive?: () => boolean;
+  readonly sleep?: (ms: number) => Promise<void>;
+}): Promise<WindowsMxcForwardHealthReadinessResult> {
+  const maxAttempts = input.attempts ?? FORWARD_HEALTH_READINESS_ATTEMPTS;
+  const delayMs = input.delayMs ?? FORWARD_HEALTH_READINESS_DELAY_MS;
+  const attempts: Array<{
+    readonly attempt: number;
+    readonly outcome: WindowsMxcForwardHealthObservation;
+  }> = [];
+  try {
+    const accepted = await pollUntil({
+      artifactPrefix: "windows-mxc-forward-health-readiness",
+      attempts: maxAttempts,
+      delayMs,
+      sleep: input.sleep,
+      probe: async (attempt) => {
+        if (input.forwardActive?.() === false) {
+          const command = {
+            exitCode: 1,
+            stderr: "OpenShell forward exited before the health probe",
+            stdout: "",
+          };
+          const outcome = "terminal" as const;
+          attempts.push({ attempt, outcome });
+          return { command, outcome };
+        }
+        const command = await input.probe(attempt);
+        let outcome = classifyWindowsMxcForwardHealthObservation(command);
+        if (input.forwardActive?.() === false) {
+          outcome = "terminal";
+        }
+        attempts.push({ attempt, outcome });
+        return { command, outcome };
+      },
+      accept: ({ outcome }) => outcome === "ready",
+      terminal: ({ outcome }) =>
+        outcome === "terminal" ? "forwarded OpenClaw health failed" : undefined,
+    });
+    return {
+      command: accepted.value.command,
+      evidence: {
+        schemaVersion: 1,
+        operation: "windows-mxc-forward-authenticated-health",
+        maxAttempts,
+        delayMs,
+        attempts,
+        outcome: "ready",
+      },
+    };
+  } catch (error) {
+    if (!(error instanceof PollingError) || error.lastAttempt === undefined) throw error;
+    return {
+      command: error.lastAttempt.value.command,
+      evidence: {
+        schemaVersion: 1,
+        operation: "windows-mxc-forward-authenticated-health",
+        maxAttempts,
+        delayMs,
+        attempts,
+        outcome: error.reason === "terminal" ? "terminal" : "exhausted",
+      },
+    };
+  }
+}
+
 export function parseOpenClawExactChatReply(output: string): boolean {
   const value = parseEmbeddedJson(output, "OpenClaw agent output");
   if (
@@ -1523,12 +1750,14 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       const stateDirectory = path.join(runRoot, "state");
       const configDirectory = path.join(runRoot, "config");
       const homeDirectory = path.join(shareDirectory, "home");
+      const tempDirectory = path.join(shareDirectory, "temp");
       const clientHomeDirectory = path.join(runRoot, "client-home");
       for (const directory of [
         shareDirectory,
         stateDirectory,
         configDirectory,
         homeDirectory,
+        tempDirectory,
         clientHomeDirectory,
       ]) {
         fs.mkdirSync(directory, { recursive: true });
@@ -1720,13 +1949,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     release: os.release(),
   });
   if (!host.candidate) throw new Error(host.detail);
-  const workRoot = path.resolve(inputs.workDirectory);
-  if (
-    normalizeWindowsIdentityValue(workRoot) !==
-    normalizeWindowsIdentityValue(path.parse(workRoot).root)
-  ) {
-    throw new Error("Windows MXC qualification work root must be a drive root");
-  }
+  requireWindowsDriveRoot(inputs.workDirectory);
   assertExactIdentities(inputs);
   const powershellPath = trustedWindowsSystemExecutable(
     environment,
@@ -1764,6 +1987,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const receiptPath = path.join(
     inputs.artifactDirectory,
     `windows-mxc-openclaw-receipt-${runId}.json`,
+  );
+  const forwardHealthReadinessPath = path.join(
+    inputs.artifactDirectory,
+    `windows-mxc-forward-health-readiness-${runId}.json`,
   );
   const {
     clientEnvironment,
@@ -1825,6 +2052,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   let trustedForwardProcess: WindowsProcessIdentity | null = null;
   let primaryFailure: unknown = null;
   const cleanupFailures: unknown[] = [];
+  let startup: WindowsMxcOpenClawStartupObservation = {
+    outcome: "not-observed",
+    gatewayExitCode: null,
+    versionExitCode: null,
+  };
   let checks: QualificationChecks = {
     artifactIdentity: true,
     filesystemControlWrite: false,
@@ -1934,6 +2166,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     const probeResult = fs.existsSync(resultPath)
       ? (JSON.parse(fs.readFileSync(resultPath, "utf8")) as Record<string, unknown>)
       : {};
+    startup = classifyWindowsMxcOpenClawStartupObservation(probeResult);
     openClawProcessId = readProcessId(openClawPidPath);
     if (openClawProcessId !== null) {
       trustedOpenClawProcess = await observeTrustedOpenClawProcessIdentity({
@@ -1974,6 +2207,14 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       ...checks,
       sandboxCreateAccepted: create.exitCode === 0,
     };
+    if (
+      !windowsMxcOpenClawStartupPreconditionsPass({
+        ...checks,
+        versionExitCode: startup.versionExitCode,
+      })
+    ) {
+      throw new Error("Windows MXC OpenClaw startup preconditions failed before forwarding");
+    }
 
     if (
       !progress.hasReached(
@@ -2034,21 +2275,31 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     });
     checks = { ...checks, forwardListening: true };
 
-    const forwardedHealth = await runCommand(
-      inputs.openClaw.nodePath,
-      [inputs.openClaw.entryPath, "gateway", "health", "--json", "--timeout", "60000"],
-      clientEnvironment,
-      progress,
-      "command: windows-mxc-openclaw-forwarded-health",
-      90_000,
+    const forwardedHealth = await observeWindowsMxcForwardHealthReadiness({
+      forwardActive: () => forward?.exitCode === null,
+      probe: async (attempt) =>
+        await runCommand(
+          inputs.openClaw.nodePath,
+          [inputs.openClaw.entryPath, "gateway", "health", "--json", "--timeout", "60000"],
+          clientEnvironment,
+          progress,
+          `command: windows-mxc-openclaw-forwarded-health-attempt-${attempt}`,
+          90_000,
+        ),
+    });
+    fs.writeFileSync(
+      forwardHealthReadinessPath,
+      `${JSON.stringify(forwardedHealth.evidence, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
     );
     checks = {
       ...checks,
-      forwardAuthenticatedHealth:
-        forwardedHealth.exitCode === 0 && parseOpenClawHealthResult(forwardedHealth.stdout),
+      forwardAuthenticatedHealth: forwardedHealth.evidence.outcome === "ready",
     };
     if (!checks.forwardAuthenticatedHealth) {
-      throw new Error(`forwarded OpenClaw health failed: ${commandDetail(forwardedHealth)}`);
+      throw new Error(
+        `forwarded OpenClaw health ${forwardedHealth.evidence.outcome}: ${commandDetail(forwardedHealth.command)}`,
+      );
     }
 
     const forwardedChat = await runCommand(
@@ -2397,7 +2648,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     sandboxName,
   });
   const receipt: WindowsMxcOpenClawQualificationReceipt = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -2431,6 +2682,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       wxcExecSha256: inputs.expected.wxcExecSha256,
     },
     checks,
+    startup,
     cleanup: {
       boundedStopMarkerNeeded,
       emergencyProcessTerminationNeeded,
