@@ -3,18 +3,25 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import YAML from "yaml";
+import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
 import {
   assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
+  assertOpenShellGatewayPortBinding,
   assertRecordedPolicyAuthority,
-  inspectGlobalPolicyAuthority,
+  inspectActiveGlobalPolicy,
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
 } from "../../adapters/openshell/policy-authority";
+import {
+  assertNemoClawPolicyCreationReceiptMatches,
+  parseOpenShellPolicy,
+} from "../../policy/merge";
 import type { SandboxEntry } from "../../state/registry";
 import { type InitialSandboxPolicy, prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { requiredObservabilityPolicyPresets } from "../observability-policy-presets";
@@ -26,9 +33,20 @@ const { LOCAL_INFERENCE_POLICY_PROVIDERS } = require("../providers") as {
 };
 
 type PolicyAuthorityInspectionDeps = {
-  readonly inspectGlobalPolicyAuthority?: typeof inspectGlobalPolicyAuthority;
+  readonly inspectActiveGlobalPolicy?: typeof inspectActiveGlobalPolicy;
+  readonly inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
+  readonly assertOpenShellGatewayPortBinding?: typeof assertOpenShellGatewayPortBinding;
   readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
 };
+
+type RecordedPolicyAuthority = Exclude<SandboxPolicyAuthority, "owner-unknown">;
+
+export type QualifiedSandboxPolicyAuthority =
+  | { readonly authority: "nemoclaw-managed" }
+  | {
+      readonly authority: "externally-managed";
+      readonly inspection: SandboxPolicyAuthorityInspection;
+    };
 
 /** Bind the global policy authority before provider selection can mutate gateway state. */
 export function qualifyGlobalPolicyAuthority(
@@ -37,28 +55,27 @@ export function qualifyGlobalPolicyAuthority(
     readonly recordedAuthority?: SandboxPolicyAuthority | null;
     readonly operation: string;
   },
-  deps: Pick<PolicyAuthorityInspectionDeps, "inspectGlobalPolicyAuthority"> = {},
-): SandboxPolicyAuthorityInspection {
-  const inspection = (deps.inspectGlobalPolicyAuthority ?? inspectGlobalPolicyAuthority)({
+  deps: Pick<PolicyAuthorityInspectionDeps, "inspectActiveGlobalPolicy"> = {},
+): QualifiedSandboxPolicyAuthority {
+  const presence = (deps.inspectActiveGlobalPolicy ?? inspectActiveGlobalPolicy)({
     gatewayName: input.gatewayName,
   });
+  const authority: RecordedPolicyAuthority =
+    presence.state === "active" ? "externally-managed" : "nemoclaw-managed";
   if (input.recordedAuthority) {
-    assertRecordedPolicyAuthority(input.recordedAuthority, inspection.authority, input.operation);
+    assertRecordedPolicyAuthority(input.recordedAuthority, authority, input.operation);
   }
-  return inspection;
+  return presence.state === "active"
+    ? { authority: "externally-managed", inspection: presence.inspection }
+    : { authority: "nemoclaw-managed" };
 }
 
 function parseRequiredPolicy(content: string, operation: string): Record<string, unknown> {
-  let parsed: unknown;
   try {
-    parsed = YAML.parse(content);
+    return parseOpenShellPolicy(content).policy;
   } catch {
     throw new Error(`Refusing to ${operation}: the required sandbox policy is invalid.`);
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Refusing to ${operation}: the required sandbox policy is invalid.`);
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function readInitialPolicy(policy: InitialSandboxPolicy, operation: string): string {
@@ -103,28 +120,44 @@ export function qualifySandboxPolicyAuthority(
     readonly gatewayName: string;
     readonly liveExists: boolean;
     readonly recordedAuthorities: readonly (SandboxPolicyAuthority | null | undefined)[];
+    readonly recordedSandbox?: SandboxEntry | null;
+    readonly readRecordedSandbox?: (sandboxName: string) => SandboxEntry | null;
     readonly prepareRequiredPolicy: () => InitialSandboxPolicy;
     readonly operation: string;
   },
   deps: PolicyAuthorityInspectionDeps = {},
-): SandboxPolicyAuthorityInspection {
+): QualifiedSandboxPolicyAuthority {
   const sandboxInspection = input.liveExists
     ? (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
         sandboxName: input.sandboxName,
         gatewayName: input.gatewayName,
       })
     : null;
-  const globalInspection = (deps.inspectGlobalPolicyAuthority ?? inspectGlobalPolicyAuthority)({
-    gatewayName: input.gatewayName,
-  });
-  if (sandboxInspection) {
-    assertRecordedPolicyAuthority(
-      sandboxInspection.authority,
-      globalInspection.authority,
-      input.operation,
+  let inspection: QualifiedSandboxPolicyAuthority;
+  if (!sandboxInspection) {
+    inspection = qualifyGlobalPolicyAuthority(
+      { gatewayName: input.gatewayName, operation: input.operation },
+      deps,
+    );
+  } else if (sandboxInspection.authority === "externally-managed") {
+    inspection = { authority: "externally-managed", inspection: sandboxInspection };
+  } else if (sandboxInspection.authority === "owner-unknown") {
+    inspection = qualifyRecordedSandboxPolicyAuthority(
+      {
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        recordedSandbox: input.recordedSandbox ?? null,
+        readRecordedSandbox: input.readRecordedSandbox,
+        inspection: sandboxInspection,
+        operation: input.operation,
+      },
+      deps,
+    );
+  } else {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${input.operation}: the observed sandbox policy authority is invalid.`,
     );
   }
-  const inspection = sandboxInspection ?? globalInspection;
 
   for (const recorded of input.recordedAuthorities) {
     if (recorded) {
@@ -140,27 +173,142 @@ export function qualifySandboxPolicyAuthority(
       readInitialPolicy(requiredPolicy, input.operation),
       input.operation,
     );
-    for (const observed of sandboxInspection
-      ? [sandboxInspection, globalInspection]
-      : [globalInspection]) {
-      assertExternalPolicyRequirements({
-        inspection: observed,
-        requiredPolicy: parsedPolicy,
-        operation: input.operation,
-        sandboxName: input.sandboxName,
-      });
-    }
+    const observed = inspection.inspection;
+    const assertRequirements =
+      observed.authority === "owner-unknown"
+        ? assertObservedPolicyRequirements
+        : assertExternalPolicyRequirements;
+    assertRequirements({
+      inspection: observed,
+      requiredPolicy: parsedPolicy,
+      operation: input.operation,
+      sandboxName: input.sandboxName,
+    });
   } catch (error) {
     primaryError = error;
   }
+  let cleanupError: unknown;
   try {
     cleanupRequirement(requiredPolicy, input.operation);
-  } catch (cleanupError) {
-    if (primaryError === undefined) throw cleanupError;
-    throw attachCleanupFailure(primaryError, cleanupError);
+  } catch (error) {
+    cleanupError = error;
   }
-  if (primaryError !== undefined) throw primaryError;
+  if (primaryError !== undefined) {
+    if (cleanupError !== undefined) {
+      throw attachCleanupFailure(primaryError, cleanupError);
+    }
+    throw primaryError;
+  }
+  if (cleanupError !== undefined) throw cleanupError;
   return inspection;
+}
+
+function qualifyRecordedSandboxPolicyAuthority(
+  input: {
+    readonly sandboxName: string;
+    readonly gatewayName: string;
+    readonly recordedSandbox: SandboxEntry | null;
+    readonly readRecordedSandbox?: (sandboxName: string) => SandboxEntry | null;
+    readonly inspection: SandboxPolicyAuthorityInspection;
+    readonly operation: string;
+  },
+  deps: PolicyAuthorityInspectionDeps,
+): QualifiedSandboxPolicyAuthority {
+  const recorded = input.recordedSandbox;
+  const gatewayPort = recorded?.gatewayPort;
+  if (
+    !recorded?.policyAuthority ||
+    recorded.pendingRouteReservation === true ||
+    recorded.gatewayName !== input.gatewayName ||
+    typeof gatewayPort !== "number" ||
+    !Number.isSafeInteger(gatewayPort) ||
+    typeof recorded.lifecycleGeneration !== "string" ||
+    typeof recorded.lifecycleLiveIdentityFingerprint !== "string"
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${input.operation}: sandbox-scoped policy ownership is not durably verified.`,
+      "owner-unknown",
+    );
+  }
+  const inspectIdentity =
+    deps.inspectOpenShellSandboxIdentityFingerprint ?? inspectOpenShellSandboxIdentityFingerprint;
+  (deps.assertOpenShellGatewayPortBinding ?? assertOpenShellGatewayPortBinding)({
+    gatewayName: input.gatewayName,
+    gatewayPort,
+  });
+  const beforeIdentity = inspectIdentity({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+  });
+  if (beforeIdentity !== recorded.lifecycleLiveIdentityFingerprint) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${input.operation}: the live sandbox identity does not match the recorded lifecycle.`,
+      "owner-unknown",
+    );
+  }
+  const confirmedInspection = (
+    deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority
+  )({ sandboxName: input.sandboxName, gatewayName: input.gatewayName });
+  const afterIdentity = inspectIdentity({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+  });
+  if (
+    beforeIdentity !== afterIdentity ||
+    confirmedInspection.authority !== "owner-unknown" ||
+    confirmedInspection.policyIdentity.hash !== input.inspection.policyIdentity.hash ||
+    confirmedInspection.policyIdentity.activeVersion !== input.inspection.policyIdentity.activeVersion
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${input.operation}: the sandbox or policy identity changed during verification.`,
+      "owner-unknown",
+    );
+  }
+  if (recorded.policyAuthority === "nemoclaw-managed") {
+    try {
+      assertNemoClawPolicyCreationReceiptMatches(recorded.policyCreationReceipt, {
+        origin: "sandbox-create",
+        gatewayName: input.gatewayName,
+        gatewayPort,
+        sandboxName: input.sandboxName,
+        lifecycleGeneration: recorded.lifecycleGeneration,
+        sandboxIdentityFingerprint: afterIdentity,
+        policyHash: confirmedInspection.policyIdentity.hash,
+        policyVersion: confirmedInspection.policyIdentity.activeVersion,
+      });
+    } catch {
+      throw new PolicyAuthorityRefusalError(
+        `Refusing to ${input.operation}: the NemoClaw policy creation receipt does not match the live sandbox policy.`,
+        "owner-unknown",
+      );
+    }
+  }
+  const confirmedRecorded = input.readRecordedSandbox
+    ? input.readRecordedSandbox(input.sandboxName)
+    : recorded;
+  if (
+    !confirmedRecorded ||
+    confirmedRecorded.pendingRouteReservation === true ||
+    confirmedRecorded.policyAuthority !== recorded.policyAuthority ||
+    !isDeepStrictEqual(confirmedRecorded.policyCreationReceipt, recorded.policyCreationReceipt) ||
+    confirmedRecorded.lifecycleGeneration !== recorded.lifecycleGeneration ||
+    confirmedRecorded.lifecycleLiveIdentityFingerprint !==
+      recorded.lifecycleLiveIdentityFingerprint ||
+    confirmedRecorded.gatewayName !== recorded.gatewayName ||
+    confirmedRecorded.gatewayPort !== recorded.gatewayPort
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${input.operation}: the recorded sandbox policy boundary changed during live verification.`,
+      "owner-unknown",
+    );
+  }
+  if (recorded.policyAuthority === "nemoclaw-managed") {
+    return { authority: "nemoclaw-managed" };
+  }
+  return {
+    authority: "externally-managed",
+    inspection: confirmedInspection,
+  };
 }
 
 type ProviderPolicyRequirements = {
@@ -262,6 +410,8 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
           observed.existingEntry?.policyAuthority,
           runtime.onboardSession.loadSession()?.policyAuthority,
         ],
+        recordedSandbox: observed.existingEntry,
+        readRecordedSandbox: (name) => runtime.inspectSandboxForCreate(name).existingEntry,
         operation: requirements.operation,
         prepareRequiredPolicy: () =>
           prepareInitialSandboxCreatePolicy(
@@ -298,7 +448,8 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         inspectionDeps,
       );
       return runtime.onboardSession.updateSession((current) => {
-        current.policyAuthority = inspection.authority;
+        current.policyAuthority =
+          inspection.authority === "externally-managed" ? "externally-managed" : null;
         if (inspection.authority === "externally-managed") current.policyPresets = null;
       });
     },
