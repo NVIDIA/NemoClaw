@@ -458,6 +458,7 @@ const {
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const {
   createCoreOnboardFlowPhases,
+  isCoreFlowCompleteBeforeFinalization,
   prepareCoreOnboardFlowContext,
   prepareFinalOnboardFlowContext,
   runCoreOnboardFlowSlice,
@@ -2965,13 +2966,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
       const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
       const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
-      type InitialOnboardFlowContext =
-        import("./onboard/machine/initial-flow-composition").InitialOnboardFlowContext<
-          typeof agent,
-          ReturnType<typeof nim.detectGpu>,
-          ReturnType<typeof resolveSandboxGpuConfig>
-        >;
-      const initialFlowContext: InitialOnboardFlowContext = {
+      const initialFlowContext = {
         resume,
         fresh,
         session,
@@ -2992,12 +2987,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchConfig: session?.webSearchConfig || null,
         webSearchSupported: false,
         selectedMessagingChannels,
-        gpu: null,
-        sandboxGpuConfig: null,
+        gpu: null as ReturnType<typeof nim.detectGpu> | null,
+        sandboxGpuConfig: null as ReturnType<typeof resolveSandboxGpuConfig> | null,
         gpuPassthrough: false,
         resumeHasResolvedGpuIntent: false,
         requestedGpuPassthrough: opts.gpu === true,
       };
+      type InitialOnboardFlowContext = typeof initialFlowContext;
       const policyAuthorityBindings =
         sandboxCreateOrchestration.createOnboardPolicyAuthorityBindings(
           sandboxCreateOrchestrationRuntime,
@@ -3123,6 +3119,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         providerInference: {
           gatewayName: GATEWAY_NAME,
+          inspectSandboxForCreate,
           forceProviderSelection: forceProviderSelectionForAgentChange,
           ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
@@ -3317,6 +3314,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
+      if (isCoreFlowCompleteBeforeFinalization(coreFlowResult)) {
+        sandboxCancelRollback.disarm();
+        await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
+        completed = true;
+        process.exitCode = 0;
+        return;
+      }
       setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;

@@ -173,6 +173,17 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
+  it("does not activate stock managed images for providerless APF creation (#9833)", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        apfInterceptorRequested: true,
+        agentName: "openclaw",
+      }),
+    ).toBe(false);
+  });
+
   it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},

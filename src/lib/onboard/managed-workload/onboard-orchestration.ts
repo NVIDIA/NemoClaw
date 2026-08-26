@@ -148,9 +148,11 @@ export interface ManagedWorkloadOnboardRuntime {
 export function shouldActivateStockManagedRuntime(input: {
   readonly portableLifecycle: boolean;
   readonly hermesPortableLifecycle: boolean;
+  readonly apfInterceptorRequested?: boolean;
   readonly agentName: string;
 }): boolean {
   return (
+    input.apfInterceptorRequested !== true &&
     !input.portableLifecycle &&
     !input.hermesPortableLifecycle &&
     isShippedManagedImageAgent(input.agentName)

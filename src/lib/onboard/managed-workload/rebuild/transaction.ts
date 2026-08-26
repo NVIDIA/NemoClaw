@@ -28,18 +28,12 @@ import {
   createManagedWorkloadPreparationAbort,
   createManagedWorkloadReplacementRollback,
 } from "./rollback";
-import {
-  type ManagedWorkloadReplacementAuthorityDependencies,
-  type ManagedWorkloadReplacementPolicyAuthorityInput,
-  verifyManagedWorkloadReplacementAuthority,
-} from "./replacement-authority";
 
 export interface RunManagedWorkloadRebuildTransactionInput {
   readonly previousEntry: SandboxEntry;
   readonly provider: RuntimeProviderBundle;
   readonly handoff: ManagedWorkloadRebuildHandoff;
   readonly operations: ManagedWorkloadRebuildProviderOperations;
-  readonly replacementPolicyAuthority: ManagedWorkloadReplacementPolicyAuthorityInput;
   readonly replacementMetadata?: Readonly<Partial<SandboxEntry>>;
   readonly transactionId?: string;
 }
@@ -47,11 +41,6 @@ export interface RunManagedWorkloadRebuildTransactionInput {
 export interface ManagedWorkloadRebuildTransactionDependencies {
   readonly getSandbox?: (sandboxName: string) => SandboxEntry | null;
   readonly commitAuthority?: CommitSandboxRebuildAuthority;
-  readonly replacementAuthority?: ManagedWorkloadReplacementAuthorityDependencies;
-  readonly withSandboxMutationLock?: <T>(
-    sandboxName: string,
-    operation: () => Promise<T> | T,
-  ) => Promise<T>;
 }
 
 function readSandboxFromRegistry(sandboxName: string): SandboxEntry | null {
@@ -81,80 +70,14 @@ async function failAfterCleanup(error: unknown, cleanup: () => Promise<void>): P
   throw rethrowWithRollback(error, rollbackError);
 }
 
-async function rejectUnprotectedReplacementPublication<T>(): Promise<T> {
-  throw new ManagedWorkloadRebuildTransactionError(
-    "registry-commit",
-    "replacement publication requires the sandbox mutation lock",
-  );
-}
-
-async function publishManagedWorkloadReplacement(
-  input: RunManagedWorkloadRebuildTransactionInput,
-  plan: ReturnType<typeof createManagedWorkloadRebuildPlan>,
-  replacement: Parameters<typeof verifyManagedWorkloadReplacementAuthority>[0]["replacement"],
-  dependencies: ManagedWorkloadRebuildTransactionDependencies,
-  readSandbox: (sandboxName: string) => SandboxEntry | null,
-): Promise<{
-  readonly entry: SandboxEntry;
-  readonly policyBoundary: ReturnType<typeof verifyManagedWorkloadReplacementAuthority>;
-}> {
-  const withMutationLock =
-    dependencies.withSandboxMutationLock ?? rejectUnprotectedReplacementPublication;
-  let published:
-    | {
-        readonly entry: SandboxEntry;
-        readonly policyBoundary: ReturnType<typeof verifyManagedWorkloadReplacementAuthority>;
-      }
-    | undefined;
-  try {
-    return await withMutationLock(plan.sandboxName, () => {
-      const policyBoundary = verifyManagedWorkloadReplacementAuthority({
-        sandboxName: plan.sandboxName,
-        replacement,
-        policy: input.replacementPolicyAuthority,
-        dependencies: dependencies.replacementAuthority,
-      });
-      const entry = commitManagedWorkloadReplacement(
-        input.previousEntry,
-        plan,
-        replacement,
-        policyBoundary,
-        dependencies.commitAuthority,
-        readSandbox,
-      );
-      published = { entry, policyBoundary };
-      return published;
-    });
-  } catch (error) {
-    if (error instanceof ManagedWorkloadRebuildTransactionError) throw error;
-    if (published) {
-      throw new ManagedWorkloadRebuildIndeterminatePublicationError(
-        "replacement publication completed but sandbox mutation lock release failed",
-        createManagedWorkloadRebuildRecoveryTask(
-          plan,
-          replacement,
-          published.policyBoundary,
-          "reconcile-publication",
-        ),
-        { cause: error },
-      );
-    }
-    throw new ManagedWorkloadRebuildTransactionError(
-      "registry-commit",
-      "the sandbox mutation lock could not protect replacement publication",
-      { cause: error },
-    );
-  }
-}
-
 /**
  * Execute a dormant, provider-neutral managed rebuild transaction.
  *
  * The durable row and provider-owned old runtime remain authoritative through
  * prepare, create, readiness, state restore, and provider rebind. Only the
- * exact final CAS publishes the replacement. The final live verification and
- * CAS share the sandbox mutation lock. The exact old runtime handle is retired
- * afterward, so no failure can turn a same-name lookup into deletion authority.
+ * exact final CAS publishes the replacement. The exact old runtime handle is
+ * retired afterward, so no failure can turn a same-name lookup into deletion
+ * authority.
  */
 export async function runManagedWorkloadRebuildTransaction(
   input: RunManagedWorkloadRebuildTransactionInput,
@@ -215,11 +138,11 @@ export async function runManagedWorkloadRebuildTransaction(
     const ready = await requireReadyManagedWorkloadReplacement(plan, staged, input.operations);
     const restored = await restoreStagedManagedWorkloadState(plan, ready, input.operations);
     const rebound = await rebindStagedManagedWorkloadProviders(plan, restored, input.operations);
-    const { entry, policyBoundary } = await publishManagedWorkloadReplacement(
-      input,
+    const entry = commitManagedWorkloadReplacement(
+      input.previousEntry,
       plan,
       rebound,
-      dependencies,
+      dependencies.commitAuthority,
       readSandbox,
     );
     try {
@@ -231,12 +154,7 @@ export async function runManagedWorkloadRebuildTransaction(
         entry,
         previousCleanup: "pending",
         cleanupError,
-        recoveryTask: createManagedWorkloadRebuildRecoveryTask(
-          plan,
-          rebound,
-          policyBoundary,
-          "retire-previous",
-        ),
+        recoveryTask: createManagedWorkloadRebuildRecoveryTask(plan, rebound, "retire-previous"),
       };
     }
   } catch (error) {

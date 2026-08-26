@@ -336,9 +336,7 @@ describe("sandbox inference route reservation", () => {
           "preferredInferenceApi",
         ] as const;
         expect(
-          routeKeys.filter(
-            (key) => reconstructedSelection[key] !== reservedSelection[key],
-          ),
+          routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
 
         const registered = registerCreatedSandbox({

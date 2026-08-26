@@ -12,7 +12,6 @@ import {
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
 import type { SandboxEntry, SandboxRegistry, SandboxWorkloadReceipt } from "./types";
-import { cloneSandboxPolicyCreationReceipt } from "../registry-normalization";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
 type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
@@ -158,8 +157,10 @@ export function captureSandboxRebuildAuthority(
 
 /**
  * Reconcile an ambiguous persistence result using the replacement's exact new
- * runtime, gateway, and policy identity. Mutable metadata may change after
- * publication, but replacement authority itself must remain exact.
+ * runtime identity. This deliberately ignores mutable non-authority fields:
+ * after publication another writer may update those fields, but no different
+ * rebuild may claim the same generation, live fingerprint, provider, and
+ * workload receipt.
  */
 export function sandboxRebuildReplacementMatchesEntry(
   replacement: SandboxEntry,
@@ -171,10 +172,6 @@ export function sandboxRebuildReplacementMatchesEntry(
     (entry.openshellDriver ?? null) === (replacement.openshellDriver ?? null) &&
     entry.lifecycleGeneration === replacement.lifecycleGeneration &&
     entry.lifecycleLiveIdentityFingerprint === replacement.lifecycleLiveIdentityFingerprint &&
-    entry.gatewayName === replacement.gatewayName &&
-    entry.gatewayPort === replacement.gatewayPort &&
-    entry.policyAuthority === replacement.policyAuthority &&
-    isDeepStrictEqual(entry.policyCreationReceipt, replacement.policyCreationReceipt) &&
     entry.imageTag === replacement.imageTag &&
     entry.agent === replacement.agent &&
     isDeepStrictEqual(
@@ -225,43 +222,6 @@ function validateReplacement(
   ) {
     throw new SandboxRebuildAuthorityError(
       "replacement must have a distinct live identity fingerprint",
-    );
-  }
-  if (
-    !boundedIdentity(replacement.gatewayName) ||
-    !Number.isSafeInteger(replacement.gatewayPort) ||
-    Number(replacement.gatewayPort) < 1 ||
-    Number(replacement.gatewayPort) > 65_535
-  ) {
-    throw new SandboxRebuildAuthorityError("replacement gateway authority is missing or invalid");
-  }
-  if (replacement.policyAuthority === "nemoclaw-managed") {
-    let receipt: ReturnType<typeof cloneSandboxPolicyCreationReceipt>;
-    try {
-      receipt = cloneSandboxPolicyCreationReceipt(replacement.policyCreationReceipt);
-    } catch (error) {
-      throw new SandboxRebuildAuthorityError(
-        `replacement policy creation receipt is invalid: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
-    }
-    if (
-      !receipt ||
-      receipt.sandboxName !== replacement.name ||
-      receipt.gatewayName !== replacement.gatewayName ||
-      receipt.gatewayPort !== replacement.gatewayPort ||
-      receipt.lifecycleGeneration !== replacement.lifecycleGeneration ||
-      receipt.sandboxIdentityFingerprint !== replacement.lifecycleLiveIdentityFingerprint
-    ) {
-      throw new SandboxRebuildAuthorityError(
-        "replacement policy receipt does not match its gateway and sandbox identity",
-      );
-    }
-  } else if (
-    replacement.policyAuthority !== "externally-managed" ||
-    replacement.policyCreationReceipt !== undefined
-  ) {
-    throw new SandboxRebuildAuthorityError(
-      "replacement policy authority is missing or inconsistent",
     );
   }
   const workload = clonedManagedReceipt(replacement.workload);

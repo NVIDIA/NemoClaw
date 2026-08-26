@@ -8,7 +8,6 @@ import {
   sandboxRebuildReplacementMatchesEntry,
 } from "../../../state/registry/rebuild-authority";
 import type { SandboxEntry } from "../../../state/registry/types";
-import type { VerifiedSandboxPolicyBoundary } from "../../types";
 import type { ManagedWorkloadRebuildPlan, ReboundManagedWorkloadReplacement } from "./contract";
 import {
   ManagedWorkloadRebuildIndeterminatePublicationError,
@@ -26,7 +25,6 @@ export type ReadSandboxRebuildEntry = (sandboxName: string) => SandboxEntry | nu
 function reconcileAmbiguousPublication(
   plan: ManagedWorkloadRebuildPlan,
   replacement: ReboundManagedWorkloadReplacement,
-  policyBoundary: VerifiedSandboxPolicyBoundary,
   candidate: SandboxEntry,
   publicationError: unknown,
   readSandbox?: ReadSandboxRebuildEntry,
@@ -34,12 +32,7 @@ function reconcileAmbiguousPublication(
   if (!readSandbox) {
     throw new ManagedWorkloadRebuildIndeterminatePublicationError(
       "publication failed without an authoritative reconciliation read",
-      createManagedWorkloadRebuildRecoveryTask(
-        plan,
-        replacement,
-        policyBoundary,
-        "reconcile-publication",
-      ),
+      createManagedWorkloadRebuildRecoveryTask(plan, replacement, "reconcile-publication"),
       { cause: publicationError },
     );
   }
@@ -49,12 +42,7 @@ function reconcileAmbiguousPublication(
   } catch (reconciliationError) {
     throw new ManagedWorkloadRebuildIndeterminatePublicationError(
       "publication and authoritative reconciliation both failed",
-      createManagedWorkloadRebuildRecoveryTask(
-        plan,
-        replacement,
-        policyBoundary,
-        "reconcile-publication",
-      ),
+      createManagedWorkloadRebuildRecoveryTask(plan, replacement, "reconcile-publication"),
       {
         cause: new AggregateError(
           [publicationError, reconciliationError],
@@ -75,12 +63,7 @@ function reconcileAmbiguousPublication(
   }
   throw new ManagedWorkloadRebuildIndeterminatePublicationError(
     "publication could not be reconciled to the replacement or exact old authority",
-    createManagedWorkloadRebuildRecoveryTask(
-      plan,
-      replacement,
-      policyBoundary,
-      "reconcile-publication",
-    ),
+    createManagedWorkloadRebuildRecoveryTask(plan, replacement, "reconcile-publication"),
     { cause: publicationError },
   );
 }
@@ -89,18 +72,7 @@ export function materializeManagedWorkloadReplacementEntry(
   previousEntry: SandboxEntry,
   plan: ManagedWorkloadRebuildPlan,
   replacement: ReboundManagedWorkloadReplacement,
-  policyBoundary: VerifiedSandboxPolicyBoundary,
 ): SandboxEntry {
-  if (
-    policyBoundary.sandboxName !== plan.sandboxName ||
-    policyBoundary.lifecycleGeneration !== replacement.lifecycleGeneration ||
-    policyBoundary.lifecycleLiveIdentityFingerprint !== replacement.liveIdentityFingerprint
-  ) {
-    throw new ManagedWorkloadRebuildTransactionError(
-      "registry-commit",
-      "the verified replacement policy boundary does not match the replacement lifecycle",
-    );
-  }
   const {
     policyAuthority: _previousPolicyAuthority,
     policyCreationReceipt: _previousPolicyCreationReceipt,
@@ -112,7 +84,6 @@ export function materializeManagedWorkloadReplacementEntry(
     name: plan.sandboxName,
     pendingRouteReservation: undefined,
     reservationSessionId: undefined,
-    pendingPolicyVerification: undefined,
     openshellDriver: plan.providerId,
     agent: plan.agent,
     fromDockerfile: null,
@@ -120,12 +91,6 @@ export function materializeManagedWorkloadReplacementEntry(
     workload: plan.replacementReceipt,
     lifecycleGeneration: replacement.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: replacement.liveIdentityFingerprint,
-    gatewayName: policyBoundary.gatewayName,
-    gatewayPort: policyBoundary.gatewayPort,
-    policyAuthority: policyBoundary.registration.policyAuthority,
-    ...(policyBoundary.registration.policyAuthority === "nemoclaw-managed"
-      ? { policyCreationReceipt: policyBoundary.registration.policyCreationReceipt }
-      : {}),
   });
 }
 
@@ -133,28 +98,15 @@ export function commitManagedWorkloadReplacement(
   previousEntry: SandboxEntry,
   plan: ManagedWorkloadRebuildPlan,
   replacement: ReboundManagedWorkloadReplacement,
-  policyBoundary: VerifiedSandboxPolicyBoundary,
   commit: CommitSandboxRebuildAuthority = compareAndSwapSandboxRebuildAuthority,
   readSandbox?: ReadSandboxRebuildEntry,
 ): SandboxEntry {
-  const candidate = materializeManagedWorkloadReplacementEntry(
-    previousEntry,
-    plan,
-    replacement,
-    policyBoundary,
-  );
+  const candidate = materializeManagedWorkloadReplacementEntry(previousEntry, plan, replacement);
   let result: SandboxRebuildAuthoritySwapResult;
   try {
     result = commit(plan.previousAuthority, candidate);
   } catch (error) {
-    return reconcileAmbiguousPublication(
-      plan,
-      replacement,
-      policyBoundary,
-      candidate,
-      error,
-      readSandbox,
-    );
+    return reconcileAmbiguousPublication(plan, replacement, candidate, error, readSandbox);
   }
   if (result.status !== "committed") {
     throw new ManagedWorkloadRebuildTransactionError(
@@ -166,7 +118,6 @@ export function commitManagedWorkloadReplacement(
     return reconcileAmbiguousPublication(
       plan,
       replacement,
-      policyBoundary,
       candidate,
       new Error("the commit adapter returned a mismatched committed entry"),
       readSandbox,

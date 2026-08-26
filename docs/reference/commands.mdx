@@ -463,6 +463,16 @@ Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the s
 #### `--apf-interceptor`
 
 Use this option to request a policyless sandbox creation for an APF-interceptor flow.
+This option currently supports providerless sandbox creation only.
+APF onboarding with an inference provider and model is not yet supported.
+APF onboarding with an OpenShell provider for a Model Context Protocol (MCP) server is also not yet supported.
+OpenShell cannot bind provider attachment to the new sandbox's verified immutable ID.
+If the prepared plan contains any provider, NemoClaw exits before it:
+
+- Creates the sandbox.
+- Registers or changes credentials.
+- Creates, updates, or deletes providers.
+
 The option requires these conditions:
 
 - Start a new onboarding session.
@@ -885,8 +895,8 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 </AgentOnly>
 
-If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
-Existing live sandboxes are not deleted by this cancel rollback path.
+If you cancel a brand-new onboarding run at the policy preset step, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
+NemoClaw reports the durable sandbox identity fingerprint when it is available and never deletes the sandbox by mutable name.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.

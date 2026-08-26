@@ -6,21 +6,19 @@
 export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preservation";
 
 /**
- * Rollback guard for a sandbox that was created during onboarding but whose
- * onboarding was cancelled before the policy-preset step was confirmed.
+ * Preservation guard for a sandbox whose onboarding is cancelled before the
+ * policy-preset step is confirmed.
  *
- * Without this, pressing Ctrl+C at the `[8/8] Policy presets` screen leaves a
- * fully created OpenShell container registered as the default sandbox even
- * though no policies were ever applied (#4614).
+ * Cancellation preserves the incomplete sandbox, registry entry, and onboarding
+ * session. The guard emits identity-bound recovery guidance and never deletes a
+ * sandbox by mutable name (#4614).
  *
- * The guard is deliberately a two-key gate — it only fires when BOTH:
- *   - a freshly-created sandbox is `arm()`ed (set after createSandbox succeeds), AND
- *   - the operator actually cancelled via `markCancelled()` (the policy-step
- *     prompts call this on Ctrl+C / SIGTERM before exiting).
+ * The guard activates only when both conditions are true:
+ *   - `arm()` records a newly created sandbox after `createSandbox` succeeds.
+ *   - `markCancelled()` records Ctrl+C or SIGTERM at a policy-step prompt.
  *
- * This keeps every other `process.exit(1)` failure path untouched: a genuine
- * build/verify failure exits without `markCancelled()`, so the sandbox it left
- * behind is preserved exactly as before. Only an explicit cancel rolls back.
+ * Other `process.exit(1)` failure paths do not call `markCancelled()`. Their
+ * existing preservation behavior remains unchanged.
  */
 export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
@@ -28,13 +26,13 @@ export interface SandboxCancelRollbackDeps {
 }
 
 export interface SandboxCancelRollback {
-  /** Arm rollback for a just-created sandbox. */
+  /** Arm cancellation recovery guidance for a just-created sandbox. */
   arm(sandboxName: string, sandboxIdentityFingerprint?: string): void;
   /** Disarm once the sandbox is past the cancellable window (policies confirmed). */
   disarm(): void;
   /** Record that the operator cancelled at a cancellable step. */
   markCancelled(): void;
-  /** Run the rollback iff armed AND cancelled. Idempotent. */
+  /** Report preservation guidance iff armed AND cancelled. Idempotent. */
   runIfArmed(): void;
   /** Test/introspection helper. */
   isArmed(): boolean;
@@ -67,13 +65,12 @@ export interface InstallSandboxCancelRollbackOptions {
 }
 
 /**
- * Wire a sandbox cancel-rollback to OpenShell + the registry and register the
- * process-exit hook that fires it. Kept here (not in onboard.ts) so the
- * orchestration lives in a focused module rather than the onboard entrypoint.
+ * Register the process-exit hook that emits cancellation recovery guidance.
+ * Keep this orchestration outside the onboard entrypoint.
  *
- * `process.exit()` — how the policy-step prompts terminate on Ctrl+C —
- * synchronously emits 'exit', so the recovery notice completes inside the
- * handler. No-op unless armed AND cancelled.
+ * Policy-step prompts use `process.exit()` for Ctrl+C. It synchronously emits
+ * `exit`, so the handler reports the recovery guidance before exit completes.
+ * The handler does nothing unless it is armed and the operator cancels.
  */
 export function installSandboxCancelRollback(
   opts: InstallSandboxCancelRollbackOptions,

@@ -20,20 +20,36 @@ beforeEach(() => {
 describe("fresh create identity", () => {
   it.each([
     {
-      title:
-        "registers managed creation only after owner-scoped identity and policy confirmation (#9833)",
+      title: "binds ordinary providers at create time before managed registration (#9833)",
       apfInterceptorRequested: false,
+      provider: "nvidia-prod",
+      model: "gpt-5.4",
+      agent: null,
+      expectedOutcome: "managed-provider" as const,
     },
     {
       title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
       apfInterceptorRequested: true,
+      provider: "nvidia-prod",
+      model: "gpt-5.4",
+      agent: null,
+      expectedOutcome: "provider-refusal" as const,
+    },
+    {
+      title:
+        "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "providerless-apf" as const,
     },
   ])(
     "$title",
     {
       timeout: 45000,
     },
-    async ({ apfInterceptorRequested }) => {
+    async ({ agent, apfInterceptorRequested, expectedOutcome, model, provider }) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -88,6 +104,9 @@ let registeredSandbox = null;
 let effectivePolicy = {};
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
+const agent = ${JSON.stringify(agent)};
+const model = ${JSON.stringify(model)};
+const provider = ${JSON.stringify(provider)};
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   _deleted = _deleted || cmd.includes("sandbox delete");
@@ -133,8 +152,8 @@ runner.run = (command, opts = {}) => {
 };
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
-	  provider: "nvidia-prod",
-	  model: "gpt-5.4",
+	  provider,
+	  model,
 	  apfInterceptorRequested,
 	  onVerifyCreatedPolicy: (input) => {
 	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
@@ -216,7 +235,7 @@ const writePayload = (sandboxName, creationError) => {
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+	    [null, model, provider, null, null, null, null, null, agent, null, null, null, []],
 	    createFixture,
 	  );
 	  if (apfInterceptorRequested) {
@@ -264,6 +283,11 @@ const writePayload = (sandboxName, creationError) => {
           command,
         ),
       );
+      const providerExposureCommands = payload.commandNames.filter((command: string) =>
+        /(?:^|\s)provider (?:create|update|profile import)\b|(?:^|\s)sandbox provider attach\b/u.test(
+          command,
+        ),
+      );
       const assertProviderBackedApfRefusal = () => {
         assert.match(
           payload.creationError,
@@ -279,22 +303,15 @@ const writePayload = (sandboxName, creationError) => {
           false,
         );
       };
-      const assertManagedCreation = () => {
+      const assertSuccessfulCreation = () => {
         assert.equal(payload.creationError, null);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.ok(payload.sandboxListCalls >= 2);
-        assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
-        assert.deepEqual(payload.killCalls, []);
-        assert.equal(payload.unrefCalls, 1);
-        assert.equal(payload.stdoutDestroyCalls, 1);
-        assert.equal(payload.stderrDestroyCalls, 1);
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
           payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
           createHash("sha256").update("sbx-fresh-create").digest("hex"),
         );
-        assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
-        assert.ok(payload.registeredSandbox.policyCreationReceipt);
         assert.match(
           payload.createCommand,
           /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
@@ -315,10 +332,32 @@ const writePayload = (sandboxName, creationError) => {
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
       };
-      const assertOutcome = apfInterceptorRequested
-        ? assertProviderBackedApfRefusal
-        : assertManagedCreation;
-      assertOutcome();
+      const assertManagedProviderCreation = () => {
+        assertSuccessfulCreation();
+        assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
+        assert.deepEqual(payload.killCalls, []);
+        assert.equal(payload.unrefCalls, 1);
+        assert.equal(payload.stdoutDestroyCalls, 1);
+        assert.equal(payload.stderrDestroyCalls, 1);
+        assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
+        assert.ok(payload.registeredSandbox.policyCreationReceipt);
+        assert.match(payload.createCommand, /--policy \S+/u);
+        assert.match(payload.createCommand, /--provider nvidia-prod/u);
+      };
+      const assertProviderlessApfCreation = () => {
+        assertSuccessfulCreation();
+        assert.equal(payload.registeredSandbox.policyAuthority, "externally-managed");
+        assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
+        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:\s|$)/u);
+        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
+        assert.deepEqual(providerExposureCommands, []);
+      };
+      const assertions = {
+        "managed-provider": assertManagedProviderCreation,
+        "provider-refusal": assertProviderBackedApfRefusal,
+        "providerless-apf": assertProviderlessApfCreation,
+      };
+      assertions[expectedOutcome]();
     },
   );
 });
