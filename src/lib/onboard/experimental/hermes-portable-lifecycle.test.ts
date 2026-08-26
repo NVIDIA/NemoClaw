@@ -515,7 +515,7 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("starts the exact stopped/Error sandbox and proves authenticated health (#9203)", () => {
+  it("starts the exact stopped Podman container from the OpenShell Error phase and proves authenticated health (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
 
@@ -644,7 +644,7 @@ describe("Hermes portable lifecycle", () => {
     expect(captureOpenShell).not.toHaveBeenCalled();
   });
 
-  it("proves the exact stopped/Error topology after stopping one full ID (#9203)", () => {
+  it("proves the exact stopped Podman container and OpenShell Error phase after stopping one full ID (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
 
@@ -665,7 +665,7 @@ describe("Hermes portable lifecycle", () => {
     });
   });
 
-  it("accepts the exact already-stopped/Error topology without another stop (#9203)", () => {
+  it("accepts the exact already-stopped Podman container and OpenShell Error phase without another stop (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman } = lifecycleDeps(receipt, false);
 
