@@ -1,0 +1,65 @@
+{
+	"schemaVersion": 1,
+	"roadmapAreas": [
+		"Usability and Onboarding",
+		"Agent Features",
+		"Acceleration and Optimization",
+		"Integrations and Blueprints"
+	],
+	"epics": [
+		{
+			"epicNodeId": "E_SYNTHETIC_101",
+			"issueNumber": 101,
+			"displayTitle": "Guided onboarding",
+			"shortenedOutcome": "Start agents in OpenShell sandboxes with fewer manual steps.",
+			"boundBodySha256": "7aea748f1051d514dce6306451f54759f12110656e9b857533e43744231a2ab0",
+			"roadmapArea": "Usability and Onboarding",
+			"displayOrder": 1
+		},
+		{
+			"epicNodeId": "E_SYNTHETIC_102",
+			"issueNumber": 102,
+			"displayTitle": "Voice interaction",
+			"shortenedOutcome": "Use speech as a first-class interaction path.",
+			"boundBodySha256": "ee9957f0a47748e097c7970837600332640f6f4ef70fd4273aa44b0fc3011ad0",
+			"roadmapArea": "Agent Features",
+			"displayOrder": 2
+		},
+		{
+			"epicNodeId": "E_SYNTHETIC_103",
+			"issueNumber": 103,
+			"displayTitle": "Agent routing",
+			"shortenedOutcome": "Route work to the selected model path.",
+			"boundBodySha256": "50b92de438ce7eed123882f62c44a7432e765b4f7dc8d9ebcc709b6543c46b9d",
+			"roadmapArea": "Acceleration and Optimization",
+			"displayOrder": 3
+		},
+		{
+			"epicNodeId": "E_SYNTHETIC_104",
+			"issueNumber": 104,
+			"displayTitle": "Community blueprints",
+			"shortenedOutcome": "Publish reviewed integration patterns for contribution and reuse.",
+			"boundBodySha256": "cb103c3f87c83938436688c033a0603179513ef6984e075b93cc226c24d0568b",
+			"roadmapArea": "Integrations and Blueprints",
+			"displayOrder": 4
+		},
+		{
+			"epicNodeId": "E_SYNTHETIC_105",
+			"issueNumber": 105,
+			"displayTitle": "Windows host path",
+			"shortenedOutcome": "Move OpenShell sandbox workflows to another host environment.",
+			"boundBodySha256": "2e9f51a17cd8261fd14c609702e130b84ce8bf94033ce8d46c410fc3cf11b99b",
+			"roadmapArea": "Usability and Onboarding",
+			"displayOrder": 5
+		},
+		{
+			"epicNodeId": "E_SYNTHETIC_106",
+			"issueNumber": 106,
+			"displayTitle": "Feedback optimization",
+			"shortenedOutcome": "Turn operator feedback into measurable agent improvements.",
+			"boundBodySha256": "015ff275e24d88a52df43a37f05ec54304cfcf7826748cf9fe6bc8051845f547",
+			"roadmapArea": "Acceleration and Optimization",
+			"displayOrder": 6
+		}
+	]
+}

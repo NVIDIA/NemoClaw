@@ -1,0 +1,125 @@
+{
+	"schemaVersion": 1,
+	"repository": "NVIDIA/NemoClaw",
+	"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"collectedAt": "2026-08-13T12:00:00.000Z",
+	"sources": [
+		{
+			"sourceId": "doc:docs/about/how-it-works.mdx#CLI, Integration Layer, and Blueprint",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "CLI, Integration Layer, and Blueprint",
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"sourceId": "doc:docs/about/how-it-works.mdx#High-Level Flow",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"sourceId": "doc:docs/about/how-it-works.mdx#Inference Routing",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "Inference Routing",
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		}
+	],
+	"claims": [
+		{
+			"claimId": "claim.operator-entry",
+			"text": "Users and operators manage NemoClaw through the host CLI.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["Install and operate NemoClaw from the host"],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"claimId": "claim.host-blueprint",
+			"text": "The host CLI and versioned blueprint define sandbox lifecycle, policy, and agent integration.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "CLI, Integration Layer, and Blueprint",
+			"evidenceAnchors": ["The _blueprint_ is a versioned YAML package"],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"claimId": "claim.gateway-control",
+			"text": "The OpenShell gateway coordinates lifecycle, credentials, network policy, and routed inference.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"coordinates sandbox lifecycle, credentials, network policy, inference routes, and approved integration traffic"
+			],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"claimId": "claim.sandbox-runtime",
+			"text": "The OpenShell sandbox runs the selected agent runtime with its NemoClaw integration layer.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Runs the selected agent runtime with its NemoClaw integration layer"
+			],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"claimId": "claim.inference-route",
+			"text": "Model requests route through inference.local while provider credentials stay outside the sandbox.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "Inference Routing",
+			"evidenceAnchors": [
+				"send model requests to `inference.local` instead of an upstream endpoint",
+				"keeps the provider credential outside the sandbox"
+			],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		},
+		{
+			"claimId": "claim.approved-egress",
+			"text": "Policy-approved integrations and package sources use gateway-controlled egress.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Receive policy-approved requests to MCP servers, package indexes, and other configured services"
+			],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		{
+			"claimId": "claim.managed-state",
+			"text": "Managed state and artifacts support sandbox lifecycle.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Preserve registry records, workspace files, policy records, logs, and manifest-declared snapshot content"
+			],
+			"commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"blobSha": "2020202020202020202020202020202020202020",
+			"sectionSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		}
+	],
+	"optionalImage": null,
+	"platformMatrix": {
+		"path": "ci/platform-matrix.json",
+		"blobSha": "4040404040404040404040404040404040404040",
+		"sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		"generatedPageInSync": true
+	},
+	"findings": [],
+	"complete": true,
+	"evidenceSha256": "2089cf2d2159a29e647cc4a1b998eb7d8c200e49075de1e3baa75a1da3fabf6a"
+}

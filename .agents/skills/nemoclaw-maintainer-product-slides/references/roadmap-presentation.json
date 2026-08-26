@@ -1,0 +1,165 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMilestone aliases and optional Epic presentation seeds only. Each run creates and reviews an owner-only map for the selected set, then binds every retained summary to the collected body hash. Never pass this seed directly to model construction or publication. Live GitHub evidence controls Epic identity, inclusion, state, milestone, and progress.",
+  "schemaVersion": 1,
+  "roadmapAreas": [
+    "Usability and Onboarding",
+    "Agent Features",
+    "Acceleration and Optimization",
+    "Integrations and Blueprints"
+  ],
+  "milestoneAliases": {
+    "Q3": "Roadmap: Q3 2026",
+    "GTC Berlin": "Roadmap: GTC Berlin 2026",
+    "Q4": "Roadmap: Q4 2026"
+  },
+  "epics": [
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABK1u8vg",
+      "issueNumber": 7923,
+      "displayTitle": "Pi Agent",
+      "roadmapArea": "Agent Features",
+      "shortenedOutcome": "Make Pi a first-class NemoClaw agent",
+      "boundBodySha256": "8c924e2325219cef991fcdbeb25e9eae5c18b84c519bfb433ed27be1d641dd4c",
+      "displayOrder": 1
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLxmNCA",
+      "issueNumber": 8498,
+      "displayTitle": "Contribution Path",
+      "roadmapArea": "Integrations and Blueprints",
+      "shortenedOutcome": "Establish enterprise and community contribution guidance",
+      "boundBodySha256": "33386b97945b5f5ce030efb82890bbd14bc5bffe3b2b042098edc5d11e3ded16",
+      "displayOrder": 2
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLm6qOg",
+      "issueNumber": 8379,
+      "displayTitle": "DGX Express Installer",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Install on DGX Spark and Station",
+      "boundBodySha256": "b43e334bd037a967550a027d5919378f13c1b65fa0c3e1167fea80d3b087617f",
+      "displayOrder": 3
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLxzYHw",
+      "issueNumber": 8500,
+      "displayTitle": "Jetson Express Installer",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Install and qualify Jetson AGX Thor",
+      "boundBodySha256": "0736a201e5b9f9e6375334416bc0608358451f0516e8daa9096a4d8e59a099ea",
+      "displayOrder": 4
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABNFwNJg",
+      "issueNumber": 9328,
+      "displayTitle": "DeepSeek Harness",
+      "roadmapArea": "Agent Features",
+      "shortenedOutcome": "Make DeepSeek a first-class agent runtime",
+      "boundBodySha256": "3d8f5da263d6af39fa95fd8ec3bee08ba93dd651f4e72408eb3fbabb5f854a13",
+      "displayOrder": 5
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLflHwQ",
+      "issueNumber": 8275,
+      "displayTitle": "VoiceClaw Speech",
+      "roadmapArea": "Agent Features",
+      "shortenedOutcome": "Connect voice sessions to one OpenClaw agent",
+      "boundBodySha256": "376ee0b37c3d82b525b4f40ce2a009c90f4b54d496106345ad9f274c7ebd917e",
+      "displayOrder": 6
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABK2nPcg",
+      "issueNumber": 7937,
+      "displayTitle": "Relay Switchyard Routing",
+      "roadmapArea": "Acceleration and Optimization",
+      "shortenedOutcome": "Route NemoClaw requests through Switchyard",
+      "boundBodySha256": "170818304c7012362ed8383b914e1e30c0b6eede945cf6f2e7e706ccf8113b1f",
+      "displayOrder": 7
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLx8MIg",
+      "issueNumber": 8501,
+      "displayTitle": "Hermes Optimization",
+      "roadmapArea": "Acceleration and Optimization",
+      "shortenedOutcome": "Improve token cost and accuracy",
+      "boundBodySha256": "ceccadefe512c22f0516ba81065986cf45d0f5b2cdb264f362f6d29074673379",
+      "displayOrder": 8
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLU1o0g",
+      "issueNumber": 8178,
+      "displayTitle": "Native Windows Runtime",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Run agents through OpenShell MXC",
+      "boundBodySha256": "9ce052ef3c551b1a47cc8eafa0a75ba69809fc8c55f79cefce6136d37ad0011f",
+      "displayOrder": 9
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABL3vbEQ",
+      "issueNumber": 8568,
+      "displayTitle": "Post-Training Feedback Loop Blueprint",
+      "roadmapArea": "Acceleration and Optimization",
+      "displayOrder": 10
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABLyEhrg",
+      "issueNumber": 8504,
+      "displayTitle": "Enterprise AI Opinionated Reference Stack",
+      "roadmapArea": "Integrations and Blueprints",
+      "displayOrder": 11
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABHGdXTA",
+      "issueNumber": 6015,
+      "displayTitle": "Computer Use Agent",
+      "roadmapArea": "Agent Features",
+      "shortenedOutcome": "Decide whether to extend the experimental NemoCUA foundation",
+      "boundBodySha256": "c91c432068b6292a441251954343293fbff6a8687bcaaf7689763dca1d0788dd",
+      "displayOrder": 12
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABKhtLqw",
+      "issueNumber": 7744,
+      "displayTitle": "Native Podman Runtime",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Enable buildless managed onboarding",
+      "boundBodySha256": "e2fe4d5adbe4b7ab0a070a12d5bd5ef17edc207cb315461c1ef1d842cd41a90f",
+      "displayOrder": 13
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABMO6Mew",
+      "issueNumber": 8773,
+      "displayTitle": "Nemotron 4",
+      "roadmapArea": "Agent Features",
+      "shortenedOutcome": "Qualify one reproducible profile on approved hardware",
+      "boundBodySha256": "cd48eb2db8cd4ee4e29e19007ab1cd0f80c07277f47a8485e7d66a7ddfa0eadc",
+      "displayOrder": 14
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABMOa8FA",
+      "issueNumber": 8769,
+      "displayTitle": "Kubernetes Multi-Tenancy",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Qualify OpenShell deployment and workspace isolation",
+      "boundBodySha256": "ec0cd32a9ee450d12da102df23dd97c8d04cd1d19e29154ca2191510be32f6b7",
+      "displayOrder": 15
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABL6tm2Q",
+      "issueNumber": 8590,
+      "displayTitle": "OpenShell Qualification",
+      "shortenedOutcome": "Qualify and pin v0.0.101",
+      "boundBodySha256": "b1b92719fe116c007dd78a19f41502c6b3c98ac3a3bf1a90c2b037adc4399d79",
+      "displayOrder": 6
+    },
+    {
+      "epicNodeId": "I_kwDORnw8lM8AAAABNnQJhg",
+      "issueNumber": 9816,
+      "displayTitle": "Kubernetes In-Cluster",
+      "roadmapArea": "Usability and Onboarding",
+      "shortenedOutcome": "Qualify one external-gateway workflow",
+      "boundBodySha256": "be56ec5e6600495982d28ec8947a96e925dd4a6200a583cdeac521391779adcb",
+      "displayOrder": 7
+    }
+  ]
+}

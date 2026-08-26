@@ -1,0 +1,224 @@
+{
+	"$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nVisible markitecture wording and its exact repository evidence scope. Runtime collection supplies commit and section hashes.",
+	"schemaVersion": 1,
+	"claims": [
+		{
+			"claimId": "claim.operator-entry",
+			"text": "Users and operators manage NemoClaw through the host CLI.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["Install and operate NemoClaw from the host"]
+		},
+		{
+			"claimId": "claim.host-blueprint",
+			"text": "The host CLI and versioned blueprint define sandbox lifecycle, policy, and agent integration.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "CLI, Integration Layer, and Blueprint",
+			"evidenceAnchors": ["The _blueprint_ is a versioned YAML package"]
+		},
+		{
+			"claimId": "claim.gateway-control",
+			"text": "The OpenShell gateway coordinates lifecycle, credentials, network policy, and routed inference.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"coordinates sandbox lifecycle, credentials, network policy, inference routes, and approved integration traffic"
+			]
+		},
+		{
+			"claimId": "claim.sandbox-runtime",
+			"text": "The OpenShell sandbox runs the selected agent runtime with its NemoClaw integration layer.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Runs the selected agent runtime with its NemoClaw integration layer"
+			]
+		},
+		{
+			"claimId": "claim.inference-route",
+			"text": "Model requests route through inference.local while provider credentials stay outside the sandbox.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "Inference Routing",
+			"evidenceAnchors": [
+				"send model requests to `inference.local` instead of an upstream endpoint",
+				"keeps the provider credential outside the sandbox"
+			]
+		},
+		{
+			"claimId": "claim.approved-egress",
+			"text": "Policy-approved integrations and package sources use gateway-controlled egress.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Receive policy-approved requests to MCP servers, package indexes, and other configured services"
+			]
+		},
+		{
+			"claimId": "claim.managed-state",
+			"text": "Managed state and artifacts support sandbox lifecycle.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": [
+				"Preserve registry records, workspace files, policy records, logs, and manifest-declared snapshot content"
+			]
+		},
+		{
+			"claimId": "claim.operator-host-operate",
+			"text": "Users and operators operate NemoClaw through the host CLI.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["USERS -->|\"operate\"| CLI"]
+		},
+		{
+			"claimId": "claim.host-gateway-configure",
+			"text": "The NemoClaw host CLI configures OpenShell gateway resources.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["CLI -->|\"configure resources\"| GATEWAY"]
+		},
+		{
+			"claimId": "claim.gateway-sandbox-control",
+			"text": "The OpenShell gateway creates and controls the OpenShell sandbox.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["GATEWAY -->|\"create and control\"| SANDBOX"]
+		},
+		{
+			"claimId": "claim.sandbox-gateway-requests",
+			"text": "The OpenShell sandbox sends managed requests to the OpenShell gateway.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["SANDBOX -->|\"managed requests\"| GATEWAY"]
+		},
+		{
+			"claimId": "claim.gateway-inference-route",
+			"text": "The OpenShell gateway routes inference requests to inference providers.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["GATEWAY -->|\"routed inference\"| INFERENCE"]
+		},
+		{
+			"claimId": "claim.gateway-integration-egress",
+			"text": "The OpenShell gateway permits approved egress to approved integrations.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "High-Level Flow",
+			"evidenceAnchors": ["GATEWAY -->|\"approved egress\"| INTEGRATIONS"]
+		},
+		{
+			"claimId": "claim.sandbox-state-lifecycle",
+			"text": "Rebuild, snapshot, and restore operations preserve only the state declared for the selected agent runtime.",
+			"path": "docs/about/how-it-works.mdx",
+			"heading": "Design Principles",
+			"evidenceAnchors": ["Rebuild, snapshot, and restore operations preserve only the state declared for the selected agent runtime."]
+		}
+	],
+	"connectors": [
+		{
+			"contentId": "connector.operator-host",
+			"claimId": "claim.operator-host-operate",
+			"from": "node.operator",
+			"to": "node.host",
+			"label": "operate",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.host-gateway",
+			"claimId": "claim.host-gateway-configure",
+			"from": "node.host",
+			"to": "node.gateway",
+			"label": "configure resources",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.gateway-sandbox",
+			"claimId": "claim.gateway-sandbox-control",
+			"from": "node.gateway",
+			"to": "node.sandbox",
+			"label": "create and control",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.sandbox-gateway",
+			"claimId": "claim.sandbox-gateway-requests",
+			"from": "node.sandbox",
+			"to": "node.gateway",
+			"label": "managed requests",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.gateway-inference",
+			"claimId": "claim.gateway-inference-route",
+			"from": "node.gateway",
+			"to": "node.inference",
+			"label": "routed inference",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.gateway-integrations",
+			"claimId": "claim.gateway-integration-egress",
+			"from": "node.gateway",
+			"to": "node.integrations",
+			"label": "approved egress",
+			"lineStyle": "solid"
+		},
+		{
+			"contentId": "connector.sandbox-state",
+			"claimId": "claim.sandbox-state-lifecycle",
+			"from": "node.sandbox",
+			"to": "node.state",
+			"label": "preserve for rebuild, snapshot, restore",
+			"lineStyle": "dashed"
+		}
+	],
+	"nodes": [
+		{
+			"contentId": "node.operator",
+			"claimId": "claim.operator-entry",
+			"text": "Users and operators",
+			"lane": 0,
+			"order": 0
+		},
+		{
+			"contentId": "node.host",
+			"claimId": "claim.host-blueprint",
+			"text": "NemoClaw host CLI and versioned blueprint",
+			"lane": 1,
+			"order": 0
+		},
+		{
+			"contentId": "node.gateway",
+			"claimId": "claim.gateway-control",
+			"text": "OpenShell gateway",
+			"lane": 2,
+			"order": 0
+		},
+		{
+			"contentId": "node.sandbox",
+			"claimId": "claim.sandbox-runtime",
+			"text": "OpenShell sandbox\nAgent runtime + NemoClaw integration",
+			"lane": 3,
+			"order": 0
+		},
+		{
+			"contentId": "node.inference",
+			"claimId": "claim.inference-route",
+			"text": "Managed inference",
+			"lane": 4,
+			"order": 0
+		},
+		{
+			"contentId": "node.integrations",
+			"claimId": "claim.approved-egress",
+			"text": "Approved integrations",
+			"lane": 4,
+			"order": 1
+		},
+		{
+			"contentId": "node.state",
+			"claimId": "claim.managed-state",
+			"text": "Managed state and artifacts",
+			"lane": 5,
+			"order": 0
+		}
+	]
+}

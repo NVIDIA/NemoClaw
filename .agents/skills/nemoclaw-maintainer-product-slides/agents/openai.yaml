@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Product Slides"
+  short_description: "Generate evidence-bound NemoClaw product slides"
+  default_prompt: "Use $nemoclaw-maintainer-product-slides to generate or refresh the NemoClaw product-slide set in Google Slides and PowerPoint."

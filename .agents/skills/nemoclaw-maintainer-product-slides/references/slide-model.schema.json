@@ -1,0 +1,576 @@
+{
+	"$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/NVIDIA/NemoClaw/tree/main/.agents/skills/nemoclaw-maintainer-product-slides/references/slide-model.schema.json",
+	"title": "NemoClaw product slide model",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"schemaVersion",
+		"kind",
+		"repository",
+		"asOf",
+		"snapshotSha256",
+		"templateFingerprint",
+		"metricMode",
+		"publication",
+		"slides",
+		"modelSha256"
+	],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"kind": { "const": "nemoclaw-product-slides" },
+		"repository": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["nameWithOwner", "commitSha", "url"],
+			"properties": {
+				"nameWithOwner": { "const": "NVIDIA/NemoClaw" },
+				"commitSha": { "$ref": "#/$defs/sha1" },
+				"url": { "$ref": "#/$defs/url" }
+			}
+		},
+		"asOf": { "$ref": "#/$defs/dateTime" },
+		"snapshotSha256": { "$ref": "#/$defs/sha256" },
+		"templateFingerprint": { "$ref": "#/$defs/sha256" },
+		"metricMode": { "enum": ["retained_additions", "net_change"] },
+		"publication": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["eligible", "blockers", "findings"],
+			"properties": {
+				"eligible": { "type": "boolean" },
+				"blockers": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+				"findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+			}
+		},
+		"slides": {
+			"type": "array",
+			"minItems": 4,
+			"items": {
+				"oneOf": [
+					{ "$ref": "#/$defs/executiveSlide" },
+					{ "$ref": "#/$defs/capabilitySlide" },
+					{ "$ref": "#/$defs/markitectureSlide" },
+					{ "$ref": "#/$defs/weeklySlide" }
+				]
+			}
+		},
+		"modelSha256": { "$ref": "#/$defs/sha256" }
+	},
+	"$defs": {
+		"sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+		"sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+		"dateTime": { "type": "string", "format": "date-time" },
+		"url": { "type": "string", "format": "uri", "pattern": "^https://" },
+		"contentId": {
+			"type": "string",
+			"pattern": "^[a-z0-9][a-z0-9._:-]{2,127}$"
+		},
+		"finding": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["code", "message", "remediation"],
+			"properties": {
+				"code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+				"role": {
+					"enum": [
+						"roadmap-executive",
+						"roadmap-capability",
+						"markitecture",
+						"weekly-release"
+					]
+				},
+				"message": { "type": "string", "minLength": 1 },
+				"remediation": { "type": "string", "minLength": 1 }
+			}
+		},
+		"sourceRecord": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["sourceId", "kind", "digest"],
+			"properties": {
+				"sourceId": { "$ref": "#/$defs/contentId" },
+				"kind": { "enum": ["github", "documentation", "claim", "mapping"] },
+				"url": { "$ref": "#/$defs/url" },
+				"path": { "type": "string", "minLength": 1 },
+				"heading": { "type": "string", "minLength": 1 },
+				"commitSha": { "$ref": "#/$defs/sha1" },
+				"digest": { "$ref": "#/$defs/sha256" }
+			},
+			"oneOf": [
+				{ "properties": { "url": {} }, "required": ["url"] },
+				{ "properties": { "path": {} }, "required": ["path"] }
+			]
+		},
+		"outcome": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"contentId",
+				"epicNodeId",
+				"issueNumber",
+				"featureTitle",
+				"text",
+				"url",
+				"state",
+				"closedAt",
+				"progress"
+			],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"epicNodeId": { "type": "string", "minLength": 1 },
+				"issueNumber": { "type": "integer", "minimum": 1 },
+				"featureTitle": { "type": "string", "minLength": 1, "maxLength": 90 },
+				"text": { "type": "string", "minLength": 1, "maxLength": 90 },
+				"url": { "$ref": "#/$defs/url" },
+				"state": { "enum": ["OPEN", "CLOSED"] },
+				"closedAt": {
+					"oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }]
+				},
+				"progress": {
+					"oneOf": [
+						{ "const": "Unknown" },
+						{
+							"type": "object",
+							"additionalProperties": false,
+							"required": ["completed", "total", "percentage"],
+							"properties": {
+								"completed": { "type": "integer", "minimum": 0 },
+								"total": { "type": "integer", "minimum": 1 },
+								"percentage": { "type": "number", "minimum": 0, "maximum": 100 }
+							}
+						}
+					]
+				}
+			}
+		},
+		"milestoneStatus": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["state", "label"],
+			"properties": {
+				"state": { "const": "open" },
+				"label": { "const": "Active" }
+			}
+		},
+		"milestoneColumn": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"contentId",
+				"milestoneNodeId",
+				"title",
+				"url",
+				"dueOn",
+				"focus",
+				"status",
+				"outcomes"
+			],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"milestoneNodeId": { "type": "string", "minLength": 1 },
+				"title": { "type": "string", "minLength": 1, "maxLength": 40 },
+				"url": { "$ref": "#/$defs/url" },
+				"dueOn": { "$ref": "#/$defs/dateTime" },
+				"focus": { "type": "string", "minLength": 1, "maxLength": 80 },
+				"status": { "$ref": "#/$defs/milestoneStatus" },
+				"outcomes": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/outcome" }
+				}
+			}
+		},
+		"executiveSlide": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"role",
+				"instanceId",
+				"pageIndex",
+				"pageCount",
+				"title",
+				"summary",
+				"milestones",
+				"managedNotes",
+				"sources"
+			],
+			"properties": {
+				"role": { "const": "roadmap-executive" },
+				"instanceId": { "type": "string", "pattern": "^roadmap-executive\\.[1-9]\\d*$" },
+				"pageIndex": { "type": "integer", "minimum": 1 },
+				"pageCount": { "type": "integer", "minimum": 1 },
+				"title": { "type": "string", "minLength": 1 },
+				"summary": { "type": "string", "minLength": 1, "maxLength": 180 },
+				"milestones": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 3,
+					"items": { "$ref": "#/$defs/milestoneColumn" }
+				},
+				"managedNotes": { "type": "string", "minLength": 1 },
+				"sources": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/sourceRecord" }
+				}
+			}
+		},
+		"matrixCell": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["contentId", "milestoneNodeId", "roadmapArea", "items"],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"milestoneNodeId": { "type": "string", "minLength": 1 },
+				"roadmapArea": { "type": "string", "minLength": 1 },
+				"items": {
+					"type": "array",
+					"maxItems": 3,
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"contentId",
+							"issueNumber",
+							"title",
+							"url",
+							"state",
+							"closedAt"
+						],
+						"properties": {
+							"contentId": { "$ref": "#/$defs/contentId" },
+							"issueNumber": { "type": "integer", "minimum": 1 },
+							"title": { "type": "string", "minLength": 1, "maxLength": 90 },
+							"url": { "$ref": "#/$defs/url" },
+							"state": { "enum": ["OPEN", "CLOSED"] },
+							"closedAt": {
+								"oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }]
+							}
+						}
+					}
+				}
+			}
+		},
+		"capabilitySlide": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"role",
+				"instanceId",
+				"pageIndex",
+				"pageCount",
+				"title",
+				"columns",
+				"rows",
+				"cells",
+				"unclassified",
+				"managedNotes",
+				"sources"
+			],
+			"properties": {
+				"role": { "const": "roadmap-capability" },
+				"instanceId": { "type": "string", "pattern": "^roadmap-capability\\.[1-9]\\d*$" },
+				"pageIndex": { "type": "integer", "minimum": 1 },
+				"pageCount": { "type": "integer", "minimum": 1 },
+				"title": { "const": "NemoClaw Feature Roadmap" },
+				"columns": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 3,
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": ["milestoneNodeId", "title", "dueOn", "focus", "status"],
+						"properties": {
+							"milestoneNodeId": { "type": "string", "minLength": 1 },
+							"title": { "type": "string", "minLength": 1, "maxLength": 40 },
+							"dueOn": { "$ref": "#/$defs/dateTime" },
+							"focus": { "type": "string", "minLength": 1, "maxLength": 80 },
+							"status": { "$ref": "#/$defs/milestoneStatus" }
+						}
+					}
+				},
+				"rows": {
+					"type": "array",
+					"minItems": 4,
+					"maxItems": 4,
+					"items": { "type": "string", "minLength": 1 }
+				},
+				"cells": {
+					"type": "array",
+					"minItems": 4,
+					"items": { "$ref": "#/$defs/matrixCell" }
+				},
+				"unclassified": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"contentId",
+							"milestoneNodeId",
+							"issueNumber",
+							"title",
+							"url",
+							"state",
+							"closedAt"
+						],
+						"properties": {
+							"contentId": { "$ref": "#/$defs/contentId" },
+							"milestoneNodeId": { "type": "string", "minLength": 1 },
+							"issueNumber": { "type": "integer", "minimum": 1 },
+							"title": { "type": "string", "minLength": 1, "maxLength": 90 },
+							"url": { "$ref": "#/$defs/url" },
+							"state": { "enum": ["OPEN", "CLOSED"] },
+							"closedAt": {
+								"oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }]
+							}
+						}
+					}
+				},
+				"managedNotes": { "type": "string", "minLength": 1 },
+				"sources": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/sourceRecord" }
+				}
+			}
+		},
+		"diagramNode": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["contentId", "claimId", "text", "lane", "order"],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"claimId": { "$ref": "#/$defs/contentId" },
+				"text": { "type": "string", "minLength": 1, "maxLength": 180 },
+				"lane": { "type": "integer", "minimum": 0, "maximum": 5 },
+				"order": { "type": "integer", "minimum": 0 }
+			}
+		},
+		"diagramConnector": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["contentId", "claimId", "from", "to", "label", "lineStyle"],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"claimId": { "$ref": "#/$defs/contentId" },
+				"from": { "$ref": "#/$defs/contentId" },
+				"to": { "$ref": "#/$defs/contentId" },
+				"label": { "type": "string", "maxLength": 72 },
+				"lineStyle": { "enum": ["solid", "dashed"] }
+			}
+		},
+		"claimRecord": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"claimId",
+				"text",
+				"path",
+				"heading",
+				"evidenceAnchors",
+				"commitSha",
+				"sectionSha256"
+			],
+			"properties": {
+				"claimId": { "$ref": "#/$defs/contentId" },
+				"text": { "type": "string", "minLength": 1 },
+				"path": { "type": "string", "minLength": 1 },
+				"heading": { "type": "string", "minLength": 1 },
+				"evidenceAnchors": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "type": "string", "minLength": 1 }
+				},
+				"commitSha": { "$ref": "#/$defs/sha1" },
+				"sectionSha256": { "$ref": "#/$defs/sha256" },
+				"platformGate": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": ["matrixSection", "entryName", "allowedStatuses"],
+					"properties": {
+						"matrixSection": { "type": "string", "minLength": 1 },
+						"entryName": { "type": "string", "minLength": 1 },
+						"allowedStatuses": {
+							"type": "array",
+							"minItems": 1,
+							"items": { "type": "string", "minLength": 1 }
+						}
+					}
+				}
+			}
+		},
+		"markitectureSlide": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"role",
+				"title",
+				"nodes",
+				"connectors",
+				"claims",
+				"managedNotes",
+				"sources"
+			],
+			"properties": {
+				"role": { "const": "markitecture" },
+				"title": { "type": "string", "minLength": 1 },
+				"nodes": {
+					"type": "array",
+					"minItems": 4,
+					"items": { "$ref": "#/$defs/diagramNode" }
+				},
+				"connectors": {
+					"type": "array",
+					"minItems": 3,
+					"items": { "$ref": "#/$defs/diagramConnector" }
+				},
+				"claims": {
+					"type": "array",
+					"minItems": 4,
+					"items": { "$ref": "#/$defs/claimRecord" }
+				},
+				"managedNotes": { "type": "string", "minLength": 1 },
+				"sources": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/sourceRecord" }
+				}
+			}
+		},
+		"metric": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["contentId", "label", "value"],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"label": { "type": "string", "minLength": 1 },
+				"value": { "oneOf": [{ "type": "integer" }, { "type": "string" }] },
+				"detailLabel": { "type": "string", "minLength": 1 },
+				"detailValue": {
+					"oneOf": [{ "type": "integer" }, { "type": "string" }]
+				}
+			}
+		},
+		"weeklyUpdate": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"contentId",
+				"epicNodeId",
+				"epicBodySha256",
+				"label",
+				"text",
+				"sourceId",
+				"sourceDigest"
+			],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"epicNodeId": { "type": "string", "minLength": 1 },
+				"epicBodySha256": { "$ref": "#/$defs/sha256" },
+				"label": { "type": "string", "minLength": 1, "maxLength": 90 },
+				"text": { "type": "string", "minLength": 1, "maxLength": 180 },
+				"sourceId": { "$ref": "#/$defs/contentId" },
+				"sourceDigest": { "$ref": "#/$defs/sha256" }
+			}
+		},
+		"weeklyRisk": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"contentId",
+				"label",
+				"text",
+				"sourceId",
+				"sourceDigest"
+			],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"label": { "type": "string", "minLength": 1, "maxLength": 90 },
+				"text": { "type": "string", "minLength": 1, "maxLength": 180 },
+				"sourceId": { "$ref": "#/$defs/contentId" },
+				"sourceDigest": { "$ref": "#/$defs/sha256" }
+			}
+		},
+		"weeklyMilestoneRow": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"contentId",
+				"milestoneNodeId",
+				"title",
+				"url",
+				"updates",
+				"risks"
+			],
+			"properties": {
+				"contentId": { "$ref": "#/$defs/contentId" },
+				"milestoneNodeId": { "type": "string", "minLength": 1 },
+				"title": { "type": "string", "minLength": 1, "maxLength": 40 },
+				"url": { "$ref": "#/$defs/url" },
+				"updates": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/weeklyUpdate" }
+				},
+				"risks": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/weeklyRisk" }
+				}
+			}
+		},
+		"weeklySlide": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"role",
+				"title",
+				"window",
+				"reportObservedAt",
+				"releaseContext",
+				"metrics",
+				"milestoneRows",
+				"managedNotes",
+				"sources"
+			],
+			"properties": {
+				"role": { "const": "weekly-release" },
+				"title": { "type": "string", "minLength": 1 },
+				"window": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": ["start", "end"],
+					"properties": {
+						"start": { "$ref": "#/$defs/dateTime" },
+						"end": { "$ref": "#/$defs/dateTime" }
+					}
+				},
+				"reportObservedAt": { "$ref": "#/$defs/dateTime" },
+				"releaseContext": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 180
+				},
+				"metrics": {
+					"type": "array",
+					"minItems": 4,
+					"maxItems": 6,
+					"items": { "$ref": "#/$defs/metric" }
+				},
+				"milestoneRows": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 3,
+					"items": { "$ref": "#/$defs/weeklyMilestoneRow" }
+				},
+				"managedNotes": { "type": "string", "minLength": 1 },
+				"sources": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/sourceRecord" }
+				}
+			}
+		}
+	}
+}

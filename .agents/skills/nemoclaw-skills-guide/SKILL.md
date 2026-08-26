@@ -25,10 +25,10 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
-### `nemoclaw-maintainer-*` (18 skills)
+### `nemoclaw-maintainer-*` (19 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
+Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, documentation refactors, releases, product slides, review selection, comparison, triage, security review, and stale bug verification.
 
 ### `nemoclaw-contributor-*` (6 skills)
 
@@ -68,6 +68,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-fix-e2e-failures` | Continuously fix automatic `main` E2E failures by root cause, coordinate peer approvals, merge eligible PRs, and monitor new results. |
 | `nemoclaw-maintainer-validate-launchable` | Run advisory validation of the staging Brev Launchable deployment, exact image and runtime identity, preinstalled user journey, inference, and cleanup. |
 | `nemoclaw-maintainer-release-notes` | Draft the post-tag Announcement from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
+| `nemoclaw-maintainer-product-slides` | Generate or refresh evidence-bound Google Slides and PowerPoint product slides. Roadmaps include eligible milestones and show closed Epics as completed. |
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority. Link each PR to its issue and identify competing PRs. |
 | `nemoclaw-maintainer-pr-comparator` | Compare open PRs for the same issue. Apply gates and score the eligible PRs before you recommend one to merge. |
 | `nemoclaw-maintainer-normalize-title-tags` | Preview and remove bracketed `NemoClaw` title tags from issues and PRs case-insensitively, even when the tag appears later in the title. |
@@ -100,6 +101,6 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
 | Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 25 | `nemoclaw-maintainer-morning` |
+| Maintainer | All skills | 26 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

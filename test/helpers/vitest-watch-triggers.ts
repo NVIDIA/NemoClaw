@@ -38,6 +38,21 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/workflow-plan.test.ts",
 ] as const;
 
+const PRODUCT_SLIDE_TESTS = [
+  "test/skills/product-slides/cleanup.test.ts",
+  "test/skills/product-slides/evidence.test.ts",
+  "test/skills/product-slides/google-template.test.ts",
+  "test/skills/product-slides/model-evidence.test.ts",
+  "test/skills/product-slides/model-presentation.test.ts",
+  "test/skills/product-slides/model-roadmap.test.ts",
+  "test/skills/product-slides/parity.test.ts",
+  "test/skills/product-slides/pptx-template-artifact.test.ts",
+  "test/skills/product-slides/pptx-template-fidelity.test.ts",
+  "test/skills/product-slides/pptx-template-structure.test.ts",
+  "test/skills/product-slides/publication.test.ts",
+  "test/skills/product-slides/template-fingerprint.test.ts",
+] as const;
+
 function runTests(...tests: string[]): () => string[] {
   return () => [...tests];
 }
@@ -354,6 +369,43 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern:
       /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
     testsToRun: runTests("test/automation/releases/release-post-tag-follow-through.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/scripts\/pptx-authoring-module\.mts$/,
+    testsToRun: runTests("test/skills/product-slides/pptx-template-structure.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/google-template\.json$/,
+    testsToRun: runTests("test/skills/product-slides/google-template.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/markitecture-claims\.json$/,
+    testsToRun: runTests(
+      "test/skills/product-slides/evidence.test.ts",
+      "test/skills/product-slides/model-evidence.test.ts",
+      "test/skills/product-slides/model-presentation.test.ts",
+      "test/skills/product-slides/model-roadmap.test.ts",
+      "test/skills/product-slides/parity.test.ts",
+      "test/skills/product-slides/publication.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-product-slides\/references\/slide-model\.schema\.json$/,
+    testsToRun: runTests(
+      "test/skills/product-slides/evidence.test.ts",
+      "test/skills/product-slides/model-presentation.test.ts",
+      "test/skills/product-slides/model-roadmap.test.ts",
+      "test/skills/product-slides/parity.test.ts",
+      "test/skills/product-slides/publication.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)test\/fixtures\/nemoclaw-maintainer-product-slides\/.*\.json$/,
+    testsToRun: runTests(...PRODUCT_SLIDE_TESTS),
   },
 ];
 export function resolveVitestWatchTests(file: string): string[] {

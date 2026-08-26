@@ -1,0 +1,71 @@
+{
+	"schemaVersion": 1,
+	"observedAt": "2026-08-12T12:00:00.000Z",
+	"reportSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+	"milestoneRows": [
+		{
+			"milestoneNodeId": "M_SYNTHETIC_3",
+			"updates": [
+				{
+					"epicNodeId": "E_SYNTHETIC_101",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Guided onboarding",
+					"text": "Guided setup validation is complete."
+				},
+				{
+					"epicNodeId": "E_SYNTHETIC_102",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Voice interaction",
+					"text": "Voice workflow validation is in progress."
+				}
+			],
+			"risks": [
+				{
+					"label": "Qualification",
+					"text": "Device qualification remains open."
+				}
+			]
+		},
+		{
+			"milestoneNodeId": "M_SYNTHETIC_1",
+			"updates": [
+				{
+					"epicNodeId": "E_SYNTHETIC_103",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Agent routing",
+					"text": "Routing validation is in progress."
+				},
+				{
+					"epicNodeId": "E_SYNTHETIC_104",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Community blueprints",
+					"text": "Blueprint contribution review is complete."
+				}
+			],
+			"risks": []
+		},
+		{
+			"milestoneNodeId": "M_SYNTHETIC_2",
+			"updates": [
+				{
+					"epicNodeId": "E_SYNTHETIC_105",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Windows host path",
+					"text": "Host workflow validation is planned."
+				},
+				{
+					"epicNodeId": "E_SYNTHETIC_106",
+					"epicBodySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+					"label": "Feedback optimization",
+					"text": "Feedback measurement work is planned."
+				}
+			],
+			"risks": [
+				{
+					"label": "Dependency",
+					"text": "Dependency validation remains open."
+				}
+			]
+		}
+	]
+}

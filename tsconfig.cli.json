@@ -1,21 +1,41 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "preserve",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "strict": true,
-    "allowJs": true,
-    "checkJs": false,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "moduleDetection": "force",
-    "types": ["node"]
-  },
-  "include": [".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts", ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts", "agents/hermes/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "scripts/**/*.mts", "src/**/*.ts", "test/**/*.ts", "tools/**/*.ts", "tools/**/*.mts", "nemoclaw-blueprint/scripts/**/*.ts"],
-  "exclude": ["node_modules", "nemoclaw", "test/e2e/fixtures/plugins/weather", "tools/mcp-tool-discovery-runtime/mcp-tool-discovery.ts", "tools/mcp-tool-discovery-runtime/streamable-http-client.test.ts"]
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022"],
+		"strict": true,
+		"allowJs": true,
+		"checkJs": false,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"moduleDetection": "force",
+		"types": ["node"]
+	},
+	"include": [
+		".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+		".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
+		".agents/skills/nemoclaw-maintainer-product-slides/scripts/*.mts",
+		"agents/hermes/**/*.ts",
+		"bin/**/*.ts",
+		"scripts/**/*.ts",
+		"scripts/**/*.mts",
+		"src/**/*.ts",
+		"test/**/*.ts",
+		"tools/**/*.ts",
+		"tools/**/*.mts",
+		"nemoclaw-blueprint/scripts/**/*.ts"
+	],
+	"exclude": [
+		"node_modules",
+		"nemoclaw",
+		".agents/skills/nemoclaw-maintainer-product-slides/scripts/pptx-authoring-module.mts",
+		"test/e2e/fixtures/plugins/weather",
+		"tools/mcp-tool-discovery-runtime/mcp-tool-discovery.ts",
+		"tools/mcp-tool-discovery-runtime/streamable-http-client.test.ts"
+	]
 }

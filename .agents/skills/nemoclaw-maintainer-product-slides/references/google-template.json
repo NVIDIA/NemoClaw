@@ -1,0 +1,67 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nPublic default Google Slides template. Read the complete deck before each run and never edit this presentation.",
+  "schemaVersion": 1,
+  "presentationId": "1wnVoqkjV_KTGwLkm6fFGnIGJ1-1YKfpOAg4HIqrXvBk",
+  "presentationUrl": "https://docs.google.com/presentation/d/1wnVoqkjV_KTGwLkm6fFGnIGJ1-1YKfpOAg4HIqrXvBk/edit",
+  "title": "[Public] NemoClaw Product Slides Template",
+  "requiredAccess": "anyone-with-link-viewer",
+  "requiredCapabilities": ["view", "copy", "download"],
+  "slideSize": {
+    "widthEmu": 36576000,
+    "heightEmu": 20574000
+  },
+  "copyPolicy": {
+    "requireFreshCopy": true,
+    "honorUserDestinationFolder": true,
+    "defaultParentFolder": "root",
+    "requiredGeneralAccess": "restricted",
+    "addSharingPermissions": false,
+    "defaultOwner": "invoking-user",
+    "sharedDriveOwner": "shared-drive",
+    "sourceWriteAllowed": false
+  },
+  "slides": [
+    {
+      "semanticRole": "title",
+      "objectId": "nemoclaw_whiteboard_title"
+    },
+    {
+      "semanticRole": "roadmap-executive",
+      "objectId": "nemoclaw_exec_roadmap_final"
+    },
+    {
+      "semanticRole": "roadmap-capability",
+      "objectId": "nemoclaw_matrix_reference_taxonomy",
+      "managedObjects": {
+        "nativeTableObjectId": "nemoclaw_matrix_reference_table",
+        "topRowIndex": 0,
+        "topRowMustBeBlank": true,
+        "milestoneTargets": [
+          {
+            "objectId": "nemoclaw_matrix_reference_q3",
+            "shapeType": "HOME_PLATE",
+            "tableColumnIndex": 1
+          },
+          {
+            "objectId": "nemoclaw_matrix_reference_berlin",
+            "shapeType": "HOME_PLATE",
+            "tableColumnIndex": 2
+          },
+          {
+            "objectId": "nemoclaw_matrix_reference_q4",
+            "shapeType": "HOME_PLATE",
+            "tableColumnIndex": 3
+          }
+        ]
+      }
+    },
+    {
+      "semanticRole": "markitecture",
+      "objectId": "nemoclaw_markitecture_public"
+    },
+    {
+      "semanticRole": "weekly-release",
+      "objectId": "nemoclaw_weekly_scorecard_combined"
+    }
+  ]
+}

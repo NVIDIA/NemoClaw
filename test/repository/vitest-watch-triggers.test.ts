@@ -102,6 +102,11 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-evening/SKILL.md",
   ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
+  ".agents/skills/nemoclaw-maintainer-product-slides/scripts/pptx-authoring-module.mts",
+  ".agents/skills/nemoclaw-maintainer-product-slides/references/google-template.json",
+  ".agents/skills/nemoclaw-maintainer-product-slides/references/markitecture-claims.json",
+  ".agents/skills/nemoclaw-maintainer-product-slides/references/slide-model.schema.json",
+  "test/fixtures/nemoclaw-maintainer-product-slides/snapshot-base.json",
 ] as const;
 
 const WORKFLOW_NAME_TEST = "test/repository/github-actions-workflow-names.test.ts";
@@ -136,13 +141,17 @@ describe("Vitest opaque-input watch triggers", () => {
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
   ])("maps each daily image caller input to its contract test [%s] (#9799)", (inputPath) => {
-    expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-daily-brev-image.test.ts"]);
+    expect(triggeredBy(inputPath)).toEqual([
+      "test/automation/releases/release-daily-brev-image.test.ts",
+    ]);
   });
 
   it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
     "maps each LKG image caller input to its contract test [%s] (#9798)",
     (inputPath) => {
-      expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-lkg-brev-image.test.ts"]);
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/releases/release-lkg-brev-image.test.ts",
+      ]);
     },
   );
 
@@ -153,14 +162,14 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it.each([
-    "nemoclaw/src/shared/openshell-policy-boundary.cts",
-    "nemoclaw/tsconfig.shared.json",
-  ])("maps each policy compiler input to its spawned fixture contract [%s] (#10016)", (inputPath) => {
-    expect(triggeredBy(inputPath)).toEqual([
-      "test/e2e/support/hermes-discord-policy-binding.test.ts",
-    ]);
-  });
+  it.each(["nemoclaw/src/shared/openshell-policy-boundary.cts", "nemoclaw/tsconfig.shared.json"])(
+    "maps each policy compiler input to its spawned fixture contract [%s] (#10016)",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+      ]);
+    },
+  );
 
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
@@ -184,9 +193,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
-    expect(
-      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
-    ).toEqual([
+    expect(triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml")).toEqual([
       "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
@@ -365,6 +372,59 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(
       triggeredBy(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md"),
     ).toEqual(["test/automation/releases/release-post-tag-follow-through.test.ts"]);
+  });
+
+  it.each([
+    [
+      ".agents/skills/nemoclaw-maintainer-product-slides/scripts/pptx-authoring-module.mts",
+      ["test/skills/product-slides/pptx-template-structure.test.ts"],
+    ],
+    [
+      ".agents/skills/nemoclaw-maintainer-product-slides/references/google-template.json",
+      ["test/skills/product-slides/google-template.test.ts"],
+    ],
+    [
+      ".agents/skills/nemoclaw-maintainer-product-slides/references/markitecture-claims.json",
+      [
+        "test/skills/product-slides/evidence.test.ts",
+        "test/skills/product-slides/model-evidence.test.ts",
+        "test/skills/product-slides/model-presentation.test.ts",
+        "test/skills/product-slides/model-roadmap.test.ts",
+        "test/skills/product-slides/parity.test.ts",
+        "test/skills/product-slides/publication.test.ts",
+      ],
+    ],
+    [
+      ".agents/skills/nemoclaw-maintainer-product-slides/references/slide-model.schema.json",
+      [
+        "test/skills/product-slides/evidence.test.ts",
+        "test/skills/product-slides/model-presentation.test.ts",
+        "test/skills/product-slides/model-roadmap.test.ts",
+        "test/skills/product-slides/parity.test.ts",
+        "test/skills/product-slides/publication.test.ts",
+      ],
+    ],
+  ])("maps the product-slide opaque input %s to its focused tests", (inputPath, tests) => {
+    expect(triggeredBy(inputPath)).toEqual(tests);
+  });
+
+  it("maps a product-slide fixture change to the complete product-slide test set", () => {
+    expect(
+      triggeredBy("test/fixtures/nemoclaw-maintainer-product-slides/snapshot-base.json"),
+    ).toEqual([
+      "test/skills/product-slides/cleanup.test.ts",
+      "test/skills/product-slides/evidence.test.ts",
+      "test/skills/product-slides/google-template.test.ts",
+      "test/skills/product-slides/model-evidence.test.ts",
+      "test/skills/product-slides/model-presentation.test.ts",
+      "test/skills/product-slides/model-roadmap.test.ts",
+      "test/skills/product-slides/parity.test.ts",
+      "test/skills/product-slides/pptx-template-artifact.test.ts",
+      "test/skills/product-slides/pptx-template-fidelity.test.ts",
+      "test/skills/product-slides/pptx-template-structure.test.ts",
+      "test/skills/product-slides/publication.test.ts",
+      "test/skills/product-slides/template-fingerprint.test.ts",
+    ]);
   });
 
   it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(

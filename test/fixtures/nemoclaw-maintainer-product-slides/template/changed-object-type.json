@@ -1,0 +1,230 @@
+{
+	"slideSize": {
+		"widthEmu": 15240000,
+		"heightEmu": 8572500,
+		"orientation": "landscape"
+	},
+	"masters": [
+		{
+			"semanticRole": "master.primary",
+			"objectKinds": ["image", "shape", "text"]
+		}
+	],
+	"layouts": [
+		{
+			"semanticRole": "layout.blank",
+			"masterRole": "master.primary",
+			"objectKinds": ["shape", "text"],
+			"placeholderStructure": [],
+			"groupStructure": []
+		},
+		{
+			"semanticRole": "layout.matrix",
+			"masterRole": "master.primary",
+			"objectKinds": ["shape", "table", "text"],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": []
+		},
+		{
+			"semanticRole": "layout.timeline",
+			"masterRole": "master.primary",
+			"objectKinds": ["group", "line", "shape", "text"],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": [
+				{
+					"semanticRole": "group.timeline",
+					"children": ["object.anchor", "object.timeline"]
+				}
+			]
+		},
+		{
+			"semanticRole": "layout.weekly",
+			"masterRole": "master.primary",
+			"objectKinds": ["shape", "text"],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": []
+		}
+	],
+	"theme": {
+		"colorRoles": [
+			{
+				"semanticRole": "color.background",
+				"hex": "#ffffff"
+			},
+			{
+				"semanticRole": "color.emphasis",
+				"hex": "#55aa00"
+			},
+			{
+				"semanticRole": "color.foreground",
+				"hex": "#111111"
+			}
+		]
+	},
+	"fontRoles": {
+		"roles": [
+			{
+				"semanticRole": "font.body",
+				"family": "Synthetic Sans",
+				"sizePt": 18,
+				"weight": 400,
+				"style": "normal"
+			},
+			{
+				"semanticRole": "font.heading",
+				"family": "Synthetic Sans",
+				"sizePt": 28,
+				"weight": 700,
+				"style": "normal"
+			}
+		]
+	},
+	"protectedRegions": [
+		{
+			"semanticRole": "region.footer",
+			"leftEmu": 0,
+			"topEmu": 8096250,
+			"widthEmu": 15240000,
+			"heightEmu": 476250
+		},
+		{
+			"semanticRole": "region.logo",
+			"leftEmu": 13906500,
+			"topEmu": 190500,
+			"widthEmu": 1143000,
+			"heightEmu": 571500
+		}
+	],
+	"roles": {
+		"roadmap-executive": {
+			"preArchiveIndex": 1,
+			"masterRole": "master.primary",
+			"layoutRole": "layout.timeline",
+			"requiredNativeObjectTypes": ["group", "line", "shape", "text"],
+			"geometry": [
+				{
+					"semanticRole": "object.anchor",
+					"kind": "shape",
+					"leftEmu": 952500,
+					"topEmu": 2857500,
+					"widthEmu": 381000,
+					"heightEmu": 381000
+				},
+				{
+					"semanticRole": "object.timeline",
+					"kind": "line",
+					"leftEmu": 1143000,
+					"topEmu": 3048000,
+					"widthEmu": 12573000,
+					"heightEmu": 9525
+				}
+			],
+			"mixedStyleRunBoundaries": [
+				{
+					"semanticRole": "text.outcome",
+					"characterIndexes": [0, 12]
+				}
+			],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": [
+				{
+					"semanticRole": "group.timeline",
+					"children": ["object.anchor", "object.timeline"]
+				}
+			]
+		},
+		"roadmap-capability": {
+			"preArchiveIndex": 2,
+			"masterRole": "master.primary",
+			"layoutRole": "layout.matrix",
+			"requiredNativeObjectTypes": ["image", "shape", "text"],
+			"geometry": [
+				{
+					"semanticRole": "object.matrix",
+					"kind": "table",
+					"leftEmu": 952500,
+					"topEmu": 1714500,
+					"widthEmu": 13335000,
+					"heightEmu": 5715000
+				}
+			],
+			"mixedStyleRunBoundaries": [],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": []
+		},
+		"markitecture": {
+			"preArchiveIndex": 3,
+			"masterRole": "master.primary",
+			"layoutRole": "layout.blank",
+			"requiredNativeObjectTypes": ["connector", "shape", "text"],
+			"geometry": [
+				{
+					"semanticRole": "object.gateway",
+					"kind": "shape",
+					"leftEmu": 6286500,
+					"topEmu": 3048000,
+					"widthEmu": 2286000,
+					"heightEmu": 1143000
+				}
+			],
+			"mixedStyleRunBoundaries": [],
+			"placeholderStructure": [],
+			"groupStructure": []
+		},
+		"weekly-release": {
+			"preArchiveIndex": 4,
+			"masterRole": "master.primary",
+			"layoutRole": "layout.weekly",
+			"requiredNativeObjectTypes": ["shape", "text"],
+			"geometry": [
+				{
+					"semanticRole": "object.scorecard",
+					"kind": "shape",
+					"leftEmu": 952500,
+					"topEmu": 1905000,
+					"widthEmu": 13335000,
+					"heightEmu": 4762500
+				}
+			],
+			"mixedStyleRunBoundaries": [],
+			"placeholderStructure": [
+				{
+					"semanticRole": "placeholder.title",
+					"placeholderType": "title",
+					"index": 0
+				}
+			],
+			"groupStructure": []
+		}
+	}
+}

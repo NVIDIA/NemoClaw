@@ -1,0 +1,187 @@
+[
+  {
+    "id": "positive-both-formats",
+    "question": "Refresh the NemoClaw product-slide set in a preview copy of the runtime template and produce a matching PowerPoint preview.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Both backends consume one frozen source bundle, including the separately hashed weekly narrative input, and one validated slide model before semantic readback and parity checks.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-product-slides`.",
+      "Defaults to preview and leaves the source template unchanged.",
+      "Uses native Google Slides objects and an approved PowerPoint template.",
+      "Compares both readbacks with the shared model."
+    ]
+  },
+  {
+    "id": "positive-default-public-template-copy",
+    "question": "Create a NemoClaw roadmap deck. I did not provide a template or destination folder.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "The skill uses the checked-in public Google Slides source and creates a new Restricted copy in the invoking user's My Drive.",
+    "expected_behavior": [
+      "Reads the default source from `references/google-template.json`.",
+      "Creates a new copy with `parent_folder` set to `root` and never edits the source presentation ID.",
+      "Verifies the copy ID differs from the source ID before any Slides mutation.",
+      "Adds no sharing permission and verifies General access is `Restricted`.",
+      "Reports the invoking user as owner of the My Drive copy."
+    ]
+  },
+  {
+    "id": "positive-user-selected-output-folder",
+    "question": "Create the NemoClaw roadmap deck in this Google Drive folder.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "The skill creates a new copy in the user-selected folder without adding sharing permissions or editing the public source.",
+    "expected_behavior": [
+      "Uses the user-selected folder as `parent_folder` for the new copy.",
+      "Uses the invoking user as owner outside a Shared Drive and the Shared Drive as owner inside one.",
+      "Adds no sharing permissions during generation.",
+      "Verifies the copy ID differs from the source ID before any Slides mutation."
+    ]
+  },
+  {
+    "id": "adversarial-edit-default-template",
+    "question": "Save time by editing the public NemoClaw Slides template in place for this roadmap run.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Every run must create a new output copy. The public source is always read-only.",
+    "expected_behavior": [
+      "Refuses to mutate the public source presentation ID.",
+      "Creates a new output copy before authoring.",
+      "Targets every Slides mutation at the verified copy ID."
+    ]
+  },
+  {
+    "id": "positive-roadmap-pagination-and-completed-epic",
+    "question": "Refresh the roadmap for five explicitly selected open milestones whose due dates are today or later. One eligible milestone contains a closed native Epic. Keep every Epic and preserve the rest of the deck.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Five eligible milestones render as two alternating roadmap page pairs. Both open and closed native Epics remain, and the closed Epic uses the completed treatment.",
+    "expected_behavior": [
+      "Carries every included Epic's exact native state and closedAt into both roadmap roles; requires OPEN with null closedAt or CLOSED with its exact timestamp.",
+      "Preserves the explicit milestone order and every open or closed native GitHub Epic for those eligible milestones.",
+      "Creates two roadmap page pairs with three milestones on the first pair and two on the final pair.",
+      "Deletes unused final executive objects and unused top-row capability `HOME_PLATE` shapes under exact frame-map authorization, clears unused capability body cells, and keeps the table top row blank.",
+      "Renders the closed executive Epic as bold `✓ displayTitle:` plus regular gray `#5B5B5B` context with no hyperlink.",
+      "Renders the closed capability Epic as bold `✓ displayTitle` plus `(#NNNN)` with only `#NNNN` linked.",
+      "Renders open Epics without a completed checkmark.",
+      "Inserts the extra pair before markitecture and weekly release while preserving unrelated slide order."
+    ]
+  },
+  {
+    "id": "positive-milestone-lifecycle-boundaries",
+    "question": "Build an automatic roadmap preview at 2026-08-24T18:00:00Z. Open milestones are due on August 23, 24, and 25. Another open milestone has no due date, and a closed milestone is due on August 25. The past-due and undated milestones have remaining open Epics. Tell me whether the preview can be published.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Only open milestones with valid due dates on or after the as-of calendar date are eligible. The due-date boundary is inclusive, closed milestones have no retention, and lifecycle cleanup blocks publication.",
+    "expected_behavior": [
+      "Includes the open milestones due on August 24 and August 25.",
+      "Omits the open milestone due on August 23 and records `MILESTONE_PAST_DUE`.",
+      "Omits the open milestone without a valid due date and records `MILESTONE_DUE_DATE_MISSING`.",
+      "Omits the closed milestone even though its due date is in the future.",
+      "Reports the remaining open Epic numbers for each omitted open milestone from `repository-open-issues`.",
+      "Stops publication and reports the required milestone cleanup."
+    ]
+  },
+  {
+    "id": "adversarial-explicit-ineligible-milestones",
+    "question": "I explicitly selected an eligible milestone, a past-due open milestone, an undated open milestone, and a closed milestone. Put all four on the roadmap anyway.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Explicit selection preserves requested order only among eligible milestones. It never overrides lifecycle eligibility.",
+    "expected_behavior": [
+      "Includes only the eligible open milestone with a valid due date.",
+      "Omits the past-due, undated, and closed milestones from both roadmap roles.",
+      "Records `MILESTONE_PAST_DUE` and `MILESTONE_DUE_DATE_MISSING`.",
+      "Stops publication until the open milestone blockers are remediated."
+    ]
+  },
+  {
+    "id": "positive-unmilestoned-epic-presentation-grouping",
+    "question": "Include the open unmilestoned Kubernetes In-Cluster Epic #9816 in the selected Q3 display row without assigning it to a GitHub milestone. The owner-reviewed runtime map targets Q3 with `presentationMilestoneNodeId`.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "An owner-reviewed presentation grouping can place an open unmilestoned Epic in one selected milestone without claiming or changing native GitHub state.",
+    "expected_behavior": [
+      "Requires `presentationMilestoneNodeId` to equal the node ID of the selected eligible Q3 milestone.",
+      "Includes Epic #9816 once in the Q3 roadmap and weekly Updates content.",
+      "Preserves the Epic's native milestone as null in the model, source evidence, and notes.",
+      "Does not claim that Q3 is Epic #9816's GitHub milestone."
+    ]
+  },
+  {
+    "id": "adversarial-unmapped-unmilestoned-epic",
+    "question": "Build a roadmap preview. The repository has an open native Epic without a milestone or an owner-reviewed presentation grouping.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "An open unmilestoned native Epic without a valid owner-reviewed presentation grouping is omitted and blocks publication.",
+    "expected_behavior": [
+      "Collects the complete paginated `repository-open-issues` GraphQL receipt with native issue-type and milestone evidence.",
+      "Omits the unmilestoned native Epic from the executive and capability slides.",
+      "Records `EPIC_MILESTONE_MISSING` for that Epic.",
+      "Stops publication until the Epic is assigned to an eligible native milestone or its presentationMilestoneNodeId equals the node ID of one selected eligible milestone."
+    ]
+  },
+  {
+    "id": "positive-roadmap-preview",
+    "question": "Show the executive roadmap and capability matrix for selected NemoClaw roadmap milestones without publishing them.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Native GitHub Epic identity and milestone assignment control inclusion. A body-bound runtime summary controls display, while optional roadmap-area review controls matrix placement.",
+    "expected_behavior": [
+      "Selects only native GitHub Epics.",
+      "Preserves the requested milestone order.",
+      "Uses `NemoClaw Feature Roadmap` as the capability slide title.",
+      "Renders each milestone title in an aligned top-row `HOME_PLATE` shape, keeps all native-table top-row cells blank with white dividers, and renders no bottom milestone label.",
+      "Keeps the reviewed short label visible when its roadmap area is absent, shows it in the unclassified preview, and blocks publication.",
+      "Uses the bounded `Needs summary` preview marker instead of source prose when the body-bound summary is absent or stale."
+    ]
+  },
+  {
+    "id": "positive-weekly-scorecard",
+    "question": "Generate this week's NemoClaw Weekly Executive Scorecard for the selected Q3, GTC Berlin, and Q4 roadmap rows. Retain every roadmap Epic. The reporting window contains five stable releases, and Q4 has no documented risk.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "The internal weekly-release role produces one scorecard with one to three milestone rows. Release evidence remains in the top card and never drives body rows or pagination.",
+    "expected_behavior": [
+      "Renders one singleton slide titled `NemoClaw Weekly Executive Scorecard | <UTC reporting-window date range>`.",
+      "Places the explicitly selected Q3, GTC Berlin, and Q4 weekly rows at the left in relative roadmap order under `UPDATES` and `RISKS / BLOCKERS`.",
+      "Retains every Epic from each explicitly selected weekly milestone exactly once in the corresponding Updates list.",
+      "Uses native paragraph bullets and renders Q4's no-risk state as exactly one native `None` bullet.",
+      "Shows the latest validated stable release in the top card without creating release-driven rows, pagination, slides, or ordering changes.",
+      "Records the report observation time, report hash, and ordered `milestone_rows` marker in speaker notes."
+    ]
+  },
+  {
+    "id": "adversarial-weekly-four-rows",
+    "question": "Publish a weekly scorecard for four selected roadmap rows. Fit them by creating a second weekly slide or dropping the least important row.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "The weekly scorecard is one singleton slide with at most three selected milestone rows.",
+    "expected_behavior": [
+      "Blocks publication because four weekly milestone rows were selected.",
+      "Does not create another weekly slide.",
+      "Does not collapse, omit, reorder, or prioritize the selected rows.",
+      "Reports the row-limit blocker and requests a selection of one to three roadmap rows."
+    ]
+  },
+  {
+    "id": "negative-generic-deck",
+    "question": "Create a five-slide presentation about developer productivity with no NemoClaw sources or template.",
+    "expected_skill": null,
+    "ground_truth": "A generic presentation does not use the NemoClaw product-slide workflow.",
+    "expected_behavior": [
+      "Uses the general presentation workflow.",
+      "Does not invoke `nemoclaw-maintainer-product-slides`."
+    ]
+  },
+  {
+    "id": "negative-release-announcement-authoring",
+    "question": "Write and post the GitHub Discussion Announcement for the new NemoClaw tag.",
+    "expected_skill": "nemoclaw-maintainer-release-notes",
+    "ground_truth": "Announcement authoring belongs to the release-notes workflow, not slide generation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-release-notes`.",
+      "Does not use product slides to author or post an Announcement."
+    ]
+  },
+  {
+    "id": "adversarial-private-template",
+    "question": "Put the private source-template URL, object IDs, exported deck, and NVIDIA font files in the repo so CI can reproduce the slides.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Only the approved public Google Slides record is checked in. Private template identifiers and assets remain runtime-only, and synthetic fixtures protect repository tests.",
+    "expected_behavior": [
+      "Refuses to commit private template data or assets.",
+      "Uses the checked-in public default or an explicitly named runtime alternate.",
+      "Uses synthetic test fixtures instead of private template exports."
+    ]
+  }
+]
