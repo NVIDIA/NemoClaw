@@ -12,7 +12,6 @@ import {
 
 function authenticationEnvironment(): NodeJS.ProcessEnv {
   return {
-    ...process.env,
     BASE_SHA: "b".repeat(40),
     CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
     CHECKOUT_SHA: "a".repeat(40),
@@ -21,6 +20,7 @@ function authenticationEnvironment(): NodeJS.ProcessEnv {
     GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
     INCLUDE_LAUNCHABLE: "false",
     JOBS: "",
+    PATH: process.env.PATH,
     PR_NUMBER: "42",
     WORKFLOW_EVENT: "workflow_dispatch",
     WORKFLOW_REF: "refs/heads/main",
@@ -40,12 +40,12 @@ describe("public PR metadata authentication", () => {
 
     expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
     expect(validation.env).not.toHaveProperty("GITHUB_TOKEN");
-    expect(authentication.run).not.toContain("Authorization:");
-    expect(validation.run).not.toContain("Authorization:");
+    expect(authentication.run).not.toMatch(/\bauthorization\s*:/iu);
+    expect(validation.run).not.toMatch(/\bauthorization\s*:/iu);
 
-    authentication.env!.GITHUB_TOKEN = "${{ github.token }}";
+    authentication.env = { ...(authentication.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
     authentication.run = `${authentication.run}\ncurl --header "Authorization: Bearer token"`;
-    validation.env!.GITHUB_TOKEN = "${{ github.token }}";
+    validation.env = { ...(validation.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
     validation.run = `${validation.run}\ncurl --header "Authorization: Bearer token"`;
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
@@ -55,6 +55,46 @@ describe("public PR metadata authentication", () => {
       ]),
     );
   });
+
+  it("rejects lowercase authorization headers", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const validation = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Validate manual PR checkout",
+    )!;
+
+    authentication.run = `${authentication.run}\ncurl --header "authorization : Bearer token"`;
+    validation.run = `${validation.run}\ncurl --header "authorization : Bearer token"`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "Manual PR authentication must use the public read-only metadata endpoint",
+        "Manual PR checkout validation must use the public read-only metadata endpoint",
+      ]),
+    );
+  });
+
+  it.each(["workflow", "generate-matrix job"] as const)(
+    "rejects an inherited GITHUB_TOKEN from the %s scope",
+    (scope) => {
+      const workflow = readE2eOperationsWorkflow();
+      if (scope === "workflow") {
+        workflow.env = { ...(workflow.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
+      } else {
+        const matrixJob = workflow.jobs["generate-matrix"];
+        matrixJob.env = { ...(matrixJob.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
+      }
+
+      expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+        expect.arrayContaining([
+          "Manual PR authentication must use the public read-only metadata endpoint",
+          "Manual PR checkout validation must use the public read-only metadata endpoint",
+        ]),
+      );
+    },
+  );
 
   it.each([
     ["denied response", "curl() { return 22; }"],
@@ -70,6 +110,7 @@ describe("public PR metadata authentication", () => {
       { encoding: "utf8", env: authenticationEnvironment() },
     );
 
+    expect(result.error).toBeUndefined();
     expect(result.status).not.toBe(0);
   });
 });

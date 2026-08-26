@@ -60,6 +60,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     'printf \'reuse=%s\\n\' "${reuse}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
+const AUTHORIZATION_HEADER = /\bauthorization\s*:/iu;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
 const GENERIC_GITHUB_WRITE_SURFACE =
@@ -328,7 +329,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
-  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
+  const inheritedGithubToken =
+    workflow.env?.GITHUB_TOKEN !== undefined || matrixJob.env?.GITHUB_TOKEN !== undefined;
+  if (
+    inheritedGithubToken ||
+    authentication.env?.GITHUB_TOKEN !== undefined ||
+    AUTHORIZATION_HEADER.test(authSource)
+  ) {
     errors.push("Manual PR authentication must use the public read-only metadata endpoint");
   }
   for (const fragment of [
@@ -393,7 +400,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
   }
-  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
+  if (
+    inheritedGithubToken ||
+    validation.env?.GITHUB_TOKEN !== undefined ||
+    AUTHORIZATION_HEADER.test(validationSource)
+  ) {
     errors.push("Manual PR checkout validation must use the public read-only metadata endpoint");
   }
   for (const fragment of [
