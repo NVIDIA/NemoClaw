@@ -5,9 +5,15 @@ import { createHash } from "node:crypto";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
+const SANDBOX_ID_MAX_LENGTH = 512;
 
 export function isOpenShellSandboxId(value: unknown): value is string {
-  return typeof value === "string" && SANDBOX_ID_RE.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= SANDBOX_ID_MAX_LENGTH &&
+    SANDBOX_ID_RE.test(value)
+  );
 }
 
 export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {

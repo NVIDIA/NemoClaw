@@ -36,8 +36,10 @@ describe("OpenShell sandbox identity parsing", () => {
       createHash("sha256").update("sandbox-alpha").digest("hex"),
     );
     expect(fingerprintOpenShellSandboxId("sandbox/alpha")).toBeNull();
+    expect(fingerprintOpenShellSandboxId("a".repeat(513))).toBeNull();
     expect(isOpenShellSandboxId("sandbox.alpha_2")).toBe(true);
     expect(isOpenShellSandboxId("sandbox/alpha")).toBe(false);
+    expect(isOpenShellSandboxId("a".repeat(513))).toBe(false);
   });
 });
 

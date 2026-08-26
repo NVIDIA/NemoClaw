@@ -1040,6 +1040,33 @@ network_policies:
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
   });
 
+  it("does not repair a replacement row after gateway-port qualification (#10056)", async () => {
+    const replacementGeneration = "44444444-4444-4444-8444-444444444444";
+    const fixture = deps({
+      failAfterRegistry: true,
+      omitRegistryGatewayPort: true,
+      beforeCompareAndSetRegistryGatewayPort: (current) => ({
+        ...current!,
+        lifecycleGeneration: replacementGeneration,
+      }),
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry gateway port repair did not complete",
+    );
+    expect(fixture.value.readRegistry()).toMatchObject({
+      lifecycleGeneration: replacementGeneration,
+      gatewayName: "nemoclaw",
+    });
+    expect(fixture.value.readRegistry()).not.toHaveProperty("gatewayPort");
+    expect(fixture.events).not.toContain("registry-update");
+  });
+
   it("resumes the current session registration overlay on a configuring row (#9211)", async () => {
     const fixture = deps({ failAfterRegistry: true, omitRegistryGatewayPort: true });
 
@@ -1048,7 +1075,7 @@ network_policies:
     );
     const current = input();
     expect(
-      fixture.value.updateRegistry(current.sandboxName, {
+      fixture.updateRegistry(current.sandboxName, {
         ...hermesPortableReservationForOnboarding(current),
         createdAt: "2026-08-25T00:00:00.000Z",
       }),
@@ -1082,7 +1109,7 @@ network_policies:
     );
     const reservation = hermesPortableReservationForOnboarding(input());
     expect(
-      fixture.value.updateRegistry(input().sandboxName, {
+      fixture.updateRegistry(input().sandboxName, {
         ...reservation,
         createdAt: "2026-08-25T00:00:00.000Z",
         reservationSessionId: "session-foreign",

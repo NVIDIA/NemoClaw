@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { expect, vi } from "vitest";
 
@@ -295,9 +296,12 @@ export interface HermesPortableTransactionFixtureOptions {
   existingRegistry?: boolean;
   registryEntry?: SandboxEntry | null;
   replaceRegistryBeforeRegistration?: SandboxEntry | null;
+  beforeCompareAndSetRegistryGatewayPort?: (entry: SandboxEntry | null) => SandboxEntry | null;
   podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   readRegistry?: () => SandboxEntry | null;
-  updateRegistry?: HermesPortableOnboardingDeps<{ ready: true }>["updateRegistry"];
+  compareAndSetRegistryGatewayPort?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["compareAndSetRegistryGatewayPort"];
   registerSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["registerSandbox"];
   createSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["createSandbox"];
   expectedBuildContextPath?: string;
@@ -424,11 +428,27 @@ export function createHermesPortableTransactionFixture(
       return { ready: true };
     },
     readRegistry: options.readRegistry ?? (() => registryEntry),
-    updateRegistry:
-      options.updateRegistry ??
-      ((name, updates) => {
-        if (!registryEntry || registryEntry.name !== name) return false;
-        registryEntry = { ...registryEntry, ...updates };
+    compareAndSetRegistryGatewayPort:
+      options.compareAndSetRegistryGatewayPort ??
+      ((name, expected, gatewayPort) => {
+        if (options.beforeCompareAndSetRegistryGatewayPort) {
+          registryEntry = options.beforeCompareAndSetRegistryGatewayPort(
+            registryEntry ? structuredClone(registryEntry) : null,
+          );
+        }
+        if (
+          !registryEntry ||
+          registryEntry.name !== name ||
+          registryEntry.gatewayPort !== undefined ||
+          expected.gatewayPort !== undefined ||
+          !Number.isSafeInteger(gatewayPort) ||
+          gatewayPort < 1 ||
+          gatewayPort > 65_535 ||
+          !isDeepStrictEqual(registryEntry, expected)
+        ) {
+          return false;
+        }
+        registryEntry = { ...registryEntry, gatewayPort };
         events.push("registry-update");
         return true;
       }),
@@ -476,5 +496,11 @@ export function createHermesPortableTransactionFixture(
     events,
     podman,
     readRegistry: () => (registryEntry ? structuredClone(registryEntry) : null),
+    updateRegistry: (name: string, updates: Partial<SandboxEntry>) => {
+      if (!registryEntry || registryEntry.name !== name) return false;
+      registryEntry = { ...registryEntry, ...updates };
+      events.push("registry-update");
+      return true;
+    },
   };
 }

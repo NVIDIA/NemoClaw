@@ -144,7 +144,11 @@ export interface HermesPortableOnboardingDeps<T> {
   readonly readSandboxReadyPublicationClockMs?: () => number;
   readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
-  readonly updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
+  readonly compareAndSetRegistryGatewayPort: (
+    name: string,
+    expected: SandboxEntry,
+    gatewayPort: number,
+  ) => boolean;
   readonly registerSandbox: (
     result: T | null,
     receipt: HermesPortableConfiguredReceipt,
@@ -1192,7 +1196,11 @@ export async function runHermesPortableOnboardingTransaction<T>(
       }
       if (
         gatewayPort === null ||
-        !deps.updateRegistry(receipt.sandboxName, { gatewayPort })
+        !deps.compareAndSetRegistryGatewayPort(
+          receipt.sandboxName,
+          disposition.entry,
+          gatewayPort,
+        )
       ) {
         fail("registry gateway port repair did not complete");
       }
@@ -1546,7 +1554,9 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
     buildContextPath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
-  readonly updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
+  readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>[
+    "compareAndSetRegistryGatewayPort"
+  ];
   readonly registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"];
   readonly sourceRoot: string;
   readonly buildContextSettings: HermesPortableBuildContextSettings;
@@ -1572,7 +1582,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     openshellArgv,
     createSandbox,
     readRegistry,
-    updateRegistry,
+    compareAndSetRegistryGatewayPort,
     registerSandbox,
     sourceRoot,
     buildContextSettings,
@@ -1659,7 +1669,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
           buildContextPath,
         ),
       readRegistry,
-      updateRegistry,
+      compareAndSetRegistryGatewayPort,
       registerSandbox,
       ...(cleanupTemporaryPolicy ? { cleanupTemporaryPolicy } : {}),
     },

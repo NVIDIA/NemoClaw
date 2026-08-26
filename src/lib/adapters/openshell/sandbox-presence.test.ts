@@ -45,6 +45,9 @@ describe("structured OpenShell sandbox identity", () => {
     expect(observeOpenShellSandboxIdentity("alpha", list([row({ id: "sandbox/alpha" })]))).toEqual({
       kind: "unknown",
     });
+    expect(observeOpenShellSandboxIdentity("alpha", list([row({ id: "a".repeat(513) })]))).toEqual({
+      kind: "unknown",
+    });
   });
 
   it("fails closed on command diagnostics or malformed rows", () => {

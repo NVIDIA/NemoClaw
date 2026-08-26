@@ -1299,7 +1299,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         createSandbox: (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
           runCreateFlow([...attemptArgv], readyCapture, readyRunner, buildContextPath),
         readRegistry: () => registry.getSandbox(sandboxName),
-        updateRegistry: registry.updateSandbox,
+        compareAndSetRegistryGatewayPort: registry.compareAndSetSandboxGatewayPort,
         registerSandbox: async (
           created,
           receipt,
