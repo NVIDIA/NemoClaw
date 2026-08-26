@@ -40,6 +40,7 @@ import signal
 import stat
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
@@ -2899,27 +2900,23 @@ def _open_activation_guard_pidfd(reference: ProcessReference) -> int:
 
 def _open_activation_guard_current_pidfd() -> int:
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
-        _fail("activation-guard-unavailable")
+        return _fail("activation-guard-unavailable")
     try:
         pidfd = os.pidfd_open(os.getpid(), 0)
         os.set_inheritable(pidfd, False)
     except OSError:
-        _fail("activation-guard-unavailable")
+        return _fail("activation-guard-unavailable")
     return pidfd
 
 
 def _stop_activation_guard_pidfd(pidfd: int) -> None:
-    try:
+    with suppress(AttributeError, OSError, ValueError):
         signal.pidfd_send_signal(pidfd, signal.SIGSTOP, None, 0)
-    except BaseException:
-        pass
 
 
 def _resume_activation_guard_pidfd(pidfd: int) -> None:
-    try:
+    with suppress(AttributeError, OSError, ValueError):
         signal.pidfd_send_signal(pidfd, signal.SIGCONT, None, 0)
-    except BaseException:
-        pass
 
 
 def _transport_broker_reference() -> ProcessReference | None:
@@ -2952,24 +2949,20 @@ def _kernel_pid_namespace_stop() -> None:
 def _stop_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
     for pidfd in pidfds:
         _stop_activation_guard_pidfd(pidfd)
-    try:
+    with suppress(OSError):
         _kernel_pid_namespace_stop()
-    except BaseException:
-        pass
     # Enumeration is defense in depth only. The kernel broadcast above is the
     # fail-closed primitive when procfs is missing or unreadable.
     try:
         pids = _pid_namespace_process_ids()
-    except BaseException:
+    except OSError:
         pids = ()
     own_pid = os.getpid()
     for pid in pids:
         if pid == own_pid:
             continue
-        try:
+        with suppress(OSError):
             os.kill(pid, signal.SIGSTOP)
-        except BaseException:
-            pass
 
 
 def _hold_pid_namespace_for_live_controller(
@@ -3060,7 +3053,7 @@ def _activation_guard_child(
         except OSError:
             pass
         os._exit(0)
-    except BaseException:
+    except Exception:
         if "live_controller_hold" in locals() and live_controller_hold:
             _hold_pid_namespace_for_live_controller(
                 (supervisor_pidfd, start_pidfd),
@@ -3070,14 +3063,12 @@ def _activation_guard_child(
                     if pidfd is not None
                 ),
             )
-            try:
+            with suppress(OSError):
                 os.write(acknowledgement_fd, b"H")
-            except OSError:
-                pass
             os._exit(0)
         try:
             _hold_exact_processes(fence, mount_namespace, None)
-        except BaseException:
+        except Exception:
             _park_pid_namespace_fail_closed((supervisor_pidfd, start_pidfd))
         os._exit(70)
 
@@ -3510,9 +3501,9 @@ def _network_namespace_identity(path: str) -> str:
     try:
         identity = os.readlink(path)
     except OSError:
-        _fail("activation-network-namespace-unavailable")
+        return _fail("activation-network-namespace-unavailable")
     if NETWORK_NAMESPACE.fullmatch(identity) is None:
-        _fail("activation-network-namespace-unavailable")
+        return _fail("activation-network-namespace-unavailable")
     return identity
 
 
@@ -3520,12 +3511,12 @@ def _open_network_namespace(path: str, expected_identity: str) -> int:
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
     except OSError:
-        _fail("activation-network-namespace-unavailable")
+        return _fail("activation-network-namespace-unavailable")
     try:
         if _network_namespace_identity(path) != expected_identity:
             _fail("activation-network-namespace-unavailable")
         return descriptor
-    except BaseException:
+    except Exception:
         os.close(descriptor)
         raise
 
@@ -3543,7 +3534,7 @@ def _health_status_in_current_namespace() -> int:
             _fail("activation-health-unavailable")
         return response.status
     except (OSError, http.client.HTTPException):
-        _fail("activation-health-unavailable")
+        return _fail("activation-health-unavailable")
     finally:
         if response is not None:
             response.close()
@@ -3567,7 +3558,7 @@ def _health_status(process: ProcessIdentity) -> int:
     current_fd = _open_network_namespace(current_path, current_identity)
     try:
         target_fd = _open_network_namespace(target_path, target_identity)
-    except BaseException:
+    except Exception:
         os.close(current_fd)
         raise
     switched = False
@@ -3590,7 +3581,7 @@ def _health_status(process: ProcessIdentity) -> int:
                 os.setns(current_fd, 0x40000000)
                 if _network_namespace_identity(current_path) != current_identity:
                     restore_failed = True
-            except BaseException:
+            except (OSError, ControlError):
                 restore_failed = True
         os.close(target_fd)
         os.close(current_fd)
