@@ -208,7 +208,9 @@ Set web_fetch maxChars to no more than 8000.
 If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.
 Fetch a different machine-readable source instead.
 Reply only after one web_fetch result contains NVDA, a numeric price, and its market or update timestamp.
-Use the price and as_of values from that result. Set source_url to the exact URL for its paired web_fetch call.
+Keep each web_fetch result isolated. Never combine a price from one result with a timestamp from another result.
+Select exactly one complete result and ignore every unselected result when constructing the reply.
+Use the price and timestamp from that result. Set source_url to the exact URL for its paired web_fetch call.
 If no result contains all three values, do not return success.
 Reply with one JSON object and no Markdown.
 Return these fields:
@@ -216,11 +218,12 @@ Return these fields:
 - symbol: NVDA
 - price: the quote price as a JSON number
 - source_url: the exact URL for the paired web_fetch call
-- as_of: the quote's own market or update timestamp
+- source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string
+- as_of: the ISO 8601 representation of source_timestamp
 Copy an extended ISO 8601 source date or timestamp exactly. Convert a compact YYYYMMDD source date to YYYY-MM-DD.
 If a source value has a calendar date but no clock time, return YYYY-MM-DD. Never add a clock time or timezone to a date-only value.
 For a Unix-epoch field such as regularMarketTime, interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601.
-Before replying, confirm that the exact ISO or date value appears in that same result, or that the exact epoch integer converts to the same instant as as_of.
+Before replying, confirm that source_timestamp appears exactly in the selected result and converts to the same instant or date as as_of.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(

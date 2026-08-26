@@ -41,6 +41,7 @@ const STOCK_REPLY = {
   symbol: "NVDA",
   price: 192.38,
   source_url: STOCK_SOURCE_URL,
+  source_timestamp: "1786982340",
   as_of: "2026-08-17T15:59:00Z",
 } satisfies NvdaPersonalStockReply;
 const DAY_MS = 24 * 60 * 60_000;
@@ -271,6 +272,7 @@ async function expectAggregateStockFailure(
   for (const sensitiveValue of [
     STOCK_SOURCE_URL,
     String(STOCK_REPLY.price),
+    STOCK_REPLY.source_timestamp,
     STOCK_REPLY.as_of,
     stockPayload().text as string,
     evidence.expectedStockFingerprint!,
@@ -288,7 +290,10 @@ describe("common-egress agent parsing and classification helpers", () => {
       "If a web_fetch result omits the quote timestamp, do not use its price or infer a timestamp.",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
-      "Use the price and as_of values from that result. Set source_url to the exact URL for its paired web_fetch call.",
+      "Never combine a price from one result with a timestamp from another result.",
+    );
+    expect(PERSONAL_STOCK_PROMPT).toContain(
+      "Select exactly one complete result and ignore every unselected result when constructing the reply.",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
       "If no result contains all three values, do not return success.",
@@ -300,7 +305,10 @@ describe("common-egress agent parsing and classification helpers", () => {
       "interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601.",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
-      "confirm that the exact ISO or date value appears in that same result, or that the exact epoch integer converts to the same instant as as_of.",
+      "source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string",
+    );
+    expect(PERSONAL_STOCK_PROMPT).toContain(
+      "confirm that source_timestamp appears exactly in the selected result and converts to the same instant or date as as_of.",
     );
   });
 
@@ -384,6 +392,11 @@ describe("common-egress agent parsing and classification helpers", () => {
     { name: "an ISO date", sourceTime: "2026-08-17", asOf: "2026-08-17" },
     { name: "a compact date", sourceTime: "20260817", asOf: "2026-08-17" },
     { name: "an exact ISO timestamp", sourceTime: STOCK_REPLY.as_of, asOf: STOCK_REPLY.as_of },
+    {
+      name: "an equivalent normalized ISO timestamp",
+      sourceTime: STOCK_REPLY.as_of,
+      asOf: "2026-08-17T15:59:00.000Z",
+    },
     { name: "a Unix timestamp in seconds", sourceTime: "1786982340", asOf: STOCK_REPLY.as_of },
     {
       name: "a Unix timestamp in milliseconds",
@@ -400,7 +413,7 @@ describe("common-egress agent parsing and classification helpers", () => {
           }),
         }),
         stockTrajectory(),
-        { ...STOCK_REPLY, as_of: asOf },
+        { ...STOCK_REPLY, as_of: asOf, source_timestamp: sourceTime },
       );
 
       expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
@@ -890,6 +903,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       price: 192.38,
       source_url: STOCK_SOURCE_URL,
       symbol: "NVDA",
+      source_timestamp: STOCK_REPLY.source_timestamp,
     });
     const projectedReply = projectNvdaPersonalStockReplyEvidence(reply);
     expect(projectedReply).toEqual({
@@ -901,16 +915,6 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
     expect(JSON.stringify(projectedReply)).not.toContain("credential");
     expect(JSON.stringify(projectedReply)).not.toContain("/v8/finance/chart");
-    expect(
-      parseNvdaPersonalStockReply(
-        JSON.stringify({ ...STOCK_REPLY, source_url: "https://10.0.0.1/quote/NVDA" }),
-      ),
-    ).toBeNull();
-    expect(
-      parseNvdaPersonalStockReply(
-        JSON.stringify({ ...STOCK_REPLY, source_url: "https://[fd00::1]/quote/NVDA" }),
-      ),
-    ).toBeNull();
     expect(
       nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse("2026-08-18T12:00:00Z")),
     ).toBe(true);
@@ -934,10 +938,39 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
-    { boundary: "the allowed past-age limit", expected: true, nowOffsetMs: 5 * DAY_MS, outcome: "accepts" },
-    { boundary: "one millisecond beyond the past-age limit", expected: false, nowOffsetMs: 5 * DAY_MS + 1, outcome: "rejects" },
-    { boundary: "the allowed future-skew limit", expected: true, nowOffsetMs: -DAY_MS, outcome: "accepts" },
-    { boundary: "one millisecond beyond the future-skew limit", expected: false, nowOffsetMs: -DAY_MS - 1, outcome: "rejects" },
+    ["a malformed", "2026-08-17T15:59:00Z-invalid"],
+    ["a missing", undefined],
+  ])("rejects a stock reply with %s source timestamp (#10330)", (_reason, source_timestamp) => {
+    expect(
+      parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_timestamp })),
+    ).toBeNull();
+  });
+
+  it.each([
+    {
+      boundary: "the allowed past-age limit",
+      expected: true,
+      nowOffsetMs: 5 * DAY_MS,
+      outcome: "accepts",
+    },
+    {
+      boundary: "one millisecond beyond the past-age limit",
+      expected: false,
+      nowOffsetMs: 5 * DAY_MS + 1,
+      outcome: "rejects",
+    },
+    {
+      boundary: "the allowed future-skew limit",
+      expected: true,
+      nowOffsetMs: -DAY_MS,
+      outcome: "accepts",
+    },
+    {
+      boundary: "one millisecond beyond the future-skew limit",
+      expected: false,
+      nowOffsetMs: -DAY_MS - 1,
+      outcome: "rejects",
+    },
   ])("$outcome a quote at $boundary", ({ expected, nowOffsetMs }) => {
     const evidence = reduceOpenClawToolEvidence(
       stockSessionJsonLines(),
@@ -953,11 +986,13 @@ describe("common-egress agent parsing and classification helpers", () => {
   });
 
   it.each([
+    "https://10.0.0.1/quote/NVDA",
+    "https://[fd00::1]/quote/NVDA",
     "https://[::ffff:127.0.0.1]/quote/NVDA",
     "https://[::ffff:169.254.169.254]/quote/NVDA",
     "https://[::ffff:10.0.0.1]/quote/NVDA",
     "https://[::ffff:192.168.1.2]/quote/NVDA",
-  ])("rejects an IPv4-mapped internal stock source: %s", (source_url) => {
+  ])("rejects an internal stock source: %s", (source_url) => {
     expect(parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_url }))).toBeNull();
   });
 
@@ -1028,7 +1063,7 @@ describe("common-egress agent parsing and classification helpers", () => {
         }),
       }),
       trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      expected: { ...STOCK_REPLY, source_timestamp: "2026-08-17T20:00:00Z" },
     },
     {
       name: "price paired with a timestamp prefix and trailing characters (#10330)",
@@ -1038,7 +1073,7 @@ describe("common-egress agent parsing and classification helpers", () => {
         }),
       }),
       trajectory: stockTrajectory(),
-      expected: STOCK_REPLY,
+      expected: { ...STOCK_REPLY, source_timestamp: STOCK_REPLY.as_of },
     },
     {
       name: "date-only reply paired with a source timestamp (#10330)",
@@ -1048,7 +1083,7 @@ describe("common-egress agent parsing and classification helpers", () => {
         }),
       }),
       trajectory: stockTrajectory(),
-      expected: { ...STOCK_REPLY, as_of: "2026-08-17" },
+      expected: { ...STOCK_REPLY, as_of: "2026-08-17", source_timestamp: "2026-08-17T20:00:00Z" },
     },
   ])("rejects $name", ({ expected, session, trajectory }) => {
     const evidence = reduceOpenClawToolEvidence(session, trajectory, expected);

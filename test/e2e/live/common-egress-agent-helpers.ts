@@ -115,6 +115,7 @@ export interface PersonalStockToolEvidenceArtifact {
 export interface NvdaPersonalStockReply {
   as_of: string;
   price: number;
+  source_timestamp: string;
   source_url: string;
   status: "NVDA_PERSONAL_AGENT_OK";
   symbol: "NVDA";
@@ -448,32 +449,34 @@ export function reduceOpenClawToolEvidence(
     }
     return false;
   };
-  const dateMatches = (text: string, expected: string): boolean => {
-    const expectedMs = Date.parse(expected);
-    if (!Number.isFinite(expectedMs)) return false;
-    const expectedDate = new Date(expectedMs).toISOString().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/u.test(expected)) {
+  const timestampMatches = (text: string, sourceTimestamp: string, asOf: string): boolean => {
+    const asOfMs = Date.parse(asOf);
+    if (!Number.isFinite(asOfMs)) return false;
+    if (/^\d{4}-\d{2}-\d{2}$/u.test(sourceTimestamp)) {
       const dateTokenMatches = (candidate: string): boolean =>
         new RegExp(`(?:^|[^0-9])${candidate}(?![0-9]|T|\\s+\\d{2}:)`, "u").test(text);
-      return dateTokenMatches(expectedDate) || dateTokenMatches(expectedDate.replace(/-/gu, ""));
+      return asOf === sourceTimestamp && dateTokenMatches(sourceTimestamp);
     }
-    const escapedExpected = expected.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    if (
-      new RegExp(
-        `(?:^|[^0-9A-Za-z_.:+-])${escapedExpected}(?![0-9A-Za-z_.:+-])`,
-        "u",
-      ).test(text)
-    ) {
-      return true;
+    if (/^\d{8}$/u.test(sourceTimestamp)) {
+      const sourceDate = `${sourceTimestamp.slice(0, 4)}-${sourceTimestamp.slice(4, 6)}-${sourceTimestamp.slice(6, 8)}`;
+      return (
+        asOf === sourceDate && new RegExp(`(?:^|[^0-9])${sourceTimestamp}(?![0-9])`, "u").test(text)
+      );
     }
-    for (const match of text.matchAll(/(?:^|\D)(\d{10}|\d{13})(?!\d)/gu)) {
-      const raw = match[1];
-      if (!raw) continue;
-      const epochMs = Number(raw) * (raw.length === 10 ? 1_000 : 1);
-      if (!Number.isFinite(epochMs)) continue;
-      if (epochMs === expectedMs) return true;
+    if (/^(?:\d{10}|\d{13})$/u.test(sourceTimestamp)) {
+      const epochMs = Number(sourceTimestamp) * (sourceTimestamp.length === 10 ? 1_000 : 1);
+      return (
+        Number.isFinite(epochMs) &&
+        epochMs === asOfMs &&
+        new RegExp(`(?:^|\\D)${sourceTimestamp}(?!\\d)`, "u").test(text)
+      );
     }
-    return false;
+    const sourceMs = Date.parse(sourceTimestamp);
+    if (!Number.isFinite(sourceMs) || sourceMs !== asOfMs) return false;
+    const escapedSource = sourceTimestamp.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(`(?:^|[^0-9A-Za-z_.:+-])${escapedSource}(?![0-9A-Za-z_.:+-])`, "u").test(
+      text,
+    );
   };
   const fingerprint = (value: string): string => {
     let hash = 2_166_136_261;
@@ -605,12 +608,16 @@ export function reduceOpenClawToolEvidence(
   const expectedSourceUrl = normalizedUrl(expectedStock?.source_url);
   const expectedPrice = expectedStock?.price;
   const expectedAsOf = expectedStock?.as_of;
+  const expectedSourceTimestamp = expectedStock?.source_timestamp;
   const expectedStockFingerprint =
     expectedSourceUrl !== null &&
     typeof expectedPrice === "number" &&
     Number.isFinite(expectedPrice) &&
-    typeof expectedAsOf === "string"
-      ? fingerprint(JSON.stringify([expectedSourceUrl, expectedPrice, expectedAsOf]))
+    typeof expectedAsOf === "string" &&
+    typeof expectedSourceTimestamp === "string"
+      ? fingerprint(
+          JSON.stringify([expectedSourceUrl, expectedPrice, expectedSourceTimestamp, expectedAsOf]),
+        )
       : null;
   const nativeExtractors = new Set(["cf-markdown", "json", "raw", "raw-html", "readability"]);
   const pairedProjectedTargetCallIds = new Set<string>();
@@ -650,8 +657,10 @@ export function reduceOpenClawToolEvidence(
     }
     webFetchResults.push({
       asOfMatches:
-        typeof expectedAsOf === "string" && boundedPayloadText
-          ? dateMatches(boundedPayloadText, expectedAsOf)
+        typeof expectedSourceTimestamp === "string" &&
+        typeof expectedAsOf === "string" &&
+        boundedPayloadText
+          ? timestampMatches(boundedPayloadText, expectedSourceTimestamp, expectedAsOf)
           : false,
       directFetch,
       httpSuccess,
@@ -925,6 +934,11 @@ export function parseNvdaPersonalStockReply(raw: string): NvdaPersonalStockReply
         typeof parsed.source_url === "string" &&
         parsed.source_url.length <= 4096 &&
         isPublicHttpsTarget(targetFromReplyUrl(parsed.source_url)) &&
+        typeof parsed.source_timestamp === "string" &&
+        parsed.source_timestamp.length <= 128 &&
+        /^(?:\d{8}|\d{10}|\d{13}|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?)$/u.test(
+          parsed.source_timestamp,
+        ) &&
         typeof parsed.as_of === "string" &&
         /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/u.test(
           parsed.as_of,
@@ -971,7 +985,7 @@ function stockReplyFingerprint(reply: NvdaPersonalStockReply): string | null {
   try {
     const parsed = new URL(reply.source_url);
     parsed.hash = "";
-    const value = JSON.stringify([parsed.href, reply.price, reply.as_of]);
+    const value = JSON.stringify([parsed.href, reply.price, reply.source_timestamp, reply.as_of]);
     let hash = 2_166_136_261;
     for (let index = 0; index < value.length; index += 1) {
       hash ^= value.charCodeAt(index);
