@@ -174,28 +174,41 @@ fi
 if [ "${1:-} ${2:-}" = "policy list" ]; then
   exit 0
 fi
+if [ "${1:-} ${2:-}" = "policy set" ]; then
+  if [ "$#" -ne 8 ] || [ "${5:-}" != "--policy" ] || [ -z "${6:-}" ]; then
+    echo "unexpected policy write: expected policy set -g fixture-gateway --policy <file> --wait <sandbox>" >&2
+    exit 64
+  fi
+  cp "$6" "${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+  exit 0
+fi
 if [ "${1:-} ${2:-}" = "policy get" ]; then
   printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
+  policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  policy_hash=sha256:fixture-policy
+  policy_version=1
+  if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+    policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    policy_hash=sha256:fixture-mutated-policy
+    policy_version=2
+  fi
   node -e '
     const fs = require("node:fs");
     const YAML = require("/opt/nemoclaw/node_modules/yaml");
-    const policy = YAML.parse(fs.readFileSync(
-      "/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
-      "utf8",
-    ));
+    const policy = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
     process.stdout.write(JSON.stringify({
       scope: "sandbox",
       sandbox: process.argv[1],
       status: "effective",
       policy_source: "sandbox",
-      hash: "sha256:fixture-policy",
-      active_version: 1,
+      hash: process.argv[3],
+      active_version: Number(process.argv[4]),
       policy,
     }) + "\n");
-  ' "$sandbox"
+  ' "$sandbox" "$policy_file" "$policy_hash" "$policy_version"
   exit 0
 fi
 case "$*" in
