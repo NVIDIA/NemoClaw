@@ -96,7 +96,6 @@ env:
 
 jobs:
   base-image-publication:
-    if: ${{ inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair' }}
     needs: generate-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -263,6 +262,7 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
@@ -287,6 +287,7 @@ jobs:
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -294,7 +295,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::PR head must match the controller workflow SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -585,56 +586,8 @@ jobs:
             fi
           fi
 
-      - name: Stage exact 933f105 managed-image catalog
-        if: ${{ inputs.checkout_sha == '933f105eb370acd42c5dc625548efe18ffd07e01' && inputs.jobs == '' && inputs.targets == 'model-router-provider-routed-inference,onboard-resume,onboard-repair' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import path from "node:path";
-          import { assembleManagedImageCatalog } from "./tools/e2e/pr-managed-image-publication.mts";
-
-          const revision = "933f105eb370acd42c5dc625548efe18ffd07e01";
-          const release = "v0.0.114-145-g933f105eb";
-          const cohort = "ghrun-32935745132-1";
-          const contracts = [
-            {
-              agent: "openclaw",
-              image: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
-              digest: "sha256:299fa725f7e836aaf6d47b2d7dc35a2c1665aa910c39102029d32de9398f476b",
-            },
-            {
-              agent: "hermes",
-              image: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
-              digest: "sha256:d3bd6110d9b74edc1432e9ef937f58e4d1922180ad2e511cef71b6f53e437ac1",
-            },
-            {
-              agent: "langchain-deepagents-code",
-              image: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
-              digest: "sha256:1ef8fc0a6b15938e6d393fb4589ad8531c32ffa2021600a23a12767bc740e78a",
-            },
-          ].map(({ agent, image, digest }) => ({
-            contractVersion: 1,
-            agent,
-            platform: "linux/amd64",
-            image,
-            digest,
-            reference: `${image}@${digest}`,
-            source: { repository: "NVIDIA/NemoClaw", revision, release, cohort },
-            startupProfileContractVersion: 1,
-            capabilityContractVersion: 1,
-          }));
-          const catalog = assembleManagedImageCatalog(contracts, revision);
-          fs.writeFileSync(
-            path.join(process.env.RUNNER_TEMP, "pr-managed-image-catalog.json"),
-            JSON.stringify(catalog) + "\n",
-            { encoding: "utf8", flag: "wx", mode: 0o600 },
-          );
-          NODE
-
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.checkout_sha != '933f105eb370acd42c5dc625548efe18ffd07e01' || inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -658,14 +611,15 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -673,7 +627,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::controller workflow SHA changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
