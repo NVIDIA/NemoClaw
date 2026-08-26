@@ -33,6 +33,7 @@ import {
   type RuntimeProviderActivationTransport,
 } from "./activation";
 import {
+  RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -123,6 +124,7 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
     bootstrap: {
       providerId,
       supported: true,
+      bootstrapKind: "managed-image",
       createAuthorityStore: unreachable,
       createLifecycle: unreachable,
       createOnboardRouting: unreachable,
@@ -279,6 +281,25 @@ describe("runtime provider activation catalog", () => {
     expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual(["docker", "kubernetes"]);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("mxc");
+  });
+
+  it("rejects native-artifact bootstrap from production activation (#8178)", () => {
+    const candidate = CANDIDATE_TOPOLOGIES[2];
+    const complete = completeBundle(candidate.providerId);
+    const inactive = {
+      ...complete,
+      bootstrap: {
+        providerId: candidate.providerId,
+        supported: true,
+        bootstrapKind: "native-artifact",
+        contractVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
+        run: unreachable,
+      },
+    } as RuntimeProviderBundle;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([registration(candidate, inactive)]),
+    ).toThrow("does not provide managed-image bootstrap authority");
   });
 
   it.each(INCOMPLETE_SURFACES)(
