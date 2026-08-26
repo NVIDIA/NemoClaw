@@ -49,9 +49,11 @@ function allowedRules(
 
 describe("Teams policy preset", () => {
   it("composes Microsoft Teams Bot Framework and Graph capabilities", () => {
-    const merged = policies.mergePresetNamesIntoPolicy("version: 1\nnetwork_policies: {}\n", [
-      "teams",
-    ]);
+    const merged = policies.mergePresetNamesIntoPolicy(
+      "version: 1\nnetwork_policies: {}\n",
+      ["teams"],
+      { sandboxName: "teams-preset" },
+    );
     expect(merged.appliedPresets).toEqual(["teams"]);
     expect(merged.missingPresets).toEqual([]);
     const teamsPolicy = YAML.parse(merged.policy).network_policies.teams;
