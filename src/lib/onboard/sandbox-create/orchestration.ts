@@ -432,7 +432,9 @@ export function createProviderEffectBoundary(input: {
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
-  readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
+  readonly activateDeferredProviderEffects:
+    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
@@ -468,7 +470,8 @@ export function createProviderEffectBoundary(input: {
       context.revalidatePolicyRequirements(
         `activating deferred providers for sandbox '${input.sandboxName}'`,
       );
-      const providerNames = input.activateDeferredProviderEffects?.() ?? [];
+      const providerNames =
+        input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
       validate();
       context.revalidatePolicyRequirements(
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
@@ -1474,11 +1477,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   )
                 ).messagingTokenDefs;
               },
-              runProviderPreDeleteCleanup: () => {
-                revalidatePolicyAuthority(
-                  createIntent?.deferSandboxEffectsUntilPolicyVerification === true,
-                  `cleaning up providers for sandbox '${sandboxName}'`,
-                );
+              runProviderPreDeleteCleanup: (revalidatePolicyRequirements) => {
+                const operation = `cleaning up providers for sandbox '${sandboxName}'`;
+                if (revalidatePolicyRequirements) revalidatePolicyRequirements(operation);
+                else revalidatePolicyAuthority(false, operation);
                 runSandboxProviderPreDeleteCleanup(sandboxName, {
                   runOpenshell,
                   redact,
@@ -1488,11 +1490,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               upsertMessagingProviders: (tokenDefs, options) =>
                 upsertMessagingProviders(tokenDefs, {
                   ...options,
-                  revalidatePolicyRequirements: (operation) =>
-                    revalidatePolicyAuthority(
-                      createIntent?.deferSandboxEffectsUntilPolicyVerification === true,
-                      operation,
-                    ),
+                  revalidatePolicyRequirements: (operation) => {
+                    if (options.revalidatePolicyRequirements) {
+                      options.revalidatePolicyRequirements(operation);
+                    } else {
+                      revalidatePolicyAuthority(false, operation);
+                    }
+                  },
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
                 getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
