@@ -261,6 +261,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/publish-base-image-manifest/action.yaml")).toEqual([
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/platform/images/publish-base-image-manifest.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
@@ -328,10 +333,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",

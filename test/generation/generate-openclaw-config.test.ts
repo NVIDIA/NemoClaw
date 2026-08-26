@@ -20,7 +20,12 @@ import {
 import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "../helpers/openclaw-env-fixture";
 import { withLegacyMessagingPlanEnvDirect } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "../..", "scripts", "generate-openclaw-config.mts");
+const SCRIPT_PATH = path.join(
+  import.meta.dirname,
+  "../..",
+  "scripts",
+  "generate-openclaw-config.mts",
+);
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
@@ -549,7 +554,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     },
   );
 
-  it("emits canonical placeholders and proxy routing for non-Slack channels", async () => {
+  it("omits the Discord token from generated config", async () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = await runMessagingConfig(channels);
     expect(config.proxy).toMatchObject({
@@ -557,16 +562,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
       proxyUrl: "http://10.200.0.1:3128",
       loopbackMode: "gateway-only",
     });
-    expect(config.channels.telegram.enabled).toBe(true);
-    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
-    expect(config.channels.discord.enabled).toBe(true);
-    expect(config.plugins.entries.discord).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
-    expect(config.channels.discord.accounts.default.token).toBe(
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
-    );
+    expect(config.channels.discord.accounts.default.token).toBeUndefined();
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
@@ -584,9 +583,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
       loopbackMode: "gateway-only",
     });
     expect(config.channels.discord.accounts.default).toMatchObject({
-      token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
       enabled: true,
     });
+    expect(config.channels.discord.accounts.default.token).toBeUndefined();
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 

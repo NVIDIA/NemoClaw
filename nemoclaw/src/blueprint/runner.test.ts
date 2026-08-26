@@ -14,9 +14,9 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
-  failureResult,
   minimalBlueprint,
   resultForCommandFailure,
+  resultWithBlueprintPolicyAuthority,
   routedBlueprint,
 } from "./runner-test-fixtures.js";
 
@@ -40,7 +40,8 @@ vi.mock("node:fs", async (importOriginal) => {
     ...original,
     existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
-    readFileSync: memory.readFileSync,
+    readFileSync: vi.fn(memory.readFileSync),
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -64,6 +65,8 @@ const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
 const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
   await import("./runner.js");
+const { readFileSync } = await import("node:fs");
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -81,15 +84,14 @@ function seedBlueprintFile(bp?: Record<string, unknown>): void {
 
 function mockCurrentPolicy(stdout: string): void {
   mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-    if (
-      args[0] === "policy" &&
-      args[1] === "get" &&
-      args[2] === "--base" &&
-      args[3] === "test-sandbox"
-    ) {
+    if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
       return { exitCode: 0, stdout, stderr: "" };
     }
-    return { exitCode: 0, stdout: "", stderr: "" };
+    return resultWithBlueprintPolicyAuthority(args, {
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
   });
 }
 
@@ -105,6 +107,7 @@ describe("runner", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("emitRunId", () => {
@@ -410,17 +413,15 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
-    it.each(
-      [
-          "credential_env",
-          "credential_default",
-          "SECRET_KEY",
-          "default-secret-value",
-          "real-secret-value",
-          "future-token-value",
-          "future-authorization",
-        ],
-    )(
+    it.each([
+      "credential_env",
+      "credential_default",
+      "SECRET_KEY",
+      "default-secret-value",
+      "real-secret-value",
+      "future-token-value",
+      "future-authorization",
+    ])(
       "does not expose credential field names or secret values in public plan output [%s]",
       async (leaked) => {
         captureStdout();
@@ -536,8 +537,13 @@ describe("runner", () => {
   describe("actionApply", () => {
     beforeEach(() => {
       captureStdout();
-      // Default: all subprocess calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithBlueprintPolicyAuthority(args, {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        }),
+      );
     });
 
     it("creates sandbox with correct arguments", async () => {
@@ -656,12 +662,7 @@ describe("runner", () => {
         },
       });
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (
-          args[0] === "policy" &&
-          args[1] === "get" &&
-          args[2] === "--base" &&
-          args[3] === "test-sandbox"
-        ) {
+        if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
           return {
             exitCode: 0,
             stdout: [
@@ -679,7 +680,11 @@ describe("runner", () => {
             stderr: "",
           };
         }
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return resultWithBlueprintPolicyAuthority(args, {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        });
       });
 
       await actionApply("default", bp);
@@ -689,6 +694,8 @@ describe("runner", () => {
         [
           "policy",
           "set",
+          "-g",
+          "test-gateway",
           "--policy",
           expect.stringContaining("merged-policy.yaml"),
           "--wait",
@@ -791,25 +798,27 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("skips policy commands when policy additions are empty", async () => {
+    it("skips policy mutation when policy additions are empty", async () => {
       await actionApply("default", minimalBlueprint());
       const policyCalls = mockExeca.mock.calls.filter(
         (c) => Array.isArray(c[1]) && c[1][0] === "policy",
       );
-      expect(policyCalls).toEqual([]);
+      expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
     it("reuses sandbox when 'already exists' error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("already exists"));
-      // Subsequent calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
+      );
 
       await actionApply("default", minimalBlueprint());
       expect(stdoutText()).toContain("already exists, reusing");
     });
 
     it("throws when sandbox creation fails with other error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("disk full"));
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
+      );
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to create sandbox.*disk full/,
@@ -899,6 +908,7 @@ describe("runner", () => {
           "inference",
           "inference_provider_created_by_apply",
           "policy_additions",
+          "policy_authority",
           "profile",
           "run_id",
           "sandbox_created_by_apply",
@@ -1277,16 +1287,46 @@ describe("runner", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
       actionStatus("nc-run-1");
-      expect(stdoutText()).toContain('"status":"unknown"');
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "missing",
+        recovery: expect.stringContaining("Do not reconstruct plan.json"),
+      });
     });
 
-    it("prints unknown status when plan.json is corrupt", () => {
+    it("reports recovery details when plan.json is corrupt", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
       addFile(`${RUNS_DIR}/nc-run-1/plan.json`, "{not valid json");
 
       actionStatus("nc-run-1");
 
-      expect(capturedJsonOutput()).toEqual({ run_id: "nc-run-1", status: "unknown" });
+      expect(capturedJsonOutput()).toEqual({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "corrupt",
+        receipt_error: expect.stringContaining("JSON"),
+        run_directory: `${RUNS_DIR}/nc-run-1`,
+        recovery: expect.stringContaining("trusted copy produced by this exact run"),
+      });
+      expect(stdoutText()).not.toContain("Restore a complete plan.json");
+    });
+
+    it("distinguishes an inaccessible plan receipt from a missing receipt", () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(`${RUNS_DIR}/nc-run-1/plan.json`, JSON.stringify({ run_id: "nc-run-1" }));
+      mockedReadFileSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      });
+
+      actionStatus("nc-run-1");
+
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "inaccessible",
+        recovery: expect.stringContaining("stop and ask a NemoClaw maintainer"),
+      });
     });
 
     // ── Path traversal rejection ──────────────────────────────────
@@ -1378,7 +1418,13 @@ describe("runner", () => {
   describe("main (CLI)", () => {
     beforeEach(() => {
       captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithBlueprintPolicyAuthority(args, {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        }),
+      );
       seedBlueprintFile();
     });
 

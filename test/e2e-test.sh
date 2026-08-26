@@ -149,21 +149,41 @@ info "4b. Verify blueprint runner apply smoke test"
 # response is intentionally rejected by the runner.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
+APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
   rm -rf "$FAKE_OPENSHELL_BIN"
-  rm -f "$APPLY_OUTPUT"
+  rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-} ${2:-} ${3:-}" in
-  "policy get --base")
+if [ "${1:-}" = "status" ]; then
+  printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy list" ]; then
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy get" ]; then
+  printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
+fi
+if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
+  sandbox="${@: -1}"
+  printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\n' "$sandbox"
+  exit 0
+fi
+case "$*" in
+  "policy get -g fixture-gateway --base "*)
+    if [ "$#" -ne 6 ] || [ -z "${6:-}" ]; then
+      echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
+      exit 64
+    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
     cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
     ;;
   "policy get "*)
-    echo "unexpected policy read: expected policy get --base" >&2
+    echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
     exit 64
     ;;
 esac
@@ -173,7 +193,6 @@ PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"
-rm -rf "$FAKE_OPENSHELL_BIN"
 if grep -q "RUN_ID:" "$APPLY_OUTPUT"; then
   pass "Apply generates run ID"
 else
@@ -194,6 +213,11 @@ if grep -q "PROGRESS:100:Apply complete" "$APPLY_OUTPUT"; then
 else
   fail "Apply did not complete"
 fi
+if grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"; then
+  pass "Apply reads base policy through the active gateway"
+else
+  fail "Apply did not use the gateway-pinned base-policy read"
+fi
 # Verify run state was persisted to disk
 RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)
 if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
@@ -201,7 +225,7 @@ if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
 else
   fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
 fi
-rm -f "$APPLY_OUTPUT"
+cleanup_apply_fixture
 trap - EXIT
 
 # -------------------------------------------------------
