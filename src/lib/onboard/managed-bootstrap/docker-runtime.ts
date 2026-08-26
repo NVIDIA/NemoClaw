@@ -18,7 +18,7 @@ import {
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "../openshell-docker-sandbox-containers";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "../sandbox-gpu-create-attempt";
 import {
   activateManagedBootstrapSequence,
@@ -39,11 +39,6 @@ import type {
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "./runtime-create";
 import { createManagedBootstrapTerminalFinalizer } from "./runtime-create";
-
-type SupportedBootstrapSurface = Extract<
-  RuntimeProviderBootstrapSurface,
-  { readonly supported: true }
->;
 
 const MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS = 30_000;
 const MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS = 30 * 60 * 1000;
@@ -394,10 +389,11 @@ function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRouting
 /** Complete Docker bootstrap surface selected only through a runtime bundle. */
 export function createDockerManagedBootstrapSurface(
   providerId = "docker",
-): SupportedBootstrapSurface {
+): RuntimeProviderManagedImageBootstrapSurface {
   return {
     providerId,
     supported: true,
+    bootstrapKind: "managed-image",
     createAuthorityStore: ({ stateRoot }) => createDockerManagedBootstrapAuthorityStore(stateRoot),
     createLifecycle: (input) => createDockerLifecycle(providerId, input),
     createOnboardRouting: createDockerOnboardRouting,

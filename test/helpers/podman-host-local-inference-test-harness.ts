@@ -188,7 +188,13 @@ function immutableManagedImage(args: readonly string[], probeImageRef: string): 
 function inspectPayload(container: TestContainer): string {
   const environment = container.createArguments.flatMap((value, index, args) =>
     value === "--env" && typeof args[index + 1] === "string"
-      ? [`${String(args[index + 1])}=injected-test-value`]
+      ? [
+          String(args[index + 1]) === "OLLAMA_CONTEXT_LENGTH"
+            ? "OLLAMA_CONTEXT_LENGTH=64000"
+            : String(args[index + 1]).includes("=")
+            ? String(args[index + 1])
+            : `${String(args[index + 1])}=injected-test-value`,
+        ]
       : [],
   );
   const portBindings: Record<string, { HostIp: string; HostPort: string }[]> = Object.create(null);
@@ -931,6 +937,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         imageRef: input.imageRef,
         gpuDevices,
         environment: Object.freeze([...(input.environment ?? [])].sort()),
+        ollamaContextLength: input.ollamaContextLength ?? null,
         mounts: Object.freeze([]),
         sharedMemory: "64m",
         ipc: "private",
@@ -1015,6 +1022,9 @@ export function createPodmanHostLocalInferenceTestHarness(
           `${input.networkGatewayIp}:${String(input.hostPort)}:${String(input.containerPort)}`,
           ...gpuDevices.flatMap((device) => ["--device", device]),
           ...[...(input.environment ?? [])].flatMap((name) => ["--env", name]),
+          ...(input.ollamaContextLength === undefined
+            ? []
+            : ["--env", "OLLAMA_CONTEXT_LENGTH"]),
           "--shm-size",
           "64m",
           "--ipc",

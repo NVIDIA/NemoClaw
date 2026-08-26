@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Governance / Require PR DCO Declaration
+name: Governance / DCO
 
 on:
   pull_request:
@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   dco-check:
+    name: Require declaration
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

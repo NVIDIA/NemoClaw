@@ -77,8 +77,12 @@ describe("external policy authority onboarding composition", () => {
     const externalInspection = {
       authority: "externally-managed" as const,
       effectivePolicy,
+      policyIdentity: { hash: "sha256:external", activeVersion: 1 },
     };
-    const inspectGlobalPolicyAuthority = vi.fn(() => externalInspection);
+    const inspectActiveGlobalPolicy = vi.fn(() => ({
+      state: "active" as const,
+      inspection: externalInspection,
+    }));
     const inspectSandboxPolicyAuthority = vi.fn(() => externalInspection);
     let liveExists = false;
     let existingEntry: SandboxEntry | null = null;
@@ -87,12 +91,13 @@ describe("external policy authority onboarding composition", () => {
       mutator(durableSession);
       return durableSession;
     });
+    const getAgentPolicyPath = vi.fn(() => basePolicyPath);
     const bindings = createOnboardPolicyAuthorityBindings(
       {
         GATEWAY_NAME: gatewayName,
         ROOT: REPO_ROOT,
         agentDefs: { loadAgent },
-        agentOnboard: { getAgentPolicyPath: () => basePolicyPath },
+        agentOnboard: { getAgentPolicyPath },
         inspectSandboxForCreate: () => ({ existingEntry, liveExists }),
         onboardSession: {
           loadSession: () => durableSession,
@@ -100,7 +105,7 @@ describe("external policy authority onboarding composition", () => {
         },
       },
       policyTier,
-      { inspectGlobalPolicyAuthority, inspectSandboxPolicyAuthority },
+      { inspectActiveGlobalPolicy, inspectSandboxPolicyAuthority },
     );
 
     durableSession = await bindings.bindPolicyAuthority(gatewayName, durableSession);
@@ -120,8 +125,12 @@ describe("external policy authority onboarding composition", () => {
       operation: `prepare sandbox '${sandboxName}'`,
     };
     bindings.preflightPolicyRequirements(policyRequirements);
-    expect(inspectGlobalPolicyAuthority).toHaveBeenCalledTimes(2);
+    bindings.preflightPolicyRequirements({ ...policyRequirements, agent: null });
+    expect(inspectActiveGlobalPolicy).toHaveBeenCalledTimes(3);
     expect(inspectSandboxPolicyAuthority).not.toHaveBeenCalled();
+    expect(getAgentPolicyPath).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "openclaw" }),
+    );
 
     const intent = resolveSandboxCreateIntent({
       basePolicyPath,
@@ -179,7 +188,7 @@ describe("external policy authority onboarding composition", () => {
         sandboxName,
         revalidate: (_sandboxIsLive, operation) =>
           bindings.preflightPolicyRequirements({ ...policyRequirements, operation }),
-        create: async () => {
+        create: async (verifyCreatedSandbox) => {
           liveExists = true;
           existingEntry = {
             name: sandboxName,
@@ -187,13 +196,14 @@ describe("external policy authority onboarding composition", () => {
             policyTier,
             policies: [],
           } as SandboxEntry;
+          await verifyCreatedSandbox(launch);
           return launch;
         },
-        captureCreatedSandboxLiveIdentity: () => "a".repeat(64),
-        observeCreatedSandbox: () => ({
-          state: "ready" as const,
-          liveIdentityFingerprint: "a".repeat(64),
-        }),
+        captureCreatedSandboxIdentity: () => "a".repeat(64),
+        revalidateCreatedSandboxIdentity: vi.fn(),
+        verifyCreatedPolicy: () => "verified",
+        persistVerifiedPolicy: vi.fn(),
+        revalidateVerifiedPolicy: vi.fn(),
         cleanupTemporarySources: vi.fn(),
       }),
     ).resolves.toBe(launch);

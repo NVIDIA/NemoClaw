@@ -47,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -70,6 +70,7 @@ export type OnboardFlags = {
   resume?: boolean;
   fresh?: boolean;
   "recreate-sandbox"?: boolean;
+  "apf-interceptor"?: boolean;
   gpu?: boolean;
   "no-gpu"?: boolean;
   from?: string;
@@ -106,6 +107,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       exclusive: ["resume"],
     }),
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
+    "apf-interceptor": Flags.boolean({
+      description:
+        "Create without a caller policy and require a contained sandbox-scoped policy without claiming its provenance",
+      exclusive: ["resume", "recreate-sandbox"],
+    }),
     gpu: Flags.boolean({
       description: "Require OpenShell GPU passthrough for the gateway and sandbox",
       exclusive: ["no-gpu", "no-sandbox-gpu"],
