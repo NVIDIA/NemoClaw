@@ -23,11 +23,12 @@ import type {
 } from "./mcp-bridge-adapter-inspection";
 import {
   inspectOpenClawAdapterRegistration,
-  McpBridgeError,
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
 } from "./mcp-bridge-adapter-openclaw";
 import {
+  mcpAdapterCredentialRevisionUnavailableError,
+  mcpAdapterCredentialRevisionUnstableError,
   type McpAttachedCredentialRevision,
   observeMcpCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
@@ -200,9 +201,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
       }
       const observation = observeMcpCredentialRevision(sandboxName, entry);
       if (observation === "absent" || observation === "canonical") {
-        throw new McpBridgeError(
-          `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${entry.server}'.`,
-        );
+        throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
       }
       if (observation !== credentialRevision) {
         credentialRevision = observation;
@@ -218,9 +217,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
     1_000,
   );
   if (!converged) {
-    throw new McpBridgeError(
-      `OpenShell credential revision did not stabilize while reconciling MCP adapter '${entry.server}'.`,
-    );
+    throw mcpAdapterCredentialRevisionUnstableError(entry.server);
   }
   return credentialRevision;
 }

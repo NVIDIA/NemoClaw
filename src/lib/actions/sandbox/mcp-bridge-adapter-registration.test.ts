@@ -32,7 +32,8 @@ vi.mock("../../state/registry", async (importOriginal) => ({
   getSandbox: mocks.getSandbox,
 }));
 
-vi.mock("./mcp-bridge-provider-readiness", () => ({
+vi.mock("./mcp-bridge-provider-readiness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-provider-readiness")>()),
   observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
 }));
 
