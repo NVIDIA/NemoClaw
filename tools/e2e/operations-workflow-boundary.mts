@@ -339,7 +339,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
     '"$INCLUDE_LAUNCHABLE" == "true"',
     '",${JOBS}," == *",staging-brev-launchable,"*',
@@ -389,9 +389,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
   }
-  if (validation.env?.WORKFLOW_SHA !== "${{ github.workflow_sha }}") {
-    errors.push("Manual PR checkout validation must bind the live controller workflow SHA");
-  }
   for (const fragment of [
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
@@ -399,7 +396,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pull request base repository changed before execution",
     "pull request base branch changed before execution",
     "checkout_repository changed before execution",
-    "controller workflow SHA changed before execution",
+    "checkout_sha changed before execution",
     "base_sha changed before execution",
     '"$NVIDIA_OWNED" == "true"',
     "PR source repository ownership changed before execution",
