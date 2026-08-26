@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -170,6 +171,37 @@ describe("createTarball", () => {
     expect(ok).toBe(false);
     expect(process.exitCode).toBe(1);
     expect(existsSync(output)).toBe(false);
+  });
+
+  it("refuses to stage into a directory other local accounts can write to without the sticky bit (#10195)", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    // World-writable, sticky bit NOT set — the actual unsafe shape: any
+    // other local account could rename or delete our entries here, at any
+    // point, including after this command has already reported success.
+    chmodSync(outputDir, 0o777);
+    const output = join(outputDir, "output.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(output)).toBe(false);
+    // Nothing gets staged either — the check runs before the exclusive open.
+    expect(readdirSync(outputDir)).toEqual([]);
+  });
+
+  it("still stages into a world-writable directory that has the sticky bit set, like a standard /tmp (#10195)", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    // World-writable WITH the sticky bit (mode 1777, same as a standard
+    // /tmp) — the directory check must accept this: the sticky bit is what
+    // makes a shared directory safe, not the absence of shared write access.
+    chmodSync(outputDir, 0o1777);
+    const output = join(outputDir, "output.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(true);
+    expect(existsSync(output)).toBe(true);
   });
 });
 

@@ -11,8 +11,36 @@ import {
   openSync,
   renameSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import { basename, dirname } from "node:path";
+
+// A directory another local account can write to without the sticky bit
+// set lets that account rename or delete entries it does not own — which
+// defeats every in-process identity check below, including ones that run
+// after createTarball() has already returned and the caller has moved on.
+// The sticky bit (mode 1777, as on a standard /tmp) is what makes a shared
+// directory safe for this at all: it restricts removing or renaming an
+// entry to its owner (or root) regardless of the directory's own write
+// permissions. A directory only the current user can write to needs no
+// sticky bit for the same reason. Refusing to stage into anything else is
+// the one check here that closes the race for good instead of narrowing it.
+const MODE_GROUP_OR_OTHER_WRITABLE = 0o022;
+const MODE_STICKY = 0o1000;
+
+function outputDirectoryTrustworthy(outputPath: string): boolean {
+  let dirStat: ReturnType<typeof statSync>;
+  try {
+    dirStat = statSync(dirname(outputPath));
+  } catch {
+    // Missing or inaccessible parent: let the real staging attempt below
+    // fail with its own, more specific error instead of a generic refusal.
+    return true;
+  }
+  const writableByOthers = (dirStat.mode & MODE_GROUP_OR_OTHER_WRITABLE) !== 0;
+  const stickyProtected = (dirStat.mode & MODE_STICKY) !== 0;
+  return !writableByOthers || stickyProtected;
+}
 
 export interface CreateTarballOptions {
   info: (message: string) => void;
@@ -35,15 +63,33 @@ export function createTarball(
 ): boolean {
   const { info, warn, error, timeoutMs = 60_000 } = options;
   const partial = `${output}.partial.${process.pid}`;
+  // Everything below assumes the output directory itself isn't a shared
+  // space another local account can rename or delete our entries in — see
+  // outputDirectoryTrustworthy(). Without that precondition, an attacker
+  // could always win by acting after this function has already returned
+  // and the caller has moved on, which nothing inside createTarball() can
+  // detect or prevent (#10195).
+  if (!outputDirectoryTrustworthy(output)) {
+    error(
+      `Refusing to stage a tarball under ${dirname(output)}: this directory is writable by ` +
+        "other local accounts and does not have the sticky bit set, so a file placed here can " +
+        "be renamed or replaced by another local user at any point, including after this " +
+        "command reports success. Choose a directory only this account can write to, or one " +
+        "with the sticky bit set (mode 1777, as on a standard /tmp).",
+    );
+    process.exitCode = 1;
+    return false;
+  }
   // Claim the predictable staging path and hold the descriptor for the whole
   // write: O_EXCL refuses a path another local user pre-planted (file or
   // symlink). tar streams to stdout redirected into this descriptor, and the
   // mode is set with fchmod on the same descriptor, so no step after the
   // claim reopens the path by name. The final rename is checked against the
-  // held descriptor's identity both before and after it runs, so an
-  // attacker who can modify entries in the output directory can still make
-  // publication fail (denial of service), but can never make us report
-  // success for, publish, or write through a planted symlink (#10195).
+  // held descriptor's identity both before and after it runs. Combined with
+  // the directory check above, an attacker without the standing ability to
+  // remove another user's entries — which the check just ruled out — can
+  // never make us report success for, publish, or write through a planted
+  // symlink (#10195).
   let fd: number;
   try {
     fd = openSync(
@@ -110,8 +156,12 @@ export function createTarball(
       );
       try {
         rmSync(output, { force: true });
-      } catch {
-        /* best-effort cleanup of a publication we cannot trust */
+      } catch (cleanupErr) {
+        error(
+          `Additionally failed to remove the untrusted content left at ${output}: ` +
+            `${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}. ` +
+            "Remove it by hand before reusing this path.",
+        );
       }
       return false;
     }
