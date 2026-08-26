@@ -588,7 +588,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(intent)).toBe(serializedIntent);
   });
 
-  it("defers every provider effect and create attachment until activation (#9833)", () => {
+  it("rejects deferred provider plans before provider effects or sandbox creation (#9833)", () => {
     const tokenDefs = [
       {
         name: "sandbox-telegram-bridge",
@@ -620,49 +620,50 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: null,
     });
     const events: string[] = [];
-    const plan = materializeSandboxCreatePlan({
-      intent,
-      fromRef: "example.invalid/image@sha256:abc",
-      policyAuthority: "externally-managed",
-      deferSandboxEffectsUntilPolicyVerification: true,
-      messagingTokenDefs: tokenDefs,
-      prepareInitialSandboxCreatePolicy: () => ({
-        policyPath: "/tmp/policy.yaml",
-        appliedPresets: ["telegram"],
-      }),
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn(() => {
-        events.push("upsert");
-        return ["sandbox-telegram-bridge"];
-      }),
-      getHermesToolGatewayProviderName: () => {
-        events.push("hermes");
-        return "sandbox-hermes-tools";
-      },
+    const cleanupPolicy = vi.fn(() => {
+      events.push("policy-cleanup");
+      return true;
+    });
+    const runProviderPreDeleteCleanup = vi.fn(() => events.push("provider-cleanup"));
+    const upsertMessagingProviders = vi.fn(() => {
+      events.push("upsert");
+      return ["sandbox-telegram-bridge"];
+    });
+    const getHermesToolGatewayProviderName = vi.fn(() => {
+      events.push("hermes");
+      return "sandbox-hermes-tools";
     });
 
-    expect(events).toEqual([]);
-    expect(plan.createArgs).not.toContain("--provider");
-    expect(plan.messagingProviders).toEqual([
-      "sandbox-telegram-bridge",
-      "sandbox-existing-discord",
-    ]);
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        fromRef: "example.invalid/image@sha256:abc",
+        policyAuthority: "externally-managed",
+        deferSandboxEffectsUntilPolicyVerification: true,
+        messagingTokenDefs: tokenDefs,
+        prepareInitialSandboxCreatePolicy: () => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: ["telegram"],
+          cleanup: cleanupPolicy,
+        }),
+        runProviderPreDeleteCleanup,
+        upsertMessagingProviders,
+        getHermesToolGatewayProviderName,
+      }),
+    ).toThrow("No sandbox was created");
 
-    expect(plan.activateDeferredProviderEffects?.()).toEqual([
-      "nvidia-prod",
-      "sandbox-telegram-bridge",
-      "sandbox-existing-discord",
-      "sandbox-hermes-tools",
-      "custom-provider",
-    ]);
-    expect(events).toEqual(["cleanup", "upsert", "hermes"]);
+    expect(events).toEqual(["policy-cleanup"]);
+    expect(cleanupPolicy).toHaveBeenCalledOnce();
+    expect(runProviderPreDeleteCleanup).not.toHaveBeenCalled();
+    expect(upsertMessagingProviders).not.toHaveBeenCalled();
+    expect(getHermesToolGatewayProviderName).not.toHaveBeenCalled();
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",
       sandboxName: "sandbox",
-      inferenceProvider: "nvidia-prod",
+      inferenceProvider: null,
       channels,
       enabledChannels: [],
       disabledChannelNames: new Set(),
@@ -694,9 +695,7 @@ describe("resolveSandboxCreateIntent", () => {
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createArgs).toEqual(
-      expect.arrayContaining(["--policy", "/tmp/policy.yaml"]),
-    );
+    expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
     expect(plan.createArgs).not.toContain("--provider");
   });
 

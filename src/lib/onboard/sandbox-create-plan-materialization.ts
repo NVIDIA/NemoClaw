@@ -261,6 +261,23 @@ function buildCreateProviderSet(
   );
 }
 
+function assertDeferredProviderPlanSupported(
+  intent: SandboxCreateIntent,
+  messagingProviders: readonly string[],
+  initialSandboxPolicy: InitialSandboxPolicy,
+): void {
+  const requiresProviderAttachment =
+    Boolean(intent.inferenceProvider) ||
+    messagingProviders.length > 0 ||
+    intent.extraProviders.length > 0 ||
+    intent.hermesToolGateways.length > 0;
+  if (!requiresProviderAttachment) return;
+  initialSandboxPolicy.cleanup?.();
+  throw new Error(
+    `Cannot create sandbox '${intent.sandboxName}' with deferred providers because OpenShell cannot bind provider attachment to a verified immutable sandbox identity. No sandbox was created; use an OpenShell release with identity-bound provider attachment before retrying.`,
+  );
+}
+
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
@@ -327,6 +344,9 @@ export function materializeSandboxCreatePlan({
     intent.policy.activeMessagingChannels,
     intent.disabledChannelNames,
   );
+  if (deferSandboxEffectsUntilPolicyVerification) {
+    assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
+  }
   if (policyAuthority === "nemoclaw-managed") {
     assertCredentialBindingProvidersAttached(
       initialSandboxPolicy,
