@@ -496,7 +496,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           (step.name === "Check out trusted PR base" &&
             step.if ===
               "${{ steps.select_pr_source.outputs.workload_source == 'managed-image' }}" &&
-            step.with?.ref === "${{ inputs.base_sha }}"));
+            step.with?.ref === "${{ inputs.base_sha }}" &&
+            step.with?.path === ".trusted-pr-base"));
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -675,6 +676,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
           ref: "${{ inputs.base_sha }}",
+          path: ".trusted-pr-base",
           "fetch-depth": 0,
           "persist-credentials": false,
         },

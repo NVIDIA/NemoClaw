@@ -1182,7 +1182,7 @@ function validateFreeStandingJobSelector(
         ? ["base-image-publication", "generate-matrix"]
         : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
-    errors.push(`${jobName} job must depend on generate-matrix`);
+    errors.push(`${jobName} job must declare needs ${JSON.stringify(expectedNeeds)}`);
   }
   if (job.if !== selectedJobsCondition(jobName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
