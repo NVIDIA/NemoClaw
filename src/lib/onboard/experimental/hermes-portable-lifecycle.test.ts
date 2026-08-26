@@ -259,6 +259,7 @@ function lifecycleDeps(
   options: { readonly livePolicy?: string; readonly registry?: Partial<SandboxEntry> } = {},
 ) {
   let running = initiallyRunning;
+  const sandboxPhase = () => (running ? "Ready" : "Error");
   const podman = vi.fn((args: readonly string[]) => {
     const actions = {
       inspect: () => ({
@@ -293,8 +294,16 @@ function lifecycleDeps(
     const sandboxExecOutput = args.includes("python3") ? "200\n" : "";
     const responses = {
       "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
-      "sandbox:list": { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" },
-      "sandbox:get": { status: 0, stdout: LIVE, stderr: "" },
+      "sandbox:list": {
+        status: 0,
+        stdout: sandboxListJson(SANDBOX_ID, sandboxPhase()),
+        stderr: "",
+      },
+      "sandbox:get": {
+        status: 0,
+        stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${sandboxPhase()}\n`,
+        stderr: "",
+      },
       "sandbox:exec": { status: 0, stdout: sandboxExecOutput, stderr: "" },
     };
     return (
@@ -506,7 +515,7 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("starts and proves exact receipt-owned authenticated health without Docker (#9203)", () => {
+  it("starts the exact stopped/Error sandbox and proves authenticated health (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
 
@@ -635,9 +644,9 @@ describe("Hermes portable lifecycle", () => {
     expect(captureOpenShell).not.toHaveBeenCalled();
   });
 
-  it("revalidates identity after the stop callback and stops one full ID (#9203)", () => {
+  it("proves the exact stopped/Error topology after stopping one full ID (#9203)", () => {
     const receipt = activeReceipt();
-    const { deps, podman } = lifecycleDeps(receipt);
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
 
     const result = withMcpLifecycleLockSync(
       SANDBOX,
@@ -649,6 +658,45 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([
       [["container", "stop", CONTAINER_ID], 40_000],
     ]);
+    expect(captureOpenShell).toHaveReturnedWith({
+      status: 0,
+      stdout: sandboxListJson(SANDBOX_ID, "Error"),
+      stderr: "",
+    });
+  });
+
+  it("accepts the exact already-stopped/Error topology without another stop (#9203)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman } = lifecycleDeps(receipt, false);
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "already-stopped" });
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
+  });
+
+  it("rejects a stopped container when OpenShell remains Ready (#9203)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
+    const defaultCapture = captureOpenShell.getMockImplementation()!;
+    captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.slice(0, 2).join(":") === "sandbox:list"
+        ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" }
+        : defaultCapture(args),
+    );
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees");
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
   });
 
   it("reconciles a receipt-owned stopping state without another stop command (#9203)", () => {
@@ -743,7 +791,7 @@ describe("Hermes portable lifecycle", () => {
     expect(podman).not.toHaveBeenCalled();
   });
 
-  it.each(["Ready", "Stopped"] as const)(
+  it.each(["Ready", "Stopped", "Error"] as const)(
     "removes one exact %s sandbox and rejects a same-name replacement on retry (#9608)",
     (phase) => {
       const receipt = activeReceipt();

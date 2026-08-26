@@ -444,11 +444,11 @@ export function recoverHermesPortableSandboxLifecycle(
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
-  let qualified = qualify(sandboxName, context, deps);
+  let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error"]);
   const wasRunning = qualified.container.authority.running;
   if (!wasRunning) {
     startHermesPortableContainer(qualified.receipt, qualified.containerDeps);
-    qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+    qualified = qualify(sandboxName, context, deps, qualified.snapshot, ["Ready", "Error"]);
   }
   const commandEnv = deps.env ?? process.env;
   const assertExecutable =
@@ -710,7 +710,11 @@ export function prepareHermesPortableSandboxRemoval(
       assertHermesPortableContainerAbsent(receipt, containerDeps);
       return { present: false, capture, containerDeps };
     }
-    const qualified = qualify(sandboxName, context, deps, expectedSnapshot, ["Ready", "Stopped"]);
+    const qualified = qualify(sandboxName, context, deps, expectedSnapshot, [
+      "Ready",
+      "Stopped",
+      "Error",
+    ]);
     return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
   };
 
@@ -747,18 +751,18 @@ export function stopHermesPortableSandboxLifecycle(
   beforeStop: () => void,
   deps: HermesPortableLifecycleDeps = {},
 ): PortableDemoLifecycleStopResult {
-  let qualified = qualify(sandboxName, context, deps);
+  let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error"]);
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
     return { kind: "already-stopped" };
   }
   if (qualified.container.authority.running) beforeStop();
-  qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+  qualified = qualify(sandboxName, context, deps, qualified.snapshot, ["Ready", "Error"]);
   const result = stopHermesPortableContainer(qualified.receipt, {
     ...qualified.containerDeps,
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   });
-  const final = qualify(sandboxName, context, deps, qualified.snapshot);
+  const final = qualify(sandboxName, context, deps, qualified.snapshot, ["Error"]);
   if (final.container.authority.running) fail("exact container remained running after stop");
   return { kind: result };
 }
