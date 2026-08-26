@@ -267,16 +267,45 @@ function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]
   process.exit(2);
 }
 
+/**
+ * Report the sandbox-first grammar for a first token that names a sandbox action.
+ *
+ * `nemoclaw doctor` and `nemoclaw policy list` name an action, not a sandbox.
+ * Reporting a missing sandbox sends the reader to `onboard` for a sandbox they
+ * never asked for (#10212).
+ */
+function printSandboxScopeHint(action: string, remainingArgs: readonly string[]): never {
+  const argSuffix = remainingArgs.length > 0 ? ` ${remainingArgs.join(" ")}` : "";
+  console.error(`  '${action}' is a sandbox command. It needs a sandbox name.`);
+  console.error("");
+  console.error(`  Run: ${CLI_NAME} <name> ${action}${argSuffix}`);
+  const allNames = registeredSandboxNames();
+  if (allNames.length > 0) {
+    console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
+    console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
+  } else {
+    console.error(`  Run '${CLI_NAME} onboard' to create one.`);
+  }
+  process.exit(1);
+}
+
 async function recoverRequestedSandboxIfNeeded(
   sandboxName: string,
   action: string,
   rawArgsAfterSandboxName: string[],
 ): Promise<void> {
-  if (registry().getSandbox(sandboxName) || !isKnownSandboxAction(action)) return;
+  if (registry().getSandbox(sandboxName)) return;
+  const namesSandboxAction = isKnownSandboxAction(sandboxName);
+  if (!namesSandboxAction && !isKnownSandboxAction(action)) return;
 
   validateName(sandboxName, "sandbox name");
   await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
   if (registry().getSandbox(sandboxName)) return;
+
+  // Recovery runs first so a live sandbox named after an action stays reachable
+  // through the name-first grammar. A token that recovery cannot resolve is a
+  // scope error, not a missing sandbox.
+  if (namesSandboxAction) printSandboxScopeHint(sandboxName, rawArgsAfterSandboxName);
 
   if (rawArgsAfterSandboxName.length === 0) {
     const suggestion = suggestGlobalCommand(sandboxName);
