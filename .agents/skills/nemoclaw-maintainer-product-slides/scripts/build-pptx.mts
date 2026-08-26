@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -34,6 +34,221 @@ import { canonicalJson, canonicalSha256, validateSlideModel } from "./validate-s
 type DynamicValue = ReturnType<typeof JSON.parse>;
 type ManagedRole = (typeof MANAGED_ROLES)[number];
 type ValidationMode = "preview" | "publish";
+type PptxCancellationSignal = "SIGINT" | "SIGTERM";
+type CancellationSignalSource = {
+  on: (signal: PptxCancellationSignal, listener: () => void) => unknown;
+  off: (signal: PptxCancellationSignal, listener: () => void) => unknown;
+};
+
+class PptxCancellationError extends Error {
+  readonly context: string;
+  readonly partialTargetPaths: string[];
+  readonly signal: PptxCancellationSignal;
+  readonly unresolvedPaths: string[];
+  readonly childMayBeActive: boolean;
+
+  constructor({
+    signal,
+    context,
+    partialTargetPaths = [],
+    unresolvedPaths = [],
+    childMayBeActive = false,
+    cause,
+  }: {
+    signal: PptxCancellationSignal;
+    context: string;
+    partialTargetPaths?: string[];
+    unresolvedPaths?: string[];
+    childMayBeActive?: boolean;
+    cause?: unknown;
+  }) {
+    const uniquePaths = (paths: string[]): string[] => [...new Set(paths)];
+    const retainedPartialTargetPaths = uniquePaths(partialTargetPaths);
+    const retainedUnresolvedPaths = uniquePaths(unresolvedPaths);
+    const list = (paths: string[]): string =>
+      paths.length === 0 ? "none" : paths.map((entry) => JSON.stringify(entry)).join(", ");
+    super(
+      `${context} interrupted by ${signal}. Partial target paths: ${list(retainedPartialTargetPaths)}. Unresolved paths: ${list(retainedUnresolvedPaths)}`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "PptxCancellationError";
+    this.context = context;
+    this.partialTargetPaths = retainedPartialTargetPaths;
+    this.signal = signal;
+    this.unresolvedPaths = retainedUnresolvedPaths;
+    this.childMayBeActive = childMayBeActive;
+  }
+}
+
+function mergePptxCancellationError(
+  error: PptxCancellationError,
+  {
+    partialTargetPaths = [],
+    unresolvedPaths = [],
+    childMayBeActive = false,
+    cause,
+  }: {
+    partialTargetPaths?: string[];
+    unresolvedPaths?: string[];
+    childMayBeActive?: boolean;
+    cause?: unknown;
+  },
+): PptxCancellationError {
+  return new PptxCancellationError({
+    signal: error.signal,
+    context: error.context,
+    partialTargetPaths: [...error.partialTargetPaths, ...partialTargetPaths],
+    unresolvedPaths: [...error.unresolvedPaths, ...unresolvedPaths],
+    childMayBeActive: error.childMayBeActive || childMayBeActive,
+    cause:
+      cause === undefined
+        ? error
+        : new AggregateError([error, cause], `${error.context} cancellation cleanup failed`),
+  });
+}
+
+type PptxChildTracking = {
+  terminalFailure: Promise<void>;
+  markSpawnFailed: (error: unknown) => void;
+};
+
+type PptxCancellationController = {
+  readonly signal: PptxCancellationSignal | undefined;
+  readonly childMayBeActive: boolean;
+  request: (signal: PptxCancellationSignal) => void;
+  attachChild: (child: ChildProcess) => PptxChildTracking;
+  throwIfRequested: (
+    context: string,
+    details?: {
+      partialTargetPaths?: string[];
+      unresolvedPaths?: string[];
+      cause?: unknown;
+    },
+  ) => void;
+};
+
+function createPptxCancellationController({
+  forceKillAfterMs = 2_000,
+}: {
+  forceKillAfterMs?: number;
+} = {}): PptxCancellationController {
+  let requestedSignal: PptxCancellationSignal | undefined;
+  let activeChild: ChildProcess | undefined;
+  let activeChildMayRemain = false;
+  let childStopFailure: unknown;
+  let forceKillTimer: NodeJS.Timeout | undefined;
+  let terminalFailureTimer: NodeJS.Timeout | undefined;
+  let resolveTerminalFailure: (() => void) | undefined;
+
+  const clearChildTimers = (): void => {
+    if (forceKillTimer) clearTimeout(forceKillTimer);
+    if (terminalFailureTimer) clearTimeout(terminalFailureTimer);
+    forceKillTimer = undefined;
+    terminalFailureTimer = undefined;
+  };
+  const recordFailedKill = (signal: NodeJS.Signals, result: boolean): void => {
+    if (!result) childStopFailure = new Error(`Active PowerPoint child rejected ${signal}`);
+  };
+  const stopActiveChild = (): void => {
+    if (!requestedSignal || !activeChild || forceKillTimer || terminalFailureTimer) return;
+    try {
+      recordFailedKill(requestedSignal, activeChild.kill(requestedSignal));
+    } catch (error) {
+      childStopFailure = error;
+    }
+    forceKillTimer = setTimeout(() => {
+      if (!activeChild) return;
+      try {
+        recordFailedKill("SIGKILL", activeChild.kill("SIGKILL"));
+      } catch (error) {
+        childStopFailure = error;
+      }
+      terminalFailureTimer = setTimeout(() => {
+        if (!activeChild) return;
+        activeChildMayRemain = true;
+        activeChild.unref();
+        resolveTerminalFailure?.();
+      }, forceKillAfterMs);
+      terminalFailureTimer.unref();
+    }, forceKillAfterMs);
+    forceKillTimer.unref();
+  };
+
+  return {
+    get signal() {
+      return requestedSignal;
+    },
+    get childMayBeActive() {
+      return activeChildMayRemain;
+    },
+    request(signal) {
+      requestedSignal ??= signal;
+      stopActiveChild();
+    },
+    attachChild(child) {
+      if (activeChild) {
+        throw new Error("PowerPoint cancellation controller already tracks a child process");
+      }
+      activeChild = child;
+      activeChildMayRemain = false;
+      childStopFailure = undefined;
+      const terminalFailure = new Promise<void>((resolve) => {
+        resolveTerminalFailure = resolve;
+      });
+      const onChildError = (error: unknown): void => {
+        if (requestedSignal) childStopFailure = error;
+      };
+      const onChildClose = (): void => {
+        if (activeChild === child) activeChild = undefined;
+        activeChildMayRemain = false;
+        clearChildTimers();
+        resolveTerminalFailure = undefined;
+        child.removeListener("error", onChildError);
+      };
+      child.on("error", onChildError);
+      child.once("close", onChildClose);
+      stopActiveChild();
+      return {
+        terminalFailure,
+        markSpawnFailed(error) {
+          childStopFailure = error;
+          if (activeChild === child) activeChild = undefined;
+          activeChildMayRemain = false;
+          clearChildTimers();
+          resolveTerminalFailure = undefined;
+          child.removeListener("error", onChildError);
+          child.removeListener("close", onChildClose);
+        },
+      };
+    },
+    throwIfRequested(context, details = {}) {
+      if (!requestedSignal) return;
+      const causes = [details.cause, childStopFailure].filter((cause) => cause !== undefined);
+      throw new PptxCancellationError({
+        signal: requestedSignal,
+        context,
+        ...details,
+        childMayBeActive: activeChildMayRemain,
+        ...(causes.length === 0
+          ? {}
+          : { cause: causes.length === 1 ? causes[0] : new AggregateError(causes, context) }),
+      });
+    },
+  };
+}
+
+function installPptxCancellationSignalHandlers(
+  cancellation: PptxCancellationController,
+  source: CancellationSignalSource = process,
+): () => void {
+  const handlers = new Map<PptxCancellationSignal, () => void>(
+    (["SIGINT", "SIGTERM"] as const).map((signal) => [signal, () => cancellation.request(signal)]),
+  );
+  for (const [signal, handler] of handlers) source.on(signal, handler);
+  return () => {
+    for (const [signal, handler] of handlers) source.off(signal, handler);
+  };
+}
 export const COMPLETED_EPIC_CONTEXT_COLOR = "#5B5B5B";
 export const WEEKLY_MILESTONE_LABEL_FILL_COLOR = "#76B900";
 export const WEEKLY_MILESTONE_LABEL_TEXT_COLOR = "#FFFFFF";
@@ -270,18 +485,37 @@ async function runRuntimeProcess(
   executable: string,
   arguments_: string[],
   environment: NodeJS.ProcessEnv,
+  cancellation?: PptxCancellationController,
+  dependencies: {
+    spawn: (
+      executable: string,
+      arguments_: string[],
+      options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+    ) => ChildProcess;
+  } = {
+    spawn: (runtimeExecutable, runtimeArguments, options) =>
+      spawn(runtimeExecutable, runtimeArguments, options),
+  },
 ): Promise<void> {
+  cancellation?.throwIfRequested("PowerPoint build before presentation runtime execution");
   const result = await new Promise<{
     code: number | null;
     signal: NodeJS.Signals | null;
   }>((resolve, reject) => {
-    const child = spawn(executable, arguments_, {
+    const child = dependencies.spawn(executable, arguments_, {
       env: environment,
       stdio: "inherit",
     });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
+    const tracking = cancellation?.attachChild(child);
+    child.once("error", (error) => {
+      if (cancellation?.signal) return;
+      tracking?.markSpawnFailed(error);
+      reject(error);
+    });
+    child.once("close", (code, signal) => resolve({ code, signal }));
+    void tracking?.terminalFailure.then(() => resolve({ code: null, signal: null }));
   });
+  cancellation?.throwIfRequested("PowerPoint build during presentation runtime execution");
   if (result.code !== 0) {
     const suffix = result.signal ? ` (signal ${result.signal})` : "";
     throw new Error(`Presentation runtime command failed with exit ${result.code}${suffix}`);
@@ -304,6 +538,7 @@ async function runTemplatePlanPreflight(
   runtime: PresentationRuntimePaths,
   workflow: TemplateWorkflowPaths,
   frozenInputs: FrozenPptxAuthoringInputs,
+  cancellation?: PptxCancellationController,
 ): Promise<void> {
   await runRuntimeProcess(
     runtime.runtimeNode,
@@ -318,6 +553,7 @@ async function runTemplatePlanPreflight(
       "--no-report",
     ],
     runtimeChildEnvironment(runtime),
+    cancellation,
   );
 }
 
@@ -326,11 +562,13 @@ async function authorPowerPointWithTemporaryModule({
   workflow,
   surface,
   frozenInputs,
+  cancellation,
 }: {
   runtime: PresentationRuntimePaths;
   workflow: TemplateWorkflowPaths;
   surface: TemporaryAuthoringSurface;
   frozenInputs: FrozenPptxAuthoringInputs;
+  cancellation?: PptxCancellationController;
 }): Promise<{ surface: TemporaryAuthoringSurface; authoredOutput: string }> {
   const markerPath = path.join(
     runtime.skillDir,
@@ -355,6 +593,7 @@ async function authorPowerPointWithTemporaryModule({
         "pptx",
       ],
       environment,
+      cancellation,
     );
     await runRuntimeProcess(
       runtime.runtimeNode,
@@ -380,6 +619,7 @@ async function authorPowerPointWithTemporaryModule({
         frozenInputs.inspectPath,
       ],
       environment,
+      cancellation,
     );
     await runRuntimeProcess(
       runtime.runtimeNode,
@@ -397,10 +637,15 @@ async function authorPowerPointWithTemporaryModule({
         authoredOutput,
       ],
       environment,
+      cancellation,
     );
     return { surface, authoredOutput };
   } catch (error) {
-    await fs.rm(surface.directory, { recursive: true, force: true });
+    await requirePrivateDirectoryCleanup(
+      "PowerPoint authoring failed and private authoring-surface cleanup also failed",
+      surface.directory,
+      error,
+    );
     throw error;
   }
 }
@@ -1062,6 +1307,7 @@ async function validateTemplateWorkflowInputs({
   frozenInputs,
   roleMap,
   model,
+  cancellation,
 }: {
   workflow: TemplateWorkflowPaths;
   runtime: PresentationRuntimePaths;
@@ -1074,6 +1320,7 @@ async function validateTemplateWorkflowInputs({
   frozenInputs: FrozenPptxAuthoringInputs;
   roleMap: DynamicValue;
   model: DynamicValue;
+  cancellation?: PptxCancellationController;
 }): Promise<DynamicValue> {
   if (!isWithinPath(workflow.workspace, runtime.tmpDir)) {
     throw new Error("--template-workspace must be inside TMP_DIR");
@@ -1143,7 +1390,7 @@ async function validateTemplateWorkflowInputs({
     model,
     sourceSlideCount: actualTemplateSlideCount,
   });
-  await runTemplatePlanPreflight(runtime, workflow, frozenInputs);
+  await runTemplatePlanPreflight(runtime, workflow, frozenInputs, cancellation);
   return frameMap;
 }
 
@@ -2264,6 +2511,7 @@ async function runTemplateFidelityCheck({
   frameMap,
   finalPptx,
   authoringSurface,
+  cancellation,
 }: {
   runtime: PresentationRuntimePaths;
   workflow: TemplateWorkflowPaths;
@@ -2271,6 +2519,7 @@ async function runTemplateFidelityCheck({
   frameMap: DynamicValue;
   finalPptx: string;
   authoringSurface: TemporaryAuthoringSurface;
+  cancellation?: PptxCancellationController;
 }): Promise<void> {
   const comparisonLayoutDir = path.join(workflow.workspace, "template-fidelity-starter-layout");
   await createTemplateFidelityStarterComparisonLayouts({
@@ -2299,6 +2548,7 @@ async function runTemplateFidelityCheck({
       authoringSurface.directory,
     ],
     runtimeChildEnvironment(runtime),
+    cancellation,
   );
 }
 
@@ -2311,6 +2561,7 @@ export async function runTemplateFidelityWorkflow({
   roleMap,
   finalPptx,
   authoringSurface,
+  cancellation,
 }: {
   runtime: PresentationRuntimePaths;
   workflow: TemplateWorkflowPaths;
@@ -2320,6 +2571,7 @@ export async function runTemplateFidelityWorkflow({
   roleMap: DynamicValue;
   finalPptx: string;
   authoringSurface: TemporaryAuthoringSurface;
+  cancellation?: PptxCancellationController;
 }): Promise<void> {
   await validateTemplateLayoutFidelity({
     frameMap,
@@ -2335,6 +2587,7 @@ export async function runTemplateFidelityWorkflow({
     frameMap,
     finalPptx,
     authoringSurface,
+    cancellation,
   });
 }
 
@@ -4678,8 +4931,43 @@ async function requirePrivateCleanup({
   operations: PrivateCleanupOperation[];
   cause?: unknown;
 }): Promise<void> {
+  if (cause instanceof PptxCancellationError && cause.childMayBeActive) {
+    throw mergePptxCancellationError(cause, {
+      unresolvedPaths: operations.map((operation) => operation.path),
+      cause: new Error(
+        "Private cleanup did not run because the PowerPoint child process may still be active",
+      ),
+    });
+  }
   const failures = await collectPrivateCleanupFailures(operations);
-  if (failures.length > 0) throw privateCleanupError(context, failures, cause);
+  if (failures.length === 0) return;
+  if (cause instanceof PptxCancellationError) {
+    throw mergePptxCancellationError(cause, {
+      unresolvedPaths: failures.map((failure) => failure.path),
+      cause: new AggregateError(
+        failures.map((failure) => failure.reason),
+        context,
+      ),
+    });
+  }
+  throw privateCleanupError(context, failures, cause);
+}
+
+async function requirePrivateDirectoryCleanup(
+  context: string,
+  directory: string,
+  cause: unknown,
+): Promise<void> {
+  await requirePrivateCleanup({
+    context,
+    operations: [
+      {
+        path: directory,
+        remove: () => fs.rm(directory, { recursive: true, force: true }),
+      },
+    ],
+    cause,
+  });
 }
 
 type FinalizationCleanupDependencies = {
@@ -4692,6 +4980,15 @@ const finalizationCleanupDependencies: FinalizationCleanupDependencies = {
   lstat: (filePath) => fs.lstat(filePath, { bigint: true }),
   unlink: (filePath) => fs.unlink(filePath),
   removeTemporary: (filePath) => fs.rm(filePath, { force: true }),
+};
+
+type FinalizationDependencies = FinalizationCleanupDependencies & {
+  link: (temporaryPath: string, targetPath: string) => Promise<void>;
+};
+
+const finalizationDependencies: FinalizationDependencies = {
+  ...finalizationCleanupDependencies,
+  link: (temporaryPath, targetPath) => fs.link(temporaryPath, targetPath),
 };
 
 function rollbackFinalizationOperation(
@@ -4757,9 +5054,19 @@ async function failedFinalizationCleanupFailures({
   return [...rollbackFailures, ...temporaryFailures];
 }
 
+function pptxProcessExitCode(error: unknown): number {
+  if (!(error instanceof PptxCancellationError)) return 1;
+  return error.signal === "SIGINT" ? 130 : 143;
+}
+
 export const pptxCleanupTestOnly = {
+  authorPowerPointWithTemporaryModule,
+  createPptxCancellationController,
   failedFinalizationCleanupFailures,
+  installPptxCancellationSignalHandlers,
+  pptxProcessExitCode,
   requirePrivateCleanup,
+  runRuntimeProcess,
 };
 
 async function requirePowerPointOutputAbsent(outputPath: string): Promise<void> {
@@ -4782,6 +5089,8 @@ export async function finalizePptxArtifacts({
   supportingArtifacts = [],
   mode,
   isolation,
+  cancellation,
+  dependencies = finalizationDependencies,
 }: {
   temporaryOutputPath: string;
   outputPath: string;
@@ -4799,6 +5108,8 @@ export async function finalizePptxArtifacts({
     inputs: LabeledFilesystemPath[];
     protectedDirectories?: Array<Omit<LabeledFilesystemPath, "kind">>;
   };
+  cancellation?: PptxCancellationController;
+  dependencies?: FinalizationDependencies;
 }): Promise<void> {
   const outputArtifact = {
     temporaryPath: temporaryOutputPath,
@@ -4823,23 +5134,63 @@ export async function finalizePptxArtifacts({
   const temporaryCleanupOperations = (): PrivateCleanupOperation[] =>
     allArtifacts.map((artifact) => ({
       path: artifact.temporaryPath,
-      remove: () => fs.rm(artifact.temporaryPath, { force: true }),
+      remove: () => dependencies.removeTemporary(artifact.temporaryPath),
     }));
 
   const createdArtifacts: FinalizationArtifact[] = [];
   try {
+    cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`);
     if (isolation) await validatePptxFilesystemIsolation(isolation);
+    cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`);
     // The PPTX is the commit marker in both modes. Every supporting artifact
     // reaches a fresh no-clobber destination before the primary output appears.
     for (const artifact of [...preOutputArtifacts, outputArtifact]) {
-      await fs.link(artifact.temporaryPath, artifact.targetPath);
+      cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`, {
+        partialTargetPaths: createdArtifacts.map((created) => created.targetPath),
+      });
+      await dependencies.link(artifact.temporaryPath, artifact.targetPath);
       createdArtifacts.push(artifact);
+      cancellation?.throwIfRequested(`PowerPoint ${mode} finalization`, {
+        partialTargetPaths: createdArtifacts.map((created) => created.targetPath),
+      });
     }
   } catch (error) {
     const cleanupFailures = await failedFinalizationCleanupFailures({
       createdArtifacts,
       allArtifacts,
+      dependencies,
     });
+    const cancellationSignal =
+      error instanceof PptxCancellationError ? error.signal : cancellation?.signal;
+    if (cancellationSignal) {
+      const cancellationCleanupFailure =
+        cleanupFailures.length === 0
+          ? undefined
+          : new AggregateError(
+              cleanupFailures.map((failure) => failure.reason),
+              `PowerPoint ${mode} cancellation rollback failed`,
+            );
+      if (error instanceof PptxCancellationError) {
+        throw mergePptxCancellationError(error, {
+          partialTargetPaths: createdArtifacts.map((artifact) => artifact.targetPath),
+          unresolvedPaths: cleanupFailures.map((failure) => failure.path),
+          cause: cancellationCleanupFailure,
+        });
+      }
+      throw new PptxCancellationError({
+        signal: cancellationSignal,
+        context: `PowerPoint ${mode} finalization`,
+        partialTargetPaths: createdArtifacts.map((artifact) => artifact.targetPath),
+        unresolvedPaths: cleanupFailures.map((failure) => failure.path),
+        cause:
+          cancellationCleanupFailure === undefined
+            ? error
+            : new AggregateError(
+                [error, cancellationCleanupFailure],
+                `PowerPoint ${mode} cancellation rollback failed`,
+              ),
+      });
+    }
     if (cleanupFailures.length > 0) {
       throw privateCleanupError(
         `PowerPoint ${mode} finalization failed before the primary output was created and cleanup also failed`,
@@ -5501,7 +5852,11 @@ function parseArgs(argv: string[]): CliOptions {
   return options;
 }
 
-export async function buildPptx(options: BuildPptxOptions): Promise<DynamicValue> {
+export async function buildPptx(
+  options: BuildPptxOptions,
+  cancellation?: PptxCancellationController,
+): Promise<DynamicValue> {
+  cancellation?.throwIfRequested("PowerPoint build before input validation");
   const templatePath = path.resolve(options.template);
   const templateWorkflow = resolveTemplateWorkflowPaths(options);
   const outputPath = path.resolve(options.output);
@@ -5793,15 +6148,21 @@ export async function buildPptx(options: BuildPptxOptions): Promise<DynamicValue
       frozenInputs,
       roleMap,
       model,
+      cancellation,
     });
     authored = await authorPowerPointWithTemporaryModule({
       runtime: presentationRuntime,
       workflow: templateWorkflow,
       surface: authoringSurface,
       frozenInputs,
+      cancellation,
     });
   } catch (error) {
-    await fs.rm(authoringSurface.directory, { recursive: true, force: true });
+    await requirePrivateDirectoryCleanup(
+      "PowerPoint template preparation failed and private authoring-surface cleanup also failed",
+      authoringSurface.directory,
+      error,
+    );
     throw error;
   }
   const finalizationInputPaths: LabeledFilesystemPath[] = [
@@ -5827,14 +6188,22 @@ export async function buildPptx(options: BuildPptxOptions): Promise<DynamicValue
     fs.mkdir(path.dirname(outputPath), { recursive: true }),
     fs.mkdir(path.dirname(readbackPath), { recursive: true }),
   ]).catch(async (error) => {
-    await fs.rm(authored.surface.directory, { recursive: true, force: true });
+    await requirePrivateDirectoryCleanup(
+      "PowerPoint destination preparation failed and private authoring-surface cleanup also failed",
+      authored.surface.directory,
+      error,
+    );
     throw error;
   });
   const stagedOutput = await stagePowerPointBlob(
     { data: new Uint8Array(await fs.readFile(authored.authoredOutput)) },
     outputPath,
   ).catch(async (error) => {
-    await fs.rm(authored.surface.directory, { recursive: true, force: true });
+    await requirePrivateDirectoryCleanup(
+      "PowerPoint artifact staging failed and private authoring-surface cleanup also failed",
+      authored.surface.directory,
+      error,
+    );
     throw error;
   });
   let stagedReadback: PrivateArtifactStage | undefined;
@@ -5871,6 +6240,7 @@ export async function buildPptx(options: BuildPptxOptions): Promise<DynamicValue
       roleMap,
       finalPptx: stagedOutput.path,
       authoringSurface: authored.surface,
+      cancellation,
     });
     const searchedTargetTextByRole = new Map(
       managedSlides.map((entry, index) => [
@@ -6095,6 +6465,7 @@ export async function buildPptx(options: BuildPptxOptions): Promise<DynamicValue
         inputs: finalizationInputPaths,
         protectedDirectories: protectedOutputDirectories,
       },
+      cancellation,
     });
     return { model, roleMap, readback };
   } catch (error) {
@@ -6138,13 +6509,19 @@ async function main(): Promise<void> {
   for (const [key, flag] of requiredOptions) {
     if (!options[key as keyof CliOptions]) throw new Error(`${flag} is required`);
   }
-  await buildPptx(options as BuildPptxOptions);
+  const cancellation = createPptxCancellationController();
+  const removeSignalHandlers = installPptxCancellationSignalHandlers(cancellation);
+  try {
+    await buildPptx(options as BuildPptxOptions, cancellation);
+  } finally {
+    removeSignalHandlers();
+  }
   console.log(`PowerPoint written: ${path.resolve(options.output as string)}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack : String(error));
-    process.exitCode = 1;
+    process.exitCode = pptxProcessExitCode(error);
   });
 }

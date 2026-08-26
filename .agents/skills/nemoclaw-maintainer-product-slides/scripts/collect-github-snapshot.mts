@@ -758,7 +758,7 @@ const MILESTONE_ISSUES_QUERY = `
   query MilestoneIssues($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     repository(owner: $owner, name: $name) {
       milestone(number: $number) {
-        issues(first: 100, after: $cursor) {
+        issues(first: 100, after: $cursor, states: [OPEN, CLOSED]) {
           nodes {
             id number title body state url createdAt closedAt
             issueType { id name }

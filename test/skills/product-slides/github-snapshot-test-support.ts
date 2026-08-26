@@ -17,10 +17,19 @@ export const UNMILESTONED_EPIC_BODY = [
 ].join("\n");
 
 export type FakeGitHubCall =
-  | { kind: "graphql"; operation: string; variables: Record<string, unknown> }
+  | {
+      kind: "graphql";
+      operation: string;
+      query: string;
+      variables: Record<string, unknown>;
+    }
   | { kind: "rest"; path: string };
 
 type ExecOptions = { input?: unknown };
+
+type ReadOnlyGitHubFixtureOptions = {
+  milestoneIssues?: Array<Record<string, unknown>>;
+};
 
 function graphqlOperation(query: string): string {
   const match = /\bquery\s+([A-Za-z][A-Za-z0-9]*)/u.exec(query);
@@ -32,7 +41,11 @@ function repositoryConnection(nodes: unknown[]): Record<string, unknown> {
   return { nodes, pageInfo: PAGE_INFO, totalCount: nodes.length };
 }
 
-function graphqlData(operation: string, variables: Record<string, unknown>): unknown {
+function graphqlData(
+  operation: string,
+  variables: Record<string, unknown>,
+  options: ReadOnlyGitHubFixtureOptions,
+): unknown {
   if (variables.cursor !== null && variables.cursor !== undefined) {
     throw new Error(`${operation} requested an unexpected additional fixture page`);
   }
@@ -89,23 +102,35 @@ function graphqlData(operation: string, variables: Record<string, unknown>): unk
   }
   if (operation === "MilestoneIssues") {
     if (variables.number !== 3) throw new Error("Fixture received an unknown milestone number");
-    return { repository: { milestone: { issues: repositoryConnection([]) } } };
+    return {
+      repository: {
+        milestone: { issues: repositoryConnection(options.milestoneIssues ?? []) },
+      },
+    };
   }
   if (operation === "IssueSubIssues") {
-    if (variables.number !== UNMILESTONED_EPIC_NUMBER) {
+    const issueNumber = Number(variables.number);
+    const isConfiguredMilestoneIssue = (options.milestoneIssues ?? []).some(
+      (issue) => issue.number === issueNumber,
+    );
+    if (issueNumber !== UNMILESTONED_EPIC_NUMBER && !isConfiguredMilestoneIssue) {
       throw new Error("Fixture received an unknown Epic subissue request");
     }
     return {
       repository: {
         issue: {
-          subIssues: repositoryConnection([
-            {
-              id: "ISSUE_9818",
-              number: 9818,
-              state: "CLOSED",
-              url: "https://github.com/NVIDIA/NemoClaw/issues/9818",
-            },
-          ]),
+          subIssues: repositoryConnection(
+            issueNumber === UNMILESTONED_EPIC_NUMBER
+              ? [
+                  {
+                    id: "ISSUE_9818",
+                    number: 9818,
+                    state: "CLOSED",
+                    url: "https://github.com/NVIDIA/NemoClaw/issues/9818",
+                  },
+                ]
+              : [],
+          ),
         },
       },
     };
@@ -195,14 +220,14 @@ function graphqlData(operation: string, variables: Record<string, unknown>): unk
   throw new Error(`Fixture received unknown GraphQL operation ${operation}`);
 }
 
-export function createReadOnlyGitHubExecutor(): {
+export function createReadOnlyGitHubExecutor(fixture: ReadOnlyGitHubFixtureOptions = {}): {
   calls: FakeGitHubCall[];
   execFileSync: (command: string, args?: readonly string[], options?: ExecOptions) => string;
 } {
   const calls: FakeGitHubCall[] = [];
   return {
     calls,
-    execFileSync: (command, args = [], options = {}) => {
+    execFileSync: (command, args = [], execOptions = {}) => {
       if (command !== "gh" || args[0] !== "api") {
         throw new Error(
           `Fixture permits only read-only gh api calls, received ${command} ${args.join(" ")}`,
@@ -223,13 +248,18 @@ export function createReadOnlyGitHubExecutor(): {
       if (args.join(" ") !== "api graphql --input -") {
         throw new Error(`Fixture received unsupported gh api arguments: ${args.join(" ")}`);
       }
-      const payload = JSON.parse(String(options.input ?? "")) as {
+      const payload = JSON.parse(String(execOptions.input ?? "")) as {
         query: string;
         variables: Record<string, unknown>;
       };
       const operation = graphqlOperation(payload.query);
-      calls.push({ kind: "graphql", operation, variables: payload.variables });
-      return JSON.stringify({ data: graphqlData(operation, payload.variables) });
+      calls.push({
+        kind: "graphql",
+        operation,
+        query: payload.query,
+        variables: payload.variables,
+      });
+      return JSON.stringify({ data: graphqlData(operation, payload.variables, fixture) });
     },
   };
 }

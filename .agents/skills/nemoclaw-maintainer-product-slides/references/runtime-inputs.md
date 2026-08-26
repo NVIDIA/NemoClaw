@@ -21,6 +21,7 @@ Keep the runtime directory outside Git.
 - [Create the Google Slides preview](#create-the-google-slides-preview)
 - [Prepare the PowerPoint template workspace](#prepare-the-powerpoint-template-workspace)
 - [Create the PowerPoint preview](#create-the-powerpoint-preview)
+- [Recover after a PowerPoint interruption](#recover-after-a-powerpoint-interruption)
 - [Compare both readbacks](#compare-both-readbacks)
 - [Publish PowerPoint](#publish-powerpoint)
 - [PowerPoint role map](#powerpoint-role-map)
@@ -896,6 +897,37 @@ The native authoring module attaches each markitecture connector to its actual n
 
 If PowerPoint is the only requested format, stop after preview validation.
 Do not publish a one-format result.
+
+## Recover After a PowerPoint Interruption
+
+Press Ctrl-C once to send `SIGINT`.
+An external supervisor can send `SIGTERM`.
+The builder records the first signal and sends that signal to the active bundled child process.
+If the child remains active for 2 seconds, the builder sends `SIGKILL`.
+The command waits for the child process to close before it removes private authoring and staging paths and reports the interruption.
+If child termination remains unconfirmed after `SIGKILL`, the builder skips cleanup that could race the child and reports each affected private path as an unresolved path.
+It does not start another child process or artifact-finalization link after cancellation.
+
+During finalization, the builder checks for cancellation before and after each no-clobber link.
+The PowerPoint output is the last link and remains the finalization commit marker.
+For each partial target, rollback compares the target with its invocation-created temporary hard-link witness.
+Rollback removes the target only when both paths have the same device and inode.
+It preserves a target when its witness is absent or has a different identity.
+
+The interruption error lists each partial target path that finalization created before cancellation.
+It separately lists each unresolved path that cleanup could not remove or verify.
+A partial target that rollback removed remains in the partial-target list and does not appear as unresolved.
+An interruption before finalization reports `none` for both lists after temporary cleanup succeeds.
+If private staging cleanup also fails, the error lists each unresolved temporary path.
+
+Before a rerun, apply these checks:
+
+- Confirm that every partial target absent from the unresolved-path list was rolled back.
+- Do not overwrite or remove an unresolved path.
+- Inspect each unresolved path and ask the user to direct its recovery.
+- Use an empty template workspace and absent artifact destinations for the rerun.
+
+Do not broaden cleanup beyond the exact paths in the interruption error.
 
 ## Compare Both Readbacks
 

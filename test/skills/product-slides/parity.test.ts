@@ -24,6 +24,7 @@ import {
   semanticReadback,
   slideModelSchemaPath,
 } from "../../helpers/nemoclaw-product-slides-fixture";
+import { independentlyAuthoredParityReadbacks } from "./parity-fixture";
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -57,10 +58,9 @@ describe("NemoClaw product slide backend parity", () => {
     );
   });
 
-  it("accepts matching semantic readback payloads for the shared model", () => {
+  it("accepts independently authored Google Slides and PowerPoint readbacks", () => {
     const model = buildSyntheticModel();
-    const google = semanticReadback(model);
-    const pptx = semanticReadback(model);
+    const { google, pptx } = independentlyAuthoredParityReadbacks(model);
     const result = compareParity(model, google, pptx);
 
     expect(result.equal).toBe(true);
@@ -77,6 +77,26 @@ describe("NemoClaw product slide backend parity", () => {
     );
     expect(result.pptxWeeklyMilestoneStructureSha256).toBe(
       result.expectedWeeklyMilestoneStructureSha256,
+    );
+  });
+
+  it("rejects focused connector drift from an independently authored PowerPoint readback", () => {
+    const model = buildSyntheticModel();
+    const { google, pptx } = independentlyAuthoredParityReadbacks(model);
+    const markitecture = (pptx.slides as Array<Record<string, unknown>>).find(
+      (slide) => slide.role === "markitecture",
+    );
+    const connector = (markitecture?.connectorInventory as Array<Record<string, unknown>>).find(
+      (entry) => entry.contentId === "connector.sandbox-state",
+    );
+    expect(connector).toBeDefined();
+    connector!.lineStyle = "solid";
+
+    expect(compareParity(model, google, pptx).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PPTX_CONNECTOR_MISMATCH" }),
+        expect.objectContaining({ code: "CROSS_FORMAT_CONNECTOR_MISMATCH" }),
+      ]),
     );
   });
 
