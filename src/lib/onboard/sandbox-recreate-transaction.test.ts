@@ -44,6 +44,7 @@ import {
   sandboxRecreateSourceProof,
   sandboxRecreateSourceWorkloadEntry,
   selectCreatedSandboxLifecycleRegistration,
+  selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
 import { nativeArtifactWorkloadReceiptFixture } from "./workload/native-artifact-test-fixture";
@@ -132,7 +133,7 @@ function freshTransactionAt(
   };
 }
 
-function creatingLifecycleFixture() {
+function creatingLifecycleFixture(generationOverride?: string) {
   const session = createSession({ sandboxName: "alpha" });
   beginSandboxRecreateTransaction(
     session,
@@ -166,13 +167,50 @@ function creatingLifecycleFixture() {
   runtime.confirmDeleted();
   runtime.advance("creating");
   return {
-    lifecycle: createCreatedSandboxLifecycle(runtime, CREATED_TARGET, () => observation),
+    lifecycle: createCreatedSandboxLifecycle(
+      runtime,
+      CREATED_TARGET,
+      () => observation,
+      generationOverride,
+    ),
     session,
     setObservation: (next: SandboxRecreateObservation) => {
       observation = next;
     },
   };
 }
+
+describe("sandbox recreate target intent selection", () => {
+  it("keeps the active transaction target when the requested target changes", () => {
+    const transaction = transactionAt("planned");
+    const changedTarget = fingerprintSandboxRecreateValue({
+      agent: "hermes",
+      provider: "ollama",
+    });
+
+    expect(
+      selectSandboxRecreateTargetIntentFingerprint(transaction, changedTarget, TARGET_INTENT),
+    ).toBe(TARGET_INTENT);
+  });
+
+  it("uses the requested target when no active transaction exists", () => {
+    expect(selectSandboxRecreateTargetIntentFingerprint(null, TARGET_INTENT, null)).toBe(
+      TARGET_INTENT,
+    );
+  });
+
+  it("uses the requested target when the active transaction was not handed off", () => {
+    const transaction = transactionAt("planned");
+    const changedTarget = fingerprintSandboxRecreateValue({
+      agent: "hermes",
+      provider: "ollama",
+    });
+
+    expect(selectSandboxRecreateTargetIntentFingerprint(transaction, changedTarget, null)).toBe(
+      changedTarget,
+    );
+  });
+});
 
 describe("sandbox recreate journal", () => {
   it("binds a secret-free transaction to a non-default gateway before deletion (#6492)", () => {
@@ -1099,6 +1137,12 @@ describe("journal-bound source proof", () => {
 });
 
 describe("created sandbox lifecycle registration", () => {
+  it("keeps the active recreate target ahead of an older recovered generation (#10056)", () => {
+    const fixture = creatingLifecycleFixture("33333333-3333-4333-8333-333333333333");
+
+    expect(fixture.lifecycle.generation).toBe(TARGET_GENERATION);
+  });
+
   it.each([
     ["not Ready", { state: "not_ready" as const, liveIdentityFingerprint: null }, /Ready/u],
     [

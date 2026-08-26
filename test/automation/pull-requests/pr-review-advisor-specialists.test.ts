@@ -248,7 +248,7 @@ describe("PR review advisor specialist prompts", () => {
     const expected = fs.readFileSync(artifact, "utf8");
     expect(path.basename(artifact)).toBe("pr-review-design-architecture-summary.md");
     expect(expected).toContain("PR Review Advisor — Design / Architecture specialist");
-    expect(expected).toContain("Synthesis publishes the final review.");
+    expect(expected).toContain("Complete specialist review for maintainers and review agents.");
     expect(expected).toContain("Concrete reduction.");
   });
 

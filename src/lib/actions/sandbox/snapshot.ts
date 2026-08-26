@@ -1824,6 +1824,7 @@ async function runSnapshotRestoreUnlocked(
         registry.getSandbox(targetSandbox)?.agent,
         result.restoredFiles,
         resolvedSnapshot?.stateFiles ?? [],
+        CLI_NAME,
       );
     } else {
       console.error(`  Restore failed.`);
