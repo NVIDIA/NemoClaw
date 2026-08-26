@@ -191,6 +191,8 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
   hermesPortableLifecycle?: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  apfInterceptorRequested?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
@@ -381,11 +383,7 @@ export interface SandboxStateOptions<
     ): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
-    skippedStepMessage(
-      stepName: string,
-      detail?: string | null,
-      reason?: "resume" | "reuse",
-    ): void;
+    skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
     recordStateSkipped(
       state: "sandbox",
       metadata?: Record<string, unknown> | null,
@@ -564,6 +562,25 @@ type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
 };
+
+/** Add APF-owned fields to an exact-gated fresh create intent. */
+export function apfCreateIntentFields(
+  requested: boolean,
+): Pick<
+  CompleteSandboxCreateIntent,
+  "apfInterceptorRequested" | "deferSandboxEffectsUntilPolicyVerification"
+> {
+  return requested
+    ? {
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilPolicyVerification: true,
+      }
+    : {};
+}
+
+export function apfCreateFingerprintFields(requested: boolean): readonly string[] {
+  return requested ? ["apf-interceptor"] : [];
+}
 
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
@@ -925,6 +942,7 @@ class SandboxStateFlow<
     const lightFingerprint = [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       policyFingerprint,
+      ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
       this.options.provider,
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
@@ -1813,6 +1831,7 @@ class SandboxStateFlow<
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
@@ -1834,9 +1853,7 @@ class SandboxStateFlow<
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
-      ...deferredSandboxEffectsIntent(
-        this.options.deferSandboxEffectsUntilPolicyVerification === true,
-      ),
+      ...deferredSandboxEffectsIntent(this.deferSandboxEffectsUntilPolicyVerification()),
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
@@ -1845,6 +1862,34 @@ class SandboxStateFlow<
       ...rebuildPolicyPresetSelection,
       extraProviders,
     };
+  }
+
+  private assertApfFreshCreate(sandboxName: string, decision: SandboxCreationDecision): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    if (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create") {
+      throw new Error(
+        "APF interceptor selection requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
+      );
+    }
+    const registered = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (registered && registered.pendingRouteReservation !== true) {
+      throw new Error(
+        `APF interceptor selection cannot adopt registered sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+    const observed = this.deps.getSandboxRecreateObservation(sandboxName);
+    if (observed.state !== "missing") {
+      throw new Error(
+        `APF interceptor selection cannot adopt live sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+  }
+
+  private deferSandboxEffectsUntilPolicyVerification(): boolean {
+    return (
+      this.options.deferSandboxEffectsUntilPolicyVerification === true ||
+      this.options.apfInterceptorRequested === true
+    );
   }
 
   private beginSandboxRecreateJournal(
@@ -2137,10 +2182,7 @@ class SandboxStateFlow<
       let sandboxName: string;
       try {
         revalidatePolicyRequirements(`create sandbox '${requestedSandboxName}'`);
-        if (
-          this.options.fresh &&
-          this.options.deferSandboxEffectsUntilPolicyVerification !== true
-        ) {
+        if (this.options.fresh && !this.deferSandboxEffectsUntilPolicyVerification()) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
             requestedSandboxName,
@@ -2336,6 +2378,7 @@ class SandboxStateFlow<
       : state;
     const requestedSandboxName =
       nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    this.assertApfFreshCreate(requestedSandboxName, decision);
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
@@ -2405,7 +2448,7 @@ class SandboxStateFlow<
         ),
         verifiedPolicyRevalidation,
       );
-    if (this.options.deferSandboxEffectsUntilPolicyVerification !== true) {
+    if (!this.deferSandboxEffectsUntilPolicyVerification()) {
       nextState = await activateCredentialProviders(nextState);
     }
     return this.createAndRecordSandbox(
@@ -2414,9 +2457,7 @@ class SandboxStateFlow<
       messaging.plan,
       registryMessagingAuthority,
       decision,
-      this.options.deferSandboxEffectsUntilPolicyVerification === true
-        ? activateCredentialProviders
-        : undefined,
+      this.deferSandboxEffectsUntilPolicyVerification() ? activateCredentialProviders : undefined,
     );
   }
 
