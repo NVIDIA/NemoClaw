@@ -11,7 +11,7 @@ import {
   writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import-time stub: createTarball resolves spawnSync from this module at
@@ -24,6 +24,24 @@ import { spawnSync } from "node:child_process";
 import { createTarball } from "./tarball";
 
 const mockedSpawnSync = vi.mocked(spawnSync);
+
+function expectTarInvokedThroughHeldDescriptor(collectDir: string): void {
+  expect(mockedSpawnSync).toHaveBeenCalledTimes(1);
+  const [command, args, options] = mockedSpawnSync.mock.calls[0];
+  // The regression this guards: if tar is ever invoked with the staging
+  // *pathname* again (e.g. ["czf", partial, ...]) instead of streaming to
+  // stdout through the descriptor already claimed with O_EXCL|O_NOFOLLOW,
+  // the close-then-reopen race #10195 fixed reopens — even though these
+  // tests would otherwise still pass, since the mocks below write to
+  // whichever descriptor they're handed regardless of the real command.
+  expect(command).toBe("tar");
+  expect(args).toEqual(["czf", "-", "-C", dirname(collectDir), basename(collectDir)]);
+  expect((options as { stdio: unknown[] }).stdio).toEqual([
+    "ignore",
+    expect.any(Number),
+    "inherit",
+  ]);
+}
 
 describe("createTarball staging-descriptor race (#10195)", () => {
   let tempDir: string;
@@ -53,9 +71,10 @@ describe("createTarball staging-descriptor race (#10195)", () => {
     expect(ok).toBe(true);
     expect(readFileSync(output, "utf-8")).toBe("MARKER");
     expect(statSync(output).mode & 0o777).toBe(0o600);
+    expectTarInvokedThroughHeldDescriptor(tempDir);
   });
 
-  it("refuses to publish through a symlink swapped in after the staging claim", () => {
+  it("does not modify a symlink target swapped in after the staging claim", () => {
     const output = join(outputDir, "output.tar.gz");
     const partial = `${output}.partial.${String(process.pid)}`;
     const victim = join(outputDir, "victim.txt");
@@ -85,5 +104,6 @@ describe("createTarball staging-descriptor race (#10195)", () => {
     expect(ok).toBe(true);
     expect(readFileSync(victim, "utf-8")).toBe(victimContent);
     expect(statSync(victim).mode & 0o777).toBe(victimModeBefore);
+    expectTarInvokedThroughHeldDescriptor(tempDir);
   });
 });
