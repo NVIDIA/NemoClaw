@@ -53,6 +53,10 @@ const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
 const providerVersion = () => Number.parseInt(marked("provider-version") ? fs.readFileSync(marker("provider-version"), "utf8") : "1", 10);
+// OpenShell provider resource versions and child credential revisions are
+// separate identities. Keep the fixture values unrelated so readiness cannot
+// derive one from the other.
+const childCredentialRevision = () => "v" + (4067750153477477213n + BigInt(providerVersion())).toString();
 const setProviderVersion = (version) => fs.writeFileSync(marker("provider-version"), String(version), { mode: 0o600 });
 const providerPresentAtStart = marked("provider");
 const providerId = "11111111-2222-4333-8444-555555555555";
@@ -243,7 +247,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout: credentialRepublishBeforeObservationCountThisProcess + credentialRepublishAfterAbsenceCountThisProcess > 0 ? childCredentialRevision() : "absent",
       stderr: "",
     };
   }
@@ -254,13 +258,13 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     }
     return {
       status: 0,
-      stdout: credentialFreeRefreshAfterAbsenceCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout: credentialFreeRefreshAfterAbsenceCountThisProcess > 0 ? childCredentialRevision() : "absent",
       stderr: "",
     };
   }
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
-    stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
+    stdout: isObservation ? (marked("updated") || marked("provider") ? childCredentialRevision() : "absent") : "",
     stderr: "",
   };
 };
@@ -631,11 +635,11 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
       const credentialRepublishCount = fs
-        .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
+        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);
