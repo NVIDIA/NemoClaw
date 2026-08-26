@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 
 import type {
   ContainerEngine,
@@ -84,6 +85,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -230,9 +232,25 @@ def run_helper(action, request):
         fail("helper-file-invalid")
     completed = None
     for attempt in range(2):
-        completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False,
-            start_new_session=True)
+        process = subprocess.Popen([sys.executable, "-I", helper, action], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(request, timeout=TIMEOUTS[action])
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.communicate(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            raise
+        completed = subprocess.CompletedProcess(
+            process.args, process.returncode, stdout=stdout, stderr=stderr)
         if completed.returncode >= 0:
             return completed
         # Every helper action is transaction-bound and idempotent. Replay only
@@ -1323,8 +1341,10 @@ function helperTransportBrokerCommand(
       HELPER_PYTHON_PATH,
       "-I",
       "-c",
-      "import base64,sys;source=base64.b64decode(sys.argv.pop(1));exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
-      Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8").toString("base64"),
+      "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
+      deflateRawSync(Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8"), {
+        level: 9,
+      }).toString("base64"),
       HELPER_PATH,
       transactionId,
     ]),

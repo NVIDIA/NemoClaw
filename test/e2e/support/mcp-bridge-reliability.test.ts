@@ -14,11 +14,13 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   isHermesRestartTransportFailure,
+  isRetryableHermesStateMutationHelperTimeout,
   isRetryableOpenClawBaselineScopeOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
+  retryHermesStateMutationHelperTimeout,
   retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
@@ -115,6 +117,31 @@ describe("MCP bridge transient classification", () => {
         initialResult,
         retry,
       }),
+    ).resolves.toBe(passing);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("retries only the exact Hermes activation helper timeout", async () => {
+    const initialResult = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: "Locking hermes config (/sandbox/.hermes/config.yaml)...\n",
+      stderr:
+        "ERROR: Runtime provider state mutation failed: root helper activate did not complete successfully: helper-timeout\n",
+    };
+    const passing = { ...initialResult, exitCode: 0, stderr: "" };
+    const retry = vi.fn(async () => passing);
+
+    expect(isRetryableHermesStateMutationHelperTimeout(initialResult)).toBe(true);
+    expect(
+      isRetryableHermesStateMutationHelperTimeout({
+        ...initialResult,
+        stderr: "ERROR: Runtime provider state mutation failed: unrelated\n",
+      }),
+    ).toBe(false);
+    await expect(
+      retryHermesStateMutationHelperTimeout({ initialResult, retry }),
     ).resolves.toBe(passing);
     expect(retry).toHaveBeenCalledOnce();
   });

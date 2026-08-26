@@ -16,6 +16,8 @@ const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
+const HERMES_STATE_MUTATION_HELPER_TIMEOUT =
+  "Runtime provider state mutation failed: root helper activate did not complete successfully: helper-timeout";
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -96,6 +98,37 @@ export async function retryOpenClawBaselineScopeOnboardFailure<T extends {
     options.sandboxName,
     options.initialResult,
   )
+    ? options.retry()
+    : options.initialResult;
+}
+
+export function isRetryableHermesStateMutationHelperTimeout(result: {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}): boolean {
+  return (
+    result.exitCode !== null &&
+    result.exitCode !== 0 &&
+    result.signal === null &&
+    !result.timedOut &&
+    `${result.stdout}\n${result.stderr}`
+      .replace(ANSI_ESCAPE, "")
+      .split(/\r?\n/u)
+      .some((line) => line.trim() === `ERROR: ${HERMES_STATE_MUTATION_HELPER_TIMEOUT}`)
+  );
+}
+
+export async function retryHermesStateMutationHelperTimeout<T extends {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}>(options: { initialResult: T; retry: () => Promise<T> }): Promise<T> {
+  return isRetryableHermesStateMutationHelperTimeout(options.initialResult)
     ? options.retry()
     : options.initialResult;
 }

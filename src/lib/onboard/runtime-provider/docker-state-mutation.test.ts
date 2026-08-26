@@ -107,6 +107,43 @@ print(json.dumps({
     });
   });
 
+  it("terminates the isolated helper process group before reporting a timeout", () => {
+    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
+      "\nhelper = sys.argv[1]\n",
+    );
+    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
+      0,
+      definitionsEnd,
+    );
+    const probe = `${definitions}
+import tempfile
+root = tempfile.mkdtemp(prefix="nemoclaw-helper-timeout-")
+helper = os.path.join(root, "helper.py")
+with open(helper, "w", encoding="utf-8") as stream:
+    stream.write("import os,time\\n")
+    stream.write("if os.fork() == 0: time.sleep(30)\\n")
+    stream.write("time.sleep(30)\\n")
+original_lstat = os.lstat
+class RootHelperMetadata:
+    st_mode = stat.S_IFREG | 0o555
+    st_uid = 0
+    st_gid = 0
+os.lstat = lambda target: RootHelperMetadata() if target == helper else original_lstat(target)
+TIMEOUTS["activate"] = 0.05
+try:
+    run_helper("activate", b"{}\\n")
+except subprocess.TimeoutExpired:
+    print("helper-timeout")
+`;
+
+    expect(
+      execFileSync("python3", ["-I", "-c", probe], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }).trim(),
+    ).toBe("helper-timeout");
+  });
+
   it("keeps activation transport alive beyond both controller readiness windows", () => {
     const probe = String.raw`
 import importlib.util

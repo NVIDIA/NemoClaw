@@ -21,6 +21,7 @@ import type { SandboxEntry } from "../state/registry";
 import {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+  hermesRuntimeProviderPhaseBlocksMutation,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 } from "./hermes-runtime-state-mutation";
@@ -176,6 +177,11 @@ function run(
 }
 
 describe("Hermes runtime-provider state mutation consumer", () => {
+  it("allows a retained mutation to recover while OpenShell is Provisioning", () => {
+    expect(hermesRuntimeProviderPhaseBlocksMutation("Provisioning", true)).toBe(false);
+    expect(hermesRuntimeProviderPhaseBlocksMutation("Provisioning", false)).toBe(true);
+  });
+
   it(
     "resolves the current Docker provider when the caller does not inject a registry",
     () => {

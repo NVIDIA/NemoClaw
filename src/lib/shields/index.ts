@@ -141,6 +141,7 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+  hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
@@ -1619,7 +1620,12 @@ function runHermesProviderProtectionTransition(
 ): void {
   const sandbox = requireHermesRuntimeProviderSandbox(sandboxName);
   const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
-  if (phase !== null && phase !== "Ready" && phase !== "Running") {
+  if (
+    hermesRuntimeProviderPhaseBlocksMutation(
+      phase,
+      hasActiveRuntimeProviderStateMutation(sandboxName),
+    )
+  ) {
     throw new Error(
       `Hermes runtime-provider state mutation is unavailable because sandbox '${sandboxName}' has OpenShell phase '${phase}', not Ready or Running. Run '${CLI_NAME} ${sandboxName} status'. Resolve the reported phase, then retry.`,
     );

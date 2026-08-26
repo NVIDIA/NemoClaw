@@ -68,6 +68,13 @@ export interface HermesRuntimeStateMutationInput {
   readonly providers?: RuntimeProviderBundleRegistry;
 }
 
+export function hermesRuntimeProviderPhaseBlocksMutation(
+  phase: string | null,
+  retainedClaim: boolean,
+): boolean {
+  return phase !== null && phase !== "Ready" && phase !== "Running" && !retainedClaim;
+}
+
 function currentRuntimeProviderBundles(): RuntimeProviderBundleRegistry {
   return (
     require("../onboard/runtime-provider/current") as typeof import("../onboard/runtime-provider/current")
