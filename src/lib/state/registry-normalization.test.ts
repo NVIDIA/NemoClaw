@@ -383,6 +383,28 @@ describe("sandbox registry normalization", () => {
     ).toThrow(/policy authority changed/u);
   });
 
+  it("sets a gateway port only while the complete qualified row remains current (#10056)", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
+        model: "qualified",
+      },
+    });
+    const qualified = registry.getSandbox("alpha")!;
+
+    expect(registry.updateSandbox("alpha", { model: "replacement" })).toBe(true);
+    expect(registry.compareAndSetSandboxGatewayPort("alpha", qualified, 8080)).toBe(false);
+    const replacement = registry.getSandbox("alpha")!;
+    expect(replacement).toMatchObject({ model: "replacement", gatewayName: "nemoclaw" });
+    expect(replacement).not.toHaveProperty("gatewayPort");
+
+    expect(registry.compareAndSetSandboxGatewayPort("alpha", replacement, 8080)).toBe(true);
+    expect(registry.getSandbox("alpha")).toEqual({ ...replacement, gatewayPort: 8080 });
+  });
+
   it("canonicalizes external attribution across registry mutations and recovery (#9833)", async () => {
     const registry = await loadRegistryWith({
       updated: { name: "updated", ...createPolicyAttribution(), policyTier: "strict" },

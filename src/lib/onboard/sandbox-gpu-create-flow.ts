@@ -32,6 +32,7 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import {
   buildHermesPortableCommandAuthority,
   buildHermesPortableOnboardingCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -48,8 +49,8 @@ import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/on
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
@@ -77,6 +78,7 @@ export {
   runHermesPortableOnboardingTransaction,
   shouldManageHermesPortableDashboard,
   buildHermesPortableCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 };
 export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
 export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;
@@ -234,7 +236,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly bootstrapIdentity: string;
     readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     readonly authorityStore: ManagedBootstrapAuthorityStore;
     readonly request: ManagedStartupRootApplyRequest;
@@ -388,10 +390,7 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
@@ -477,8 +476,8 @@ export async function runSandboxGpuCreateFlow(
       gpuCreateOutcome.nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
-        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+          : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
     );
     process.exit(1);
   }
