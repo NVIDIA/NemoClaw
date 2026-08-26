@@ -702,6 +702,19 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it("prefers the sandbox-action report over a near-match global suggestion (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["agent"])).rejects.toThrow("process.exit:1");
+
+      // `agent` names a sandbox action and `agents` is a separate global
+      // command. An exact action-token match is more accurate than an
+      // edit-distance guess, so the scope report replaces the suggestion.
+      const output = stderr.join("\n");
+      expect(output).toContain("'agent' is a sandbox command. It needs a sandbox name.");
+      expect(output).not.toContain("Did you mean: nemoclaw agents?");
+    });
+  });
+
   it("keeps the name-first grammar for a sandbox literally named doctor (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, runOclifCommandById, stderr }) => {
