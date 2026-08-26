@@ -69,6 +69,7 @@ export interface OpenClawToolEvidence {
   toolExecutions: OpenClawToolRecord[];
   toolResults: OpenClawToolRecord[];
   unexpectedWebFetchCalls: number;
+  unexpectedWebFetchExecutions: number;
   unexpectedWebFetchResults: number;
   webFetchResults: OpenClawWebFetchResultEvidence[];
 }
@@ -82,6 +83,7 @@ export interface PersonalPublicFetchToolEvidenceAssessment {
   publicHttpsTargets: OpenClawToolTarget[];
   qualifyingWebFetchResults: number;
   unexpectedWebFetchCalls: number;
+  unexpectedWebFetchExecutions: number;
   unexpectedWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
@@ -100,6 +102,7 @@ export interface PersonalPublicFetchToolEvidenceArtifact {
   publicHttpsTargets: OpenClawToolTarget[];
   qualifyingWebFetchResults: number;
   unexpectedWebFetchCalls: number;
+  unexpectedWebFetchExecutions: number;
   unexpectedWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
@@ -259,7 +262,7 @@ export function parseOpenClawAgentText(raw: string): string {
 
 /**
  * Reduce OpenClaw session and trajectory JSONL to bounded proof that one
- * successful direct web_fetch result supports the expected public fetch.
+ * successful paired web_fetch result supports the expected public fetch.
  * Fetched content and complete URLs remain inside the sandbox. The function
  * is self-contained because the live test serializes it instead of copying
  * full traces into host artifacts.
@@ -623,6 +626,7 @@ export function reduceOpenClawToolEvidence(
 
   const finalStatuses = new Set<string>();
   const toolExecutions: OpenClawToolRecord[] = [];
+  let unexpectedWebFetchExecutions = 0;
   for (const document of trajectoryDocuments) {
     const root = asRecord(document);
     if (root?.type !== "trace.artifacts") continue;
@@ -637,7 +641,12 @@ export function reduceOpenClawToolEvidence(
     if (!Array.isArray(data?.toolMetas)) continue;
     for (const metaValue of data.toolMetas) {
       const meta = asRecord(metaValue);
-      recordTool(toolExecutions, meta, meta?.meta ?? meta);
+      const targetSource = meta?.meta ?? meta;
+      const name = normalizedName(meta?.name ?? meta?.toolName ?? meta?.tool_name);
+      if (name === "web_fetch" && normalizedUrl(directUrlFrom(targetSource)) !== expectedUrl) {
+        unexpectedWebFetchExecutions += 1;
+      }
+      recordTool(toolExecutions, meta, targetSource);
     }
   }
 
@@ -652,6 +661,7 @@ export function reduceOpenClawToolEvidence(
     toolExecutions,
     toolResults,
     unexpectedWebFetchCalls: unexpectedWebFetchCallIds.size,
+    unexpectedWebFetchExecutions,
     unexpectedWebFetchResults,
     webFetchResults,
   };
@@ -696,6 +706,7 @@ export function parseOpenClawToolEvidence(raw: string): OpenClawToolEvidence {
     !Array.isArray(parsed.toolExecutions) ||
     !Array.isArray(parsed.toolResults) ||
     !Number.isInteger(parsed.unexpectedWebFetchCalls) ||
+    !Number.isInteger(parsed.unexpectedWebFetchExecutions) ||
     !Number.isInteger(parsed.unexpectedWebFetchResults) ||
     !Array.isArray(parsed.webFetchResults)
   ) {
@@ -795,6 +806,7 @@ export function assessPersonalPublicFetchToolEvidence(
       evidence.controlTargetViolations === 0 &&
       evidence.finalStatuses.includes("success") &&
       evidence.unexpectedWebFetchCalls === 0 &&
+      evidence.unexpectedWebFetchExecutions === 0 &&
       evidence.unexpectedWebFetchResults === 0 &&
       webFetchCalls.length > 0 &&
       webFetchExecutions.length > 0 &&
@@ -806,6 +818,7 @@ export function assessPersonalPublicFetchToolEvidence(
     publicHttpsTargets,
     qualifyingWebFetchResults: qualifyingWebFetchResults.length,
     unexpectedWebFetchCalls: evidence.unexpectedWebFetchCalls,
+    unexpectedWebFetchExecutions: evidence.unexpectedWebFetchExecutions,
     unexpectedWebFetchResults: evidence.unexpectedWebFetchResults,
     webFetchCalls: webFetchCalls.length,
     webFetchExecutions: webFetchExecutions.length,
@@ -846,6 +859,7 @@ export function projectPersonalPublicFetchToolEvidenceArtifact(
     publicHttpsTargets: assessment.publicHttpsTargets,
     qualifyingWebFetchResults: assessment.qualifyingWebFetchResults,
     unexpectedWebFetchCalls: assessment.unexpectedWebFetchCalls,
+    unexpectedWebFetchExecutions: assessment.unexpectedWebFetchExecutions,
     unexpectedWebFetchResults: assessment.unexpectedWebFetchResults,
     webFetchCalls: assessment.webFetchCalls,
     webFetchExecutions: assessment.webFetchExecutions,
@@ -890,6 +904,7 @@ export async function validateOpenClawAgentAttemptEvidence(
         `webFetchExecutions=${assessment.webFetchExecutions}`,
         `qualifying=${assessment.qualifyingWebFetchResults}`,
         `unexpectedWebFetchCalls=${assessment.unexpectedWebFetchCalls}`,
+        `unexpectedWebFetchExecutions=${assessment.unexpectedWebFetchExecutions}`,
         `unexpectedWebFetchResults=${assessment.unexpectedWebFetchResults}`,
         `webFetchResults=${counts.total}`,
         `expectedContentMatches=${counts.expectedContentMatches}`,

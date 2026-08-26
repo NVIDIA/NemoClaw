@@ -768,14 +768,14 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   );
 
   openClawTest(
-    "C4 Personal permits a public fetch without a search credential",
+    "C4 Personal permits a public fetch without Brave Search or Tavily Search API keys",
     {
       timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
         e2ePhases: [
           "validate hosted representative-agent prerequisites",
           "onboard a representative OpenClaw sandbox with Personal and no web search",
-          "verify Personal policy and absent search credentials",
+          "verify Personal policy and absent Brave Search or Tavily Search API keys",
           "fetch a public website with curl",
           "deny loopback and link-local targets",
           "fetch a fixed public reference with OpenClaw",
@@ -816,7 +816,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         },
       });
 
-      progress.phase("verify Personal policy and absent search credentials");
+      progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
       ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });

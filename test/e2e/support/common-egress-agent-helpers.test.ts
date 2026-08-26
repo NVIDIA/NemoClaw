@@ -317,6 +317,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       toolExecutions: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolResults: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchExecutions: 0,
       unexpectedWebFetchResults: 0,
       webFetchResults: [
         {
@@ -442,6 +443,28 @@ describe("common-egress agent parsing and classification helpers", () => {
       matches: false,
       qualifyingWebFetchResults: 1,
       unexpectedWebFetchCalls: 1,
+    });
+  });
+
+  it("rejects a different public fetch target recorded only as a tool execution", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines(),
+      [
+        directPublicFetchTrajectoryWithProjection(),
+        JSON.stringify({
+          type: "trace.artifacts",
+          data: {
+            toolMetas: [{ toolName: "web_fetch", meta: "https://example.com/" }],
+          },
+        }),
+      ].join("\n"),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 1,
+      unexpectedWebFetchExecutions: 1,
     });
   });
 
@@ -650,6 +673,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       matches: false,
       publicHttpsTargets: [{ hostname: "www.wikidata.org", protocol: "https:" }],
       unexpectedWebFetchCalls: 0,
+      unexpectedWebFetchExecutions: 0,
       unexpectedWebFetchResults: 0,
       webFetchResultCounts: {
         expectedContentMatches: 1,
