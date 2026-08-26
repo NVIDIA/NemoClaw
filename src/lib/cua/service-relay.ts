@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawn } from "node:child_process";
+import { dockerCapture } from "../adapters/docker";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -31,22 +32,16 @@ function statePath(sandboxName: string, home = os.homedir()): string {
 }
 
 function resolveBridgeAddress(): string {
-  let raw = "";
-  try {
-    raw = execFileSync(
-      "docker",
-      [
-        "network",
-        "inspect",
-        "--format",
-        "{{(index .IPAM.Config 0).Gateway}}",
-        DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
-      ],
-      { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-  } catch {
-    // The validated error below owns this trust-boundary failure.
-  }
+  const raw = dockerCapture(
+    [
+      "network",
+      "inspect",
+      "--format",
+      "{{(index .IPAM.Config 0).Gateway}}",
+      DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+    ],
+    { ignoreError: true },
+  ).trim();
   if (!/^(?:10|172\.(?:1[6-9]|2[0-9]|3[01])|192\.168)(?:\.[0-9]{1,3}){2}$/u.test(raw)) {
     throw new Error("NemoCUA could not resolve the OpenShell bridge address for its service relay");
   }

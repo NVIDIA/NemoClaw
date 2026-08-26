@@ -59,7 +59,6 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
-  stopCuaServiceRelay,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
 } from "./destroy-preflight";
@@ -238,7 +237,10 @@ export function cleanupSandboxServices(
 
   const sandbox = getSandbox(validatedSandboxName);
   if (stopCuaRelay && sandbox?.agent === "nemocua") {
-    const stopRelay = deps.stopCuaServiceRelay ?? stopCuaServiceRelay;
+    const stopRelay =
+      deps.stopCuaServiceRelay ??
+      (require("../../cua/service-relay") as typeof import("../../cua/service-relay"))
+        .stopCuaServiceRelay;
     stopRelay(validatedSandboxName);
   }
 
