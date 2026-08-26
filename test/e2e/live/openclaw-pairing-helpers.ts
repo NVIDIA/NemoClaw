@@ -486,6 +486,7 @@ function receiveSlackSocketEvent() {
         framed = framed.slice(frame.totalLength);
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
+        if (envelope.type === "hello") continue;
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
         clearTimeout(timer);
         socket.end();
