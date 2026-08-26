@@ -7,7 +7,7 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
 
 /**
  * Preservation guard for a sandbox whose onboarding is cancelled before the
- * policy-preset step is confirmed.
+ * policy tier and preset selection window is confirmed.
  *
  * Cancellation preserves the incomplete sandbox, registry entry, and onboarding
  * session. The guard emits identity-bound recovery guidance and never deletes a
@@ -15,7 +15,8 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
  *
  * The guard activates only when both conditions are true:
  *   - `arm()` records a newly created sandbox after `createSandbox` succeeds.
- *   - `markCancelled()` records Ctrl+C or SIGTERM at a policy-step prompt.
+ *   - `markCancelled()` records Ctrl+C or SIGTERM at the policy-tier or either
+ *     policy-preset selector.
  *
  * Other `process.exit(1)` failure paths do not call `markCancelled()`. Their
  * existing preservation behavior remains unchanged.
@@ -28,7 +29,7 @@ export interface SandboxCancelRollbackDeps {
 export interface SandboxCancelRollback {
   /** Arm cancellation recovery guidance for a just-created sandbox. */
   arm(sandboxName: string, sandboxIdentityFingerprint?: string): void;
-  /** Disarm once the sandbox is past the cancellable window (policies confirmed). */
+  /** Disarm once the sandbox is past the cancellable policy-selection window. */
   disarm(): void;
   /** Record that the operator cancelled at a cancellable step. */
   markCancelled(): void;
@@ -88,7 +89,7 @@ export function installSandboxCancelRollback(
 }
 
 /**
- * Build the cancel handler the policy-step prompts run on Ctrl+C / SIGTERM:
+ * Build the cancel handler the policy-selection prompts run on Ctrl+C / SIGTERM:
  * restore the terminal (`cleanup`), record the cancel, then exit non-zero.
  * Shared so both the tier and preset selectors stay in sync.
  */

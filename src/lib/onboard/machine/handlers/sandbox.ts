@@ -696,6 +696,23 @@ class SandboxStateFlow<
     return !agentName || agentName === "openclaw";
   }
 
+  private assertProviderlessApfInput(): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    const explicitWebSearch = parseExplicitWebSearchProvider(
+      this.options.env[WEB_SEARCH_PROVIDER_ENV],
+    ).provider;
+    const hasProviderIntent =
+      this.options.webSearchConfig !== null ||
+      explicitWebSearch !== null ||
+      this.options.selectedMessagingChannels.length > 0 ||
+      this.options.hermesToolGateways.length > 0 ||
+      Boolean(this.options.session?.messagingPlan);
+    if (!hasProviderIntent) return;
+    throw new Error(
+      "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+    );
+  }
+
   private prepareWebSearchSupport(): SandboxStepState<WebSearchConfig> {
     const probePath = this.options.fromDockerfile
       ? this.deps.resolvePath(this.options.fromDockerfile)
@@ -1899,7 +1916,7 @@ class SandboxStateFlow<
       resolved.hermesToolGateways.length > 0;
     if (!hasProviderPlan) return;
     throw new Error(
-      "APF interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+      "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
     );
   }
 
@@ -2443,6 +2460,27 @@ class SandboxStateFlow<
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
     nextState = this.recordSandboxIdentityForCreate(nextState, requestedSandboxName);
+    if (this.options.apfInterceptorRequested === true) {
+      const registryMessagingAuthority =
+        this.deps.getRegistrySandboxMessagingAuthority(requestedSandboxName);
+      if (registryMessagingAuthority.plan !== null) {
+        throw new Error(
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+        );
+      }
+      return this.createAndRecordSandbox(
+        nextState,
+        requestedSandboxName,
+        null,
+        registryMessagingAuthority,
+        decision,
+        async (state) =>
+          this.checkpointMessaging(this.checkpointWebSearch(state, null), {
+            plan: null,
+            selectedChannels: [],
+          }),
+      );
+    }
     const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
       nextState.webSearchConfigChanged ||
@@ -2560,6 +2598,7 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
+    this.assertProviderlessApfInput();
     if (this.options.session?.checkpoint) {
       this.replayableCheckpointProviderBindings(this.options.session.checkpoint);
     }

@@ -126,6 +126,8 @@ const APF_PROVIDER_INTENT_ENV_KEYS = [
   "NEMOCLAW_SERVING_PRESET",
 ] as const;
 
+const APF_PROVIDERLESS_WEB_SEARCH_ENV_VALUES = new Set(["", "none", "off", "disabled", "no", "0"]);
+
 function hasProviderBackedApfIntent(context: OnboardFlowContext, env: NodeJS.ProcessEnv): boolean {
   const routeValues = [
     context.provider,
@@ -144,10 +146,16 @@ function hasProviderBackedApfIntent(context: OnboardFlowContext, env: NodeJS.Pro
     context.selectedMessagingChannels.length > 0 ||
     context.hermesToolGateways.length > 0 ||
     context.webSearchConfig !== null ||
+    Boolean(context.session?.messagingPlan) ||
     context.hostLocalInferenceRouteOnly === true ||
     context.hostLocalInferenceSandboxProofAuthority != null ||
     context.session?.servingProfileProvenance != null ||
-    APF_PROVIDER_INTENT_ENV_KEYS.some((key) => String(env[key] ?? "").trim().length > 0)
+    APF_PROVIDER_INTENT_ENV_KEYS.some((key) => String(env[key] ?? "").trim().length > 0) ||
+    !APF_PROVIDERLESS_WEB_SEARCH_ENV_VALUES.has(
+      String(env.NEMOCLAW_WEB_SEARCH_PROVIDER ?? "")
+        .trim()
+        .toLowerCase(),
+    )
   );
 }
 
@@ -195,7 +203,7 @@ export function createProviderInferenceOnboardFlowPhase<
     ) {
       if (hasProviderBackedApfIntent(context, options.env)) {
         throw new Error(
-          "APF interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
         );
       }
       const sandboxName =

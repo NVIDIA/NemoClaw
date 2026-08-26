@@ -494,12 +494,13 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 
 <Warning title="Recover an Incomplete APF Creation">
 If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
+The same preservation applies if you cancel at the policy-tier selector or either policy-preset selector after sandbox creation.
 Do not destroy that sandbox by name.
 Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
 If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
 Ask an OpenShell administrator to obtain the exact live durable ID, verify it against the fingerprint, and use an identity-bound removal procedure.
-After the administrator confirms removal, start a fresh onboarding attempt.
-`--resume` and `--recreate-sandbox` cannot recover the incomplete attempt.
+This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
+After the administrator confirms identity-bound removal, repeat the original command with `--fresh` and a new name.
 </Warning>
 
 #### `--tool-disclosure <progressive|direct>`
@@ -895,8 +896,10 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 </AgentOnly>
 
-If you cancel a brand-new onboarding run at the policy preset step, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
+If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
 NemoClaw reports the durable sandbox identity fingerprint when it is available and never deletes the sandbox by mutable name.
+Do not resume or recreate that incomplete sandbox.
+After an OpenShell administrator verifies the live durable ID, removes that exact sandbox through an identity-bound procedure, and confirms removal, repeat the original onboarding intent with `$$nemoclaw onboard --fresh --name <new-sandbox>`.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.

@@ -633,6 +633,54 @@ describe("core onboard flow phases", () => {
     expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
   });
 
+  it("rejects an explicit APF web-search provider before route reservation", async () => {
+    const reserveSandboxInferenceRoute = vi.fn(() => true);
+    const checkpointSandboxIdentity = vi.fn(async () => undefined);
+    const { providerInference: providerPhase } = createPhases({
+      providerEnv: { NEMOCLAW_WEB_SEARCH_PROVIDER: "brave", BRAVE_API_KEY: "secret-value" },
+      providerDeps: { checkpointSandboxIdentity, reserveSandboxInferenceRoute },
+      sandboxOptions: { apfInterceptorRequested: true },
+    });
+
+    await expect(
+      providerPhase.run(
+        context({ fresh: true, model: null, provider: null, selectedMessagingChannels: [] }),
+      ),
+    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+    expect(checkpointSandboxIdentity).not.toHaveBeenCalled();
+    expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects APF messaging intent before route reservation or external effects", async () => {
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const reserveSandboxInferenceRoute = vi.fn(() => true);
+    const checkpointSandboxIdentity = vi.fn(async () => undefined);
+    const { providerInference: providerPhase } = createPhases({
+      providerDeps: {
+        checkpointSandboxIdentity,
+        reserveSandboxInferenceRoute,
+        setupInference,
+      },
+      sandboxOptions: { apfInterceptorRequested: true },
+    });
+
+    await expect(
+      providerPhase.run(
+        context({
+          fresh: true,
+          model: null,
+          provider: null,
+          selectedMessagingChannels: ["telegram"],
+        }),
+      ),
+    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+    expect(checkpointSandboxIdentity).not.toHaveBeenCalled();
+    expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
+    expect(setupInference).not.toHaveBeenCalled();
+  });
+
   it("rejects APF when a serving profile requests an inference plan", async () => {
     const session = createSession({ apfInterceptorRequested: true });
     session.servingProfileProvenance = {} as never;
@@ -703,6 +751,7 @@ describe("core onboard flow phases", () => {
     });
     const session = createSession({ apfInterceptorRequested: true });
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerEnv: { NEMOCLAW_WEB_SEARCH_PROVIDER: "none" },
       providerDeps: {
         reserveSandboxInferenceRoute: reserveRoute,
         setupInference,

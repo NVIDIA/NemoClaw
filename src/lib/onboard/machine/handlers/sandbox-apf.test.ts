@@ -53,6 +53,9 @@ describe("APF sandbox create selection", () => {
     });
 
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledOnce();
     const createCall = calls.createSandbox.mock.calls[0] ?? [];
     expect(createCall.at(-2)).toMatchObject({
@@ -69,6 +72,35 @@ describe("APF sandbox create selection", () => {
     expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
       sessionUpdatesBeforeVerifiedEffects,
     );
+  });
+
+  it.each([
+    [
+      "an explicit web-search environment selection",
+      { env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "brave", BRAVE_API_KEY: "secret-value" } },
+    ],
+    ["a selected messaging channel", { selectedMessagingChannels: ["telegram"] }],
+  ])("rejects %s before credential, provider, or sandbox effects", async (_label, intent) => {
+    const session = createSession({ apfInterceptorRequested: true });
+    const { deps, calls } = createDeps({}, session);
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        ...intent,
+        fresh: true,
+        apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
+      }),
+    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects a resolved APF provider plan before sandbox or provider effects (#9833)", async () => {
