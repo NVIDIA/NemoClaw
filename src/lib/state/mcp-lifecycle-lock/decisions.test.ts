@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   decideMcpLifecycleAcquisition,
+  decideMcpLifecycleDeadlineRecovery,
   decideMcpLifecycleLock,
   decideMcpLifecycleGate,
   decideMcpLifecycleTakeover,
@@ -164,6 +165,138 @@ describe("lifecycle lock decisions", () => {
     ["removed token", "a".repeat(32), undefined, "refuse"],
   ] as const)("maps %s takeover authority to %s", (_name, expected, observed, kind) => {
     expect(decideMcpLifecycleTakeover(expected, observed).kind).toBe(kind);
+  });
+
+  it.each([
+    ["open containment gate", { phase: "committed-containment", present: false }, "proceed"],
+    ["committed containment", { phase: "committed-containment", present: true }, "refuse"],
+    [
+      "unchanged publication authority",
+      {
+        phase: "publication",
+        expectedTakeoverToken: "a".repeat(32),
+        observedTakeoverToken: "a".repeat(32),
+        existingSelfToken: null,
+      },
+      "publish",
+    ],
+    [
+      "recovered self publication",
+      {
+        phase: "publication",
+        expectedTakeoverToken: "a".repeat(32),
+        observedTakeoverToken: "a".repeat(32),
+        existingSelfToken: "owner-a",
+      },
+      "resume",
+    ],
+    [
+      "changed publication authority",
+      {
+        phase: "publication",
+        expectedTakeoverToken: "a".repeat(32),
+        observedTakeoverToken: "b".repeat(32),
+        existingSelfToken: "owner-a",
+      },
+      "refuse",
+    ],
+  ] as const)("maps %s to %s", (_name, input, kind) => {
+    expect(decideMcpLifecycleDeadlineRecovery(input).kind).toBe(kind);
+  });
+
+  const activeOwnerDecision = {
+    kind: "wait",
+    disposition: "active",
+    ownerPid: 100,
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+  const staleOwnerDecision = {
+    kind: "reap",
+    observation: observation(owner()),
+    timerBound: true,
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+  const staleDeadlineDecision = {
+    kind: "contain",
+    observation: observation(owner()),
+    reason: "deadline-owner",
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+
+  it.each([
+    [
+      "stale deadline owner",
+      { phase: "deadline-owner", lock: staleDeadlineDecision },
+      { kind: "contain" },
+    ],
+    [
+      "verified live protected owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: true,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "wait", verifiedLive: true },
+    ],
+    [
+      "stale protected owner",
+      {
+        phase: "protected-owner",
+        lock: staleOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "contain" },
+    ],
+    [
+      "same-process sibling owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: true,
+        syncProcessIdentity: "match",
+      },
+      { kind: "refuse", reason: "sync-reentrant-owner" },
+    ],
+    [
+      "unverifiable same-process owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "unverifiable",
+      },
+      { kind: "refuse", reason: "sync-reentrant-owner" },
+    ],
+    [
+      "stale unverifiable same-process owner",
+      {
+        phase: "protected-owner",
+        lock: staleOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "unverifiable",
+      },
+      { kind: "contain" },
+    ],
+    [
+      "foreign unverifiable owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: false,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "wait", verifiedLive: false },
+    ],
+  ] as const)("maps %s", (_name, input, expected) => {
+    expect(decideMcpLifecycleDeadlineRecovery(input)).toMatchObject(expected);
   });
 
   it.each([
