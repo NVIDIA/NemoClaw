@@ -141,6 +141,7 @@ const lifecycleMock = vi.hoisted(() => {
   const events: string[] = [];
   return {
     events,
+    cleanupSandboxServicesMock: vi.fn(() => events.push("cleanup-services")),
     cleanupShieldsDestroyArtifactsMock: vi.fn(() => events.push("cleanup-shields")),
     readTimerMarkerMock: vi.fn(() => null as Record<string, unknown> | null),
     withTimerBoundMock: vi.fn(
@@ -362,6 +363,7 @@ vi.mock("./destroy", async () => {
     typeof import("../../onboard/runtime-provider/access")
   >("../../onboard/runtime-provider/access");
   return {
+    cleanupSandboxServices: lifecycleMock.cleanupSandboxServicesMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
     removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
@@ -390,6 +392,9 @@ export function resetSnapshotRestoreMocks(): void {
   shieldsMock.isShieldsDownMock.mockReturnValue(true);
   shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
   lifecycleMock.events.length = 0;
+  lifecycleMock.cleanupSandboxServicesMock
+    .mockReset()
+    .mockImplementation(() => lifecycleMock.events.push("cleanup-services"));
   lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });

@@ -112,7 +112,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     );
   });
 
-  it("fails closed before other cleanup when the Google Chat tunnel cannot stop", () => {
+  it("retains service PID directories and fails closed when the Google Chat tunnel cannot stop", () => {
     const harness = buildDeps({ provider: "ollama-local" });
     vi.mocked(harness.deps.stopGooglechatWebhookTunnel).mockImplementation(() => {
       throw new Error("cloudflared refused to stop");

@@ -27,7 +27,6 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
-import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
@@ -68,6 +67,7 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import {
+  cleanupSandboxServices,
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
@@ -654,16 +654,11 @@ async function autoCreateSandboxFromSource(
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
 // can recreate it from the source's image. Stops the destination's NIM
 // container, runs `openshell sandbox delete`, performs the destination-only
-// cleanups that `sandboxDestroy` does (PID dir, per-sandbox messaging
-// providers, shields state), then drops the NemoClaw registry entry. Throws
-// SnapshotCommandError on failure so the caller does not proceed into a
-// partially-deleted target.
-//
-// Host-shared cleanups that destroy.ts performs \u2014 Ollama auth proxy
-// (`killStaleProxy`), host services (`cleanupSandboxServices` with
-// `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
-// deliberately skipped here because they can also affect the source sandbox
-// we are about to clone from.
+// per-sandbox service, provider, and Shields cleanup that `sandboxDestroy`
+// owns, then drops the NemoClaw registry entry. Shared host services and
+// gateway teardown stay running because they can also serve the source sandbox
+// we are about to clone from. Throws SnapshotCommandError on failure so the
+// caller does not proceed into a partially-deleted target.
 function deleteSandboxForRestore(name: string): void {
   withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
     const sbMeta = registry.getSandbox(name);
@@ -737,26 +732,7 @@ function deleteSandboxForRestore(name: string): void {
         snapshotExit(1);
       }
     }
-    // Destination-only cleanup so the recreated sandbox does not inherit stale
-    // host-side state or hit provider-name conflicts (Codex #3796 P2):
-    // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
-    // - OpenShell per-sandbox messaging bridge providers declared by channel
-    //   manifests.
-    // - shields-<name>.json + shields timer: per-sandbox shields artifacts
-    try {
-      fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
-        recursive: true,
-        force: true,
-      });
-    } catch {
-      // PID dir may not exist \u2014 ignore.
-    }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-    }
+    cleanupSandboxServices(name);
     cleanupShieldsDestroyArtifacts(name);
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });

@@ -26,6 +26,7 @@ const captureOpenshellMock = vi.fn(() => ({
   status: 0,
   output: "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
 }));
+const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn(
   (
@@ -57,6 +58,7 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
+const cleanupSandboxServicesMock = vi.fn();
 const cleanupShieldsDestroyArtifactsMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 7,
@@ -191,7 +193,7 @@ vi.mock("../../runner", () => ({
   validateName: vi.fn((value: string) => value),
 }));
 vi.mock("../../runtime-recovery", () => ({
-  parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
+  parseLiveSandboxNames: parseLiveSandboxNamesMock,
 }));
 vi.mock("../../sandbox/create-stream", () => ({ streamSandboxCreate: streamSandboxCreateMock }));
 vi.mock("../../shields", () => ({
@@ -246,6 +248,7 @@ vi.mock("../../shields/destroy-cleanup", () => ({
   cleanupShieldsDestroyArtifacts: cleanupShieldsDestroyArtifactsMock,
 }));
 vi.mock("./destroy", () => ({
+  cleanupSandboxServices: cleanupSandboxServicesMock,
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));
@@ -268,6 +271,8 @@ describe("snapshot restore auto-create failures", () => {
     vi.clearAllMocks();
     harness.entries.clear();
     harness.entries.set("alpha", sourceEntry());
+    cleanupSandboxServicesMock.mockImplementation(() => undefined);
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
     streamSandboxCreateMock.mockResolvedValue({
       status: 7,
       output: "create failed before registry write",
@@ -420,12 +425,54 @@ describe("snapshot restore auto-create failures", () => {
     const nimRuntime = await import("../../inference/nim");
     expect(nimRuntime.stopNimContainer).not.toHaveBeenCalled();
     expect(nimRuntime.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(cleanupSandboxServicesMock).toHaveBeenCalledWith("beta");
     expect(removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+    expect(cleanupSandboxServicesMock.mock.invocationCallOrder[0]).toBeLessThan(
+      cleanupShieldsDestroyArtifactsMock.mock.invocationCallOrder[0]!,
+    );
     expect(cleanupShieldsDestroyArtifactsMock.mock.invocationCallOrder[0]).toBeLessThan(
       removeSandboxRegistryEntryOutcomeMock.mock.invocationCallOrder[0]!,
     );
     expect(getSandboxMock("beta")).toBeNull();
     expect(consoleError.mock.calls.flat().join("\n")).toContain("injected live route failure");
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves cleanup state when the Google Chat tunnel cannot stop (#9833)", async () => {
+    const destination = {
+      name: "beta",
+      openshellDriver: "docker",
+      provider: "vllm-local",
+      model: "model-b",
+      endpointUrl: "https://inference.local/v1",
+      lifecycleGeneration: "beta-generation-1",
+    };
+    harness.entries.set("beta", destination);
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    cleanupSandboxServicesMock.mockImplementationOnce(() => {
+      throw new Error("Refusing to finish sandbox cleanup while its Google Chat tunnel remains");
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { getLatestBackup } = await import("../../state/sandbox");
+    vi.mocked(getLatestBackup).mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    } as ReturnType<typeof getLatestBackup>);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("Refusing to finish sandbox cleanup");
+
+    expect(cleanupSandboxServicesMock).toHaveBeenCalledWith("beta");
+    expect(cleanupShieldsDestroyArtifactsMock).not.toHaveBeenCalled();
+    expect(removeSandboxRegistryEntryOutcomeMock).not.toHaveBeenCalled();
+    expect(harness.entries.get("beta")).toBe(destination);
+    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
   });
 });
