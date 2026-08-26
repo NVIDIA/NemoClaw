@@ -101,7 +101,7 @@ jobs:
     outputs:
       dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
-      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e') || inputs.checkout_sha || github.sha }}
     permissions:
       actions: read
       contents: read
@@ -122,7 +122,8 @@ jobs:
               required=1
               ;;
             NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
-              required=1
+              required=0
+              reuse=1
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -173,9 +174,9 @@ jobs:
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
+          PUBLICATION_HEAD_SHA: 0ceccaf6d33b11ed88aa7f0079429fd96e5f286e
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          PUBLICATION_RUN_ID: "32927294702"
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
 
       - id: validate_dcode_base
@@ -191,9 +192,9 @@ jobs:
         name: Validate reused Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
+          PUBLICATION_HEAD_SHA: 0ceccaf6d33b11ed88aa7f0079429fd96e5f286e
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          PUBLICATION_RUN_ID: "32927294702"
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
@@ -626,7 +627,7 @@ jobs:
             "$contracts/langchain-deepagents-code/contract.json"
           catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
           jq \
-            --arg release 'v0.0.114-125-g0ceccaf6d3' \
+            --arg release 'v0.0.114-125-g0ceccaf6d' \
             --arg revision '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e' '
               with_entries(.value.source.revision = $revision | .value.source.release = $release)
             ' "$catalog" >"$catalog.next"

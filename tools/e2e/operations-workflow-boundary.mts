@@ -46,7 +46,8 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    required=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
-    "    required=1",
+    "    required=0",
+    "    reuse=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -600,7 +601,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       dcode_base_ref:
         "${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}",
       managed_image_revision:
-        "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}",
+        "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && '0ceccaf6d33b11ed88aa7f0079429fd96e5f286e') || inputs.checkout_sha || github.sha }}",
     },
     permissions: {
       actions: "read",
@@ -671,9 +672,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REUSE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
-          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_HEAD_SHA: "0ceccaf6d33b11ed88aa7f0079429fd96e5f286e",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32544159037",
+          PUBLICATION_RUN_ID: "32927294702",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
       },
@@ -693,9 +694,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Validate reused Deep Agents Code base",
         if: PUBLICATION_REUSE_CONDITION,
         env: {
-          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_HEAD_SHA: "0ceccaf6d33b11ed88aa7f0079429fd96e5f286e",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32544159037",
+          PUBLICATION_RUN_ID: "32927294702",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },
