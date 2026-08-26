@@ -9,7 +9,7 @@
       "Reads the pull request template from the trusted base branch.",
       "Updates `refs/remotes/origin/main` explicitly before validation.",
       "Treats normal hook results as supplemental evidence, including when hook installation or execution is missing or uncertain.",
-      "Runs `npm run validate:pr` after the final commit and before every agent-managed push only when its complete execution surface matches the trusted base; otherwise stops publication.",
+      "Runs `npm run validate:pr` after the final commit and before every agent-managed push only when its complete execution surface, dependency-resolution inputs, and resolved validator executables match the trusted base; otherwise stops publication.",
       "Stops the push when direct validation fails or is inconclusive.",
       "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
     ]

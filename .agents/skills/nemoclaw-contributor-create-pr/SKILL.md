@@ -95,11 +95,16 @@ Normal Git hooks provide early feedback:
 
 Do not use a successful `git commit` or `git push` command as proof that these hooks ran.
 Hook installation can be missing, stale, or redirected through `core.hooksPath`.
+This stricter direct-validation gate applies to contributor agents. It does not replace the human
+contributor hook guidance.
 
-Before executing validation, read its command, hook configuration, and transitively loaded
-repository-local helpers and configuration from `origin/main`. Confirm that each active-checkout
-execution surface is byte-for-byte identical to that trusted-base version. Do not use a
-branch-defined validator as independent evidence for the same branch.
+Before executing validation, read its command, hook configuration, package manifests, lockfiles,
+package-manager configuration, and transitively loaded repository-local helpers and configuration
+from `origin/main`. Confirm that each active-checkout execution surface is byte-for-byte identical
+to that trusted-base version. Confirm that the resolved validator executables came from the trusted
+base dependency inputs and match a trusted-base installation. Do not infer executable identity from
+a package name or version, and do not use a branch-defined validator as independent evidence for
+the same branch.
 
 If an execution surface differs, is unavailable, or cannot be traced completely, do not execute
 the candidate validator, push, or open the PR. Report that trusted-base validation is unavailable
