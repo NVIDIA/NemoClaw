@@ -122,7 +122,7 @@ describe("handleSandboxState tool disclosure", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      null,
       {
         resolved: expect.any(Object),
         recreate: true,

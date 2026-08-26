@@ -69,7 +69,7 @@ describe("handleSandboxState resume recreation", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      null,
       expect.objectContaining({ compatibleEndpointReasoning: "true", recreate: true }),
     );
   });
@@ -120,7 +120,7 @@ describe("handleSandboxState resume recreation", () => {
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[4]).toBe("saved");
-    expect(createSandboxCall[14]).toEqual({ sessionId: session.sessionId });
+    expect(createSandboxCall[14]).toBeNull();
     expect(createSandboxCall[15]).toMatchObject({
       extraProviders: ["healthy-extra-provider"],
       recreate: true,
@@ -157,7 +157,7 @@ describe("handleSandboxState resume recreation", () => {
     expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
-    expect(createSandboxCall[14]).toEqual({ sessionId: session.sessionId });
+    expect(createSandboxCall[14]).toBeNull();
     expect(createSandboxCall[15]).toMatchObject({
       extraProviders: [],
       recreate: true,

@@ -693,13 +693,29 @@ describe("registerCreatedSandbox", () => {
 
   it("stages an owned registration until onboarding commits the sandbox step", () => {
     const registerSandbox = vi.fn();
+    const input = createdRegistryEntryInput({ lifecycleGeneration: "generation-1" });
+    const inferenceRouteReservation = {
+      authority: {
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        sessionId: "session-owner",
+        selection: input.inferenceSelection,
+      },
+      entry: {
+        name: input.sandboxName,
+        ...input.inferenceSelection,
+        gatewayName: input.gatewayName,
+        pendingRouteReservation: true as const,
+        reservationSessionId: "session-owner",
+      },
+    };
     const entry = registerCreatedSandbox({
-      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
-      reservationSessionId: "session-owner",
+      ...input,
+      inferenceRouteReservation,
       registerSandbox,
     });
 
-    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry, undefined, {
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry, inferenceRouteReservation, {
       pending: true,
       reservationSessionId: "session-owner",
     });

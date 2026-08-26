@@ -62,6 +62,7 @@ describe("createCoreOnboardFlowPhases", () => {
     expect(mocks.createProviderInferencePhase).toHaveBeenCalledWith({
       deps: {
         existingProviderDependency,
+        getOwnedSandboxInferenceRouteReservation: expect.any(Function),
         ensureManagedLlamaCppResumeReady: expect.any(Function),
         ensureResumeProviderReady: expect.any(Function),
         isResumeProviderSurfaceReady: expect.any(Function),

@@ -88,11 +88,6 @@ export interface SandboxCreateIntent {
   readonly rebuildPolicyPresets?: readonly string[];
 }
 
-/** Durable onboarding-session identity that owns the pending inference route. */
-export interface InferenceRouteReservationAuthority {
-  readonly sessionId: string;
-}
-
 export type OnboardOptions = {
   /** Hidden temporary opt-in for new managed-image runtime activation. */
   tempManagedRuntime?: boolean;

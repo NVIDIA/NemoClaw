@@ -6,14 +6,17 @@ import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/reso
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { BackupResult } from "../../state/sandbox";
-import type { SandboxEntry } from "../../state/registry";
+import type {
+  QualifiedSandboxInferenceRouteReservation,
+  SandboxEntry,
+} from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
-import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
+import type { SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
@@ -195,7 +198,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     resourceProfile: import("../../resources-cmd").ResourceProfile | null = null,
     hermesToolGateways: string[] = [],
     hermesAuthMethod: HermesAuthMethod | null = null,
-    inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null = null,
+    inferenceRouteReservation: QualifiedSandboxInferenceRouteReservation | null = null,
     createIntent: import("../types").SandboxCreateIntent | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
   ) {
@@ -1180,7 +1183,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesDashboardForwarding.ensureForState,
       managedWorkloadRuntime,
       preparedSandboxWorkload,
-      inferenceRouteReservationAuthority?.sessionId ?? null,
       note,
     );
     const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
@@ -1190,6 +1192,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       manageDashboard,
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
+    if (!inferenceRouteReservation) {
+      throw new Error(
+        "Sandbox creation is missing current inference route reservation authority.",
+      );
+    }
 
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
@@ -1221,20 +1228,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
         );
       }
-      if (!inferenceRouteReservationAuthority?.sessionId) {
-        throw new Error(
-          "Hermes portable onboarding is missing current inference route reservation authority.",
-        );
-      }
-      const inferenceRouteReservation = {
-        sessionId: inferenceRouteReservationAuthority.sessionId,
-        selection: sandboxRegistration.selection(
-          sandboxName,
-          provider,
-          model,
-          preferredInferenceApi,
-          createIntent?.endpointSource ?? null,
-        ),
+      const portableInferenceRouteReservation = {
+        sessionId: inferenceRouteReservation.authority.sessionId,
+        selection: inferenceRouteReservation.authority.selection,
       };
       await sandboxGpuCreateFlow.runHermesPortableOnboardingFromOnboard<
         import("../sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
@@ -1250,7 +1246,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxName,
           startupArgv: intendedSandboxStartupCommand,
         },
-        inferenceRouteReservation,
+        inferenceRouteReservation: portableInferenceRouteReservation,
         withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
         childEnv: sandboxEnv,
         openshellArgv,
@@ -1294,7 +1290,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
-      await completeCreatedSandboxRegistration(created, null);
+      await completeCreatedSandboxRegistration(
+        created,
+        null,
+        undefined,
+        undefined,
+        inferenceRouteReservation,
+      );
     }
     hermesStateVolumeLifecycle.commit();
     if ("complete" in recreateRuntime) recreateRuntime.complete();

@@ -935,7 +935,6 @@ describe("created sandbox completion actions", () => {
             hermesToolGateways: [],
             gatewayName: "nemoclaw",
             gatewayPort: 8080,
-            reservationSessionId: "session-owner",
           },
           gpu: {
             config: gpuConfig,
@@ -1051,7 +1050,7 @@ describe("created sandbox completion actions", () => {
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          reservationSessionId: "session-owner",
+          inferenceRouteReservation: undefined,
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",

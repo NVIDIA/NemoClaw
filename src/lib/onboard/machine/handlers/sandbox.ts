@@ -39,6 +39,7 @@ import type {
 } from "../../../state/onboard-session";
 import {
   type BaselineExclusionEntry,
+  type QualifiedSandboxInferenceRouteReservation,
   type SandboxEntry,
   type SandboxRemovalReceipt,
 } from "../../../state/registry";
@@ -102,7 +103,7 @@ import {
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
-import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
+import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
@@ -210,6 +211,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
+  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation | null;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -351,7 +353,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
-      inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
+      inferenceRouteReservation: QualifiedSandboxInferenceRouteReservation | null,
       createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
@@ -1978,7 +1980,7 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
-              this.options.session ? { sessionId: this.options.session.sessionId } : null,
+              this.options.inferenceRouteReservation ?? null,
               effectiveCreateIntent,
             ),
         );

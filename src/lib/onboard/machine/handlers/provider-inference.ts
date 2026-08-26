@@ -16,6 +16,7 @@ import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type { QualifiedSandboxInferenceRouteReservation } from "../../../state/registry/route-reservation";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
@@ -267,6 +268,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         reservationSessionId?: string;
       },
     ): boolean;
+    getOwnedSandboxInferenceRouteReservation?(
+      sandboxName: string,
+      gatewayName: string,
+      sessionId: string,
+    ): QualifiedSandboxInferenceRouteReservation | null;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
     prepareLocalProviderForInference(provider: string): Promise<string | null>;
@@ -311,6 +317,7 @@ export interface ProviderInferenceStateResult {
   webSearchConfig: WebSearchConfig | null;
   hostLocalInferenceRouteOnly: boolean;
   hostLocalInferenceSandboxProofAuthority: HostLocalInferenceSandboxProofAuthority | null;
+  inferenceRouteReservation: QualifiedSandboxInferenceRouteReservation | null;
   session: Session | null;
   stateResult: OnboardStateTransitionResult;
   stateResults: OnboardStateTransitionResult[];
@@ -1753,6 +1760,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     metadata: { state: "inference", provider, model },
   });
   stateResults.push(stateResult);
+  const inferenceRouteReservation =
+    sandboxName && session?.sessionId
+      ? (deps.getOwnedSandboxInferenceRouteReservation?.(
+          sandboxName,
+          gatewayName,
+          session.sessionId,
+        ) ?? null)
+      : null;
 
   return {
     sandboxName,
@@ -1771,6 +1786,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     webSearchConfig,
     hostLocalInferenceRouteOnly,
     hostLocalInferenceSandboxProofAuthority: hostLocalInferenceProofAuthority,
+    inferenceRouteReservation,
     session,
     stateResult,
     stateResults,

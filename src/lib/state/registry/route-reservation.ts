@@ -4,9 +4,10 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { load } from "./persistence";
 import type { SandboxEntry } from "./types";
 
-const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
+const ROUTE_RESERVATION_KEY_LIST = [
   "credentialEnv",
   "endpointSource",
   "endpointUrl",
@@ -21,7 +22,16 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "preferredInferenceApi",
   "provider",
   "reservationSessionId",
-]);
+] as const satisfies readonly (keyof SandboxEntry)[];
+const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>(ROUTE_RESERVATION_KEY_LIST);
+const ROUTE_SELECTION_KEYS = [
+  "provider",
+  "model",
+  "endpointUrl",
+  "endpointSource",
+  "credentialEnv",
+  "preferredInferenceApi",
+] as const;
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
@@ -34,7 +44,8 @@ export interface SandboxInferenceRouteReservationAuthority {
 
 export interface QualifiedSandboxInferenceRouteReservation {
   readonly authority: SandboxInferenceRouteReservationAuthority;
-  readonly entry: SandboxEntry;
+  /** Exact route-only projection; this object never grants sandbox authority. */
+  readonly entry: Pick<SandboxEntry, "name"> & Partial<SandboxEntry>;
 }
 
 export type SandboxInferenceRouteReservationDisposition =
@@ -53,6 +64,30 @@ export function normalizeSandboxInferenceRouteSelection(input: InferenceSelectio
     credentialEnv: normalized.credentialEnv,
     preferredInferenceApi: normalized.preferredInferenceApi,
   };
+}
+
+/** Return field names only so route diagnostics cannot disclose endpoint or credential data. */
+export function sandboxInferenceRouteMismatchFields(
+  actual: InferenceSelection,
+  expected: InferenceSelection,
+): (typeof ROUTE_SELECTION_KEYS)[number][] {
+  const normalizedActual = normalizeSandboxInferenceRouteSelection(actual);
+  const normalizedExpected = normalizeSandboxInferenceRouteSelection(expected);
+  return ROUTE_SELECTION_KEYS.filter(
+    (field) => !isDeepStrictEqual(normalizedActual[field], normalizedExpected[field]),
+  );
+}
+
+function routeReservationEntry(
+  entry: SandboxEntry,
+): QualifiedSandboxInferenceRouteReservation["entry"] {
+  const projected: Partial<SandboxEntry> = {};
+  for (const key of ROUTE_RESERVATION_KEY_LIST) {
+    if (Object.hasOwn(entry, key)) {
+      Object.assign(projected, { [key]: structuredClone(entry[key]) });
+    }
+  }
+  return projected as QualifiedSandboxInferenceRouteReservation["entry"];
 }
 
 /**
@@ -96,9 +131,44 @@ export function classifySandboxInferenceRouteReservation(
   authority: SandboxInferenceRouteReservationAuthority,
   entry: SandboxEntry | null,
 ): SandboxInferenceRouteReservationDisposition {
+  return qualifySandboxInferenceRouteReservation(authority, entry, true);
+}
+
+/** Qualify an exact session-owned pending route without copying sandbox authority. */
+export function qualifyPendingSandboxInferenceRouteReservation(
+  authority: SandboxInferenceRouteReservationAuthority,
+  entry: SandboxEntry | null,
+): SandboxInferenceRouteReservationDisposition {
+  return qualifySandboxInferenceRouteReservation(authority, entry, false);
+}
+
+/** Capture the exact pending route owned by one onboarding session. */
+export function getOwnedSandboxInferenceRouteReservation(
+  sandboxName: string,
+  gatewayName: string,
+  sessionId: string,
+): QualifiedSandboxInferenceRouteReservation | null {
+  const entry = load().sandboxes[sandboxName] ?? null;
+  const disposition = qualifyPendingSandboxInferenceRouteReservation(
+    {
+      sandboxName,
+      gatewayName,
+      sessionId,
+      selection: normalizeInferenceSelection(entry),
+    },
+    entry,
+  );
+  return disposition.kind === "owned" ? disposition.reservation : null;
+}
+
+function qualifySandboxInferenceRouteReservation(
+  authority: SandboxInferenceRouteReservationAuthority,
+  entry: SandboxEntry | null,
+  requireRouteOnly: boolean,
+): SandboxInferenceRouteReservationDisposition {
   if (!entry) return { kind: "missing" };
   if (entry.pendingRouteReservation !== true) return { kind: "not-reservation" };
-  if (!isRouteOnlySandboxReservation(entry)) {
+  if (requireRouteOnly && !isRouteOnlySandboxReservation(entry)) {
     return { kind: "conflict", detail: "the inference route reservation is already completed" };
   }
   if (!isPendingReservationForSession(entry, authority.sessionId)) {
@@ -107,7 +177,10 @@ export function classifySandboxInferenceRouteReservation(
       detail: "the inference route reservation belongs to another onboarding session",
     };
   }
-  if (Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))) {
+  if (
+    requireRouteOnly &&
+    Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))
+  ) {
     return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
   }
   if (entry.name !== authority.sandboxName || entry.gatewayName !== authority.gatewayName) {
@@ -157,7 +230,7 @@ export function classifySandboxInferenceRouteReservation(
         ...authority,
         selection: { ...authority.selection },
       },
-      entry: structuredClone(entry),
+      entry: routeReservationEntry(entry),
     },
   };
 }
@@ -167,7 +240,7 @@ export function isCurrentSandboxInferenceRouteReservation(
   reservation: QualifiedSandboxInferenceRouteReservation,
   entry: SandboxEntry | null,
 ): boolean {
-  const current = classifySandboxInferenceRouteReservation(reservation.authority, entry);
+  const current = qualifyPendingSandboxInferenceRouteReservation(reservation.authority, entry);
   return (
     current.kind === "owned" && isDeepStrictEqual(current.reservation.entry, reservation.entry)
   );
@@ -182,9 +255,9 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
     entry.name === reservation.authority.sandboxName &&
     entry.gatewayName === reservation.authority.gatewayName &&
     entry.pendingRouteReservation !== true &&
-    isDeepStrictEqual(
-      normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
-      normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
-    )
+    sandboxInferenceRouteMismatchFields(
+      normalizeInferenceSelection(entry),
+      reservation.authority.selection,
+    ).length === 0
   );
 }
