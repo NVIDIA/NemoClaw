@@ -23,6 +23,7 @@ import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gatewa
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as registry from "../state/registry";
+import { SandboxQuarantineError } from "../state/registry/quarantine-operations";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
@@ -91,6 +92,7 @@ interface BackupAllSandboxAttempt {
   shieldsWindowOpened: boolean;
   stoppedContainerUnavailable: boolean;
   mutationLockError?: unknown;
+  quarantineError?: SandboxQuarantineError;
 }
 
 function returnStartedSandboxToStopped(
@@ -132,7 +134,18 @@ async function backupSandboxWithinShieldsWindow(
   try {
     return await withSandboxMutationLock(sandboxName, async () => {
       enteredTransactionLock = true;
-      registry.assertSandboxActivationAllowed(sandboxName, "backup-all", registry.getSandbox);
+      try {
+        registry.assertSandboxActivationAllowed(sandboxName, "backup-all", registry.getSandbox);
+      } catch (error) {
+        if (!(error instanceof SandboxQuarantineError)) throw error;
+        return {
+          result: null,
+          orphanManifestMessage: null,
+          shieldsWindowOpened: false,
+          stoppedContainerUnavailable: false,
+          quarantineError: error,
+        };
+      }
       const startedForBackup = shouldStartStoppedContainer
         ? startStoppedSandboxContainerForBackup(sandboxName)
         : null;
@@ -384,6 +397,11 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
       console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
       skipped++;
       notRunningSkipped++;
+      return;
+    }
+    if (attempt.quarantineError) {
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (${attempt.quarantineError.message})`);
+      skipped++;
       return;
     }
     result = attempt.result;

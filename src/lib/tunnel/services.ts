@@ -539,9 +539,13 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
+  let agentForwardsStopped = true;
   if (opts.releaseGatewayPort) {
     if (sandboxName) {
-      agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
+      agentForwardsStopped = agentForwardStop.stopAgentForwardPortsForStop(sandboxName, {
+        info,
+        warn,
+      });
       gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
     } else if (!rawSandboxName) {
       // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
@@ -565,6 +569,11 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
   if (gatewayOutcome === "unconfirmed") {
     info("Host services stopped; managed gateway release was not confirmed.");
+    return;
+  }
+
+  if (!agentForwardsStopped) {
+    info("Host services stopped; agent host forward cleanup was not confirmed.");
     return;
   }
 

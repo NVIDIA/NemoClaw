@@ -44,22 +44,29 @@ async function runSandboxMutationAction(
   return action();
 }
 
-vi.mock("../state/registry", () => ({
-  assertSandboxActivationAllowed: (
-    sandboxName: string,
-    _action: string,
-    getSandbox: typeof mocks.getSandbox,
-  ) => {
-    expect(
-      getSandbox(sandboxName)?.quarantine,
-      `Sandbox '${sandboxName}' is quarantined`,
-    ).toBeUndefined();
-  },
-  isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
-    entry.pendingRouteReservation !== true,
-  listSandboxes: mocks.listSandboxes,
-  getSandbox: mocks.getSandbox,
-}));
+vi.mock("../state/registry", async () => {
+  const { SandboxQuarantineError } = await vi.importActual<
+    typeof import("../state/registry/quarantine-operations")
+  >("../state/registry/quarantine-operations");
+  return {
+    assertSandboxActivationAllowed: (
+      sandboxName: string,
+      action: string,
+      getSandbox: typeof mocks.getSandbox,
+    ) => {
+      const fence = getSandbox(sandboxName)?.quarantine;
+      return fence
+        ? (() => {
+            throw new SandboxQuarantineError(sandboxName, fence.fenceId, fence.phase, action);
+          })()
+        : undefined;
+    },
+    isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
+      entry.pendingRouteReservation !== true,
+    listSandboxes: mocks.listSandboxes,
+    getSandbox: mocks.getSandbox,
+  };
+});
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
@@ -349,25 +356,46 @@ describe("backupAll", () => {
     expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
   });
 
-  it("does not temporarily start a quarantined sandbox after acquiring the backup lock (#10140)", async () => {
+  it("skips a quarantined sandbox and continues backing up later sandboxes (#10140)", async () => {
     mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-stopped" }],
+      sandboxes: [{ name: "sb-stopped" }, { name: "sb-good" }],
       defaultSandbox: "sb-stopped",
     });
-    readySandboxNames = new Set();
-    mocks.getSandbox.mockReturnValue({
-      name: "sb-stopped",
-      quarantine: {
-        fenceId: "00000000-0000-4000-8000-000000000001",
-        phase: "quarantined",
-      },
+    readySandboxNames = new Set(["sb-good"]);
+    mocks.getSandbox.mockImplementation((name: string) =>
+      name === "sb-stopped"
+        ? {
+            name,
+            quarantine: {
+              fenceId: "00000000-0000-4000-8000-000000000001",
+              phase: "quarantined",
+            },
+          }
+        : null,
+    );
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
     });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await expect(backupAll()).rejects.toThrow("quarantined");
+    await expect(backupAll()).resolves.toBeUndefined();
 
-    expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
+    expect(mocks.withSandboxMutationLock.mock.calls.map(([name]) => name)).toEqual([
+      "sb-stopped",
+      "sb-good",
+    ]);
     expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
-    expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
+    expect(mocks.openBackupShieldsWindow).toHaveBeenCalledOnce();
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Skipped 'sb-stopped'");
+    expect(output).toContain("quarantined");
+    expect(output).toContain("1 backed up, 0 failed, 1 skipped");
   });
 
   it("does not back up when gateway preflight exits", async () => {

@@ -66,6 +66,43 @@ describe("showSandboxStatus flow", () => {
     },
   );
 
+  it("reports quarantine details for a published Hermes portable sandbox (#10140)", async () => {
+    const harness = createStatusFlowHarness({
+      portableDisposition: hermesPortableDisposition("active"),
+      sandboxEntry: {
+        agent: "hermes",
+        quarantine: {
+          schemaVersion: 1,
+          fenceId: "00000000-0000-4000-8000-000000000001",
+          requestIdentity: "a".repeat(64),
+          reasonDigest: "e".repeat(64),
+          createdAt: "2026-08-25T04:00:00.000Z",
+          updatedAt: "2026-08-25T04:00:00.000Z",
+          phase: "quarantined",
+          target: {
+            sandboxName: "alpha",
+            providerId: "docker",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+            lifecycleGeneration: "generation-1",
+            liveIdentityFingerprint: "fingerprint-1",
+            providerHandle: "c".repeat(64),
+            providerLifecycleGeneration: "provider-generation-1",
+            runtime: { kind: "docker-container", handle: "d".repeat(64) },
+          },
+          attempts: [],
+        },
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Quarantine: quarantined");
+    expect(output).toContain("fence 00000000-0000-4000-8000-000000000001");
+    expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed portable receipt authority before status probes (#9203)", async () => {
     const harness = createStatusFlowHarness({
       portableDisposition: new Error("invalid portable lifecycle receipt"),

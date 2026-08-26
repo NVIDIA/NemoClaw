@@ -172,6 +172,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         console.log(`  Sandbox: ${sandboxName}`);
         console.log("  Agent: Hermes");
         console.log(`  Portable lifecycle phase: ${hermesPortable.phase}`);
+        prepareSandboxStatusSideEffects(hermesPortable.entry);
         return;
       }
       await showLegacySandboxStatus(sandboxName);

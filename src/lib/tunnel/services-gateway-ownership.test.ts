@@ -271,6 +271,25 @@ describe("stopAll gateway-stop wiring", () => {
     expect(output).toContain("All services stopped");
   });
 
+  it("does not claim every service stopped when agent forward cleanup is unconfirmed (#10140)", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-agent-forward-stop-wiring-"));
+    vi.stubEnv("PATH", "");
+    vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => false);
+    vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "attempted");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
+
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).not.toContain("All services stopped");
+    expect(output).toContain("agent host forward cleanup was not confirmed");
+  });
+
   it("preserves the shared gateway for canonical tunnel-only stop", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-tunnel-stop-wiring-"));
     vi.stubEnv("PATH", "");
