@@ -441,20 +441,23 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
-  it("records patchError when recreate throws and exitOnPatchError reports it via printDockerGpuPatchFailureAndExit", async () => {
+  it("invokes retained-sandbox recovery once before reporting a deferred patch failure (#9833)", async () => {
+    const events: string[] = [];
     const deps = makeDeps();
     const recreatePatch = vi.fn(() => {
       throw new Error("docker rename failed");
     });
     const waitForSupervisor = vi.fn();
     const finalizeBackup = vi.fn();
-    const onPatchFailureExit = vi.fn();
+    const beforeFailureExit = vi.fn(() => events.push("before-failure-exit"));
+    const onPatchFailureExit = vi.fn(() => events.push("failure-exit"));
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
       route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
+      beforeFailureExit,
       deps,
       overrides: {
         findContainerIds,
@@ -468,7 +471,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     expect(patch.createFailureMessage()).toMatch(/Docker GPU patch failed/);
     await patch.exitOnPatchError();
+    expect(beforeFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["before-failure-exit", "failure-exit"]);
     // Supervisor wait must be skipped because needsSupervisorWait stayed false.
     patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).not.toHaveBeenCalled();

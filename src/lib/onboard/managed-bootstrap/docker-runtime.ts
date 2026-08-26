@@ -179,6 +179,7 @@ function createDockerLifecycle(
     timeoutSecs: input.timeoutSecs,
     backend,
     dockerDesktopWsl,
+    beforeFailureExit: input.beforeFailureExit,
     deps: input.dependencies,
     ...(input.onPatchFailure
       ? {

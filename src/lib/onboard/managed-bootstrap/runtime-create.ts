@@ -113,6 +113,8 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly sandboxGpuConfig: SandboxGpuConfig;
   readonly requiredLimits: readonly ManagedBootstrapRuntimeLimit[];
   readonly timeoutSecs: number;
+  /** Persist caller-owned recovery evidence before canonical patch termination. */
+  readonly beforeFailureExit?: () => void;
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;

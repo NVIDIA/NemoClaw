@@ -654,6 +654,64 @@ describe("created sandbox identity gate", () => {
     },
   );
 
+  it("persists APF recovery once when post-create revalidation fails (#9833)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const revalidationFailure = new Error("checkpoint changed");
+    const input = noGpuInput();
+    input.requirePolicylessCreate = true;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+      events.push("verify");
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn(() => {
+      events.push("revalidate");
+      throw revalidationFailure;
+    });
+    const persistRetainedApfSandboxRecovery = vi.fn(() => {
+      events.push("persist");
+      return false;
+    });
+    input.persistRetainedApfSandboxRecovery = persistRetainedApfSandboxRecovery;
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+
+    const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBe(revalidationFailure);
+    const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: fingerprint,
+      message: formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce: nonce,
+        liveIdentityFingerprint: fingerprint,
+      }),
+    });
+    expect(events).toEqual(["verify", "revalidate", "persist"]);
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "APF recovery is blocked because NemoClaw could not save this create-attempt evidence",
+    );
+    expect(output).not.toContain("onboard --resume");
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("stops before a runtime patch when the durable checkpoint drifts (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();

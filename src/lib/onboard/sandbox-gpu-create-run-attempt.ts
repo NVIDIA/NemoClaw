@@ -497,7 +497,11 @@ export function createSandboxGpuCreateAttemptRunner(
   const nativeFallbackHasCleanBaseline =
     managedRouting?.nativeFallbackHasCleanBaseline ??
     (nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0);
-  const runAttempt = async (route: SelectedDockerGpuRoute) => {
+  const runAttemptCore = async (
+    route: SelectedDockerGpuRoute,
+    armApfPostCreateRecovery: (persist: () => void) => void,
+    persistApfPostCreateRecoveryOnce: () => void,
+  ) => {
     const deferPostCreateEffects = input.verifyCreatedSandboxBeforeEffects !== undefined;
     const compatibility = route === "compatibility";
     if (compatibility && input.initialGpuRoute === "native") {
@@ -517,6 +521,12 @@ export function createSandboxGpuCreateAttemptRunner(
       : null;
     const captureRetainedSandboxRecovery = () =>
       captureRetainedApfSandboxRecovery(input, deps, createAttemptNonce);
+    const armRetainedApfSandboxRecovery = (): void => {
+      if (!input.requirePolicylessCreate) return;
+      armApfPostCreateRecovery(() =>
+        persistApfCreateFailureRecovery(input, captureRetainedSandboxRecovery),
+      );
+    };
     const attemptArgv = createAttemptNonce
       ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
       : unboundAttemptArgv;
@@ -546,6 +556,7 @@ export function createSandboxGpuCreateAttemptRunner(
           sandboxGpuConfig: input.sandboxGpuConfig,
           requiredLimits: input.requiredUlimits ?? [],
           timeoutSecs: input.sandboxReadyTimeoutSecs,
+          beforeFailureExit: persistApfPostCreateRecoveryOnce,
           network: {
             inferenceProvider: input.provider,
             gatewayUsesContainerBridge: input.dockerDriverGateway,
@@ -586,6 +597,7 @@ export function createSandboxGpuCreateAttemptRunner(
             requiredUlimits: input.requiredUlimits,
             timeoutSecs: input.sandboxReadyTimeoutSecs,
             backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+            beforeFailureExit: persistApfPostCreateRecoveryOnce,
             deps,
           }));
     const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
@@ -659,6 +671,7 @@ export function createSandboxGpuCreateAttemptRunner(
             if (result.status !== 0 && createFailure?.kind !== "sandbox_create_incomplete") {
               throw new ManagedBootstrapCreateStreamFailure(result);
             }
+            armRetainedApfSandboxRecovery();
             if (createFailure?.kind === "sandbox_create_incomplete") {
               const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
@@ -757,6 +770,7 @@ export function createSandboxGpuCreateAttemptRunner(
       });
       if (failureResult) return failureResult;
     }
+    armRetainedApfSandboxRecovery();
     if (!createdSandboxVerified && deferPostCreateEffects) {
       if (!createAttemptNonce) {
         throw new Error("Sandbox create-attempt identity was not generated.");
@@ -770,7 +784,6 @@ export function createSandboxGpuCreateAttemptRunner(
           runCaptureOpenshell: deps.runCaptureOpenshell,
         });
       } catch (error) {
-        persistApfCreateFailureRecovery(input, captureRetainedSandboxRecovery);
         throw new Error(
           `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
           { cause: error },
@@ -789,6 +802,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const expectedRecreatedSandboxId =
       preRecreateIdentity?.state === "identified" ? preRecreateIdentity.sandboxId : null;
     if (deferRestartSafeCutover && !expectedRecreatedSandboxId) {
+      persistApfPostCreateRecoveryOnce();
       console.error("");
       console.error(
         `  Sandbox '${input.sandboxName}' reached Ready, but OpenShell did not return one exact durable sandbox ID before runtime recreation.`,
@@ -867,7 +881,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ...captureRetainedSandboxRecovery(),
         } as const;
       }
-      persistApfCreateFailureRecovery(input, captureRetainedSandboxRecovery);
+      persistApfPostCreateRecoveryOnce();
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
@@ -912,6 +926,7 @@ export function createSandboxGpuCreateAttemptRunner(
           },
         );
       } catch (error) {
+        persistApfPostCreateRecoveryOnce();
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         throw error;
       }
@@ -937,6 +952,7 @@ export function createSandboxGpuCreateAttemptRunner(
             } as const;
           }
         }
+        persistApfPostCreateRecoveryOnce();
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         console.error("");
         console.error("  Native sandbox GPU proof failed.");
@@ -949,6 +965,7 @@ export function createSandboxGpuCreateAttemptRunner(
         process.exit(1);
       }
       if (proof.status === "failed") {
+        persistApfPostCreateRecoveryOnce();
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         throw new Error("Sandbox GPU proof returned failed status.");
       }
@@ -969,6 +986,28 @@ export function createSandboxGpuCreateAttemptRunner(
       route,
       value: { createResult, runtimePatch },
     } as const;
+  };
+
+  const runAttempt = async (route: SelectedDockerGpuRoute) => {
+    let persistApfPostCreateRecovery: (() => void) | null = null;
+    let apfPostCreateRecoveryPersisted = false;
+    const persistApfPostCreateRecoveryOnce = (): void => {
+      if (apfPostCreateRecoveryPersisted || !persistApfPostCreateRecovery) return;
+      apfPostCreateRecoveryPersisted = true;
+      persistApfPostCreateRecovery();
+    };
+    try {
+      return await runAttemptCore(
+        route,
+        (persist) => {
+          persistApfPostCreateRecovery ??= persist;
+        },
+        persistApfPostCreateRecoveryOnce,
+      );
+    } catch (error) {
+      persistApfPostCreateRecoveryOnce();
+      throw error;
+    }
   };
 
   return { state, managedRouting, runAttempt };

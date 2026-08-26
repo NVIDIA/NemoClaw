@@ -87,6 +87,8 @@ type DockerGpuSandboxCreatePatchOptions = {
   requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   timeoutSecs: number;
   backend?: DockerGpuPatchBackend;
+  /** Persist caller-owned recovery evidence immediately before a terminal failure report. */
+  beforeFailureExit?: () => void;
   /**
    * Whether the host is Docker Desktop WSL. Defaults to the cached
    * `isDockerDesktopWslRuntime()` probe. When true, the GPU patch skips the CDI
@@ -177,8 +179,12 @@ export function createDockerGpuSandboxCreatePatch(
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
   const captureFailedClone =
     options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
-  const onPatchFailureExit =
+  const reportPatchFailureAndExit =
     options.overrides?.onPatchFailureExit ?? printDockerGpuPatchFailureAndExit;
+  const onPatchFailureExit: PatchFailureExitFn = (sandboxName, error, deps) => {
+    options.beforeFailureExit?.();
+    reportPatchFailureAndExit(sandboxName, error, deps);
+  };
   const failureDiagnosticDeps = {
     runCaptureOpenshell: options.deps.runCaptureOpenshell,
     dockerCapture: options.deps.dockerCapture,

@@ -499,7 +499,8 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     }
   });
 
-  it("does not finalize rollback after a claimed commit loses acknowledgement", async () => {
+  it("persists recovery before a managed commit loses acknowledgement (#9833)", async () => {
+    const events: string[] = [];
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
     const seed = authority("openclaw");
     const prepared = Object.freeze({}) as ManagedBootstrapPreparedTransaction;
@@ -516,7 +517,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     adapterMocks.activate.mockResolvedValue(activated);
     adapterMocks.finalize.mockRejectedValue(new Error("commit acknowledgement lost"));
+    const beforeFailureExit = vi.fn(() => events.push("before-failure-exit"));
     const onPatchFailure = vi.fn((error: unknown): never => {
+      events.push("failure-exit");
       throw error;
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
@@ -546,6 +549,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       },
       requiredLimits: [],
       timeoutSecs: 30,
+      beforeFailureExit,
       onPatchFailure,
       network: {
         inferenceProvider: "openai",
@@ -572,7 +576,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       expect.anything(),
       expect.objectContaining({ outcome: "commit", transaction: activated }),
     );
+    expect(beforeFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailure).toHaveBeenCalledOnce();
+    expect(events).toEqual(["before-failure-exit", "failure-exit"]);
     await expect(lifecycle.recoverUnfinished()).resolves.toEqual({ receipts: [], failures: [] });
     fs.rmSync(stateRoot, { recursive: true, force: true });
   });
