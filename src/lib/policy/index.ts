@@ -1371,7 +1371,7 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
 
 function policyDocumentsMatch(left: string, right: string): boolean {
   try {
-    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
+    return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
   } catch {
     return false;
   }
