@@ -144,8 +144,9 @@ $$nemoclaw <sandbox> rebuild
 Retry `shields down` after the rebuild.
 
 <AgentOnly variant="openclaw">
-OpenClaw Google Chat recovery requires interactive `$$nemoclaw <sandbox> channels add googlechat` to configure its public webhook audience.
-Rebuild the sandbox after enrollment, then retry `shields down`.
+For OpenClaw Google Chat recovery, run `$$nemoclaw <sandbox> channels add googlechat` in an interactive terminal.
+Paste the displayed public HTTPS URL into the HTTP endpoint field in **Google Chat API** > **Configuration** > **Connection settings**.
+Confirm the prompt, rebuild the sandbox, and retry `shields down`.
 </AgentOnly>
 
 When the saved plan is available, `shields down` can continue without an affected credential-bound route.
