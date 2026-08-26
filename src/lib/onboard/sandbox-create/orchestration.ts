@@ -33,6 +33,7 @@ import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materi
 import {
   pendingSandboxPolicyVerificationForBoundary,
   revalidateCreatedSandboxPolicyRegistration,
+  verifyCreatedApfInterceptorPolicyRegistration,
   verifyCreatedSandboxPolicyRegistration,
 } from "./policy-creation-receipt";
 import {
@@ -43,6 +44,35 @@ import {
 
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
+
+/** Select the policyless APF create plan only when no active global policy exists. */
+export function resolveSandboxCreatePolicyAuthority(
+  observedAuthority: "nemoclaw-managed" | "externally-managed",
+  apfInterceptorRequested: boolean,
+): "nemoclaw-managed" | "externally-managed" {
+  if (!apfInterceptorRequested) return observedAuthority;
+  if (observedAuthority !== "nemoclaw-managed") {
+    throw new Error(
+      "APF interceptor selection requires the active global policy to be absent before sandbox creation.",
+    );
+  }
+  return "externally-managed";
+}
+
+/** Require the generic deferred-effect gate for explicit APF creation. */
+export function assertApfCreateIntent(
+  createIntent: Pick<
+    SandboxCreateIntent,
+    "apfInterceptorRequested" | "deferSandboxEffectsUntilPolicyVerification"
+  > | null,
+): void {
+  if (
+    createIntent?.apfInterceptorRequested === true &&
+    createIntent.deferSandboxEffectsUntilPolicyVerification !== true
+  ) {
+    throw new Error("APF interceptor create intent is missing deferred-effect authority.");
+  }
+}
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -645,6 +675,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
+    assertApfCreateIntent(createIntent);
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
@@ -851,6 +882,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       selectionNeedsValidation: tempManagedRuntime || managedWorkloadRebuild !== null,
       prepareWorkload: ensurePreparedSandboxWorkload,
     });
+    const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
+    let verifiedPolicyGate: VerifiedSandboxPolicyBoundary | null = null;
+    let pendingPolicyVerification: PendingSandboxPolicyVerification | null = null;
+    let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
+    let apfPolicyRegistrationFinalized = false;
     const sessionPolicyAuthority = onboardSession.loadSession()?.policyAuthority ?? null;
     const qualifyPolicyAuthority = (
       sandboxIsLive = liveExists,
@@ -871,9 +907,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     };
     const policyAuthorityInspection = qualifyPolicyAuthority();
-    const resolvedPolicyAuthority = policyAuthorityInspection.authority;
+    const resolvedPolicyAuthority = resolveSandboxCreatePolicyAuthority(
+      policyAuthorityInspection.authority,
+      apfInterceptorRequested,
+    );
     const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {
+      if (apfInterceptorRequested && sandboxIsLive && !apfPolicyRegistrationFinalized) {
+        revalidateVerifiedPolicyRegistration(requireVerifiedPolicyGate(), operation);
+        return;
+      }
       const inspection = qualifyPolicyAuthority(sandboxIsLive, operation);
+      if (apfInterceptorRequested) {
+        if (sandboxIsLive) {
+          assertRecordedPolicyAuthority("externally-managed", inspection.authority, operation);
+        } else {
+          resolveSandboxCreatePolicyAuthority(inspection.authority, true);
+        }
+        return;
+      }
       assertRecordedPolicyAuthority(resolvedPolicyAuthority, inspection.authority, operation);
     };
     assertHermesPortablePolicyAuthority(
@@ -888,7 +939,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
     onboardSession.updateSession((session) => {
       session.policyAuthority =
-        resolvedPolicyAuthority === "externally-managed" ? "externally-managed" : null;
+        resolvedPolicyAuthority === "externally-managed" && !apfInterceptorRequested
+          ? "externally-managed"
+          : null;
       if (session.policyAuthority === "externally-managed") session.policyPresets = null;
     });
     const recreateRegistryEntry = readSandboxRecreateRegistryEntry({
@@ -1560,9 +1613,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       : null;
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
-    let verifiedPolicyGate: VerifiedSandboxPolicyBoundary | null = null;
-    let pendingPolicyVerification: PendingSandboxPolicyVerification | null = null;
-    let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     const policySourcePathForRoute = (
       route: import("../docker-gpu-route").SelectedDockerGpuRoute,
     ): string => {
@@ -1668,7 +1718,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         verifyCreatedPolicy: (
           identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
         ) => {
-          const registration = verifyCreatedSandboxPolicyRegistration({
+          const registrationInput = {
             sandboxName,
             gatewayName: GATEWAY_NAME,
             gatewayPort: GATEWAY_PORT,
@@ -1676,9 +1726,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             policySourcePath: policySourcePathForRoute(identity.route),
             route: identity.route,
-            plannedAuthority: resolvedPolicyAuthority,
             operation: `verify effective policy for sandbox '${sandboxName}'`,
-          });
+          };
+          const registration = apfInterceptorRequested
+            ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput)
+            : verifyCreatedSandboxPolicyRegistration({
+                ...registrationInput,
+                plannedAuthority: resolvedPolicyAuthority,
+              });
           return {
             registration,
             sandboxName,
@@ -1696,6 +1751,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           });
           pendingPolicyVerification = checkpoint;
           verifiedPolicyGate = boundary;
+          if (apfInterceptorRequested) {
+            onboardSession.updateSession((session) => {
+              session.policyAuthority = "externally-managed";
+              session.policyPresets = null;
+            });
+          }
         },
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
@@ -1715,6 +1776,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
+              ...(apfInterceptorRequested
+                ? {
+                    requirePolicylessCreate: true as const,
+                    persistRetainedApfSandboxRecovery: (
+                      recovery: import("../sandbox-gpu-create-flow").RetainedApfSandboxRecovery,
+                    ) =>
+                      onboardSession.finalizeIncompleteOnboardStep("sandbox", recovery.message) !==
+                      null,
+                  }
+                : {}),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
@@ -1975,6 +2046,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
       try {
         await completeCreatedSandboxRegistration(created, null);
+        apfPolicyRegistrationFinalized = apfInterceptorRequested;
       } finally {
         cleanupInitialCreateSource();
       }

@@ -68,6 +68,14 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
 
+/** Reject caller policy flags while leaving workload arguments after `--` untouched. */
+export function assertPolicylessSandboxCreateArgv(argv: readonly string[]): void {
+  const createArgs = argv.slice(0, argv.indexOf("--") < 0 ? argv.length : argv.indexOf("--"));
+  if (createArgs.some((arg) => arg === "--policy" || arg.startsWith("--policy="))) {
+    throw new Error("APF interceptor sandbox creation must not supply a caller policy.");
+  }
+}
+
 type OpenShellCommandResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
 function createPortableRuntimePatch(
@@ -332,9 +340,31 @@ export function createSandboxGpuCreateAttemptRunner(
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
+    if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     const createAttemptNonce = deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+    const captureRetainedSandboxRecovery = () => {
+      if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
+      let liveIdentityFingerprint: string | null = null;
+      try {
+        const sandboxId = resolveCreatedOpenShellSandboxId({
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          createAttemptNonce,
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+        });
+        liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+      } catch {
+        // The nonce remains durable recovery evidence when identity lookup is unavailable.
+      }
+      return {
+        retainedSandboxRecovery: {
+          createAttemptNonce,
+          liveIdentityFingerprint,
+        },
+      } as const;
+    };
     const attemptArgv = createAttemptNonce
       ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
       : unboundAttemptArgv;
@@ -611,6 +641,7 @@ export function createSandboxGpuCreateAttemptRunner(
           stage: "create",
           error: new Error("Native OpenShell GPU sandbox creation was rejected."),
           fallbackEligible: true,
+          ...captureRetainedSandboxRecovery(),
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -739,6 +770,7 @@ export function createSandboxGpuCreateAttemptRunner(
             `Native OpenShell GPU sandbox did not become ready${readiness.failurePhase ? ` (${readiness.failurePhase})` : ""}.`,
           ),
           fallbackEligible: true,
+          ...captureRetainedSandboxRecovery(),
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -805,6 +837,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
               ),
               fallbackEligible: true,
+              ...captureRetainedSandboxRecovery(),
               ...nativeCleanup,
             } as const;
           }
