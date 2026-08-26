@@ -20,6 +20,17 @@ export type McpAttachedCredentialRevision = Exclude<
   "absent" | "canonical"
 >;
 
+export function mcpCredentialRevisionForProviderResourceVersion(
+  resourceVersion: number | null,
+): McpAttachedCredentialRevision {
+  if (!Number.isSafeInteger(resourceVersion) || Number(resourceVersion) < 1) {
+    throw new McpBridgeError(
+      "OpenShell did not return a valid MCP provider resource version for credential synchronization.",
+    );
+  }
+  return `v${String(resourceVersion)}` as McpAttachedCredentialRevision;
+}
+
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
   | { kind: "transport-unavailable" }
@@ -148,7 +159,8 @@ export function waitForAttachedMcpCredential(
   entry: McpBridgeEntry,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => void;
+    expectedRevision?: McpAttachedCredentialRevision;
+    refreshAfterObservedAbsence?: () => McpAttachedCredentialRevision | void;
   } = {},
 ): McpAttachedCredentialRevision {
   assertAuthenticatedBridgeEntry(entry);
@@ -164,6 +176,10 @@ export function waitForAttachedMcpCredential(
     10,
   );
   let refreshedAfterObservedAbsence = false;
+  let expectedRevision = options.expectedRevision;
+  if (expectedRevision !== undefined && !/^v[0-9]{1,20}$/u.test(expectedRevision)) {
+    throw new McpBridgeError("Invalid expected MCP credential revision.");
+  }
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitForMcpBridgeCondition(
@@ -180,7 +196,13 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        options.refreshAfterObservedAbsence();
+        const refreshedRevision = options.refreshAfterObservedAbsence();
+        if (refreshedRevision !== undefined) {
+          if (!/^v[0-9]{1,20}$/u.test(refreshedRevision)) {
+            throw new McpBridgeError("Invalid refreshed MCP credential revision.");
+          }
+          expectedRevision = refreshedRevision;
+        }
         attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
         lastAttempt = attempt;
       }
@@ -193,7 +215,8 @@ export function waitForAttachedMcpCredential(
         observation !== null &&
         observation !== "absent" &&
         observation !== "canonical" &&
-        (options.previousRevision === undefined || observation !== options.previousRevision);
+        (options.previousRevision === undefined || observation !== options.previousRevision) &&
+        (expectedRevision === undefined || observation === expectedRevision);
       if (attached) attachedRevision = observation;
       return attached;
     },

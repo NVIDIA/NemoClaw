@@ -66,6 +66,7 @@ const EXPECTED_BASE_OUTPUTS = {
   },
   "managed-image-protected-runtime": {
     dcode: DCODE_BASE_REF,
+    hermes: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
     openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
   },
 } as const;
@@ -142,6 +143,7 @@ printf '%s  %s\n' "$digest" "$1"
         }),
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
+        GITHUB_WORKSPACE: fixture,
         HERMES_BASE_DIGEST: PLATFORM_DIGESTS.hermes,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",

@@ -38,6 +38,7 @@ export type { McpCredentialRevisionObservation } from "./mcp-bridge-provider-rea
 export {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,
+  mcpCredentialRevisionForProviderResourceVersion,
   observeMcpCredentialRevision,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
