@@ -283,7 +283,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::PR head must match the controller workflow SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -574,8 +574,60 @@ jobs:
             fi
           fi
 
+      - name: Assemble exact 4d7ac91 managed-image catalog
+        if: ${{ inputs.checkout_sha == '4d7ac9107b6bc1793fd7565b33c1c8bcf921fd46' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          contracts="${RUNNER_TEMP}/4d7ac91-managed-contracts"
+          install -d -m 0700 "$contracts"
+          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          import path from "node:path";
+          import { githubRequest } from "./tools/e2e/base-image-publication.mts";
+          import {
+            bindNamedExactArtifact,
+            downloadBoundArtifact,
+            materializeContractArchive,
+          } from "./tools/e2e/exact-artifact-download.mts";
+
+          const expected = {
+            headSha: "4d7ac9107b6bc1793fd7565b33c1c8bcf921fd46",
+            runAttempt: 1,
+            runId: 32919103133,
+          };
+          const artifacts = [
+            ["openclaw", 9589697327, "sha256:4554304b0320574344e39dfd987e8ba7c674063a7a0ee84b8007bc13b7c01fa0"],
+            ["hermes", 9589318185, "sha256:29a643fbaa319ff68b5cd15e56c10b11b8ce275486f89c9ec5130e6a98195f69"],
+            ["langchain-deepagents-code", 9589322551, "sha256:508dcc22c6023dbf2cd35bbbea35b58631e6cc4ebf0dafe43ae328ba0c2f816c"],
+          ];
+          for (const [agent, id, digest] of artifacts) {
+            const name = `managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}`;
+            const page = await githubRequest(
+              `/repos/NVIDIA/NemoClaw/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
+              process.env.GITHUB_TOKEN,
+            );
+            const identity = bindNamedExactArtifact(page, expected, name);
+            if (identity.id !== id || identity.digest !== digest) {
+              throw new Error(`reused ${agent} artifact identity changed`);
+            }
+            const archive = await downloadBoundArtifact(identity, process.env.GITHUB_TOKEN);
+            materializeContractArchive(
+              archive,
+              path.join(process.env.RUNNER_TEMP, "4d7ac91-managed-contracts", agent),
+            );
+          }
+          NODE
+          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
+            4d7ac9107b6bc1793fd7565b33c1c8bcf921fd46 \
+            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
+            "$contracts/openclaw/contract.json" \
+            "$contracts/hermes/contract.json" \
+            "$contracts/langchain-deepagents-code/contract.json"
+
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != '4d7ac9107b6bc1793fd7565b33c1c8bcf921fd46' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -602,6 +654,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -615,7 +668,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::controller workflow SHA changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -4661,7 +4714,8 @@ jobs:
   # assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
+    needs:
+      [base-image-publication, generate-matrix, managed-image-multiarch-startup]
     if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
