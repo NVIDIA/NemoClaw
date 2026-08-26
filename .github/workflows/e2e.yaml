@@ -575,7 +575,7 @@ jobs:
           fi
 
       - name: Assemble exact 7eccb19 managed-image catalog
-        if: ${{ inputs.checkout_sha == '033f1218472e6a02b02a6948126dd59e7d259df8' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha == 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
@@ -627,14 +627,14 @@ jobs:
             "$contracts/langchain-deepagents-code/contract.json"
           catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
           jq \
-            --arg release 'v0.0.114-130-g033f12184' \
-            --arg revision '033f1218472e6a02b02a6948126dd59e7d259df8' '
+            --arg release 'v0.0.114-132-gad7af27ec' \
+            --arg revision 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' '
               with_entries(.value.source.revision = $revision | .value.source.release = $release)
             ' "$catalog" >"$catalog.next"
           mv "$catalog.next" "$catalog"
 
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != '033f1218472e6a02b02a6948126dd59e7d259df8' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != 'ad7af27ec78d6222ceb7d3223e643adcdc2a6adf' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
