@@ -19,10 +19,17 @@ beforeEach(() => {
 
 describe("fresh create identity", () => {
   it.each([
-    { label: "managed creation", apfInterceptorRequested: false },
-    { label: "APF-selected creation", apfInterceptorRequested: true },
+    {
+      title:
+        "registers managed creation only after owner-scoped identity and policy confirmation (#9833)",
+      apfInterceptorRequested: false,
+    },
+    {
+      title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
+      apfInterceptorRequested: true,
+    },
   ])(
-    "registers $label only after owner-scoped identity and policy confirmation (#9833)",
+    "$title",
     {
       timeout: 45000,
     },
@@ -83,10 +90,10 @@ const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
-  if (profileResult !== null) return profileResult;
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
@@ -187,6 +194,25 @@ childProcess.spawn = (...args) => {
 
 const { createSandbox } = require(${onboardPath});
 
+const writePayload = (sandboxName, creationError) => {
+  const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
+  fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
+    sandboxName,
+    creationError,
+    sandboxCreated,
+    sandboxListCalls,
+    killCalls: createCommand?.child?.killCalls ?? [],
+    groupKillCalls,
+    unrefCalls: createCommand?.child?.unrefCalls ?? 0,
+    stdoutDestroyCalls: createCommand?.child?.stdout.destroyCalls ?? 0,
+    stderrDestroyCalls: createCommand?.child?.stderr.destroyCalls ?? 0,
+    lifecycleObservationCommands,
+    registeredSandbox,
+    createCommand: createCommand?.command ?? null,
+    commandNames: commands.map((entry) => entry.command),
+  }));
+};
+
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
@@ -202,21 +228,13 @@ const { createSandbox } = require(${onboardPath});
 	      observabilityEnabled: false,
 	    };
 	  }
-	  const sandboxName = await createSandbox(...createArgs);
-  const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
-  fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
-    sandboxName,
-    sandboxListCalls,
-    killCalls: createCommand.child.killCalls,
-    groupKillCalls,
-    unrefCalls: createCommand.child.unrefCalls,
-    stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
-    stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
-    lifecycleObservationCommands,
-    registeredSandbox,
-    createCommand: createCommand.command,
-    commandNames: commands.map((entry) => entry.command),
-  }));
+	  try {
+	    const sandboxName = await createSandbox(...createArgs);
+	    writePayload(sandboxName, null);
+	  } catch (error) {
+	    if (!apfInterceptorRequested) throw error;
+	    writePayload(null, error instanceof Error ? error.message : String(error));
+	  }
   clearInterval(keepAlive);
 })().catch((error) => {
   clearInterval(keepAlive);
@@ -241,59 +259,66 @@ const { createSandbox } = require(${onboardPath});
 
       assert.equal(result.status, 0, result.stderr);
       const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-      assert.equal(payload.sandboxName, "my-assistant");
-      assert.ok(payload.sandboxListCalls >= 2);
-      assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
-      assert.deepEqual(payload.killCalls, []);
-      assert.equal(payload.unrefCalls, 1);
-      assert.equal(payload.stdoutDestroyCalls, 1);
-      assert.equal(payload.stderrDestroyCalls, 1);
-      assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
-      assert.equal(
-        payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
-        createHash("sha256").update("sbx-fresh-create").digest("hex"),
-      );
-      const assertPolicyMode = apfInterceptorRequested
-        ? () => {
-            assert.equal(payload.registeredSandbox.policyAuthority, "externally-managed");
-            assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
-            assert.deepEqual(payload.registeredSandbox.appliedPolicies ?? [], []);
-            assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:=|\s)/u);
-            const createIndex = payload.commandNames.findIndex((command: string) =>
-              command.includes("sandbox create"),
-            );
-            const deferredEffectIndexes = payload.commandNames
-              .map((command: string, index: number) => ({ command, index }))
-              .filter(({ command }: { command: string }) =>
-                /provider (?:profile import|create)|sandbox provider attach/u.test(command),
-              )
-              .map(({ index }: { index: number }) => index);
-            assert.ok(deferredEffectIndexes.every((index: number) => index > createIndex));
-          }
-        : () => {
-            assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
-            assert.ok(payload.registeredSandbox.policyCreationReceipt);
-          };
-      assertPolicyMode();
-      assert.match(
-        payload.createCommand,
-        /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
-      );
-      const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-        (command: string) => command.includes("-g nemoclaw"),
-      );
-      assert.ok(
-        ownerScopedObservations.length >= 6,
-        "expected owner-scoped sandbox identity observations",
-      );
-      assert.ok(
-        ownerScopedObservations.every(
-          (command: string) =>
-            command.includes("sandbox get -g nemoclaw my-assistant") ||
-            command.includes("sandbox list -g nemoclaw"),
+      const providerEffectCommands = payload.commandNames.filter((command: string) =>
+        /(?:^|\s)provider (?:create|update|delete|profile import)\b|(?:^|\s)sandbox provider (?:attach|detach)\b/u.test(
+          command,
         ),
-        `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
       );
+      const assertProviderBackedApfRefusal = () => {
+        assert.match(
+          payload.creationError,
+          /Cannot create sandbox 'my-assistant' with deferred providers .* No sandbox was created/u,
+        );
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, false);
+        assert.equal(payload.createCommand, null);
+        assert.equal(payload.registeredSandbox, null);
+        assert.deepEqual(providerEffectCommands, []);
+        assert.equal(
+          payload.commandNames.some((command: string) => command.includes("sandbox create")),
+          false,
+        );
+      };
+      const assertManagedCreation = () => {
+        assert.equal(payload.creationError, null);
+        assert.equal(payload.sandboxName, "my-assistant");
+        assert.ok(payload.sandboxListCalls >= 2);
+        assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
+        assert.deepEqual(payload.killCalls, []);
+        assert.equal(payload.unrefCalls, 1);
+        assert.equal(payload.stdoutDestroyCalls, 1);
+        assert.equal(payload.stderrDestroyCalls, 1);
+        assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
+        assert.equal(
+          payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
+          createHash("sha256").update("sbx-fresh-create").digest("hex"),
+        );
+        assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
+        assert.ok(payload.registeredSandbox.policyCreationReceipt);
+        assert.match(
+          payload.createCommand,
+          /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
+        );
+        const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
+          (command: string) => command.includes("-g nemoclaw"),
+        );
+        assert.ok(
+          ownerScopedObservations.length >= 6,
+          "expected owner-scoped sandbox identity observations",
+        );
+        assert.ok(
+          ownerScopedObservations.every(
+            (command: string) =>
+              command.includes("sandbox get -g nemoclaw my-assistant") ||
+              command.includes("sandbox list -g nemoclaw"),
+          ),
+          `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
+        );
+      };
+      const assertOutcome = apfInterceptorRequested
+        ? assertProviderBackedApfRefusal
+        : assertManagedCreation;
+      assertOutcome();
     },
   );
 });
