@@ -42,8 +42,11 @@ export interface DockerHostProbeResult {
   reachable: boolean;
   identity: DockerVersionIdentity;
   /**
-   * The probe never reached a verdict — the Docker CLI could not be spawned,
-   * or it was killed by the probe timeout. Unreachability was not observed.
+   * The probe never reached a verdict: the Docker CLI could not be spawned,
+   * it was killed by the probe timeout, or it produced no complete answer.
+   * Unreachability was not observed, so this must not license a redirect.
+   * The timeout therefore biases toward holding the host default — raising
+   * it buys patience for a slow daemon, not more fallback coverage.
    */
   inconclusive?: boolean;
 }
@@ -133,12 +136,12 @@ function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentit
  * Probe the Docker CLI in the same environment the CLI's real Docker
  * commands run in (`buildSubprocessEnv`), minus the authority under test.
  *
- * A narrower environment makes the probe answer a different question than
- * the one that matters: `XDG_RUNTIME_DIR` selects a rootless daemon socket,
- * `SSH_AUTH_SOCK` authenticates an `ssh://` context, and the proxy names
- * reach a `tcp://` one. Dropping them can report "unreachable" for a daemon
- * that every later command talks to, which sends detection to a fallback
- * socket the host never meant to use (#10367).
+ * The probe predicts whether those commands will reach a daemon, so any
+ * name they get and it does not can flip its verdict: `SSH_AUTH_SOCK`
+ * authenticates an `ssh://` Docker context, and the proxy names decide how
+ * a `tcp://` one is routed. A verdict from a narrower environment can call
+ * a daemon unreachable that every later command talks to, which sends
+ * detection to a fallback socket the host never meant to use (#10367).
  */
 function buildDockerProbeEnv(
   source: NodeJS.ProcessEnv,
