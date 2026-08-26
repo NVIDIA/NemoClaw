@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { getBuildIdentity } from "../../src/lib/core/version.js";
 import { appendHostProxyEnvArgs } from "../../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
@@ -942,6 +943,7 @@ const { createSandbox } = require(${onboardPath});
 
   it("rejects portable managed bootstrap before recreate state mutation (#9068)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
+    const catalogRevision = getBuildIdentity({ rootDir: repoRoot }).sourceRevision;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-managed-recreate-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
@@ -1011,7 +1013,7 @@ catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
       reference: image + "@" + digest,
       source: {
         repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-        revision: process.env.NEMOCLAW_E2E_EXPECTED_SHA?.trim() || "a".repeat(40),
+        revision: ${JSON.stringify(catalogRevision)},
         release,
         cohort: "ghrun-9068-1",
       },
