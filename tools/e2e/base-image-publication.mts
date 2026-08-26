@@ -11,7 +11,7 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_BRANCH = "main";
 const WORKFLOW_PATH = ".github/workflows/base-image.yaml";
 const WORKFLOW_FILE = "base-image.yaml";
-const WORKFLOW_NAME = "Images / Base Images";
+const WORKFLOW_NAME = "Images / Publish Base and Managed Images";
 const API_ROOT = "https://api.github.com";
 const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
@@ -71,9 +71,9 @@ const COMPLETED_CONCLUSIONS = new Set([
 ]);
 
 export const REQUIRED_PUBLISHER_JOBS = [
-  "Manifests / OpenClaw",
-  "Manifests / Hermes",
-  "Manifests / Deep Agents Code",
+  "Build and push OpenClaw base image",
+  "Build and push Hermes base image",
+  "Build and push Deep Agents Code base image",
 ] as const;
 
 type JsonRecord = Record<string, unknown>;
