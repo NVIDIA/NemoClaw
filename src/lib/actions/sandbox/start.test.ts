@@ -733,11 +733,13 @@ describe("startSandbox", () => {
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("probe exploded");
   });
 
-  it("reports the recorded route as ready only after it serves an agent request", async () => {
+  it("pins a Deep Agents Code start probe to its recorded gateway and managed launcher identity (#10080)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
+        agent: "langchain-deepagents-code",
+        gatewayName: "nemoclaw-19080",
         provider: "ollama-local",
         model: "nemotron-3-nano:30b",
         preferredInferenceApi: "openai-completions",
@@ -750,6 +752,8 @@ describe("startSandbox", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledWith(
       {
         sandboxName: "my-sandbox",
+        gatewayName: "nemoclaw-19080",
+        agentName: "langchain-deepagents-code",
         provider: "ollama-local",
         model: "nemotron-3-nano:30b",
         preferredInferenceApi: "openai-completions",
