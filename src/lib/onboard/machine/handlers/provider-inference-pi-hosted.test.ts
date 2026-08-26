@@ -22,9 +22,12 @@ describe("Pi hosted inference selection", () => {
     });
 
     expect(resolver).not.toHaveBeenCalled();
-    const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
-    expect(setupCall[7]).not.toHaveProperty("hostLocalInference");
-    expect(result.hostLocalInferenceRouteOnly).toBe(false);
+    expect(result).toMatchObject({
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      hostLocalInferenceRouteOnly: false,
+      hostLocalInferenceSandboxProofAuthority: null,
+    });
   });
 
   it("keeps Pi host-local inference outside the accepted application boundary", async () => {
