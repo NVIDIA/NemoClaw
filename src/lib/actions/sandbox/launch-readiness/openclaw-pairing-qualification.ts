@@ -551,13 +551,17 @@ try:
 
     if STRICT_SETTLEMENT and pending:
         reject()
+    canonical_pending_count = 0
     for request_id, request in pending.items():
         if (
             not isinstance(request_id, str)
             or not request_id
             or not isinstance(request, dict)
-            or request.get('requestId') != request_id
         ):
+            reject()
+        if ORDINARY_SETTLEMENT and request.get('deviceId') != device_id:
+            continue
+        if request.get('requestId') != request_id:
             reject()
         if ALLOW_CANONICAL_PENDING:
             # The host warm-up or an earlier client command can publish the
@@ -587,6 +591,7 @@ try:
                 or decision.get('allowed') is not True
             ):
                 reject()
+            canonical_pending_count += 1
             continue
         decision = approval_request_decision(request)
         if decision.get('reason') == 'malformed-scopes':
@@ -614,8 +619,10 @@ try:
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
-    if ALLOW_CANONICAL_PENDING and pending and (len(pending) != 1 or not pairing_only):
-        reject()
+    if ALLOW_CANONICAL_PENDING:
+        relevant_pending_count = canonical_pending_count if ORDINARY_SETTLEMENT else len(pending)
+        if relevant_pending_count and (relevant_pending_count != 1 or not pairing_only):
+            reject()
     if not settled and not pairing_only:
         reject()
 
@@ -625,7 +632,7 @@ try:
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     ${
       mode !== "qualification"
-        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': ('settled' if settled else ('scope-upgrade-pending' if ORDINARY_SETTLEMENT and pending else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'))),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
+        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': ('settled' if settled else ('scope-upgrade-pending' if ORDINARY_SETTLEMENT and canonical_pending_count else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'))),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
         : "if not settled:\n        reject()"
     }
 
