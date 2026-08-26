@@ -48,10 +48,13 @@ afterEach(() => {
 });
 
 describe("Hermes Portable schema-5 uninstall", () => {
-  it("retires exact owned resources, preserves unrelated state, and completes a second no-op (#9608)", async () => {
+  it("admits and retires the credential-free managed Ollama row with exact owned resources (#9211)", async () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     const image = hermesPortableUninstallFixtureConstants.inferenceImage;
 
+    expect(fixture.targetRow.credentialEnv).toBeNull();
+    expect(fixture.targetRow.hostLocalInferenceReceipt).toEqual(expect.any(String));
+    expect(fixture.targetRow.hostLocalInferenceProvenance).toBeUndefined();
     expect(runCleanup(fixture)).toMatchObject({
       sandboxContainersRemoved: 1,
       selectorsRemoved: [],
