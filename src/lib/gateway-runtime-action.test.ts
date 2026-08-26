@@ -231,5 +231,52 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       expect(result.via).toBe("start");
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });
+
+    it.each([
+      {
+        state: "connected_other",
+        status: "Status: Connected\nGateway: nemoclaw\n",
+        gatewayInfo: "Gateway: nemoclaw\n",
+      },
+      {
+        state: "named_unreachable",
+        status: "Status: Disconnected\nGateway: nemoclaw-8090\nConnection refused\n",
+        gatewayInfo: "Gateway: nemoclaw-8090\n",
+      },
+    ] as const)(
+      "starts the requested gateway when selection leaves it $state (#10249)",
+      async ({ gatewayInfo, state, status }) => {
+        captureSpy
+          .mockReturnValueOnce({ status: 0, output: status })
+          .mockReturnValueOnce({ status: 0, output: gatewayInfo })
+          .mockReturnValueOnce({ status: 0, output: status })
+          .mockReturnValueOnce({ status: 0, output: gatewayInfo })
+          .mockReturnValueOnce({
+            status: 0,
+            output: "Status: Connected\nGateway: nemoclaw-8090\n",
+          })
+          .mockReturnValueOnce({
+            status: 0,
+            output: "Gateway: nemoclaw-8090\n",
+          });
+        runSpy.mockReturnValue({ status: 0 } as never);
+
+        const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+          gatewayName: "nemoclaw-8090",
+        });
+
+        expect(startGatewaySpy).toHaveBeenCalledWith({
+          gatewayName: "nemoclaw-8090",
+          gatewayPort: 8090,
+        });
+        expect(result).toMatchObject({
+          recovered: true,
+          before: { state },
+          after: { state: "healthy_named" },
+          attempted: true,
+          via: "start",
+        });
+      },
+    );
   });
 });

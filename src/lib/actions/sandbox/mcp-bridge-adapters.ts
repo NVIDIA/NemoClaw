@@ -143,7 +143,13 @@ export function registerAgentAdapter(
       );
       return;
     case "hermes-config":
-      registerHermesAdapter(sandboxName, entry, envValues, options.replaceExisting === true);
+      registerHermesAdapter(
+        sandboxName,
+        entry,
+        envValues,
+        options.replaceExisting === true,
+        options.credentialRevision,
+      );
       return;
     case "deepagents-config":
       registerDeepAgentsAdapter(
@@ -152,6 +158,7 @@ export function registerAgentAdapter(
         envValues,
         options.replaceExisting === true,
         options.teardownRollback === true,
+        options.credentialRevision,
       );
       return;
   }

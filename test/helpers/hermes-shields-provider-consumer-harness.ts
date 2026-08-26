@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
+import { managedPolicyMutationAuthority } from "./shields-flow-harness";
 
 const INDEX_MODULE = "./index.js";
 export const HERMES_PROVIDER_CAPABILITY_PATH =
@@ -46,6 +47,7 @@ export const hermesProviderConsumerSandbox: SandboxEntry = {
   name: "current-hermes",
   agent: "hermes",
   openshellDriver: "docker",
+  policyAuthority: "nemoclaw-managed",
   lifecycleGeneration: "generation-1",
   workload: {
     schemaVersion: 1,
@@ -285,6 +287,12 @@ export function createHermesShieldsProviderConsumerHarness(
         String(file),
         String(name),
       ]),
+    vi
+      .spyOn(policy, "inspectPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
+      .spyOn(policy, "recheckPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")

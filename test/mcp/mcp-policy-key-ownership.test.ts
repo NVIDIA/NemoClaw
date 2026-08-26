@@ -10,6 +10,16 @@ import { describe, expect, it } from "vitest";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.106'; exit 0; fi`;
+const MANAGED_POLICY_AUTHORITY_CLAUSE = `if [ "$1 $2" = "policy get" ]; then
+  case " $* " in
+    *" --output json "*)
+      sandbox=""
+      for sandbox in "$@"; do :; done
+      printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "$sandbox"
+      exit 0
+      ;;
+  esac
+fi`;
 
 const PRESET = `network_policies:
   example:
@@ -29,6 +39,7 @@ function runApply(
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\n${
@@ -79,6 +90,7 @@ function runContentMatch(liveName: string) {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: ${liveName}\n    endpoints: []\n'
 `,
     { mode: 0o755 },
@@ -109,6 +121,7 @@ function runFailedPolicyMutation(operation: "apply" | "remove") {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
   exit 0
@@ -174,6 +187,7 @@ function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
 fi
@@ -295,6 +309,7 @@ describe("MCP-generated network policy ownership", () => {
       path.join(binDir, "openshell"),
       `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
@@ -394,6 +409,7 @@ bridge.addMcpBridge("alpha", {
       path.join(binDir, "openshell"),
       `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'

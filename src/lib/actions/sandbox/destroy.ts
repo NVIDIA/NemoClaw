@@ -277,11 +277,10 @@ export function cleanupSandboxServices(
 }
 
 /**
- * Remove host-side shields state files for a sandbox.
+ * Remove host-side Shields state and recovery artifacts for a sandbox.
  *
- * Without this cleanup a stale shields-<name>.json from a previous
- * `shields up` survives destroy → re-onboard and causes
- * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ * Without this cleanup, stale state or an external policy handoff from a
+ * previous sandbox can survive destroy → re-onboard under the same name.
  *
  * See: https://github.com/NVIDIA/NemoClaw/issues/3114
  */
@@ -293,8 +292,14 @@ export function removeShieldsState(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
   const resolvedStateDir = path.resolve(stateDir);
-  for (const prefix of ["shields-", "shields-timer-"]) {
-    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
+  const artifactNames = [
+    recoveryArtifactName,
+    `shields-${sandboxName}.json`,
+    `shields-timer-${sandboxName}.json`,
+  ];
+  for (const artifactName of artifactNames) {
+    const filePath = path.resolve(resolvedStateDir, artifactName);
     if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
       // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
       // all entry points, but reject traversal attempts just in case.
@@ -303,12 +308,18 @@ export function removeShieldsState(
     try {
       rmSync(filePath, { force: true });
     } catch (error) {
-      // force: true already suppresses ENOENT; warn on real failures
-      // (e.g. EPERM) so stale state doesn't silently survive.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`Failed to remove shields cleanup artifact '${filePath}': ${message}`);
+      // force: true already suppresses ENOENT. A recovery handoff must not
+      // become unbound under a reusable sandbox name, so preserve Shields
+      // state and stop cleanup when that artifact cannot be removed.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (artifactName === recoveryArtifactName) {
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
+          { cause: error },
+        );
       }
+      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
     }
   }
 }
