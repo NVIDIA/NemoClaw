@@ -123,7 +123,9 @@ function createStatefulMessagingProviderRunner({
     if (providerAction === "profile") {
       const profileActionIndex = providerIndex + 2;
       const profileAction =
-        args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
+        args[profileActionIndex] === "-g"
+          ? args[profileActionIndex + 2]
+          : args[profileActionIndex];
       if (profileAction === "export") {
         return messagingProfileImported
           ? { status: 0, stdout: messagingProfile, stderr: "" }
@@ -272,14 +274,15 @@ const ONBOARD_SANDBOX_INSPECT = {
 function isOpenClawSecurityInventoryProbe(command) {
   const commandArgs = Array.isArray(command) ? command.map(String) : [];
   const dockerArgs = commandArgs[0] === "docker" ? commandArgs.slice(1) : commandArgs;
-  const matches =
+  const matches = (
     dockerArgs.length === 14 &&
     OPENCLAW_SECURITY_INVENTORY_PROBE_PREFIX.every(
       (expected, index) => dockerArgs[index] === expected,
     ) &&
     dockerArgs[11].length > 0 &&
     dockerArgs[12] === "-c" &&
-    dockerArgs[13] === OPENCLAW_SECURITY_INVENTORY_PROBE;
+    dockerArgs[13] === OPENCLAW_SECURITY_INVENTORY_PROBE
+  );
   return matches;
 }
 
@@ -305,6 +308,9 @@ function mockSandboxExecCurl(command, options = {}) {
 }
 
 function mockOnboardRunCapture(command, options = {}) {
+  // The companion runner seam models the exact post-commit Docker proof. Install
+  // it lazily after each scenario has replaced runner.run with its local recorder.
+  mockDockerSandboxLifecycleReleaseFromRunner();
   const normalized = normalizeCommand(command);
   if (
     normalized.startsWith("docker ps -a --no-trunc ") &&
@@ -313,7 +319,10 @@ function mockOnboardRunCapture(command, options = {}) {
   ) {
     return `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\n${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
   }
-  if (normalized === `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
+  if (
+    normalized ===
+    `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`
+  ) {
     return JSON.stringify([ONBOARD_SANDBOX_INSPECT]);
   }
   if (isOpenClawSecurityInventoryProbe(command)) {
@@ -331,7 +340,9 @@ function mockOnboardRunCapture(command, options = {}) {
 
 function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
-  const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
+  const client = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"),
+  );
   client.captureOpenshellCommand = (binary, args, options = {}) => {
     const stdout = String(
       runner.runCapture([binary, ...args], {
@@ -380,11 +391,35 @@ function mockStandaloneGatewayTeardownAuthority() {
 
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  if (runner.run.__nemoclawDockerLifecycleFixture === true) return;
   const run = runner.run;
+  let finalCommitReleased = false;
   let lifecycleReleased = false;
-  runner.run = (command, options) => {
+  const wrappedRun = (command, options) => {
     const normalized = normalizeCommand(command);
-    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (
+      finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.endsWith("--format {{.ID}}")
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    if (
+      finalCommitReleased &&
+      normalized ===
+        `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from("true\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
     if (lifecycleReleased && normalized.includes("sandbox list")) {
       return {
         status: 0,
@@ -392,8 +427,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
         stderr: Buffer.alloc(0),
       };
     }
-    return run(command, options);
+    const result = run(command, options);
+    if (normalized.startsWith("docker rm ") && result?.status === 0) {
+      lifecycleReleased = true;
+      if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
+        finalCommitReleased = true;
+      }
+    }
+    return result;
   };
+  wrappedRun.__nemoclawDockerLifecycleFixture = true;
+  runner.run = wrappedRun;
 }
 
 function mockManagedImageFallback() {
@@ -449,7 +493,8 @@ function mockManagedImageCatalog() {
               release,
               cohort: "ghrun-9068-1",
             },
-            startupProfileContractVersion: contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+            startupProfileContractVersion:
+              contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
             capabilityContractVersion: contract.MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
           },
         ];
@@ -466,7 +511,10 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker.ts"),
   );
   const authorityStore = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
+    path.resolve(
+      __dirname,
+      "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts",
+    ),
   );
   const sandboxIdentity = require(
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
