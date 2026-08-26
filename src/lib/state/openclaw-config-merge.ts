@@ -38,11 +38,13 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
    * `agents` is durable except its primary model routing reference, which the
    * fresh rebuild re-owns (see `agentPrimaryModelPath`) so a managed-model
    * switch followed by rebuild does not leave the agent pinned to the old
-   * model.
+   * model, and its heartbeat schedule (see `agentHeartbeatPath`).
    */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /** Fresh rebuild owns the agent heartbeat schedule, including its absence. */
+  agentHeartbeatPath: ["agents", "defaults", "heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -499,6 +501,43 @@ function reconcileAgentPrimaryModel(
   updateMainAgentListModel(agents, freshPrimary);
 }
 
+/**
+ * The current build owns `agents.defaults.heartbeat`, including its
+ * intentional absence: `NEMOCLAW_AGENT_HEARTBEAT_EVERY` is a build-time
+ * managed default (#3158, #2880), and a stale backup's interval (or a
+ * backup-only heartbeat the current build deliberately omits) must not
+ * silently override it after restore (#10244).
+ *
+ * A plain `rebuild` cannot actually trigger this: it re-derives
+ * `NEMOCLAW_AGENT_HEARTBEAT_EVERY` from the outgoing sandbox's own
+ * persisted profile (`managedWorkloadRebuildProfileEnvironment` in
+ * `../onboard/workload/rebuild.ts`), which the backup was itself sourced
+ * from — the two already agree in the steady state. The divergence this
+ * guards is reachable through `onboard --recreate-sandbox` and
+ * `snapshot restore`, both of which build a fresh config against the
+ * target sandbox's live backup through this same merge.
+ */
+function reconcileAgentHeartbeat(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const currentAgents = currentConfig.agents;
+  if (!isPlainObject(currentAgents)) return;
+  const currentDefaults = currentAgents.defaults;
+  if (!isPlainObject(currentDefaults)) return;
+  if ("heartbeat" in currentDefaults) {
+    const agents = ensureMergedObject(merged, "agents");
+    const defaults = ensureMergedObject(agents, "defaults");
+    defaults.heartbeat = cloneJson(currentDefaults.heartbeat);
+    return;
+  }
+  const mergedAgents = merged.agents;
+  if (!isPlainObject(mergedAgents)) return;
+  const mergedDefaults = mergedAgents.defaults;
+  if (!isPlainObject(mergedDefaults)) return;
+  delete mergedDefaults.heartbeat;
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -537,6 +576,7 @@ export function mergeOpenClawRestoredConfig(
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentHeartbeat(merged, currentConfig);
 
   return merged;
 }

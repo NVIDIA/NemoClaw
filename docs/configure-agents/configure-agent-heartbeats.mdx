@@ -48,3 +48,6 @@ Recreate an existing sandbox to apply a new cadence.
 ```bash
 nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+Recreating re-reads `NEMOCLAW_AGENT_HEARTBEAT_EVERY` from the current shell environment, not from the sandbox's prior setting.
+Re-export the variable before recreating a sandbox for an unrelated reason (for example, applying a base image update) to keep the same cadence — an unset variable resets the sandbox to OpenClaw's own default instead of carrying the previous cadence forward.

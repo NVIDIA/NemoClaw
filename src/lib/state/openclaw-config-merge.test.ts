@@ -722,6 +722,103 @@ describe("mergeOpenClawRestoredConfig", () => {
     });
   });
 
+  it("keeps the current build's heartbeat when the backup carries a different interval (#10244)", () => {
+    // #10244: the backup was captured while the sandbox ran a 45m cadence; the
+    // current build (e.g. `onboard --recreate-sandbox` or `snapshot restore`
+    // — not a plain `rebuild`, see reconcileAgentHeartbeat's doc comment)
+    // generated agents.defaults.heartbeat from NEMOCLAW_AGENT_HEARTBEAT_EVERY
+    // (2m). `agents` is backup-durable, so without an ownership carve-out the
+    // stale interval wins on restore.
+    const freshHeartbeat = { every: "2m" };
+    const freshConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "inference/Qwen/Qwen3.6-27B-FP8" },
+          heartbeat: freshHeartbeat,
+          timeoutSeconds: 300,
+        },
+      },
+    };
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "45m" },
+            thinkingDefault: "off",
+            subagents: { researcher: { maxDepth: 2 } },
+          },
+        },
+        customAgents: { researcher: { prompt: "be thorough" } },
+      },
+      freshConfig,
+    ) as {
+      agents: { defaults: Record<string, unknown> };
+      customAgents: unknown;
+    };
+
+    // The current build owns the heartbeat schedule.
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+    // The merge clones rather than aliases: mutating the merged result must
+    // not reach back into the caller's own fresh-config object.
+    (merged.agents.defaults.heartbeat as { every: string }).every = "9m";
+    expect(freshHeartbeat.every).toBe("2m");
+    // Unrelated durable backup content under `agents` still restores.
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+    expect(merged.agents.defaults.subagents).toEqual({ researcher: { maxDepth: 2 } });
+    expect(merged.customAgents).toEqual({ researcher: { prompt: "be thorough" } });
+  });
+
+  it("does not resurrect a backed-up heartbeat when the current build omits it (#10244)", () => {
+    // Omission is authoritative: the generator writes agents.defaults.heartbeat
+    // only when NEMOCLAW_AGENT_HEARTBEAT_EVERY is set, so a build without it
+    // must not have the backup's cadence restored underneath the agent.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { heartbeat: { every: "45m" }, thinkingDefault: "off" },
+        },
+      },
+      {
+        agents: {
+          defaults: {
+            model: { primary: "inference/Qwen/Qwen3.6-27B-FP8" },
+            timeoutSeconds: 300,
+          },
+        },
+      },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults.heartbeat).toBeUndefined();
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+  });
+
+  it("keeps the current build's heartbeat when the backup has none (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { agents: { defaults: { thinkingDefault: "off" } } },
+      {
+        agents: {
+          defaults: {
+            model: { primary: "inference/Qwen/Qwen3.6-27B-FP8" },
+            heartbeat: { every: "2m" },
+          },
+        },
+      },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+  });
+
+  it("leaves backup heartbeat untouched when the current build carries no agents defaults (#10244)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { agents: { defaults: { heartbeat: { every: "45m" }, thinkingDefault: "off" } } },
+      { gateway: { auth: { token: "fresh-token" } } },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "45m" });
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+  });
+
   it("fails closed when reconciliation receives incomplete or one-sided provenance", () => {
     expect(() =>
       mergeOpenClawRestoredConfig(pluginConfig({}, {}, []), pluginConfig({}, {}, []), {
