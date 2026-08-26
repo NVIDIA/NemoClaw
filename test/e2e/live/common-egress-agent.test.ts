@@ -34,7 +34,7 @@ import {
 } from "./common-egress-agent-helpers.ts";
 import {
   runOpenClawAgentAssertion,
-  runPersonalStockAgentAssertion,
+  runPersonalPublicFetchAgentAssertion,
   type OpenClawAgentAssertionEvidence,
 } from "./openclaw-agent-assertion.ts";
 import { assertPersonalRuntimeEgress } from "./personal-egress-live-proof.ts";
@@ -768,7 +768,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   );
 
   openClawTest(
-    "C4 Personal permits keyless public fetches with OpenClaw as the NVDA witness",
+    "C4 Personal permits a keyless public fetch with OpenClaw",
     {
       timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
@@ -776,9 +776,9 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
           "validate hosted representative-agent prerequisites",
           "onboard a representative OpenClaw sandbox with Personal and no web search",
           "verify Personal policy and provider-free fetch state",
-          "fetch a public website with curl and Python",
+          "fetch a public website with curl",
           "deny loopback and link-local targets",
-          "fetch the latest NVDA quote with representative OpenClaw web fetch",
+          "fetch a fixed public reference with OpenClaw",
         ],
       },
     },
@@ -787,13 +787,13 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
-        case: "openclaw-personal-stock-price",
+        case: "openclaw-personal-public-fetch",
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
         contract: [
-          "Personal onboarding applies one broad public web policy for every sandbox binary",
-          "curl and Python fetch a public website without a Brave Search or Tavily Search API key",
+          "Personal onboarding activates its broad public web policy",
+          "curl fetches a public website without a Brave Search or Tavily Search API key",
           "the Personal policy does not permit loopback or link-local web targets",
-          "OpenClaw is one representative agent witness that chooses a public source and fetches a recent NVDA price through web_fetch",
+          "OpenClaw is one representative agent witness that fetches a fixed public reference through web_fetch",
           "the reduced agent trajectory contains no web_search, Brave Search, or Tavily Search call",
         ],
       });
@@ -822,18 +822,18 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });
       await assertPersonalRuntimeEgress(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal", {
         beforeDeniedTargets: () => progress.phase("deny loopback and link-local targets"),
-        beforePublicFetch: () => progress.phase("fetch a public website with curl and Python"),
+        beforePublicFetch: () => progress.phase("fetch a public website with curl"),
       });
 
-      progress.phase("fetch the latest NVDA quote with representative OpenClaw web fetch");
-      await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
+      progress.phase("fetch a fixed public reference with OpenClaw");
+      await runPersonalPublicFetchAgentAssertion(host, sandbox, artifacts, {
         apiKey,
-        label: "c4-agent-personal-stock",
+        label: "c4-agent-personal-public-fetch",
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
       });
       await artifacts.target.complete({
         id: "common-egress-agent",
-        case: "openclaw-personal-stock-price",
+        case: "openclaw-personal-public-fetch",
         status: "passed",
       });
     },

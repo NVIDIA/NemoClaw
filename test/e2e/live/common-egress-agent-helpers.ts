@@ -44,23 +44,24 @@ export interface OpenClawToolRecord {
 }
 
 export interface OpenClawWebFetchResultEvidence {
-  asOfMatches: boolean;
-  directFetch: boolean;
+  expectedContentMatches: boolean;
+  expectedUrlMatches: boolean;
   httpSuccess: boolean;
   maxCharsWithinLimit: boolean;
   paired: boolean;
-  priceMatches: boolean;
   resultSuccess: boolean;
-  sourceUrlMatches: boolean;
-  symbolMatches: boolean;
   target?: OpenClawToolTarget;
+}
+
+export interface OpenClawPublicFetchExpectation {
+  content: string;
+  url: string;
 }
 
 export interface OpenClawToolEvidence {
   schemaVersion: 1;
   controlTargetViolations: number;
   errors: string[];
-  expectedStockFingerprint: string | null;
   finalStatuses: string[];
   projectedTargetEvidence: boolean;
   providerMentions: string[];
@@ -70,7 +71,7 @@ export interface OpenClawToolEvidence {
   webFetchResults: OpenClawWebFetchResultEvidence[];
 }
 
-export interface PersonalStockToolEvidenceAssessment {
+export interface PersonalPublicFetchToolEvidenceAssessment {
   controlTargetViolations: number;
   forbiddenProviderMentions: string[];
   forbiddenToolNames: string[];
@@ -82,7 +83,7 @@ export interface PersonalStockToolEvidenceAssessment {
   webFetchExecutions: number;
 }
 
-export interface PersonalStockToolEvidenceArtifact {
+export interface PersonalPublicFetchToolEvidenceArtifact {
   schemaVersion: 1;
   controlTargetViolations: number;
   errorCount: number;
@@ -97,35 +98,16 @@ export interface PersonalStockToolEvidenceArtifact {
   webFetchCalls: number;
   webFetchExecutions: number;
   webFetchResultCounts: {
-    asOfMatches: number;
-    directFetch: number;
+    expectedContentMatches: number;
+    expectedUrlMatches: number;
     httpSuccess: number;
     maxCharsWithinLimit: number;
     paired: number;
-    priceMatches: number;
     publicHttpsTarget: number;
     resultSuccess: number;
-    sourceUrlMatches: number;
-    symbolMatches: number;
     total: number;
   };
   webFetchResultsWithinMaxChars: number;
-}
-
-export interface NvdaPersonalStockReply {
-  as_of: string;
-  price: number;
-  source_url: string;
-  status: "NVDA_PERSONAL_AGENT_OK";
-  symbol: "NVDA";
-}
-
-export interface NvdaPersonalStockReplyEvidence {
-  as_of: string;
-  price: number;
-  source: OpenClawToolTarget;
-  status: "NVDA_PERSONAL_AGENT_OK";
-  symbol: "NVDA";
 }
 
 export interface CommonEgressProviderValidationSkip {
@@ -164,11 +146,8 @@ export interface OpenClawAgentAttemptEvidenceOptions {
   classification: AgentAssertionAttempt;
   label: string;
   recordToolEvidence: (evidence: OpenClawToolEvidence) => Promise<void>;
-  reduceToolEvidence: (
-    expectedStock: NvdaPersonalStockReply,
-  ) => Promise<{ exitCode: number | null; stdout: string }>;
+  reduceToolEvidence: () => Promise<{ exitCode: number | null; stdout: string }>;
   reply: string;
-  replyValidator?: (reply: string, evidence?: OpenClawToolEvidence) => boolean;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
 }
 
@@ -274,15 +253,15 @@ export function parseOpenClawAgentText(raw: string): string {
 
 /**
  * Reduce OpenClaw session and trajectory JSONL to bounded proof that one
- * successful direct web_fetch result supports the expected quote. Fetched
- * content and complete URLs remain inside the sandbox. The function is
- * self-contained because the live test serializes it instead of copying full
- * traces into host artifacts.
+ * successful direct web_fetch result supports the expected public fetch.
+ * Fetched content and complete URLs remain inside the sandbox. The function
+ * is self-contained because the live test serializes it instead of copying
+ * full traces into host artifacts.
  */
 export function reduceOpenClawToolEvidence(
   sessionJsonLines: string,
   trajectoryJsonLines: string,
-  expectedStock: NvdaPersonalStockReply | null = null,
+  expectedFetch: OpenClawPublicFetchExpectation | null = null,
 ): OpenClawToolEvidence {
   const MAX_ERRORS = 32;
   const MAX_RECORDS = 64;
@@ -438,45 +417,6 @@ export function reduceOpenClawToolEvidence(
     }
     return null;
   };
-  const numberMatches = (text: string, expected: number): boolean => {
-    const matches = text.matchAll(
-      /(?:^|[^A-Za-z0-9])\$?\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![A-Za-z0-9])/gu,
-    );
-    for (const match of matches) {
-      const candidate = Number(match[1]?.replace(/,/gu, ""));
-      if (Number.isFinite(candidate) && Math.abs(candidate - expected) <= 0.005) return true;
-    }
-    return false;
-  };
-  const dateMatches = (text: string, expected: string): boolean => {
-    const expectedMs = Date.parse(expected);
-    if (!Number.isFinite(expectedMs)) return false;
-    const expectedDate = new Date(expectedMs).toISOString().slice(0, 10);
-    if (
-      text.includes(expectedDate) ||
-      text.includes(expectedDate.replace(/-/gu, "")) ||
-      text.includes(expected)
-    ) {
-      return true;
-    }
-    for (const match of text.matchAll(/(?:^|\D)(\d{10}|\d{13})(?!\d)/gu)) {
-      const raw = match[1];
-      if (!raw) continue;
-      const epochMs = Number(raw) * (raw.length === 10 ? 1_000 : 1);
-      if (!Number.isFinite(epochMs)) continue;
-      if (new Date(epochMs).toISOString().slice(0, 10) === expectedDate) return true;
-    }
-    return false;
-  };
-  const fingerprint = (value: string): string => {
-    let hash = 2_166_136_261;
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16_777_619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-  };
-
   const trajectoryDocuments = parseJsonLines(trajectoryJsonLines, "trajectory");
   const projectedMessages: unknown[] = [];
   for (const document of trajectoryDocuments) {
@@ -595,17 +535,13 @@ export function reduceOpenClawToolEvidence(
     }
   }
 
-  const expectedSourceUrl = normalizedUrl(expectedStock?.source_url);
-  const expectedPrice = expectedStock?.price;
-  const expectedAsOf = expectedStock?.as_of;
-  const expectedStockFingerprint =
-    expectedSourceUrl !== null &&
-    typeof expectedPrice === "number" &&
-    Number.isFinite(expectedPrice) &&
-    typeof expectedAsOf === "string"
-      ? fingerprint(JSON.stringify([expectedSourceUrl, expectedPrice, expectedAsOf]))
+  const expectedUrl = normalizedUrl(expectedFetch?.url);
+  const expectedContent =
+    typeof expectedFetch?.content === "string" &&
+    expectedFetch.content.length > 0 &&
+    expectedFetch.content.length <= 1_000
+      ? expectedFetch.content
       : null;
-  const nativeExtractors = new Set(["cf-markdown", "json", "raw", "raw-html", "readability"]);
   const pairedProjectedTargetCallIds = new Set<string>();
   const toolResults: OpenClawToolRecord[] = [];
   const webFetchResults: OpenClawWebFetchResultEvidence[] = [];
@@ -620,9 +556,6 @@ export function reduceOpenClawToolEvidence(
     if (resultName !== "web_fetch" && call?.name !== "web_fetch") continue;
     const payload = resultPayloadFrom(message);
     collectProviderMentions(payload);
-    const externalContent = asRecord(payload?.externalContent);
-    const extractor = normalizedName(payload?.extractor);
-    const provider = externalContent?.provider;
     const boundedPayloadText =
       typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
@@ -632,34 +565,21 @@ export function reduceOpenClawToolEvidence(
     }
     const httpSuccess =
       typeof status === "number" && Number.isInteger(status) && status >= 200 && status < 300;
-    const directFetch =
-      externalContent?.source === "web_fetch" &&
-      !(typeof provider === "string" && provider.trim()) &&
-      extractor !== null &&
-      nativeExtractors.has(extractor);
     if (webFetchResults.length >= MAX_RECORDS) {
       addError("web fetch result limit exceeded");
       continue;
     }
     webFetchResults.push({
-      asOfMatches:
-        typeof expectedAsOf === "string" && boundedPayloadText
-          ? dateMatches(boundedPayloadText, expectedAsOf)
-          : false,
-      directFetch,
+      expectedContentMatches:
+        expectedContent !== null && boundedPayloadText.includes(expectedContent),
+      expectedUrlMatches:
+        expectedUrl !== null &&
+        call?.requestedUrl === expectedUrl &&
+        normalizedUrl(payload?.url) === expectedUrl,
       httpSuccess,
       maxCharsWithinLimit: call?.maxCharsWithinLimit === true,
       paired,
-      priceMatches:
-        typeof expectedPrice === "number" && Number.isFinite(expectedPrice) && boundedPayloadText
-          ? numberMatches(boundedPayloadText, expectedPrice)
-          : false,
       resultSuccess: paired && message.isError !== true && payload !== null && httpSuccess,
-      sourceUrlMatches:
-        expectedSourceUrl !== null &&
-        call?.requestedUrl === expectedSourceUrl &&
-        normalizedUrl(payload?.url) === expectedSourceUrl,
-      symbolMatches: /\b(?:NVDA|NVIDIA)\b/iu.test(boundedPayloadText),
       ...(call?.target ? { target: call.target } : {}),
     });
   }
@@ -689,7 +609,6 @@ export function reduceOpenClawToolEvidence(
     schemaVersion: 1,
     controlTargetViolations: controlTargetViolationIds.size,
     errors,
-    expectedStockFingerprint,
     finalStatuses: [...finalStatuses].sort(),
     projectedTargetEvidence,
     providerMentions: [...providerMentions].sort(),
@@ -703,17 +622,17 @@ export function reduceOpenClawToolEvidence(
 export const OPENCLAW_TOOL_EVIDENCE_MARKER = "__NEMOCLAW_TOOL_EVIDENCE__=";
 
 export function buildOpenClawToolEvidenceReducerScript(
-  expectedStock: NvdaPersonalStockReply | null = null,
+  expectedFetch: OpenClawPublicFetchExpectation | null = null,
 ): string {
   return [
     '"use strict"',
     'const fs = require("node:fs")',
     `const reduce = ${reduceOpenClawToolEvidence.toString()}`,
-    `const expectedStock = ${JSON.stringify(expectedStock)}`,
+    `const expectedFetch = ${JSON.stringify(expectedFetch)}`,
     "const [sessionPath, trajectoryPath] = process.argv.slice(1)",
     "const readErrors = []",
     'const read = (filePath, label) => { try { return fs.readFileSync(filePath, "utf8"); } catch (error) { readErrors.push(label + " read failed: " + String(error && error.code || "unknown")); return ""; } }',
-    'const evidence = reduce(read(sessionPath, "session"), read(trajectoryPath, "trajectory"), expectedStock)',
+    'const evidence = reduce(read(sessionPath, "session"), read(trajectoryPath, "trajectory"), expectedFetch)',
     "evidence.errors.unshift(...readErrors)",
     `process.stdout.write(${JSON.stringify(OPENCLAW_TOOL_EVIDENCE_MARKER)} + JSON.stringify(evidence) + "\\n")`,
   ].join("; ");
@@ -732,10 +651,6 @@ export function parseOpenClawToolEvidence(raw: string): OpenClawToolEvidence {
     parsed.schemaVersion !== 1 ||
     !Number.isInteger(parsed.controlTargetViolations) ||
     !Array.isArray(parsed.errors) ||
-    !(
-      parsed.expectedStockFingerprint === null ||
-      typeof parsed.expectedStockFingerprint === "string"
-    ) ||
     !Array.isArray(parsed.finalStatuses) ||
     typeof parsed.projectedTargetEvidence !== "boolean" ||
     !Array.isArray(parsed.providerMentions) ||
@@ -803,9 +718,9 @@ function isPublicHttpsTarget(target: OpenClawToolTarget | undefined): target is 
   return isPublicIpv4(hostname.split(".").map(Number));
 }
 
-export function assessPersonalStockToolEvidence(
+export function assessPersonalPublicFetchToolEvidence(
   evidence: OpenClawToolEvidence,
-): PersonalStockToolEvidenceAssessment {
+): PersonalPublicFetchToolEvidenceAssessment {
   const allRecords = [...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults];
   const allowedToolNames = new Set(
     evidence.projectedTargetEvidence
@@ -815,21 +730,20 @@ export function assessPersonalStockToolEvidence(
   const forbiddenToolNames = [
     ...new Set(allRecords.map(({ name }) => name).filter((name) => !allowedToolNames.has(name))),
   ].sort();
-  const forbiddenProviderMentions = [...evidence.providerMentions];
+  const forbiddenProviderMentions = evidence.providerMentions.filter((name) =>
+    ["brave", "tavily"].includes(name),
+  );
   const webFetchCalls = evidence.toolCalls.filter(({ name }) => name === "web_fetch");
   const webFetchExecutions = evidence.toolExecutions.filter(({ name }) => name === "web_fetch");
   const publicHttpsTargets = webFetchCalls.map(({ target }) => target).filter(isPublicHttpsTarget);
   const qualifyingWebFetchResults = evidence.webFetchResults.filter(
     (result) =>
-      result.asOfMatches &&
-      result.directFetch &&
+      result.expectedContentMatches &&
+      result.expectedUrlMatches &&
       result.httpSuccess &&
       result.maxCharsWithinLimit &&
       result.paired &&
-      result.priceMatches &&
       result.resultSuccess &&
-      result.sourceUrlMatches &&
-      result.symbolMatches &&
       isPublicHttpsTarget(result.target),
   );
   return {
@@ -854,25 +768,25 @@ export function assessPersonalStockToolEvidence(
   };
 }
 
-export function projectPersonalStockToolEvidenceArtifact(
+export function projectPersonalPublicFetchToolEvidenceArtifact(
   evidence: OpenClawToolEvidence,
-): PersonalStockToolEvidenceArtifact {
-  const assessment = assessPersonalStockToolEvidence(evidence);
+): PersonalPublicFetchToolEvidenceArtifact {
+  const assessment = assessPersonalPublicFetchToolEvidence(evidence);
   const webFetchResultCounts = {
-    asOfMatches: evidence.webFetchResults.filter(({ asOfMatches }) => asOfMatches).length,
-    directFetch: evidence.webFetchResults.filter(({ directFetch }) => directFetch).length,
+    expectedContentMatches: evidence.webFetchResults.filter(
+      ({ expectedContentMatches }) => expectedContentMatches,
+    ).length,
+    expectedUrlMatches: evidence.webFetchResults.filter(
+      ({ expectedUrlMatches }) => expectedUrlMatches,
+    ).length,
     httpSuccess: evidence.webFetchResults.filter(({ httpSuccess }) => httpSuccess).length,
     maxCharsWithinLimit: evidence.webFetchResults.filter(
       ({ maxCharsWithinLimit }) => maxCharsWithinLimit,
     ).length,
     paired: evidence.webFetchResults.filter(({ paired }) => paired).length,
-    priceMatches: evidence.webFetchResults.filter(({ priceMatches }) => priceMatches).length,
     publicHttpsTarget: evidence.webFetchResults.filter(({ target }) => isPublicHttpsTarget(target))
       .length,
     resultSuccess: evidence.webFetchResults.filter(({ resultSuccess }) => resultSuccess).length,
-    sourceUrlMatches: evidence.webFetchResults.filter(({ sourceUrlMatches }) => sourceUrlMatches)
-      .length,
-    symbolMatches: evidence.webFetchResults.filter(({ symbolMatches }) => symbolMatches).length,
     total: evidence.webFetchResults.length,
   };
   return {
@@ -894,104 +808,6 @@ export function projectPersonalStockToolEvidenceArtifact(
   };
 }
 
-export function parseNvdaPersonalStockReply(raw: string): NvdaPersonalStockReply | null {
-  const trimmed = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/iu, "")
-    .replace(/\s*```$/u, "");
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  const candidates = [
-    trimmed,
-    firstBrace >= 0 && lastBrace > firstBrace ? trimmed.slice(firstBrace, lastBrace + 1) : "",
-  ];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      const parsed = JSON.parse(candidate) as Partial<NvdaPersonalStockReply>;
-      if (
-        parsed.status === "NVDA_PERSONAL_AGENT_OK" &&
-        parsed.symbol === "NVDA" &&
-        typeof parsed.price === "number" &&
-        Number.isFinite(parsed.price) &&
-        parsed.price > 0 &&
-        typeof parsed.source_url === "string" &&
-        parsed.source_url.length <= 4096 &&
-        isPublicHttpsTarget(targetFromReplyUrl(parsed.source_url)) &&
-        typeof parsed.as_of === "string" &&
-        /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/u.test(
-          parsed.as_of,
-        ) &&
-        Number.isFinite(Date.parse(parsed.as_of))
-      ) {
-        return parsed as NvdaPersonalStockReply;
-      }
-    } catch {
-      // Try the bounded JSON object extracted from a fenced or prefixed reply.
-    }
-  }
-  return null;
-}
-
-export function projectNvdaPersonalStockReplyEvidence(
-  raw: string,
-): NvdaPersonalStockReplyEvidence | null {
-  const reply = parseNvdaPersonalStockReply(raw);
-  if (!reply) return null;
-  const source = targetFromReplyUrl(reply.source_url);
-  if (!source) return null;
-  return {
-    as_of: reply.as_of,
-    price: reply.price,
-    source,
-    status: reply.status,
-    symbol: reply.symbol,
-  };
-}
-
-function targetFromReplyUrl(value: string): OpenClawToolTarget | undefined {
-  try {
-    const parsed = new URL(value);
-    if (parsed.username || parsed.password) return undefined;
-    if (parsed.protocol !== "https:") return undefined;
-    return { hostname: parsed.hostname.toLowerCase(), protocol: "https:" };
-  } catch {
-    return undefined;
-  }
-}
-
-function stockReplyFingerprint(reply: NvdaPersonalStockReply): string | null {
-  try {
-    const parsed = new URL(reply.source_url);
-    parsed.hash = "";
-    const value = JSON.stringify([parsed.href, reply.price, reply.as_of]);
-    let hash = 2_166_136_261;
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16_777_619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-  } catch {
-    return null;
-  }
-}
-
-export function nvdaPersonalStockReplyMatchesEvidence(
-  raw: string,
-  evidence: OpenClawToolEvidence,
-  nowMs = Date.now(),
-): boolean {
-  const reply = parseNvdaPersonalStockReply(raw);
-  if (!reply) return false;
-  const quoteTime = Date.parse(reply.as_of);
-  const ageMs = nowMs - quoteTime;
-  if (ageMs < -24 * 60 * 60_000 || ageMs > 5 * 24 * 60 * 60_000) return false;
-  return (
-    evidence.expectedStockFingerprint === stockReplyFingerprint(reply) &&
-    assessPersonalStockToolEvidence(evidence).matches
-  );
-}
-
 export async function validateOpenClawAgentAttemptEvidence(
   options: OpenClawAgentAttemptEvidenceOptions,
 ): Promise<OpenClawAgentAttemptEvidenceResult> {
@@ -999,14 +815,7 @@ export async function validateOpenClawAgentAttemptEvidence(
 
   let toolEvidence: OpenClawToolEvidence | undefined;
   if (options.toolEvidenceValidator) {
-    const expectedStock = parseNvdaPersonalStockReply(options.reply);
-    if (!expectedStock) {
-      return {
-        attempt: { passed: false, failureClass: "deterministic" },
-        failure: `${options.label}: agent reply did not contain a valid stock quote`,
-      };
-    }
-    const reduced = await options.reduceToolEvidence(expectedStock);
+    const reduced = await options.reduceToolEvidence();
     if (reduced.exitCode !== 0) {
       return {
         attempt: { passed: false, failureClass: "deterministic" },
@@ -1023,7 +832,7 @@ export async function validateOpenClawAgentAttemptEvidence(
     }
     await options.recordToolEvidence(toolEvidence);
     if (!options.toolEvidenceValidator(toolEvidence)) {
-      const assessment = projectPersonalStockToolEvidenceArtifact(toolEvidence);
+      const assessment = projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence);
       const counts = assessment.webFetchResultCounts;
       const diagnostic = [
         `errors=${toolEvidence.errors.length}`,
@@ -1035,16 +844,13 @@ export async function validateOpenClawAgentAttemptEvidence(
         `webFetchExecutions=${assessment.webFetchExecutions}`,
         `qualifying=${assessment.qualifyingWebFetchResults}`,
         `webFetchResults=${counts.total}`,
-        `asOfMatches=${counts.asOfMatches}`,
-        `directFetch=${counts.directFetch}`,
+        `expectedContentMatches=${counts.expectedContentMatches}`,
+        `expectedUrlMatches=${counts.expectedUrlMatches}`,
         `httpSuccess=${counts.httpSuccess}`,
         `maxCharsWithinLimit=${counts.maxCharsWithinLimit}`,
         `paired=${counts.paired}`,
-        `priceMatches=${counts.priceMatches}`,
         `publicHttpsTarget=${counts.publicHttpsTarget}`,
         `resultSuccess=${counts.resultSuccess}`,
-        `sourceUrlMatches=${counts.sourceUrlMatches}`,
-        `symbolMatches=${counts.symbolMatches}`,
         `forbiddenTools=${assessment.forbiddenToolCount}`,
         `forbiddenProviders=${assessment.forbiddenProviderMentionCount}`,
       ].join("; ");
@@ -1053,12 +859,6 @@ export async function validateOpenClawAgentAttemptEvidence(
         failure: `${options.label}: reduced tool evidence did not match the required trajectory (${diagnostic})`,
       };
     }
-  }
-  if (options.replyValidator && !options.replyValidator(options.reply, toolEvidence)) {
-    return {
-      attempt: { passed: false, failureClass: "deterministic" },
-      failure: `${options.label}: agent reply did not contain a recent fetched stock quote`,
-    };
   }
   return {
     attempt: { passed: true },

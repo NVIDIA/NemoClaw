@@ -714,14 +714,17 @@ describe("E2E workflow plan", () => {
   it.each([
     "test/e2e/live/openclaw-agent-assertion.ts",
     "test/e2e/live/personal-egress-live-proof.ts",
-  ])("selects both Personal stock proof owners when a shared helper changes: %s", (changedFile) => {
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+  ])(
+    "selects both Personal public-fetch proof owners for a shared helper change: %s",
+    (changedFile) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
 
-    expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "common-egress-agent-openclaw-personal-stock-price",
-    );
-  });
+      expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
+      expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+        "common-egress-agent-openclaw-personal-public-fetch",
+      );
+    },
+  );
 
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });

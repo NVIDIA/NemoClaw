@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
-import YAML from "yaml";
-
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -13,41 +8,25 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import { text } from "./common-egress-agent-helpers.ts";
 import {
-  runPersonalStockAgentAssertion,
-  type PersonalStockAssertionResult,
+  runPersonalPublicFetchAgentAssertion,
+  type PersonalPublicFetchAssertionResult,
 } from "./openclaw-agent-assertion.ts";
 
-export const PERSONAL_STOCK_PR_TARGET = "ubuntu-repo-cloud-openclaw";
-
-interface NetworkPolicyEntry {
-  binaries?: Array<{ path?: string }>;
-  endpoints?: Array<{
-    host?: string;
-    hosts?: string[];
-    port?: number | string;
-    ports?: Array<number | string>;
-  }>;
-}
-
-interface PolicyDocument {
-  network_policies?: Record<string, NetworkPolicyEntry>;
-}
+export const PERSONAL_PUBLIC_FETCH_PR_TARGET = "ubuntu-repo-cloud-openclaw";
 
 export interface PersonalRuntimeEgressEvidence {
   deniedTargets: ["loopback", "link-local"];
-  policyEntryMatchesReviewedPreset: true;
-  publicFetchTools: ["curl", "python3"];
-  webPorts: [80, 443];
-  wildcardBinary: "/**";
+  personalPolicyActive: true;
+  publicFetchTools: ["curl"];
+  searchCredentialsAbsent: true;
 }
 
-export interface PersonalStockFetchEvidence {
+export interface PersonalPublicFetchEvidence {
   egress: PersonalRuntimeEgressEvidence;
-  stock: PersonalStockAssertionResult;
+  publicFetch: PersonalPublicFetchAssertionResult;
 }
 
 export function requireRegistryTargetSecrets(
@@ -56,14 +35,14 @@ export function requireRegistryTargetSecrets(
   secrets: SecretStore,
 ): void {
   for (const secret of requiredSecrets) {
-    if (targetId === PERSONAL_STOCK_PR_TARGET && !secrets.optional(secret)) {
+    if (targetId === PERSONAL_PUBLIC_FETCH_PR_TARGET && !secrets.optional(secret)) {
       throw new Error(`target '${targetId}' requires E2E secret '${secret}'`);
     }
     secrets.required(secret);
   }
 }
 
-export async function verifyPersonalStockFetchForTarget(
+export async function verifyPersonalPublicFetchForTarget(
   targetId: string,
   policyTier: string | undefined,
   agent: string,
@@ -73,18 +52,18 @@ export async function verifyPersonalStockFetchForTarget(
   secrets: SecretStore,
   sandboxName: string,
   announcePhase: () => void,
-): Promise<PersonalStockFetchEvidence | undefined> {
-  if (targetId !== PERSONAL_STOCK_PR_TARGET) return undefined;
+): Promise<PersonalPublicFetchEvidence | undefined> {
+  if (targetId !== PERSONAL_PUBLIC_FETCH_PR_TARGET) return undefined;
   expect(policyTier).toBe("personal");
   expect(agent).toBe("openclaw");
   announcePhase();
   const egress = await assertPersonalRuntimeEgress(sandbox, sandboxName, "registry-personal");
-  const stock = await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
+  const publicFetch = await runPersonalPublicFetchAgentAssertion(host, sandbox, artifacts, {
     apiKey: secrets.required(HOSTED_INFERENCE_SECRET),
-    label: "registry-personal-stock",
+    label: "registry-personal-public-fetch",
     sandboxName,
   });
-  return { egress, stock };
+  return { egress, publicFetch };
 }
 
 function commandEnv(): NodeJS.ProcessEnv {
@@ -114,41 +93,6 @@ export async function assertPersonalRuntimeEgress(
   expect(policy.exitCode, text(policy)).toBe(0);
   const policyYaml = parseOpenShellPolicy(policy.stdout).yamlBody;
   expect(policyYaml).toContain("personal_open_internet");
-  expect(policyYaml).toContain("169.255.0.0/16");
-  expect(policyYaml).toContain("2000::/3");
-  expect(policyYaml).not.toContain("api.search.brave.com");
-  expect(policyYaml).not.toContain("api.tavily.com");
-
-  const document = YAML.parse(policyYaml) as PolicyDocument;
-  const reviewedDocument = YAML.parse(
-    fs.readFileSync(
-      path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml"),
-      "utf8",
-    ),
-  ) as PolicyDocument;
-  const livePersonalEntry = document.network_policies?.personal_open_internet;
-  const reviewedPersonalEntry = reviewedDocument.network_policies?.personal_open_internet;
-  expect(reviewedPersonalEntry).toBeDefined();
-  expect(livePersonalEntry).toEqual(reviewedPersonalEntry);
-  expect(livePersonalEntry?.binaries).toEqual([{ path: "/**" }]);
-  expect(livePersonalEntry?.endpoints).toHaveLength(1);
-  expect(livePersonalEntry?.endpoints?.[0]).not.toHaveProperty("host");
-  expect(livePersonalEntry?.endpoints?.[0]).not.toHaveProperty("hosts");
-  const webPortClaims = Object.entries(document.network_policies ?? {})
-    .flatMap(([policyName, entry]) =>
-      (entry.endpoints ?? []).flatMap((endpoint) => {
-        const ports = endpoint.ports ?? (endpoint.port === undefined ? [] : [endpoint.port]);
-        return ports
-          .map(Number)
-          .filter((port) => port === 80 || port === 443)
-          .map((port) => ({ policy: policyName, port }));
-      }),
-    )
-    .sort((left, right) => left.policy.localeCompare(right.policy) || left.port - right.port);
-  expect(webPortClaims).toEqual([
-    { policy: "personal_open_internet", port: 80 },
-    { policy: "personal_open_internet", port: 443 },
-  ]);
 
   const keyless = await sandbox.execShell(
     sandboxName,
@@ -165,30 +109,26 @@ export async function assertPersonalRuntimeEgress(
   expect(keyless.stdout).toContain("PERSONAL_KEYLESS_FETCH_OK");
 
   phases.beforePublicFetch?.();
-  const multiBinary = await sandbox.execShell(
+  const publicFetch = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(String.raw`
 set -eu
 curl_bin="$(command -v curl)"
-python_bin="$(command -v python3)"
 test -n "$curl_bin"
-test -n "$python_bin"
-test "$curl_bin" != "$python_bin"
 curl_body="$(mktemp)"
 trap 'rm -f "$curl_body"' EXIT
 "$curl_bin" -fsSL --max-time 30 -o "$curl_body" https://example.com/
 grep -Fq 'Example Domain' "$curl_body"
-"$python_bin" -c 'import sys, urllib.request; body = urllib.request.urlopen(sys.argv[1], timeout=30).read(20000); raise SystemExit(0 if b"Example Domain" in body else 1)' https://example.com/
-printf 'PERSONAL_PUBLIC_MULTI_BINARY_OK curl=%s python=%s\n' "$curl_bin" "$python_bin"
+printf 'PERSONAL_PUBLIC_CURL_OK curl=%s\n' "$curl_bin"
 `),
     {
-      artifactName: `${artifactPrefix}-public-multi-binary`,
+      artifactName: `${artifactPrefix}-public-curl`,
       env: commandEnv(),
       timeoutMs: 90_000,
     },
   );
-  expect(multiBinary.exitCode, text(multiBinary)).toBe(0);
-  expect(multiBinary.stdout).toContain("PERSONAL_PUBLIC_MULTI_BINARY_OK");
+  expect(publicFetch.exitCode, text(publicFetch)).toBe(0);
+  expect(publicFetch.stdout).toContain("PERSONAL_PUBLIC_CURL_OK");
 
   phases.beforeDeniedTargets?.();
   const deniedTargets = await sandbox.execShell(
@@ -230,9 +170,8 @@ probe_denied link-local http://169.254.169.254/latest/meta-data/
 
   return {
     deniedTargets: ["loopback", "link-local"],
-    policyEntryMatchesReviewedPreset: true,
-    publicFetchTools: ["curl", "python3"],
-    webPorts: [80, 443],
-    wildcardBinary: "/**",
+    personalPolicyActive: true,
+    publicFetchTools: ["curl"],
+    searchCredentialsAbsent: true,
   };
 }

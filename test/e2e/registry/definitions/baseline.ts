@@ -79,9 +79,9 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     manifestName: "openclaw-nvidia",
     environment: { ...ubuntuRepoDocker("cloud-openclaw"), policyTier: "personal" },
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference", "credentials", "personal-stock-fetch"],
+    suiteIds: ["smoke", "inference", "credentials", "personal-public-fetch"],
     description:
-      "Ubuntu repo checkout with Docker, Personal policy, and cloud OpenClaw stock-fetch proof.",
+      "Ubuntu repo checkout with Docker, Personal policy, and cloud OpenClaw public-fetch proof.",
     executionCoverage: {
       agentRuntime: "openclaw",
       observableOutcome: "Repository install onboarding and hosted inference succeed",

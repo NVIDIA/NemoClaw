@@ -611,8 +611,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^common-egress.+C3.+$",
   }),
   commonEgressTarget({
-    displayName: "Networking: Personal permits a keyless public stock fetch",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public stock endpoint",
+    displayName: "Networking: Personal permits a keyless public fetch",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public Wikidata endpoint",
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
@@ -623,7 +623,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/policy/index.ts",
       "test/e2e/live/personal-egress-live-proof.ts",
     ],
-    shard: "openclaw-personal-stock-price",
+    shard: "openclaw-personal-public-fetch",
     selector: "^common-egress.+C4.+$",
     environment: {
       BRAVE_API_KEY: "",
