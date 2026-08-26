@@ -12,7 +12,6 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { retryHermesStateMutationHelperTimeout } from "./mcp-bridge-reliability.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
@@ -67,19 +66,11 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const shieldsUpOptions = {
+  const shieldsUp = await host.nemoclaw([sandboxName, "shields", "up"], {
     artifactName: "hermes-mcp-shields-up-after-add",
     env: buildAvailabilityProbeEnv(),
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-  };
-  const shieldsUp = await retryHermesStateMutationHelperTimeout({
-    initialResult: await host.nemoclaw([sandboxName, "shields", "up"], shieldsUpOptions),
-    retry: () =>
-      host.nemoclaw([sandboxName, "shields", "up"], {
-        ...shieldsUpOptions,
-        artifactName: "hermes-mcp-shields-up-after-add-recovery",
-      }),
   });
   expectExitZero(shieldsUp, "restore Hermes shields after managed MCP add");
 

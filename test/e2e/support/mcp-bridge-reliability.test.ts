@@ -14,13 +14,11 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   isHermesRestartTransportFailure,
-  isRetryableHermesStateMutationHelperTimeout,
   isRetryableOpenClawBaselineScopeOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
-  retryHermesStateMutationHelperTimeout,
   retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
@@ -75,12 +73,12 @@ describe("MCP bridge transient classification", () => {
       stderr: "",
     };
 
-    expect(
-      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, result),
-    ).toBe(true);
-    expect(
-      isRetryableOpenClawBaselineScopeOnboardFailure("hermes", sandboxName, result),
-    ).toBe(false);
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, result)).toBe(
+      true,
+    );
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("hermes", sandboxName, result)).toBe(
+      false,
+    );
     expect(
       isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", "other-sandbox", result),
     ).toBe(false);
@@ -117,31 +115,6 @@ describe("MCP bridge transient classification", () => {
         initialResult,
         retry,
       }),
-    ).resolves.toBe(passing);
-    expect(retry).toHaveBeenCalledOnce();
-  });
-
-  it("retries only the exact Hermes activation helper timeout", async () => {
-    const initialResult = {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      stdout: "Locking hermes config (/sandbox/.hermes/config.yaml)...\n",
-      stderr:
-        "ERROR: Runtime provider state mutation failed: root helper activate did not complete successfully: helper-timeout\n",
-    };
-    const passing = { ...initialResult, exitCode: 0, stderr: "" };
-    const retry = vi.fn(async () => passing);
-
-    expect(isRetryableHermesStateMutationHelperTimeout(initialResult)).toBe(true);
-    expect(
-      isRetryableHermesStateMutationHelperTimeout({
-        ...initialResult,
-        stderr: "ERROR: Runtime provider state mutation failed: unrelated\n",
-      }),
-    ).toBe(false);
-    await expect(
-      retryHermesStateMutationHelperTimeout({ initialResult, retry }),
     ).resolves.toBe(passing);
     expect(retry).toHaveBeenCalledOnce();
   });
@@ -187,9 +160,7 @@ describe("MCP bridge transient classification", () => {
         failure = error;
       }
 
-      expect(MCP_BRIDGE_TEST_REDACTION_VALUES).toEqual(
-        Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
-      );
+      expect(MCP_BRIDGE_TEST_REDACTION_VALUES).toEqual(Object.values(MCP_BRIDGE_TEST_CREDENTIALS));
       expect(failure).toBeInstanceOf(Error);
       progress.phase("inspect redacted failure artifacts");
       const failureMessage = failure instanceof Error ? failure.message : String(failure);
@@ -202,9 +173,7 @@ describe("MCP bridge transient classification", () => {
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.rebindHost);
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint);
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
-      expect(persistedFailure).not.toContain(
-        `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`,
-      );
+      expect(persistedFailure).not.toContain(`${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`);
     } finally {
       progress.stop();
       await fs.rm(root, { recursive: true, force: true });

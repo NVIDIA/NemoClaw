@@ -24,6 +24,7 @@ import {
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
+  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
   DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
@@ -169,6 +170,34 @@ print(json.dumps({
     expect(DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000).toBeGreaterThan(
       timing.activationSeconds * 2 + timing.processStateSeconds * 2,
     );
+  });
+
+  it("binds the guardian recovery lineage to the exact embedded broker command", () => {
+    const probe = String.raw`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("runtime_state_control", sys.argv[1])
+control = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = control
+spec.loader.exec_module(control)
+print(json.dumps({
+    "bootstrap": control.TRANSPORT_BROKER_BOOTSTRAP.decode("ascii"),
+    "helper": control.TRANSPORT_BROKER_HELPER_PATH.decode("ascii"),
+}, separators=(",", ":")))
+`;
+    const binding = JSON.parse(
+      execFileSync("python3", ["-I", "-c", probe, RUNTIME_STATE_MUTATION_CONTROLLER], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }),
+    ) as { bootstrap: string; helper: string };
+
+    expect(binding).toEqual({
+      bootstrap: DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
+      helper: "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+    });
   });
 
   it("uses one harness-owned absolute Docker executable", () => {

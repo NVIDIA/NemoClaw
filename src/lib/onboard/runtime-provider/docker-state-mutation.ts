@@ -63,6 +63,8 @@ const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_POLL_MS = 250;
 const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
+export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP =
+  "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -1341,7 +1343,7 @@ function helperTransportBrokerCommand(
       HELPER_PYTHON_PATH,
       "-I",
       "-c",
-      "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
+      DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
       deflateRawSync(Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8"), {
         level: 9,
       }).toString("base64"),
