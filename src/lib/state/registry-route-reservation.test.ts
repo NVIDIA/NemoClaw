@@ -144,6 +144,41 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("preserves the existing port when reserving a route on the same gateway", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "nvidia-prod",
+        model: "model-a",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      });
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-b",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("preserves an omitted host-local receipt through creation registration", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
@@ -311,6 +346,344 @@ describe("sandbox inference route reservation", () => {
       });
       expect(registry.isPendingReservationForSession(reserved, "session-new")).toBe(true);
       expect(registry.isPendingReservationForSession(reserved, "session-old")).toBe(false);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes a reused registered sandbox only for the owning onboarding session", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-other")).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+      expect(registry.getSandbox("alpha")).toEqual(
+        expect.not.objectContaining({
+          pendingRouteReservation: expect.anything(),
+        }),
+      );
+      expect(registry.getSandbox("alpha")?.reservationSessionId).toBe("session-owner");
+      expect(registry.getDefault()).toBe("alpha");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a created registration hidden until its owning sandbox step commits", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      registry.registerSandbox(
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: "https://api.example.test/v1",
+          credentialEnv: "CUSTOM_API_KEY",
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: "true",
+          compatibleEndpointReasoningEffort: "high",
+          nimContainer: "managed-image",
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(registry.getSandbox("alpha")!)).toBe(true);
+      expect(registry.getDefault()).toBe("alpha");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the recreated default when its owner publishes the registration", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.registerSandbox({
+        name: "beta",
+        provider: "compatible-endpoint",
+        model: "model-b",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      expect(registry.getDefault()).toBe("alpha");
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      registry.registerSandbox(
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(registry.setDefault("alpha")).toBe(false);
+      expect(registry.getDefault()).toBe("beta");
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+      expect(registry.getDefault()).toBe("alpha");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["omits reservation authority", undefined],
+    ["supplies an empty reservation owner", { pending: true as const, reservationSessionId: "" }],
+    [
+      "tries to publish through registration",
+      { pending: false as const, reservationSessionId: "session-owner" },
+    ],
+  ])("rejects registration that %s for a session-owned row (#10214)", async (_case, options) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      const entry = {
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      } as const;
+
+      expect(() => registry.registerSandbox(entry, undefined, options)).toThrow(
+        "Cannot stage a sandbox after its inference route reservation changed",
+      );
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses generic pending-registration publication for a session-owned row", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      registry.registerSandbox(
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(registry.finalizePendingSandboxRegistration("alpha")).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an already-published sandbox without the same transaction receipt", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(false);
+      expect(registry.isPublishedSandboxRegistration(registry.getSandbox("alpha")!)).toBe(true);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a stale session after another session publishes the same sandbox", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-old",
+      });
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-new",
+      });
+
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-new")).toBe(true);
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-new")).toBe(true);
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-old")).toBe(false);
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        reservationSessionId: "session-new",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not transfer a published transaction receipt to an ownerless reservation", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      });
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+      });
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+      });
+      expect(registry.getSandbox("alpha")?.reservationSessionId).toBeUndefined();
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

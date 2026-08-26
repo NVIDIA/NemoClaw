@@ -927,6 +927,9 @@ usage() {
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
+  printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
+  printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
@@ -936,6 +939,9 @@ usage() {
   printf "    NVIDIA_INFERENCE_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
+  printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
@@ -3770,6 +3776,44 @@ recover_preexisting_sandboxes_before_onboard() {
   return 1
 }
 
+validate_deferred_hermes_onboarding_request() {
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
+
+  if [[ "${NEMOCLAW_AGENT:-openclaw}" != "hermes" ]]; then
+    error "--defer-onboarding currently requires NEMOCLAW_AGENT=hermes."
+  fi
+  if [[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]; then
+    error "--defer-onboarding does not support a local model profile."
+  fi
+  case "${NEMOCLAW_PROVIDER:-build}" in
+    build | cloud | routed) ;;
+    *)
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      ;;
+  esac
+}
+
+should_defer_hermes_onboarding() {
+  local registered_sandbox_count="${1:-0}"
+  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
+  [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
+  [[ "$registered_sandbox_count" == "0" ]] || return 1
+  [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
+  [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
+
+  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
+  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
+  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
+  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
+  # src/lib/onboard/providers.ts. These values select a route; they are not
+  # inference credentials.
+  case "$provider_key" in
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    *) return 1 ;;
+  esac
+}
+
 run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
@@ -5969,6 +6013,7 @@ main() {
   # cannot be recovered from the env at error time — track it here instead.
   NON_INTERACTIVE_SOURCE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
+  DEFER_ONBOARDING=""
   FRESH=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
@@ -5987,6 +6032,7 @@ main() {
         NON_INTERACTIVE_SOURCE="the --non-interactive flag"
         ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
+      --defer-onboarding) DEFER_ONBOARDING=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
@@ -6030,6 +6076,7 @@ main() {
     NON_INTERACTIVE_SOURCE="NEMOCLAW_NON_INTERACTIVE=1"
   fi
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
+  DEFER_ONBOARDING="${DEFER_ONBOARDING:-${NEMOCLAW_DEFER_ONBOARDING:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
   if [ -n "${LOCAL_MODEL_RUNTIME:-}" ]; then
     export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
@@ -6048,6 +6095,7 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
+  validate_deferred_hermes_onboarding_request
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -6100,6 +6148,10 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
+  # Express selection can change the provider after the initial argument
+  # validation. Recheck the deferred-onboarding scope before installation.
+  validate_deferred_hermes_onboarding_request
+
   install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
@@ -6126,7 +6178,9 @@ main() {
       warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
-    if run_installer_host_preflight; then
+    if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
+      info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
+    elif run_installer_host_preflight; then
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1

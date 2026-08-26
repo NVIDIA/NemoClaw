@@ -534,7 +534,7 @@ network_policies:
   it("disposes the base-image handoff when live-state preflight fails (#7144)", async () => {
     const disposeImageRef = vi.fn(() => true);
     const harness = createRebuildFlowHarness({
-      sandboxListOutput: "",
+      sandboxInventory: { sandboxes: [] },
       reconciledSandboxGatewayState: { state: "unknown", output: "indeterminate" },
       baseImagePreflight: {
         ok: true,

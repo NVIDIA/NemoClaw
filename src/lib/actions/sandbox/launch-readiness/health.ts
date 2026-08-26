@@ -175,6 +175,7 @@ export async function requireLaunchSemanticHealth(
       const invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
         sandboxName,
         gatewayName,
+        agentName,
         provider,
         model,
         preferredInferenceApi: normalizedString(entry.preferredInferenceApi),

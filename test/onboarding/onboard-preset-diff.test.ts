@@ -270,20 +270,14 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
-  // Regression for #5967: Discord (and every messaging channel other than
-  // Slack) is not flagged `requiredAtCreate`, so its policy preset is never
-  // injected into the create-time boot policy. The policy finalization step
-  // must still merge the enabled channel's preset into the effective selection
-  // so it is applied to the gateway and persisted to the registry — otherwise
-  // `policy-list` shows `○ discord` even though Discord was configured during
-  // onboard. The Slack tests above pass purely because Slack happens to be
-  // requiredAtCreate; these tests guard the channels that are not.
+  // Regression for #5967: policy finalization must retain Discord even when an
+  // older or interrupted onboarding session did not record its create-time
+  // preset. Otherwise, `policy-list` can show `○ discord` after configuration.
   it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
-      // Discord is not injected at create time, so it is absent from the
-      // already-applied boot presets — unlike Slack.
+      // Model an older or interrupted session that did not record the preset.
       alreadyApplied: [],
       selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["discord"] },
     });
@@ -326,8 +320,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   });
 
   // The #5967 fix is channel-agnostic — it iterates the channel→preset registry
-  // rather than special-casing Slack/Discord. Telegram is another channel that is
-  // not `requiredAtCreate`, so its egress preset is never injected at create time;
+  // rather than special-casing Discord or Slack. Telegram is not
+  // `requiredAtCreate`, so its egress preset is not included at create time;
   // exercising it end-to-end through the real `setupPoliciesWithSelection` path
   // guards the security-critical egress-policy application for a second, distinct
   // non-required channel (not just Discord).

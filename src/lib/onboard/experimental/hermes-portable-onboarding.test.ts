@@ -892,10 +892,18 @@ describe("Hermes portable onboarding transaction", () => {
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
       "registry-to-active exit",
     );
+    expect(fixture.readRegistry()).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: input().inferenceRouteReservation.sessionId,
+    });
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     const resumed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
 
     expect(resumed.active.receipt.phase).toBe("active");
+    expect(fixture.readRegistry()).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: input().inferenceRouteReservation.sessionId,
+    });
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
   });
@@ -1121,9 +1129,11 @@ describe("Hermes portable onboarding transaction", () => {
     const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
 
     expect(run(["sandbox", "get", "alpha"]).status).toBe(0);
+    expect(run(["sandbox", "delete", "alpha"]).status).toBe(0);
     expect(run(["sandbox", "exec", "--name", "alpha", "--", "true"]).status).toBe(0);
     expect(capture.mock.calls).toEqual([
       [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
+      [["sandbox", "delete", "-g", "nemoclaw", "alpha"]],
       [["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]],
     ]);
     expect(() => run(["sandbox", "get", "beta"])).toThrow("unsupported OpenShell command");
@@ -1194,6 +1204,28 @@ describe("Hermes portable onboarding transaction", () => {
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });
     expect(classifyHermesPortableRegistry(receipt, matching)).toMatchObject({ kind: "matching" });
+    expect(
+      classifyHermesPortableRegistry(
+        receipt,
+        {
+          ...matching,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-alpha",
+        },
+        "session-alpha",
+      ),
+    ).toMatchObject({ kind: "matching" });
+    expect(
+      classifyHermesPortableRegistry(
+        receipt,
+        {
+          ...matching,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-beta",
+        },
+        "session-alpha",
+      ),
+    ).toMatchObject({ kind: "conflict" });
     expect(
       classifyHermesPortableRegistry(receipt, { ...matching, openshellVersion: "0.0.101" }),
     ).toMatchObject({ kind: "conflict" });
