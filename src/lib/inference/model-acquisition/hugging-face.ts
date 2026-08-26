@@ -177,7 +177,14 @@ function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
   if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
   const seconds = Number(raw.trim());
   if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
-  return Math.floor(seconds * 1000);
+  // A finite `seconds` can still leave the representable range once scaled to
+  // milliseconds, and a sub-millisecond value floors to zero. Either result
+  // would disable the abort this timeout exists to enforce — `idleMs >=
+  // Infinity` never holds, and a zero window aborts a healthy download at
+  // once — so treat both as unusable and keep the default.
+  const timeoutMs = Math.floor(seconds * 1000);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  return timeoutMs;
 }
 
 function formatElapsed(ms: number): string {

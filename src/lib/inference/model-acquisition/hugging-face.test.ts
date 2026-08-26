@@ -405,6 +405,35 @@ describe("Hugging Face model acquisition", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each([
+    ["scales past the representable range", "1e308"],
+    ["floors to a zero-millisecond window", "0.0001"],
+  ])(
+    "keeps the default stall window when the configured timeout %s (#10346)",
+    async (_reason, configured) => {
+      vi.useFakeTimers();
+      vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", configured);
+      const proc = mockProcess();
+      dockerSpawn.mockReturnValue(proc);
+      const events = observer();
+      const resultPromise = acquireHuggingFaceModel(request(), events);
+
+      // A zero-millisecond window would abort at the first heartbeat, and an
+      // out-of-range one would never abort at all. Pin both ends.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(proc.kill).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(570_000);
+
+      expect(proc.kill).toHaveBeenCalledTimes(1);
+      await expect(resultPromise).resolves.toEqual({
+        ok: false,
+        reason: expect.stringContaining("hf download stalled"),
+      });
+      vi.unstubAllEnvs();
+    },
+  );
+
   it("keeps token selection and metadata behavior independent of the serving provider (#8279)", () => {
     const env = {
       HF_TOKEN: "hf_primary",
