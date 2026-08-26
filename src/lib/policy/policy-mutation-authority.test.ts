@@ -46,8 +46,10 @@ vi.mock("../state/registry", async (importOriginal) => ({
 import {
   applyPermissivePolicy,
   applyPresetContent,
+  applyPresets,
   excludeBaselineEntry,
   inspectPolicyRecoveryAuthority,
+  loadPresetForSandbox,
   removePreset,
   restoreBaselineEntry,
 } from "./index";
@@ -76,6 +78,12 @@ network_policies:
           - allow: { method: GET, path: "/**" }
 `;
 const WEATHER_POLICY = YAML.parse(WEATHER_PRESET).network_policies.weather;
+
+function loadBuiltInWeatherPolicy(): Record<string, unknown> {
+  const preset = loadPresetForSandbox(SANDBOX, "weather");
+  expect(preset).not.toBeNull();
+  return YAML.parse(preset!).network_policies.weather as Record<string, unknown>;
+}
 
 function reportedErrors(): string {
   return vi
@@ -134,6 +142,68 @@ describe("PolicyMutationAuthority", () => {
       policyAuthority: "externally-managed",
     });
   });
+
+  it("accepts complete external requirements through applyPresets without local mutation or attribution (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: { weather: loadBuiltInWeatherPolicy() } },
+    });
+
+    expect(applyPresets(SANDBOX, ["weather"])).toBe(true);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledOnce();
+    expect(mocks.updateSandbox).toHaveBeenCalledWith(SANDBOX, {
+      policyAuthority: "externally-managed",
+    });
+    expect(sandbox).toEqual(
+      expect.objectContaining({ policyAuthority: "externally-managed", policies: [] }),
+    );
+    expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+  });
+
+  it.each([
+    {
+      caseName: "missing",
+      expectedDiagnostic: 'missing entries "weather"',
+      networkPolicies: {},
+    },
+    {
+      caseName: "changed",
+      expectedDiagnostic: 'drifted entries "weather"',
+      networkPolicies: null,
+    },
+  ])(
+    "refuses $caseName external requirements through applyPresets without local mutation or attribution (#9833)",
+    ({ expectedDiagnostic, networkPolicies }) => {
+      const effectiveNetworkPolicies =
+        networkPolicies ?? {
+          weather: { ...loadBuiltInWeatherPolicy(), name: "changed-weather" },
+        };
+      mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+        authority: "externally-managed",
+        effectivePolicy: { network_policies: effectiveNetworkPolicies },
+      });
+
+      expect(applyPresets(SANDBOX, ["weather"])).toBe(false);
+
+      expect(reportedErrors()).toContain("external policy authority");
+      expect(reportedErrors()).toContain(expectedDiagnostic);
+      expect(reportedErrors()).not.toContain("wttr.in");
+      expect(reportedErrors()).not.toContain("network_policies:");
+      expect(mocks.runCapture).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).toHaveBeenCalledOnce();
+      expect(mocks.updateSandbox).toHaveBeenCalledWith(SANDBOX, {
+        policyAuthority: "externally-managed",
+      });
+      expect(sandbox).toEqual(
+        expect.objectContaining({ policyAuthority: "externally-managed", policies: [] }),
+      );
+      expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+    },
+  );
 
   it("records external authority before refusing a missing preset requirement (#9833)", () => {
     mocks.inspectSandboxPolicyAuthority.mockReturnValue({

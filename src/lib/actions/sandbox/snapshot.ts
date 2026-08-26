@@ -52,6 +52,7 @@ import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
+import { cleanupShieldsDestroyArtifacts } from "../../shields/destroy-cleanup";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import { isSandboxReady } from "../../state/gateway";
@@ -67,7 +68,6 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import {
-  cleanupShieldsDestroyArtifacts,
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";

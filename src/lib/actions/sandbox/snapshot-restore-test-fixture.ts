@@ -351,12 +351,15 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 
+vi.mock("../../shields/destroy-cleanup", () => ({
+  cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
+}));
+
 vi.mock("./destroy", async () => {
   const runtimeProviders = await vi.importActual<
     typeof import("../../onboard/runtime-provider/access")
   >("../../onboard/runtime-provider/access");
   return {
-    cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
     removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>

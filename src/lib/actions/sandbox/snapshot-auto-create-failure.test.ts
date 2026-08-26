@@ -57,6 +57,7 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
+const cleanupShieldsDestroyArtifactsMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 7,
   output: "create failed before registry write",
@@ -241,8 +242,10 @@ vi.mock("../../state/sandbox", () => ({
   listBackups: vi.fn(() => []),
   restoreSandboxState: restoreSandboxStateMock,
 }));
+vi.mock("../../shields/destroy-cleanup", () => ({
+  cleanupShieldsDestroyArtifacts: cleanupShieldsDestroyArtifactsMock,
+}));
 vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: vi.fn(),
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));
@@ -418,6 +421,9 @@ describe("snapshot restore auto-create failures", () => {
     expect(nimRuntime.stopNimContainer).not.toHaveBeenCalled();
     expect(nimRuntime.stopNimContainerByName).not.toHaveBeenCalled();
     expect(removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+    expect(cleanupShieldsDestroyArtifactsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      removeSandboxRegistryEntryOutcomeMock.mock.invocationCallOrder[0]!,
+    );
     expect(getSandboxMock("beta")).toBeNull();
     expect(consoleError.mock.calls.flat().join("\n")).toContain("injected live route failure");
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();

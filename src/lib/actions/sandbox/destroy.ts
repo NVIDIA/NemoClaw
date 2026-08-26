@@ -35,12 +35,7 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import {
-  cleanupShieldsDestroyArtifacts as cleanupShieldsDestroyArtifactsOwned,
-  type CleanupShieldsDestroyArtifactsDeps,
-  removeShieldsState as removeShieldsStateOwned,
-  type RemoveShieldsStateDeps,
-} from "../../shields/destroy-cleanup";
+import { cleanupShieldsDestroyArtifacts } from "../../shields/destroy-cleanup";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -264,17 +259,6 @@ export function cleanupSandboxServices(
   }
 }
 
-export function removeShieldsState(
-  sandboxName: string,
-  stateDir?: string,
-  deps: RemoveShieldsStateDeps = {},
-): void {
-  removeShieldsStateOwned(sandboxName, stateDir, {
-    ...deps,
-    warn: deps.warn ?? defaultDestroyWarn,
-  });
-}
-
 /**
  * Remove only a provider-owned per-sandbox workload image. Shared managed
  * cohorts and ambiguous ownership are never deleted.
@@ -364,16 +348,6 @@ export function removeSandboxRegistryEntryWithReceipt(
 
 function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
-}
-
-export function cleanupShieldsDestroyArtifacts(
-  sandboxName: string,
-  deps: CleanupShieldsDestroyArtifactsDeps = {},
-): void {
-  cleanupShieldsDestroyArtifactsOwned(sandboxName, {
-    ...deps,
-    warn: deps.warn ?? defaultDestroyWarn,
-  });
 }
 
 export async function revokeDestroyedSandboxHttpsPinRoute(
@@ -568,7 +542,8 @@ async function destroySandboxUnlocked(
   let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
   try {
     destructiveResult = await executeSandboxDestroy({
-      cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+      cleanupShieldsArtifacts: (name) =>
+        cleanupShieldsDestroyArtifacts(name, { warn: defaultDestroyWarn }),
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,

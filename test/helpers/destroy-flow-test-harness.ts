@@ -549,7 +549,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
     events.push("timer-cleanup");
-    return { warnings: [] };
+    return { authorityRevoked: true, warnings: [] };
   });
   const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
   const mcpPreparation = {
