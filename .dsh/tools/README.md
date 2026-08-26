@@ -81,6 +81,34 @@ low confidence.
 The report marks the investigation as incomplete when the commit or changed-file list is truncated.
 Do not claim causal completeness or absence of path overlap from a truncated range.
 
+## Pull request value stream
+
+Use `analyze_pr_value_stream` to measure one pull request from the earliest
+observable branch push through merge:
+
+```ts
+const valueStream = await tools.analyze_pr_value_stream({
+  workdir: "/path/to/NemoClaw",
+  number: 10301,
+  targetMinutes: 10,
+})
+```
+
+The report separates these intervals:
+
+- Branch push to pull request open.
+- Pull request open to the latest revision.
+- Latest revision to selected automation completion.
+- Approval delay after automation.
+- Ready-to-merge lag.
+
+The target result models a one-push pull request with immediate opening and
+approval. It uses the latest revision's observed automation time plus the
+observed ready-to-merge lag. GitHub does not expose a canonical branch-created
+time, so the report identifies whether the start came from a retained push run
+or a lower-confidence fallback. Treat one pull request as a diagnostic sample,
+not a service-level distribution.
+
 ## Trust boundaries
 
 - The tools use authenticated `gh` and local `git`; they make no GitHub writes.

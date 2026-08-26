@@ -333,10 +333,10 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
