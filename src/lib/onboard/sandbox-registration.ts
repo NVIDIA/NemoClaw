@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { inferenceSelectionRegistryFields, normalizeInferenceSelection } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
@@ -337,6 +337,10 @@ export function loadOnboardCommandResumeSession(): {
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
+  const pendingRoute =
+    input.reservationSessionId && pending
+      ? registry.normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(pending))
+      : null;
   const pendingHostLocalInferenceReceipt =
     input.hostLocalInferenceReceipt !== undefined
       ? input.hostLocalInferenceReceipt
@@ -347,6 +351,9 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       : pending?.hostLocalInferenceProvenance;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    inferenceSelection: pendingRoute
+      ? { ...input.inferenceSelection, ...pendingRoute }
+      : input.inferenceSelection,
     ...(pendingHostLocalInferenceReceipt === undefined
       ? {}
       : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
