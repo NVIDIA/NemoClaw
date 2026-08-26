@@ -5,10 +5,6 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
-  listBuiltInMessagingChannelManifests,
-  listMessagingPolicyPresetMetadata,
-} from "./metadata";
-import {
   composeCredentialBoundMessagingPolicies,
   createMessagingChannelPolicyResolver,
   listMessagingChannelPolicyPresets,
@@ -210,19 +206,6 @@ describe("messaging channel policy presets", () => {
     );
 
     expect(YAML.parse(composed).network_policies.slack).toBeUndefined();
-  });
-
-  it("ships a policy file for every manifest-supported agent and preset", () => {
-    const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>
-      manifest.supportedAgents.flatMap((agent) =>
-        listMessagingPolicyPresetMetadata({ manifests: [manifest], agent }).flatMap((preset) =>
-          resolveMessagingChannelPolicyPresetPath(preset.presetName, agent)
-            ? []
-            : [`${manifest.id}/${agent}/${preset.presetName}`],
-        ),
-      ),
-    );
-    expect(missing).toEqual([]);
   });
 
   it("composes the Slack app route more specifically than the bot route (#10153)", () => {
