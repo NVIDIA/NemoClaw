@@ -642,11 +642,11 @@ export function loadLlamaCppImageConfig(
     "build-essential": "12.10ubuntu1",
     "ca-certificates": "20260601~24.04.1",
     cmake: "3.28.3-1build7",
-    curl: "8.5.0-2ubuntu10.13",
+    curl: "8.5.0-2ubuntu10.12",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
-    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.13",
-    "libssl-dev": "3.0.13-0ubuntu3.15",
+    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.12",
+    "libssl-dev": "3.0.13-0ubuntu3.12",
   };
   const expectedCompiler = {
     c: "gcc-14",
@@ -655,9 +655,9 @@ export function loadLlamaCppImageConfig(
   };
   const expectedRuntimePackages = {
     "ca-certificates": "20260601~24.04.1",
-    libcurl4t64: "8.5.0-2ubuntu10.13",
+    libcurl4t64: "8.5.0-2ubuntu10.12",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
-    libssl3t64: "3.0.13-0ubuntu3.15",
+    libssl3t64: "3.0.13-0ubuntu3.12",
   };
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
