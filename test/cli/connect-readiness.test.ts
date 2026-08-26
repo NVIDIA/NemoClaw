@@ -187,6 +187,7 @@ describe("CLI connect readiness", () => {
       expect(r.out).not.toContain("Timed out after 1s");
       const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
       expect(calls).toContain("status");
+      expect(calls).toContain("sandbox list -g nemoclaw");
       expect(calls).not.toContain("should-not-connect");
     },
     testTimeout(15_000),

@@ -18,6 +18,7 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
+export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */

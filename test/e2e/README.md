@@ -487,8 +487,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256` | Expected OpenClaw entrypoint SHA-256 |
 
 The target creates a random OpenClaw gateway token for readiness, forwarding,
-and chat checks. It
-passes that token through the MXC agent environment; current OpenShell
+and chat checks. It passes that token through the MXC agent environment. Current OpenShell
 `process_container` packaging can therefore expose its encoded configuration,
 including the token, to privileged host process inspection while `wxc-exec.exe`
 starts the sandbox. The token is never written to the receipt or supplied in
@@ -496,7 +495,8 @@ the OpenClaw command arguments, is not reused, and is useful only for the
 temporary loopback OpenClaw gateway. The host client uses a temporary config
 file that is deleted before a passing receipt is written. Cleanup attempts sandbox deletion, stops
 the recorded OpenClaw process, clears the in-memory environment value, and
-removes the runtime home, state, configuration, and gateway logs. A direct
+removes both test-owned run directories, including the MXC agent environment
+file, runtime home, state, configuration, and gateway logs. A direct
 process-tree termination is an emergency cleanup fallback only. The host-side
 OpenShell processes receive an allowlist of Windows runtime variables rather
 than the complete caller environment. Before using a termination fallback,
@@ -521,22 +521,35 @@ npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-con
 
 The target verifies OpenClaw startup and in-sandbox health, read-write and denied
 filesystem behavior, an authenticated host-loopback forward, and one
-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
+provider-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
 the forward active while deleting the sandbox and requires the listener,
 forward process, sandbox registry entry, and recorded OpenClaw process to stop.
+The target starts forwarding only after in-sandbox OpenClaw health, the exact
+OpenClaw process identity, filesystem enforcement, and the sandbox registry
+entry pass. After the owned host listener appears, the target makes at most 12
+authenticated health observations at one-second intervals. It observes again
+only while the owned forward process remains active and OpenClaw reports a
+nonzero structured transport error with kind `closed`, code `1006`, and reason
+`no close reason`. Authentication, authorization, policy, timeout,
+malformed-output, forward-process exit, and all other failures stop the qualification. The
+target writes a secret-free `windows-mxc-forward-health-readiness-<run-id>.json`
+artifact with the bound, delay, sanitized attempt outcomes, and final result.
+It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. When that cleanup succeeds, a failed run retains
-only non-sensitive probe files for diagnosis.
+runtime artifacts were removed. Cleanup removes both test-owned run directories
+for every verdict because MXC can write the temporary gateway token to its agent
+environment file. A failed run retains only the secret-free receipt.
 The host-preparation declaration is operator evidence, not an ACL attestation.
 Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation
 remain outside this target.
 
 If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
-not confirm removal of that exact sandbox. Inspect the registry and delete only
-the recorded name:
+not confirm removal of that exact sandbox. The retained process environment can
+hold the temporary gateway token until sandbox deletion is confirmed. Inspect
+the registry and delete only the recorded name:
 
 ```powershell
 $receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
