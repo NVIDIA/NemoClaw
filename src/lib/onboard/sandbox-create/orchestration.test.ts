@@ -3,7 +3,17 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { decisionSelected } from "../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
+import { createSession, normalizeSession } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  beginSandboxRecreateTransaction,
+  createCreatedSandboxLifecycle,
+  createSandboxRecreateRuntime,
+  fingerprintSandboxRecreateValue,
+  type SandboxRecreateObservation,
+} from "../sandbox-recreate-transaction";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
@@ -368,6 +378,120 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({ message: expect.stringContaining("live identity changed") }),
       ]),
     );
+  });
+
+  it("persists refusal recovery identity and rejects a same-name replacement after reload (#9833)", async () => {
+    const gatewayName = "nemoclaw-31818";
+    const gatewayPort = 31818;
+    const transactionId = "11111111-1111-4111-8111-111111111111";
+    const targetGeneration = "22222222-2222-4222-8222-222222222222";
+    const targetIntentFingerprint = fingerprintSandboxRecreateValue("fresh-create");
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      sandboxIdentity: decisionSelected({ name: "alpha", agent: "openclaw" }),
+      gatewayAuthority: decisionSelected({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+    };
+    const transaction = beginSandboxRecreateTransaction(session, {
+      sandboxName: "alpha",
+      gatewayName,
+      gatewayPort,
+      sourceEntry: null,
+      observation: { state: "missing", liveIdentityFingerprint: null },
+      targetIntentFingerprint,
+      id: transactionId,
+      targetGeneration,
+    });
+    let observation: SandboxRecreateObservation = {
+      state: "missing",
+      liveIdentityFingerprint: null,
+    };
+    const sessionStore = {
+      loadSession: () => session,
+      updateSession: (mutator: (current: typeof session) => typeof session | void) => {
+        mutator(session);
+        return session;
+      },
+    };
+    const request = {
+      id: transaction.id,
+      targetGeneration: transaction.targetGeneration,
+      targetIntentFingerprint: transaction.targetIntentFingerprint,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      sessionStore,
+      request,
+      "alpha",
+      gatewayName,
+      null,
+      () => observation,
+      vi.fn(),
+    );
+    runtime.advance("creating");
+    const lifecycle = createCreatedSandboxLifecycle(
+      runtime,
+      { sandboxName: "alpha", gatewayName },
+      () => observation,
+    );
+    observation = createdObservation;
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate,
+        create: async () => "created",
+        captureCreatedSandboxLiveIdentity: () =>
+          lifecycle.capture({ lifecycleGeneration: targetGeneration })
+            .lifecycleLiveIdentityFingerprint,
+        observeCreatedSandbox: () => observation,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("cleanup did not complete");
+
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      sandboxName: "alpha",
+      gatewayName,
+      gatewayPort,
+      phase: "created",
+      targetLiveIdentityFingerprint: CREATED_IDENTITY,
+    });
+    const restored = normalizeSession(JSON.parse(JSON.stringify(session)));
+    expect(restored).not.toBeNull();
+    const restoredSession = restored!;
+    expect(restoredSession.checkpoint?.sandboxRecreate).toMatchObject(request);
+    observation = { state: "ready", liveIdentityFingerprint: REPLACEMENT_IDENTITY };
+    expect(() =>
+      createSandboxRecreateRuntime(
+        {
+          loadSession: () => restoredSession,
+          updateSession: (mutator) => {
+            mutator(restoredSession);
+            return restoredSession;
+          },
+        },
+        request,
+        "alpha",
+        gatewayName,
+        null,
+        () => observation,
+        vi.fn(),
+      ),
+    ).toThrow(/not the journaled created sandbox/u);
   });
 
   it("leaves the named sandbox in place when its created identity was not captured (#9833)", async () => {

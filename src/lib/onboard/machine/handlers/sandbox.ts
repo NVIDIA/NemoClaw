@@ -1770,7 +1770,7 @@ class SandboxStateFlow<
     sourceEntry: SandboxEntry | null,
   ): CheckpointSandboxRecreateTransaction | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
-    if (!this.options.resume && !existing) return null;
+    if (!this.options.resume && !existing && sourceEntry) return null;
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
       this.options.gatewayName,
@@ -1786,7 +1786,6 @@ class SandboxStateFlow<
       );
     }
     if (!gateway) return null;
-    if (!existing && !sourceEntry) return null;
     const observation = this.deps.getSandboxRecreateObservation(sandboxName);
     const updated = this.deps.updateSession((current) => {
       beginSandboxRecreateTransaction(current, {
