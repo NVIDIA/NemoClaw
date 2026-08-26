@@ -222,8 +222,8 @@ Return these fields:
 - as_of: the ISO 8601 representation of source_timestamp
 Copy an extended ISO 8601 source date or timestamp exactly. Convert a compact YYYYMMDD source date to YYYY-MM-DD.
 If a source value has a calendar date but no clock time, return YYYY-MM-DD. Never add a clock time or timezone to a date-only value.
-For a Unix-epoch field such as regularMarketTime, interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601.
-Before replying, confirm that source_timestamp appears exactly in the selected result and converts to the same instant or date as as_of.
+For a Unix-epoch field such as regularMarketTime, interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601 without applying exchange hours, timezone labels, or daylight-saving rules.
+Before replying, confirm that source_timestamp appears exactly in the selected result; for a Unix epoch, reverse-convert as_of to the same unit and require exact integer equality.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(

@@ -302,13 +302,13 @@ describe("common-egress agent parsing and classification helpers", () => {
       "Never add a clock time or timezone to a date-only value.",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
-      "interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601.",
+      "interpret the exact integer as seconds or milliseconds since 1970-01-01T00:00:00Z and convert that instant to UTC ISO 8601 without applying exchange hours, timezone labels, or daylight-saving rules.",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
       "source_timestamp: the exact timestamp token copied without editing from the selected result, as a JSON string",
     );
     expect(PERSONAL_STOCK_PROMPT).toContain(
-      "confirm that source_timestamp appears exactly in the selected result and converts to the same instant or date as as_of.",
+      "confirm that source_timestamp appears exactly in the selected result; for a Unix epoch, reverse-convert as_of to the same unit and require exact integer equality.",
     );
   });
 
@@ -1058,14 +1058,14 @@ describe("common-egress agent parsing and classification helpers", () => {
       expected: STOCK_REPLY,
     },
     {
-      name: "price paired with a shifted same-day timestamp (#10330)",
+      name: "price paired with an epoch converted one hour late (#10330)",
       session: stockSessionJsonLines({
         payload: stockPayload({
-          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"2026-08-17T20:00:00Z"}',
+          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"regularMarketTime":1787688000}',
         }),
       }),
       trajectory: stockTrajectory(),
-      expected: { ...STOCK_REPLY, source_timestamp: "2026-08-17T20:00:00Z" },
+      expected: { ...STOCK_REPLY, as_of: "2026-08-25T21:00:00Z", source_timestamp: "1787688000" },
     },
     {
       name: "price paired with a timestamp prefix and trailing characters (#10330)",
