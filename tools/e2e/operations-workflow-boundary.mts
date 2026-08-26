@@ -100,6 +100,7 @@ type WorkflowJob = {
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
   "timeout-minutes"?: unknown;
+  with?: Record<string, unknown>;
 };
 
 export type OperationsWorkflow = {
@@ -759,6 +760,26 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push(
       "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
     );
+  }
+  for (const jobName of [
+    "catalogue-standard",
+    "catalogue-nvidia-api",
+    "catalogue-nvidia-inference",
+    "catalogue-github-read",
+    "catalogue-brave-nvidia-inference",
+  ]) {
+    const catalogue = workflow.jobs[jobName] ?? {};
+    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+      errors.push(`${jobName} must wait for matrix generation and base-image publication`);
+    }
+    if (
+      catalogue.with?.managed_image_revision !==
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    ) {
+      errors.push(
+        `${jobName} must use the selected managed-image revision when no exact PR catalog is present`,
+      );
+    }
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
