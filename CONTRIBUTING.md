@@ -226,9 +226,9 @@ These are the primary npm scripts for day-to-day development:
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
-| `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
-| `npm run test:changed` | Run tests affected by staged, unstaged, or untracked changes in the CLI, plugin, and E2E-support projects |
-| `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
+| `npm run test:fast` | Clean `dist/` and run the `cli`, `policy-command-contract`, `plugin`, and `e2e-support` projects |
+| `npm run test:changed` | Run tests affected by staged, unstaged, or untracked changes in the `cli`, `policy-command-contract`, `plugin`, and `e2e-support` projects |
+| `npm run test:watch` | Watch the `cli`, `policy-command-contract`, `plugin`, and `e2e-support` projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
 | `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test and workflow-selected credential-free integration test without executing test bodies |
@@ -357,12 +357,10 @@ between the two digest fields.
 
 ### Focused Vitest Feedback
 
-Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,
-or keep `npm run test:watch` running while editing. Both commands select only the source-backed
-`cli`, `plugin`, and `e2e-support` projects. Watch mode also maps the repository's current opaque
-YAML, Python, shell, generated, and workflow inputs to the concrete contract tests that read or
-execute them outside Vitest's import graph. Add a narrow mapping in
-`test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
+Use `npm run test:changed` for staged, unstaged, and untracked changes, or keep `npm run test:watch` running while editing.
+Both commands select the source-backed `cli`, `policy-command-contract`, `plugin`, and `e2e-support` projects.
+Watch mode also maps opaque YAML, Python, shell, generated, and workflow inputs to contract tests outside Vitest's import graph.
+Add a narrow mapping in `test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
 
 Use `npm run test:shuffle` to expose order dependencies in those focused projects. The command
 shuffles tests within files and leaves coverage disabled. Vitest prints the chosen seed at the
@@ -384,9 +382,9 @@ receives test annotations.
 
 ### Test State Isolation
 
-The `cli`, `integration`, `installer-integration`, `package-contract`, `plugin`, and `e2e-support`
-projects clear mock call history, restore `vi.spyOn` descriptors, and undo `vi.stubEnv` and
-`vi.stubGlobal` before each test.
+The `cli`, `policy-command-contract`, `integration`, `installer-integration`, `package-contract`,
+`plugin`, and `e2e-support` projects clear mock call history, restore `vi.spyOn` descriptors, and
+undo `vi.stubEnv` and `vi.stubGlobal` before each test.
 Create those spies and stubs in `beforeEach` or the test body. A documented import-time stub may
 remain at module scope when the imported module must capture it during evaluation.
 These projects do not enable `mockReset`, and Vitest does not track direct `process.env` or global

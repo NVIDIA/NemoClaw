@@ -93,14 +93,16 @@ The `bin/` directory uses CommonJS intentionally for the launcher and a few comp
 
 Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
-1. **`cli`** — `src/**/*.test.ts` — CLI unit tests importing source
-2. **`integration`** — `test/**/*.test.{js,ts}` — root integration tests importing source; excludes the explicit lanes below
-3. **`installer-integration`** — `test/installer-integration/**/*.test.ts` — installer tests that spawn real `install.sh` processes
-4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
-5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
-6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
-   aggregate checks for code-changing PRs and code-changing pushes to `main`
-7. **`e2e-live`** — opt-in live targets that mutate real external state
+1. **`cli`**: `src/**/*.test.ts`, except the policy command contract below, contains CLI unit tests importing source.
+2. **`policy-command-contract`**: `src/lib/policy/commands.test.ts` verifies the pure policy command `argv` contract.
+   Its separate project converts the V8 map before the CLI coverage job combines project coverage.
+3. **`integration`**: `test/**/*.test.{js,ts}` contains root integration tests importing source and excludes the explicit lanes below.
+4. **`installer-integration`**: `test/installer-integration/**/*.test.ts` contains installer tests that spawn real `install.sh` processes.
+5. **`package-contract`**: `test/package-contract/**/*.test.ts` is the only non-live lane that imports compiled CLI or plugin artifacts.
+6. **`plugin`**: `nemoclaw/src/**/*.test.ts` contains plugin unit tests co-located with source.
+7. **`e2e-support`**: Fast tests for the E2E fixture and support layer.
+   This project runs in aggregate checks for code-changing PRs and code-changing pushes to `main`.
+8. **`e2e-live`**: Opt-in live targets that mutate real external state.
 
 When writing tests:
 
@@ -109,7 +111,8 @@ When writing tests:
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint and exhaustive; `npm run test:projects:check` compares filesystem candidates with Vitest and rejects missing, overlapping, or unexpected membership.
 - Deterministic projects clear mock calls, restore `vi.spyOn`, and undo `vi.stubEnv` and `vi.stubGlobal` before each test. Create those spies and stubs in `beforeEach` or the test body unless a documented import-time stub must run before module evaluation. Restore direct environment or global mutations yourself, and reset mock implementations explicitly when needed. Live E2E and automatic `mockReset` are intentionally excluded.
-- Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
+- Use `npm run test:changed` or `npm run test:watch` for focused CLI, policy command contract, plugin, and E2E-support feedback.
+  Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
 - Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
 - Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests

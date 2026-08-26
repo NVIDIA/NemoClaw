@@ -7,7 +7,8 @@ import { test as it } from "../helpers/owned-test-resources";
 import { resolveVitestFeedback } from "../helpers/vitest-feedback";
 import { runVitestNpmScript } from "../helpers/vitest-npm-script";
 
-const focusedProjects = "--project cli --project plugin --project e2e-support";
+const focusedProjects =
+  "--project cli --project policy-command-contract --project plugin --project e2e-support";
 
 describe("Vitest developer feedback", () => {
   it("selects passed-only Vitest output in CI (#6692)", () => {

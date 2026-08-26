@@ -156,7 +156,30 @@ export default defineConfig({
             "test/helpers/onboard-script-mocks.cjs",
           ],
           include: ["src/**/*.test.ts"],
-          exclude: ["**/node_modules/**", "**/.claude/**"],
+          exclude: [
+            "**/node_modules/**",
+            "**/.claude/**",
+            "src/lib/policy/commands.test.ts",
+          ],
+        },
+      },
+      // Keep this pure command contract in a short-lived project. Exact CLI-only
+      // and integration-only CI shards both passed these tests but lost one
+      // executed function from their raw V8 maps before blob emission.
+      {
+        ...typedSourceTransform,
+        test: {
+          ...vitestStateIsolation,
+          name: "policy-command-contract",
+          alias: canonicalSourceAliases,
+          env: controlledNonLiveEnv,
+          testTimeout: testTimeout(),
+          setupFiles: [
+            fixtureUmaskSetup,
+            isolatedTestStateSetup,
+            "test/helpers/onboard-script-mocks.cjs",
+          ],
+          include: ["src/lib/policy/commands.test.ts"],
         },
       },
       {

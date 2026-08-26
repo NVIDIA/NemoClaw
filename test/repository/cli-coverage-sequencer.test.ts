@@ -149,6 +149,7 @@ describe("stable CLI coverage sharding", () => {
     expect(shouldUseCliCoverageSharding(["cli", "integration", "e2e-support"])).toBe(true);
     expect(shouldUseCliCoverageSharding(["integration"])).toBe(true);
     expect(shouldUseCliCoverageSharding(["e2e-support"])).toBe(true);
+    expect(shouldUseCliCoverageSharding(["policy-command-contract"])).toBe(false);
     expect(shouldUseCliCoverageSharding(["plugin"])).toBe(false);
     expect(shouldUseCliCoverageSharding([])).toBe(false);
   });

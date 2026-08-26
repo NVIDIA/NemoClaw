@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const EXPECTED_VITEST_PROJECTS = [
   "cli",
+  "policy-command-contract",
   "integration",
   "installer-integration",
   "package-contract",
@@ -65,6 +66,7 @@ export function discoverVitestCandidates(repoRoot: string = REPO_ROOT): Set<stri
 
 export function expectedProjectForTestPath(file: string): ExpectedVitestProject | undefined {
   const normalized = normalizeRepoPath(file);
+  if (normalized === "src/lib/policy/commands.test.ts") return "policy-command-contract";
   if (normalized.startsWith("src/")) return "cli";
   if (normalized.startsWith("nemoclaw/src/")) return "plugin";
   if (normalized.startsWith("test/installer-integration/")) return "installer-integration";

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-cli-coverage-shard
-description: Run one shared CLI, integration, and E2E-support shard and upload its Vitest blob report.
+description: Run one shared source-test shard, preserve the policy command contract, and upload Vitest blob reports.
 
 inputs:
   shard:
@@ -176,11 +176,49 @@ runs:
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
 
+    - name: Run policy command coverage contract
+      if: ${{ inputs.shard == '1' }}
+      shell: bash
+      run: |
+        npx vitest run --project policy-command-contract \
+          --reporter=github-actions \
+          --reporter=blob \
+          --outputFile.blob=".vitest-reports/blob-policy-command-contract.json" \
+          --coverage \
+          --coverage.reporter=json-summary \
+          --coverage.reportsDirectory="coverage/cli/policy-command-contract" \
+          --coverage.include="src/lib/policy/commands.ts"
+
+    - name: Verify CLI shard blob reports
+      shell: bash
+      env:
+        CLI_SHARD: ${{ inputs.shard }}
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
+      run: |
+        set -euo pipefail
+        shard_blob=".vitest-reports/blob-${CLI_SHARD}-${CLI_SHARD_COUNT}.json"
+        contract_blob=".vitest-reports/blob-policy-command-contract.json"
+        if [ ! -s "$shard_blob" ]; then
+          echo "::error title=Missing CLI shard blob::Expected non-empty ${shard_blob}"
+          exit 1
+        fi
+        if [ "$CLI_SHARD" = "1" ]; then
+          if [ ! -s "$contract_blob" ]; then
+            echo "::error title=Missing policy command contract blob::Expected non-empty ${contract_blob}"
+            exit 1
+          fi
+        elif [ -e "$contract_blob" ]; then
+          echo "::error title=Unexpected policy command contract blob::Only shard 1 may upload ${contract_blob}"
+          exit 1
+        fi
+
     - name: Upload CLI shard blob report
       if: ${{ always() && steps.validate-shard-inputs.outcome == 'success' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: cli-blob-report-${{ inputs.shard }}
-        path: .vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json
+        path: |
+          .vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json
+          .vitest-reports/blob-policy-command-contract.json
         if-no-files-found: error
         retention-days: 1

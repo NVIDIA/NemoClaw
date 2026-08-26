@@ -753,6 +753,7 @@ describe("Vitest project membership boundary", () => {
     Array.from(
       new Map<string, string | undefined>([
         ["src/example.spec.ts", "cli"],
+        ["src/lib/policy/commands.test.ts", "policy-command-contract"],
         ["nemoclaw/src/example.test.js", "plugin"],
         ["test/repository/coverage-ratchet.test.ts", "integration"],
         ["test/repository/vitest-coverage-thresholds.test.ts", "integration"],

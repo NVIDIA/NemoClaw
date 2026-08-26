@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-cli-coverage-merge
-description: Merge shared CLI coverage shard blob reports and run the coverage ratchet.
+description: Merge shared source-test and policy command contract blobs and run the CLI coverage ratchet.
 
 inputs:
   shard-count:
@@ -66,6 +66,11 @@ runs:
         CLI_SHARD_COUNT: ${{ inputs.shard-count }}
       run: |
         set -euo pipefail
+        contract_blob=".vitest-reports/blob-policy-command-contract.json"
+        if [ ! -s "$contract_blob" ]; then
+          echo "::error title=Missing policy command contract blob::Expected non-empty ${contract_blob}"
+          exit 1
+        fi
         for shard in $(seq 1 "$CLI_SHARD_COUNT"); do
           blob=".vitest-reports/blob-${shard}-${CLI_SHARD_COUNT}.json"
           if [ ! -s "$blob" ]; then
@@ -76,6 +81,13 @@ runs:
         blob_count=$(find .vitest-reports -maxdepth 1 -type f -name "blob-*-${CLI_SHARD_COUNT}.json" | wc -l | tr -d ' ')
         if [ "$blob_count" != "$CLI_SHARD_COUNT" ]; then
           echo "::error title=Unexpected CLI shard blob count::Expected ${CLI_SHARD_COUNT} blob reports, found ${blob_count}"
+          find .vitest-reports -maxdepth 1 -type f -print
+          exit 1
+        fi
+        total_blob_count=$(find .vitest-reports -maxdepth 1 -type f -name 'blob-*.json' | wc -l | tr -d ' ')
+        expected_total=$((CLI_SHARD_COUNT + 1))
+        if [ "$total_blob_count" != "$expected_total" ]; then
+          echo "::error title=Unexpected CLI coverage blob count::Expected ${expected_total} blob reports, found ${total_blob_count}"
           find .vitest-reports -maxdepth 1 -type f -print
           exit 1
         fi
