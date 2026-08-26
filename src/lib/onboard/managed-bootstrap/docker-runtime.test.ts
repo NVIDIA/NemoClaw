@@ -238,6 +238,53 @@ describe("Docker managed-bootstrap native fallback owner cleanup", () => {
   });
 });
 
+describe("Docker managed-bootstrap pre-create GPU fallback", () => {
+  it("reuses the exact managed image when native create is rejected before runtime discovery (#10155)", () => {
+    const managedImageReference = `registry.example/nemoclaw-hermes@sha256:${"d".repeat(64)}`;
+    const routing = createDockerManagedBootstrapSurface().createOnboardRouting({
+      sandboxName: "alpha",
+      openshellArgv: (args) => ["openshell", ...args],
+      nativeFallbackEnabled: false,
+    });
+
+    expect(
+      routing.prepareCompatibilityLaunch({
+        createArgs: [
+          "--from",
+          "registry.example/native-source",
+          "--name",
+          "alpha",
+          "--gpu",
+          "--policy",
+          "/tmp/native-policy.yaml",
+        ],
+        currentRegistryImageRef: managedImageReference,
+        managedImageReference,
+        prebuildImageId: null,
+        allowUnbuiltSource: false,
+        compatibilityPolicyPath: "/tmp/compatibility-policy.yaml",
+        startupCommand: ["managed-hold"],
+        runtimeSnapshot: null,
+      }),
+    ).toEqual({
+      createArgv: [
+        "openshell",
+        "sandbox",
+        "create",
+        "--from",
+        managedImageReference,
+        "--name",
+        "alpha",
+        "--policy",
+        "/tmp/compatibility-policy.yaml",
+        "--",
+        "managed-hold",
+      ],
+      registryImageRef: managedImageReference,
+    });
+  });
+});
+
 describe("Docker managed-bootstrap GPU probe diagnostics", () => {
   it("includes each failed mode without exposing credentials", () => {
     const details = formatDockerGpuModeFailureDetails([

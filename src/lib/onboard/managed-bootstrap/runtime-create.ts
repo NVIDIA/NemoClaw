@@ -195,6 +195,8 @@ export interface ManagedBootstrapRuntimeSnapshot {
 export interface ManagedBootstrapRuntimeCompatibilityLaunchInput {
   readonly createArgs: readonly string[];
   readonly currentRegistryImageRef: string | null;
+  /** Exact managed image selected before either GPU route is attempted. */
+  readonly managedImageReference: string;
   readonly prebuildImageId: string | null;
   readonly allowUnbuiltSource: boolean;
   readonly compatibilityPolicyPath: string;

@@ -393,6 +393,7 @@ export async function runSandboxGpuCreateFlow(
               bootstrapIdentity,
             ),
             currentRegistryImageRef: registryImageRef,
+            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
             compatibilityPolicyPath: input.compatibilityPolicyPath,

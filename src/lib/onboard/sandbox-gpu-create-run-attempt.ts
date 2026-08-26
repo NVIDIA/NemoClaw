@@ -488,6 +488,7 @@ export function createSandboxGpuCreateAttemptRunner(
     await runtimePatch.exitOnPatchError();
     if (createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
+      let nativeCreateRejectedBeforeProgress = false;
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         if (managedIncompleteCreateRecovered) {
@@ -515,6 +516,7 @@ export function createSandboxGpuCreateAttemptRunner(
                   sawProgress: createResult.sawProgress,
                 })
           ) {
+            nativeCreateRejectedBeforeProgress = true;
             state.allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
             return true;
           }
@@ -538,6 +540,9 @@ export function createSandboxGpuCreateAttemptRunner(
           stage: "create",
           error: new Error("Native OpenShell GPU sandbox creation was rejected."),
           fallbackEligible: true,
+          ...(nativeCreateRejectedBeforeProgress
+            ? { nativeCreateRejectedBeforeProgress: true as const }
+            : {}),
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();

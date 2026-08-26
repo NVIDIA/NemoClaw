@@ -363,7 +363,7 @@ function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRouting
         runtime?.imageId ??
         (compatibility.prebuildImageId && isImmutableDockerImageId(compatibility.prebuildImageId)
           ? compatibility.prebuildImageId.toLowerCase()
-          : null);
+          : compatibility.managedImageReference);
       let registryImageRef = compatibility.currentRegistryImageRef;
       if (
         !registryImageRef &&

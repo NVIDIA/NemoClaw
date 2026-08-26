@@ -491,10 +491,8 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       "openshell sandbox exec denied by policy",
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    const calls = vi.mocked(deps.runOpenshell).mock.calls;
+    expect(calls.flat()).not.toContain("delete");
   });
 
   it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
@@ -1237,8 +1235,9 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
+    const deps = createDeps();
 
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
     });
 
@@ -1261,6 +1260,10 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     );
     expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain("bash");
     expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain("-lc");
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("discloses the compatibility container-swap confinement tradeoff and native-only opt-out", async () => {
@@ -1317,7 +1320,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(input.sandboxGpuConfig.sandboxGpuProof).toBeNull();
   });
 
-  it("validates the full compatibility command before deleting native state (#6110)", async () => {
+  it("validates the full compatibility command before proving native state absent (#6110)", async () => {
     const input = createInput();
     input.compatibilityPolicyPath = null;
     failNativeCreate();
@@ -1348,7 +1351,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     const deps = createDeps();
     await expectFlowExit(input, deps);
     expect(deps.openshellArgv).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
