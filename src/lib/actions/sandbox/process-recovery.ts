@@ -398,6 +398,19 @@ function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult |
   return lines.length === 1 && lines[0] === "PRIVILEGED_CONTROL_UNAVAILABLE";
 }
 
+function isExactlyPendingManagedSupervisorDiscovery(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  // The installed managed controller emits this only before selecting a
+  // supervisor, when an incomplete process-table scan cannot yet prove either
+  // one exact supervisor or clean absence. Retrying this exact bare marker can
+  // delay recovery but cannot authorize a relaunch or accept an identity.
+  return lines.length === 1 && lines[0] === "SUPERVISOR_DISCOVERY_PENDING";
+}
+
 function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | null): boolean {
   if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
   const lines = result.stderr
@@ -416,6 +429,7 @@ function isExactlyManagedGatewayStartupTransition(
   return (
     isExactlyMissingManagedSupervisor(result) ||
     isExactlyPendingManagedSupervisorControl(result) ||
+    isExactlyPendingManagedSupervisorDiscovery(result) ||
     isExactlyPendingManagedGatewayHealth(result)
   );
 }
