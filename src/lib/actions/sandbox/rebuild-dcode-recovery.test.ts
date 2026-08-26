@@ -25,9 +25,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
-      sandboxInventory: {
-        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
-      },
+      sandboxListOutput: "alpha Error",
       preDeleteLatestManifest: recoveryManifest,
     });
     configureDcodeSession(harness);
@@ -66,7 +64,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
         customPolicies: [customPolicy],
         policyPresetsFinalized: true,
       },
-      sandboxInventory: { sandboxes: [] },
+      sandboxListOutput: "",
       reconciledSandboxGatewayState: { state: "missing", output: "" },
     });
     configureDcodeSession(harness);

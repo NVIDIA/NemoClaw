@@ -21,6 +21,7 @@ import {
 import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
@@ -302,11 +303,7 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
     },
     { gatewayName: selectedGatewayName },
   );
-  const readyNames = new Set(
-    liveList.sandboxes
-      .filter((sandbox) => sandbox.readiness === "ready")
-      .map((sandbox) => sandbox.name),
-  );
+  const readyNames = parseReadySandboxNames(liveList.output || "");
   // Source-of-truth review (#6520):
   //
   // - Invalid state: a sandbox the selected gateway does not observe, whose
@@ -335,7 +332,7 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
   // candidate the gateway observes again reverts to a genuine strict skip.
   const orphanNames = new Set(
     classifyOrphanedRegistrySandboxes(sandboxes, {
-      observedNames: new Set(liveList.sandboxes.map((sandbox) => sandbox.name)),
+      observedNames: parseLiveSandboxNames(liveList.output || ""),
       reconnectedNames: new Set(),
       selectedGatewayName,
       resolveGatewayBinding: resolveSandboxGatewayName,
@@ -451,7 +448,7 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
       },
       { gatewayName: selectedGatewayName },
     );
-    const observedOnRecheck = new Set(confirmation.sandboxes.map((sandbox) => sandbox.name));
+    const observedOnRecheck = parseLiveSandboxNames(confirmation.output || "");
     confirmedStranded = strandedOrphans.filter(
       (name) => !observedOnRecheck.has(name) && isSandboxContainerDefinitivelyAbsent(name),
     );

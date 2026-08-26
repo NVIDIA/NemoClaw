@@ -26,6 +26,7 @@ import {
   captureNamedGatewaySandboxListReadOnly,
   captureSandboxListWithGatewayPreflightOrExit,
 } from "../openshell-sandbox-list";
+import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
@@ -204,15 +205,11 @@ async function confirmAbsentRecoveryCandidates(
   };
   // #7279: a read-only check must never recover/select the gateway.
   const confirmation = checkOnly
-    ? await captureNamedGatewaySandboxListReadOnly(context, selectedGatewayName)
+    ? captureNamedGatewaySandboxListReadOnly(context, selectedGatewayName)
     : await captureSandboxListWithGatewayPreflightOrExit(context, {
         gatewayName: selectedGatewayName,
       });
-  const confirmedLiveNames = new Set(
-    confirmation.sandboxes
-      .filter((sandbox) => sandbox.readiness === "ready")
-      .map((sandbox) => sandbox.name),
-  );
+  const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
   return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
 }
 
@@ -301,23 +298,21 @@ export async function upgradeSandboxes(
     command: `${CLI_NAME} upgrade-sandboxes`,
   };
   const liveResult = checkOnly
-    ? await captureNamedGatewaySandboxListReadOnly(liveListContext, selectedGatewayName)
+    ? captureNamedGatewaySandboxListReadOnly(liveListContext, selectedGatewayName)
     : await captureSandboxListWithGatewayPreflightOrExit(liveListContext, {
         gatewayName: selectedGatewayName,
       });
-  const liveNames = new Set(
-    liveResult.sandboxes
-      .filter((sandbox) => sandbox.readiness === "ready")
-      .map((sandbox) => sandbox.name),
-  );
+  const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
   // the selected gateway and stale Ready/Running rows are handled by
   // isPreparedRecoveryCandidate, which recovers them only when they resolve to
   // the selected gateway.
   const nonReadyLiveNames = new Set(
-    liveResult.sandboxes
-      .filter((sandbox) => sandbox.phase !== null && sandbox.readiness !== "ready")
-      .map((sandbox) => sandbox.name),
+    parseLiveSandboxEntries(liveResult.output || "")
+      .filter(
+        (entry) => entry.phase !== null && entry.phase !== "Ready" && entry.phase !== "Running",
+      )
+      .map((entry) => entry.name),
   );
 
   // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw

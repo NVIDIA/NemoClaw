@@ -11,12 +11,16 @@ const mocks = vi.hoisted(() => ({
   detectResultIssue: vi.fn(),
   printIssue: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
+  stripAnsi: vi.fn((value: string) => value),
 }));
 
 vi.mock("./adapters/openshell/gateway-drift", () => ({
   detectOpenShellStateRpcPreflightIssue: mocks.detectPreflightIssue,
   detectOpenShellStateRpcResultIssue: mocks.detectResultIssue,
   printOpenShellStateRpcIssue: mocks.printIssue,
+}));
+vi.mock("./adapters/openshell/client", () => ({
+  stripAnsi: mocks.stripAnsi,
 }));
 vi.mock("./adapters/openshell/runtime", () => ({
   captureOpenshell: mocks.captureOpenshell,
@@ -28,24 +32,12 @@ vi.mock("./gateway-runtime-action", () => ({
 import {
   captureNamedGatewaySandboxListReadOnly,
   captureSandboxListWithGatewayPreflightOrExit,
-  captureSandboxListWithGatewayRecovery,
 } from "./openshell-sandbox-list";
-import type {
-  OpenShellSandboxInventory,
-  OpenShellSandboxObserver,
-  OpenShellSandboxResult,
-} from "./adapters/openshell/sandbox-observer";
 
 const context = {
   action: "checking sandbox state",
   command: "nemoclaw test-command",
 };
-
-function observerReturning(
-  result: OpenShellSandboxResult<OpenShellSandboxInventory>,
-): OpenShellSandboxObserver {
-  return { listSandboxes: vi.fn().mockResolvedValue(result) };
-}
 
 const imageDriftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -102,29 +94,22 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
   it("returns the successful sandbox list without gateway recovery", async () => {
     const result = await captureSandboxListWithGatewayPreflightOrExit(context);
 
-    expect(result).toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-    });
+    expect(result).toEqual({ status: 0, output: "alpha Ready" });
     expect(mocks.captureOpenshell).toHaveBeenCalledOnce();
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true, timeout: 15_000 }),
-    );
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(["sandbox", "list"]);
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("recovers a missing explicit gateway after its scoped observation (#6114)", async () => {
+  it("proves and recovers an explicit gateway instead of the current selection (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
     mocks.captureOpenshell
-      .mockReturnValueOnce({ status: 1, output: "Unknown gateway 'nemoclaw-12345'." })
+      .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
       .mockReturnValueOnce({ status: 0, output: "alpha Ready" });
 
     const result = await captureSandboxListWithGatewayPreflightOrExit(context, options);
 
-    expect(result).toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-    });
+    expect(result).toEqual({ status: 0, output: "alpha Ready" });
     expect(mocks.detectPreflightIssue).toHaveBeenCalledWith(options);
     const expectedRecoveryOptions = {
       gatewayName: "nemoclaw-12345",
@@ -135,29 +120,40 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
         "connected_other",
       ],
     };
-    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
-    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith(expectedRecoveryOptions);
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw-12345"],
-      expect.anything(),
-    );
-    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenNthCalledWith(1, expectedRecoveryOptions);
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenNthCalledWith(2, expectedRecoveryOptions);
+    expect(mocks.detectResultIssue).toHaveBeenCalledWith(result, options);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("observes a healthy explicit gateway without mutating gateway state (#6114)", async () => {
+  it("fails closed when target selection fails while a sibling list is healthy (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
-    mocks.captureOpenshell.mockReturnValue({ status: 0, output: "alpha Ready" });
-
-    await expect(captureSandboxListWithGatewayPreflightOrExit(context, options)).resolves.toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+    mocks.recoverNamedGatewayRuntime.mockResolvedValueOnce({
+      recovered: false,
+      attempted: true,
+      before: { state: "connected_other", activeGateway: "nemoclaw" },
+      after: { state: "connected_other", activeGateway: "nemoclaw" },
     });
+    // This is the process-global sibling output that must never be accepted
+    // after the target gateway select/verification fails.
+    mocks.captureOpenshell.mockReturnValue({ status: 0, output: "default-box Ready" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw-12345"],
-      expect.anything(),
+    await expect(captureSandboxListWithGatewayPreflightOrExit(context, options)).rejects.toThrow(
+      "process.exit(1)",
     );
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-12345",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
+    expect(mocks.captureOpenshell).not.toHaveBeenCalled();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("recovery did not complete");
   });
 
   it("recovers a disconnected gateway once and retries the sandbox list", async () => {
@@ -167,9 +163,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
 
     const result = await captureSandboxListWithGatewayPreflightOrExit(context);
 
-    expect(result).toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-    });
+    expect(result).toEqual({ status: 0, output: "alpha Ready" });
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith({
       recoverableStates: [
         "missing_named",
@@ -179,16 +173,8 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
       ],
     });
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
-    expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["sandbox", "list"],
-      expect.anything(),
-    );
-    expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["sandbox", "list"],
-      expect.anything(),
-    );
+    expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(1, ["sandbox", "list"]);
+    expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(2, ["sandbox", "list"]);
   });
 
   it("classifies protobuf mismatch from the retry before generic failure handling", async () => {
@@ -208,16 +194,13 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
-    expect(mocks.printIssue).toHaveBeenCalledWith(
-      { kind: "protobuf_mismatch", drift: null, output: "" },
-      context,
-    );
+    expect(mocks.printIssue).toHaveBeenCalledWith(issue, context);
     expect(errorSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("Failed to query running sandboxes"),
     );
   });
 
-  it("preserves invalid-request exit behavior from the single retry", async () => {
+  it("preserves a generic failure status from the single retry", async () => {
     mocks.captureOpenshell
       .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
       .mockReturnValueOnce({ status: 2, output: "unknown option: --json" });
@@ -262,29 +245,6 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("Failed to query running sandboxes");
   });
 
-  it("does not mutate a named gateway after an identity mismatch (#9803)", async () => {
-    const result = {
-      ok: false,
-      error: {
-        kind: "transport",
-        reason: "identity_mismatch",
-        message: "The selected OpenShell gateway identity does not match the recorded identity.",
-      },
-    } as const;
-
-    await expect(
-      captureSandboxListWithGatewayRecovery({
-        gatewayName: "nemoclaw-12345",
-        observer: observerReturning(result),
-      }),
-    ).resolves.toEqual({
-      result,
-      recoveryAttempted: false,
-      recoverySucceeded: false,
-    });
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-  });
-
   it("classifies protobuf mismatch before recovery or generic failure handling", async () => {
     const issue: OpenShellStateRpcIssue = {
       kind: "protobuf_mismatch",
@@ -298,10 +258,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
       "process.exit(1)",
     );
 
-    expect(mocks.printIssue).toHaveBeenCalledWith(
-      { kind: "protobuf_mismatch", drift: null, output: "" },
-      context,
-    );
+    expect(mocks.printIssue).toHaveBeenCalledWith(issue, context);
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("Failed to query running sandboxes"),
@@ -326,97 +283,44 @@ describe("read-only named-gateway sandbox list (#7279)", () => {
     vi.restoreAllMocks();
   });
 
-  it("lists the named gateway with -g and never recovers or selects", async () => {
-    const result = await captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
+  it("lists the named gateway with -g and never recovers or selects", () => {
+    const result = captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
 
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw-18080"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true, timeout: 15_000 }),
+      { ignoreError: true },
     );
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-    });
+    expect(result).toEqual({ status: 0, output: "alpha Ready" });
   });
 
-  it("stays non-fatal when the recorded gateway is down", async () => {
+  it("stays non-fatal when the recorded gateway is down", () => {
     mocks.captureOpenshell.mockReturnValue({
       status: 1,
       output: "tcp connect error: Connection refused",
     });
 
-    const result = await captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
+    const result = captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
 
-    expect(result).toEqual({ sandboxes: [] });
+    expect(result.status).toBe(1);
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      label: "authentication",
-      error: {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox observation.",
-      },
-      exitCode: 1,
-    },
-    {
-      label: "identity mismatch",
-      error: {
-        kind: "transport",
-        reason: "identity_mismatch",
-        message: "The selected OpenShell gateway identity does not match the recorded identity.",
-      },
-      exitCode: 1,
-    },
-    {
-      label: "invalid command",
-      error: {
-        kind: "command",
-        reason: "invalid_request",
-        message: "OpenShell rejected the sandbox observation request.",
-      },
-      exitCode: 2,
-    },
-  ] as const)(
-    "fails closed on a $label observation failure (#9803)",
-    async ({ error, exitCode }) => {
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("still exits on a state-RPC result drift issue", () => {
+    mocks.detectResultIssue.mockReturnValue(imageDriftIssue);
 
-      await expect(
-        captureNamedGatewaySandboxListReadOnly(
-          context,
-          "nemoclaw-18080",
-          observerReturning({ ok: false, error }),
-        ),
-      ).rejects.toThrow(`process.exit(${exitCode})`);
-
-      expect(errorSpy.mock.calls.flat().join("\n")).toContain(error.message);
-      expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    },
-  );
-
-  it("still exits on a state-RPC result drift issue", async () => {
-    mocks.captureOpenshell.mockReturnValue({
-      status: 1,
-      output: "Sandbox.metadata: invalid wire type value: 6",
-    });
-
-    await expect(captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).rejects.toThrow(
+    expect(() => captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).toThrow(
       "process.exit(1)",
     );
-    expect(mocks.printIssue).toHaveBeenCalledWith(
-      { kind: "protobuf_mismatch", drift: null, output: "" },
-      context,
-    );
+    expect(mocks.printIssue).toHaveBeenCalledWith(imageDriftIssue, context);
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
-  it("exits before listing on a preflight drift issue", async () => {
+  it("exits before listing on a preflight drift issue", () => {
     mocks.detectPreflightIssue.mockReturnValue(hostProcessDriftIssue);
 
-    await expect(captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).rejects.toThrow(
+    expect(() => captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).toThrow(
       "process.exit(1)",
     );
     expect(mocks.captureOpenshell).not.toHaveBeenCalled();

@@ -32,7 +32,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     vi.restoreAllMocks();
   });
 
-  it("pins both the sandbox and policy RPCs to the recorded owner", async () => {
+  it("pins both the sandbox and policy RPCs to the recorded owner", () => {
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
     const capture = vi
@@ -40,7 +40,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
       .mockReturnValueOnce({ status: 0, output: "Policy:\nPhase: Ready" } as never)
       .mockReturnValueOnce({ status: 0, output: "version: 1" } as never);
 
-    const result = await getSandboxGatewayState("beta", "nemoclaw-8091");
+    const result = getSandboxGatewayState("beta", "nemoclaw-8091");
 
     expect(result.state).toBe("present");
     expect(capture).toHaveBeenNthCalledWith(
@@ -55,7 +55,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     );
   });
 
-  it("classifies the owner-scoped Internal no-spec response as missing", async () => {
+  it("classifies the owner-scoped Internal no-spec response as missing", () => {
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
     const capture = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -63,7 +63,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
       output: 'status: Internal, message: "sandbox has no spec"',
     } as never);
 
-    await expect(getSandboxGatewayState("beta", "nemoclaw-8091")).resolves.toMatchObject({
+    expect(getSandboxGatewayState("beta", "nemoclaw-8091")).toMatchObject({
       state: "missing",
     });
     expect(capture).toHaveBeenCalledWith(
@@ -101,7 +101,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     const syncCapture = vi.spyOn(openshellRuntime, "captureOpenshell");
     const asyncCapture = vi.spyOn(openshellRuntime, "captureOpenshellForStatus");
 
-    await expect(getSandboxGatewayState("beta", "nemoclaw-8091")).resolves.toMatchObject({
+    expect(getSandboxGatewayState("beta", "nemoclaw-8091")).toMatchObject({
       state: "gateway_endpoint_override",
       output: expect.stringContaining("OPENSHELL_GATEWAY_ENDPOINT is set"),
     });

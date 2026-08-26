@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
-import {
-  namedOpenShellGateway,
-  type OpenShellSandboxError,
-  type OpenShellSandboxObservation,
-  type OpenShellSandboxObserver,
-} from "../../adapters/openshell/sandbox-observer";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -50,6 +43,13 @@ import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
+import {
+  isSandboxReady,
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  parseSandboxStatus,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -85,8 +85,6 @@ import {
   printGatewayLifecycleHint,
   qualifyPortableAgentLifecycleAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
-  isTerminalSandboxPhase,
-  TERMINAL_SANDBOX_PHASES,
   requireHermesPortableActiveLifecycleAuthority,
   startStoppedSandboxContainerForProbeRecovery,
   withConnectSandboxLifecycleLock,
@@ -137,6 +135,11 @@ export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
+};
+
+type SandboxListProbe = {
+  status: number | null;
+  output: string;
 };
 
 export type SandboxInferenceRouteProbe = {
@@ -567,38 +570,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
   process.exit(1);
 }
 
-function failConnectReadinessObservation(sandboxName: string, error: OpenShellSandboxError): never {
-  if (error.kind === "transport") {
-    failConnectReadinessGatewayUnavailable(sandboxName, error.message);
-  }
-
-  console.error("");
-  switch (error.kind) {
-    case "authentication":
-      console.error(
-        `  OpenShell could not authenticate while checking sandbox '${sandboxName}' readiness.`,
-      );
-      console.error("  Restore authentication for the sandbox's recorded gateway, then retry.");
-      break;
-    case "schema":
-      console.error(
-        `  The OpenShell CLI and gateway schemas do not match; cannot verify sandbox '${sandboxName}' readiness.`,
-      );
-      console.error("  Use matching supported OpenShell CLI and gateway versions, then retry.");
-      break;
-    case "timeout":
-      console.error(`  The OpenShell readiness request for sandbox '${sandboxName}' timed out.`);
-      console.error("  Check gateway health and retry after it responds.");
-      break;
-    case "command":
-      console.error(`  The OpenShell readiness request for sandbox '${sandboxName}' failed.`);
-      console.error(
-        `  Run \`${CLI_NAME} ${sandboxName} status\` to inspect the failure before retrying.`,
-      );
-      break;
-  }
-  console.error(`  ${error.message}`);
-  process.exit(1);
+function outputShowsGatewayUnavailable(output = ""): boolean {
+  return GATEWAY_UNAVAILABLE_RE.test(output);
 }
 
 // Fail fast with Docker-outage guidance instead of polling to the readiness
@@ -1214,7 +1187,10 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
 type WaitForSandboxReadyOptions = {
   allowInitialErrorAfterStart?: boolean;
   allowDockerRuntimeInspection?: boolean;
-  observer?: OpenShellSandboxObserver;
+  captureSandboxList?: (
+    args: string[],
+    options: { readonly ignoreError: true; readonly timeout: number },
+  ) => ReturnType<typeof captureOpenshell>;
   defaultTimeoutSec?: number;
   retryCommand?: string;
   successLogs?: readonly string[];
@@ -1236,20 +1212,17 @@ const START_INITIAL_ERROR_GRACE_POLLS = 10;
 export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
 
 /** Wait for a sandbox to become ready, exiting with recovery guidance on terminal failure. */
-export async function waitForSandboxReadyOrExit(
+export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
     allowInitialErrorAfterStart = false,
     allowDockerRuntimeInspection = true,
-    observer = createCliOpenShellSandboxObserver({
-      capture: captureOpenshell,
-      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    }),
+    captureSandboxList = captureOpenshell,
     defaultTimeoutSec = 120,
     retryCommand = "connect",
     successLogs = [],
   }: WaitForSandboxReadyOptions = {},
-): Promise<void> {
+): void {
   const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
   let timeout = defaultTimeoutSec;
   if (rawTimeout !== undefined) {
@@ -1268,26 +1241,27 @@ export async function waitForSandboxReadyOrExit(
   const gatewayName = getSandboxTargetGatewayName(sandboxName);
   const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
   const remainingMs = () => Math.max(1, deadline - Date.now());
-  const observeSandbox = async (): Promise<OpenShellSandboxObservation | null> => {
+  const runSandboxList = (): SandboxListProbe => {
     // Gateway selection is process-global and another CLI can change it while
     // this command waits. Pin each poll to the registry-recorded owner so a
     // same-named sandbox on a sibling gateway cannot satisfy readiness.
-    const result = await observer.listSandboxes({
-      target: namedOpenShellGateway(gatewayName),
-      timeoutMs: remainingMs(),
+    const result = captureSandboxList(["sandbox", "list", "-g", gatewayName], {
+      ignoreError: true,
+      timeout: remainingMs(),
     });
-    if (!result.ok) {
-      if (result.error.kind === "timeout" && Date.now() >= deadline) return null;
-      failConnectReadinessObservation(sandboxName, result.error);
-    }
-    return result.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
+    return { status: result.status, output: result.output };
   };
 
-  const initial = await observeSandbox();
-  if (initial?.readiness === "ready") return;
+  const listProbe = runSandboxList();
+  const listCommandFailed = listProbe.status !== 0;
+  if (listCommandFailed && outputShowsGatewayUnavailable(listProbe.output)) {
+    failConnectReadinessGatewayUnavailable(sandboxName, listProbe.output);
+  }
+  const list = listProbe.output;
+  if (isSandboxReady(list, sandboxName)) return;
 
-  const status = initial?.phase ?? null;
-  if (status && /^unknown$/i.test(status)) {
+  const status = parseSandboxStatus(list, sandboxName);
+  if (!listCommandFailed && status && /^unknown$/i.test(status)) {
     failIfGatewayBlocksConnectReadiness(sandboxName);
   }
   let remainingInitialErrorGracePolls =
@@ -1309,18 +1283,21 @@ export async function waitForSandboxReadyOrExit(
   while (Date.now() < deadline) {
     const sleepFor = Math.min(interval, remainingMs() / 1000);
     if (sleepFor <= 0) break;
-    if (process.env.VITEST !== "true" && process.env.NEMOCLAW_TEST_NO_SLEEP !== "1") {
-      await new Promise<void>((resolve) => setTimeout(resolve, sleepFor * 1000));
+    spawnSync("sleep", [String(sleepFor)]);
+    const pollProbe = runSandboxList();
+    const pollCommandFailed = pollProbe.status !== 0;
+    if (pollCommandFailed && outputShowsGatewayUnavailable(pollProbe.output)) {
+      failConnectReadinessGatewayUnavailable(sandboxName, pollProbe.output);
     }
-    const poll = await observeSandbox();
+    const poll = pollProbe.output;
     const elapsed = elapsedSec();
-    if (poll?.readiness === "ready") {
+    if (isSandboxReady(poll, sandboxName)) {
       ready = true;
       break;
     }
-    const parsedCur = poll?.phase ?? null;
+    const parsedCur = parseSandboxStatus(poll, sandboxName);
     const cur = parsedCur || "unknown";
-    if (parsedCur && /^unknown$/i.test(parsedCur)) {
+    if (!pollCommandFailed && parsedCur && /^unknown$/i.test(parsedCur)) {
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
@@ -1509,7 +1486,7 @@ async function runConnectEntryPreflight(
           gatewayRecovery: probeOnly ? "observe" : "recover",
         }),
       );
-      const livePhase = live.phase ?? null;
+      const livePhase = parseSandboxPhase(live.output || "");
       if (
         livePhase &&
         livePhase !== "Ready" &&
@@ -1634,14 +1611,11 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
       }
       // Ensure Ollama auth proxy is running (recovers from host reboots)
       if (!hermesPortable) ensureOllamaAuthProxy();
-      await waitForSandboxReadyOrExit(sandboxName, {
+      waitForSandboxReadyOrExit(sandboxName, {
         allowDockerRuntimeInspection: !hermesPortable,
-        observer: hermesPortable
-          ? createCliOpenShellSandboxObserver({
-              capture: (args, captureOptions) =>
-                captureHermesPortableOpenShell(sandboxName, args, captureOptions),
-              defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-            })
+        captureSandboxList: hermesPortable
+          ? (args, captureOptions) =>
+              captureHermesPortableOpenShell(sandboxName, args, captureOptions)
           : undefined,
         successLogs: ["  Sandbox is ready. Connecting..."],
       });
@@ -1809,15 +1783,12 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 startStoppedSandboxContainerForProbeRecovery(sandboxName),
               );
             }
-            await probeTiming!.measureAsync("gateway", () =>
+            probeTiming!.measure("gateway", () =>
               waitForSandboxReadyOrExit(sandboxName, {
                 allowDockerRuntimeInspection: !hermesPortable,
-                observer: hermesPortable
-                  ? createCliOpenShellSandboxObserver({
-                      capture: (args, captureOptions) =>
-                        captureHermesPortableOpenShell(sandboxName, args, captureOptions),
-                      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-                    })
+                captureSandboxList: hermesPortable
+                  ? (args, captureOptions) =>
+                      captureHermesPortableOpenShell(sandboxName, args, captureOptions)
                   : undefined,
                 defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
                 retryCommand: "connect --probe-only",

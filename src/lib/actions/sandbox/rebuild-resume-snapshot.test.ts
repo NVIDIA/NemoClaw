@@ -121,12 +121,7 @@ describe("rebuild resume snapshot repair", () => {
         attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-        result: {
-          ok: true,
-          value: {
-            sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-          },
-        },
+        result: { status: 0, output: "alpha Ready" },
         recoveryAttempted: false,
         recoverySucceeded: false,
       }),

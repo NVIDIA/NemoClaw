@@ -162,9 +162,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
       },
       hydrateCredentialEnv: () => "host-provider-key",
       runOpenshell: providerRuntime([]),
-      sandboxInventory: {
-        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
-      },
+      sandboxListOutput: "alpha Error",
     });
     configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
       endpointUrl: "https://inference.example.test/v1",

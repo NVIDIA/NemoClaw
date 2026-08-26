@@ -3,7 +3,6 @@
 
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
-import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import {
   agentDefs,
@@ -95,7 +94,7 @@ export type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
-  sandboxInventory?: OpenShellSandboxInventory;
+  sandboxListOutput?: string;
   backupPolicyPresets?: string[];
   gatewayPresets?: string[];
   verificationUnavailableAfterPresetRemoval?: boolean;
@@ -240,14 +239,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: {
-      ok: true,
-      value: overrides.sandboxInventory ?? {
-        sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
-      },
-    },
-    recoveryAttempted: false,
-    recoverySucceeded: false,
+    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });

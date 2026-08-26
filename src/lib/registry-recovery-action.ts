@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveOpenshell } from "./adapters/openshell/resolve";
-import { createCliOpenShellSandboxObserver } from "./adapters/openshell/sandbox-observer-cli";
-import { namedOpenShellGateway } from "./adapters/openshell/sandbox-observer";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "./core/ports";
@@ -18,6 +16,7 @@ import {
 import { withGatewayRouteMutationLock } from "./inference/gateway-route-mutation-lock";
 import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
+import { parseLiveSandboxEntries } from "./runtime-recovery";
 import * as onboardSession from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
@@ -334,20 +333,18 @@ async function recoverRegistryFromLiveGateway(
   // Provisioning or absent from the live gateway (#7105). `-g` targets the
   // named gateway without selecting it, matching the readiness poll in
   // `connect` and `captureNamedGatewaySandboxListReadOnly`.
-  const liveList = await createCliOpenShellSandboxObserver({
-    capture: captureOpenshell,
-    defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-  }).listSandboxes({
-    target: namedOpenShellGateway(gatewayName),
-    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+  const liveList = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   // Only trust the output of a clean `sandbox list`. On a non-zero/failed probe
-  // (timeout, transport error) the typed observer returns an error instead of
-  // treating command diagnostics as sandbox rows.
-  if (!liveList.ok) {
+  // (timeout, transport error) OpenShell may print free-form text whose first
+  // token parseLiveSandboxEntries would otherwise mistake for a sandbox name.
+  if (liveList.status !== 0) {
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
   }
-  for (const { name, phase } of liveList.value.sandboxes) {
+  const liveEntries = parseLiveSandboxEntries(liveList.output);
+  for (const { name, phase } of liveEntries) {
     const metadata = metadataByName.get(name) || undefined;
     if (readOnly) {
       // Unseeded recovery: surface the live sandbox for THIS `list` only and do

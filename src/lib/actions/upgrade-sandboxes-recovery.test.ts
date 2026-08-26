@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { parseCliOpenShellSandboxInventory } from "../adapters/openshell/sandbox-observer-cli";
 import * as coreVersion from "../core/version";
 import * as sandboxList from "../openshell-sandbox-list";
 import * as sandboxVersion from "../sandbox/version";
@@ -39,10 +38,6 @@ function makeManifest(sandboxName: string, agentType: ManifestAgentType = "openc
     customPolicies: [],
     snapshotVersion: 1,
   };
-}
-
-function sandboxInventory(output: string) {
-  return parseCliOpenShellSandboxInventory(output);
 }
 
 function createRecoveryHarness(
@@ -96,17 +91,19 @@ function createRecoveryHarness(
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
-    .mockResolvedValue(
-      sandboxInventory(options.liveOutput ?? names.map((name) => `${name} Error`).join("\n")),
-    );
+    .mockResolvedValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
   // #7279: check mode observes gateways through the read-only helper instead of
   // the recovering preflight; keep both stubbed so a check-mode run never hits
   // the real openshell adapter.
   const readOnlyListSpy = vi
     .spyOn(sandboxList, "captureNamedGatewaySandboxListReadOnly")
-    .mockResolvedValue(
-      sandboxInventory(options.liveOutput ?? names.map((name) => `${name} Error`).join("\n")),
-    );
+    .mockReturnValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     defaultSandbox: null,
     sandboxes: names.map((name) => ({
@@ -717,8 +714,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       staleNames: ["reconnecting-box"],
     });
     harness.liveListSpy
-      .mockResolvedValueOnce(sandboxInventory("other-box Ready"))
-      .mockResolvedValueOnce(sandboxInventory("reconnecting-box Ready"));
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "reconnecting-box Ready" });
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
@@ -780,8 +777,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       liveOutput: "other-box Ready",
     });
     harness.liveListSpy
-      .mockResolvedValueOnce(sandboxInventory("other-box Ready"))
-      .mockResolvedValueOnce(sandboxInventory("still-other-box Ready"));
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "still-other-box Ready" });
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
@@ -804,8 +801,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     const harness = createRecoveryHarness(["healthy-box"], { gatewayPort: 12345 });
     harness.liveListSpy.mockImplementation(async (...args: unknown[]) =>
       (args[1] as { gatewayName?: string } | undefined)?.gatewayName === targetGatewayName
-        ? sandboxInventory("healthy-box Ready")
-        : sandboxInventory("default-other-box Ready"),
+        ? { status: 0, output: "healthy-box Ready" }
+        : { status: 0, output: "default-other-box Ready" },
     );
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
@@ -871,8 +868,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       staleNames: ["reconnecting-box"],
     });
     harness.liveListSpy
-      .mockResolvedValueOnce(sandboxInventory("other-box Ready"))
-      .mockResolvedValueOnce(sandboxInventory("reconnecting-box Ready"));
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "reconnecting-box Ready" });
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
@@ -891,8 +888,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
         liveOutput: "other-box Ready",
       });
       harness.liveListSpy
-        .mockResolvedValueOnce(sandboxInventory("other-box Ready"))
-        .mockResolvedValueOnce(sandboxInventory(`orphaned-box ${phase}`));
+        .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+        .mockResolvedValueOnce({ status: 0, output: `orphaned-box ${phase}` });
 
       await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 

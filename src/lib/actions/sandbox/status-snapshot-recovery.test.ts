@@ -55,7 +55,6 @@ const healthyRoute: SandboxInferenceRouteHealth = {
 function recoveredLookup() {
   return Promise.resolve({
     state: "present",
-    phase: "Ready",
     output: "Phase: Ready",
     recoveredSandbox: true,
     recoverySandboxVia: "started-stopped-original",
@@ -91,7 +90,6 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
       reconcile: () =>
         Promise.resolve({
           state: "present" as const,
-          phase: "Ready",
           output: "Phase: Ready",
         }),
     };
@@ -113,7 +111,6 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
       reconcile: () =>
         Promise.resolve({
           state: "present" as const,
-          phase: "Ready",
           output: "Phase: Ready",
         }),
     };
@@ -127,30 +124,29 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });
 
-  it.each(["Provisioning", "Failed"])(
-    "keeps the existing %s phase diagnosis ahead of markerless recovery (#7824)",
-    async (phase) => {
-      const deps = {
-        ...snapshotDeps({
-          checked: true,
-          wasRunning: false,
-          recovered: false,
-          forwardRecovered: false,
+  it.each([
+    "Provisioning",
+    "Failed",
+  ])("keeps the existing %s phase diagnosis ahead of markerless recovery (#7824)", async (phase) => {
+    const deps = {
+      ...snapshotDeps({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      }),
+      reconcile: () =>
+        Promise.resolve({
+          state: "present" as const,
+          output: `Phase: ${phase}`,
         }),
-        reconcile: () =>
-          Promise.resolve({
-            state: "present" as const,
-            phase,
-            output: `Phase: ${phase}`,
-          }),
-      };
+    };
 
-      const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-      expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
-      expect(snapshot.lookup.state).toBe("present");
-    },
-  );
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
+  });
 
   it("keeps a host preflight failure ahead of markerless recovery (#7824)", async () => {
     const deps = {
@@ -163,7 +159,6 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
       reconcile: () =>
         Promise.resolve({
           state: "present" as const,
-          phase: "Ready",
           output: "Phase: Ready",
         }),
     };

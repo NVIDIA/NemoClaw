@@ -147,11 +147,9 @@ function makePassthroughDeps(
     getSandbox: ((name) => ({ name, agent: "openclaw", ...route })) as NonNullable<
       AgentPassthroughDeps["getSandbox"]
     >,
-    ensureLive: (async () => ({
-      state: "present",
-      phase: "Ready",
-      output: "Phase: Ready",
-    })) as NonNullable<AgentPassthroughDeps["ensureLive"]>,
+    ensureLive: (async () => ({ state: "present", output: "Phase: Ready" })) as NonNullable<
+      AgentPassthroughDeps["ensureLive"]
+    >,
     execNonJson: ((): never => {
       events.push("dispatch");
       throw new Error("__exit:0");
