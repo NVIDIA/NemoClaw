@@ -88,6 +88,16 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
   };
 }
 
+function withProcessPlatform(platform: NodeJS.Platform, operation: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  try {
+    operation();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
@@ -158,6 +168,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("continues forward cleanup after a trusted process query fails (#8178)", async () => {
     const events: string[] = [];
+    let processExitChecks = 0;
     const result = await runWindowsMxcForwardCleanup({
       childWasRunning: true,
       sandboxDeleteAccepted: true,
@@ -170,7 +181,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       },
       waitForProcessExit: async () => {
         events.push("wait-for-process-exit");
-        return true;
+        processExitChecks += 1;
+        return processExitChecks > 1;
       },
       waitForListenerClosed: async () => {
         events.push("wait-for-listener-close");
@@ -179,6 +191,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
 
     expect(events).toEqual([
+      "wait-for-process-exit",
       "stop-child",
       "query-trusted-process",
       "wait-for-process-exit",
@@ -191,6 +204,41 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toEqual(new Error("injected process query failure"));
+  });
+
+  it("allows a bounded natural forward exit after sandbox deletion (#8178)", async () => {
+    const events: string[] = [];
+    const result = await runWindowsMxcForwardCleanup({
+      childWasRunning: true,
+      sandboxDeleteAccepted: true,
+      stopChild: async () => {
+        events.push("stop-child");
+      },
+      terminateTrustedProcessIfAlive: async () => {
+        events.push("query-trusted-process");
+        return false;
+      },
+      waitForProcessExit: async () => {
+        events.push("wait-for-process-exit");
+        return true;
+      },
+      waitForListenerClosed: async () => {
+        events.push("wait-for-listener-close");
+        return true;
+      },
+    });
+
+    expect(events).toEqual([
+      "wait-for-process-exit",
+      "query-trusted-process",
+      "wait-for-listener-close",
+    ]);
+    expect(result).toEqual({
+      emergencyTerminationNeeded: false,
+      failures: [],
+      listenerStopped: true,
+      processStopped: true,
+    });
   });
 
   it("records the retained sandbox when cleanup cannot confirm deletion (#8178)", () => {
@@ -244,6 +292,47 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
       /must be a child of the OpenClaw artifact root/u,
     );
+  });
+
+  it("rejects a nested OpenClaw artifact root before qualification (#8178)", () => {
+    const { environment, root } = fixture();
+    const openClawRoot = path.join(root, "openclaw");
+    const nestedRoot = path.join(root, "nested", "openclaw");
+    fs.mkdirSync(path.dirname(nestedRoot), { recursive: true });
+    fs.renameSync(openClawRoot, nestedRoot);
+    environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT = nestedRoot;
+    environment.NEMOCLAW_WINDOWS_MXC_NODE = path.join(nestedRoot, "node", "node.exe");
+    environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY = path.join(
+      nestedRoot,
+      "runtime",
+      "openclaw.mjs",
+    );
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /artifact root must be a direct child of the qualification work root/u,
+    );
+  });
+
+  it("rejects an OpenClaw artifact root that is the work root parent (#8178)", () => {
+    const { environment, root } = fixture();
+    const openClawRoot = path.join(root, "openclaw");
+    const workRoot = path.join(openClawRoot, "work");
+    fs.mkdirSync(workRoot);
+    environment.NEMOCLAW_WINDOWS_MXC_WORK_ROOT = workRoot;
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /artifact root must be a direct child of the qualification work root/u,
+    );
+  });
+
+  it("rejects a nested Windows qualification work root during parsing (#8178)", () => {
+    const { environment } = fixture();
+
+    withProcessPlatform("win32", () => {
+      expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+        /work root must be a drive root/u,
+      );
+    });
   });
 
   it("rejects moving aliases instead of exact digest and revision identities (#8178)", () => {
@@ -461,6 +550,10 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     );
     expect(config).toContain("pc_relay_target_port = 18889");
     expect(config).toContain('"NEMOCLAW_MXC_E2E_TOKEN"');
+    expect(config).toContain('"TEMP=C:/probe/share/temp"');
+    expect(config).toContain('"TMP=C:/probe/share/temp"');
+    expect(config).not.toMatch(/^\s*"TEMP",$/mu);
+    expect(config).not.toMatch(/^\s*"TMP",$/mu);
     expect(config).not.toContain("credential-value");
     expect(config).not.toContain("--token");
   });

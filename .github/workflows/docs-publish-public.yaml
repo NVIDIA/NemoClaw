@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs / Publish Release Docs
+name: Docs / Release Site
 
 on:
   push:
@@ -20,6 +20,7 @@ env:
 
 jobs:
   publish:
+    name: Publish
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: docs-public

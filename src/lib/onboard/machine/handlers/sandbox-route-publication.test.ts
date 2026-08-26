@@ -100,7 +100,7 @@ describe("sandbox route publication", () => {
     });
   });
 
-  it("rejects Ready sandbox reuse after route reservation ownership changes", async () => {
+  it("passes route ownership to the verified create boundary after reservation ownership changes", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
     const registryEntry: SandboxEntry = {
@@ -113,9 +113,13 @@ describe("sandbox route publication", () => {
     const finalizeSandboxRouteReservation = vi.fn(
       (_name: string, sessionId: string) => sessionId === registryEntry.reservationSessionId,
     );
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      expect(args[14]).toEqual({ sessionId: session.sessionId });
+      throw new Error("route reservation changed at the verified create boundary");
+    });
     const { deps, calls } = createDeps(
       {
-        createSandbox: vi.fn(async () => "saved"),
+        createSandbox,
         finalizeSandboxRouteReservation,
         getSandboxReuseState: () => "ready",
         getSandboxRegistryEntry: () => registryEntry,
@@ -129,15 +133,11 @@ describe("sandbox route publication", () => {
         resume: true,
         sandboxName: "saved",
       }),
-    ).rejects.toThrow("exit 1");
+    ).rejects.toThrow("route reservation changed at the verified create boundary");
 
-    expect(calls.error).toHaveBeenCalledWith(
-      "  Error: sandbox 'saved' inference route reservation changed while onboarding was in progress. Retry onboarding.",
-    );
-    expect(finalizeSandboxRouteReservation).toHaveBeenCalledExactlyOnceWith(
-      "saved",
-      session.sessionId,
-    );
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(finalizeSandboxRouteReservation).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(registryEntry).toMatchObject({
       pendingRouteReservation: true,
       reservationSessionId: "session-new",
