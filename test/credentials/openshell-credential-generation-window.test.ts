@@ -18,6 +18,7 @@ import {
   credentialWindowRequestId,
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
+  parseCredentialWindowRequestObservation,
 } from "../e2e/live/openshell-credential-generation-window.ts";
 
 describe("OpenShell exact-main credential generation-window proof", () => {
@@ -43,8 +44,9 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script.indexOf(snapshot)).toBeLessThan(script.indexOf("while (Date.now() < deadline"));
     expect(script).toContain('"^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$"');
     expect(script).toContain('authorization: "Bearer " + credentialPlaceholder');
-    expect(script).toContain('response.statusCode === 200 ? "allowed" : "denied"');
-    expect(script).toContain('outbound.on("error", () => resolve("denied"))');
+    expect(script).toContain('outcome: statusCode === 200 ? "allowed" : "denied"');
+    expect(script).toContain("errorCode: normalizeErrorCode(error)");
+    expect(script).toContain('errorCode: "TIMEOUT"');
     expect(script).toContain("outbound.setTimeout(30_000");
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_PATHS.acknowledgement));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry));
@@ -55,6 +57,74 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.stop));
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
+  });
+
+  it("accepts bounded request diagnostics and rejects raw error text (#10155)", () => {
+    expect(
+      parseCredentialWindowRequestObservation(
+        JSON.stringify({
+          step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+          outcome: "allowed",
+          statusCode: 200,
+          errorCode: null,
+        }),
+      ),
+    ).toEqual({
+      step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+      outcome: "allowed",
+      statusCode: 200,
+      errorCode: null,
+    });
+    expect(
+      parseCredentialWindowRequestObservation(
+        JSON.stringify({
+          step: CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+          outcome: "denied",
+          statusCode: 503,
+          errorCode: null,
+        }),
+      ),
+    ).toEqual({
+      step: CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+      outcome: "denied",
+      statusCode: 503,
+      errorCode: null,
+    });
+    expect(
+      parseCredentialWindowRequestObservation(
+        JSON.stringify({
+          step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+          outcome: "denied",
+          statusCode: null,
+          errorCode: "ECONNRESET",
+        }),
+      ),
+    ).toEqual({
+      step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+      outcome: "denied",
+      statusCode: null,
+      errorCode: "ECONNRESET",
+    });
+    expect(
+      parseCredentialWindowRequestObservation(
+        JSON.stringify({
+          step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+          outcome: "denied",
+          statusCode: null,
+          errorCode: "Error: fixture credential leaked",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseCredentialWindowRequestObservation(
+        JSON.stringify({
+          step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+          outcome: "allowed",
+          statusCode: 401,
+          errorCode: null,
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("builds explicit bounded expiry and attached-key-removal updates", () => {
@@ -105,6 +175,8 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry");
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval");
     expect(liveTarget).toContain('["sandbox", "provider", "detach"');
+    expect(liveTarget).toContain("expectSandboxProviderAttachment");
+    expect(liveTarget).not.toContain('expectExitZero(detach, "detach credential-window provider")');
     expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "restart", SERVER_NAME]');
     expect(liveTarget).toContain('[SANDBOX_NAME, "rebuild", "--yes"]');
     expect(liveTarget).toContain('!request.auth.includes("openshell:resolve:env")');
