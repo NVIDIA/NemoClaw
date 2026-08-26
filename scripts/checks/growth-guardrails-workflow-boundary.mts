@@ -54,7 +54,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
         "runs-on": "ubuntu-latest",
-        "timeout-minutes": 15,
+        "timeout-minutes": 5,
         steps: [
           {
             name: "Check out the trusted base revision",
@@ -72,11 +72,8 @@ export function validateGrowthGuardrailsWorkflowBoundary(
             name: "Test codebase growth guardrails",
             env: {
               NEMOCLAW_GROWTH_PR: "1",
-              GH_TOKEN: "${{ github.token }}",
               PR_NUMBER: "${{ github.event.pull_request.number }}",
-              REPO: "${{ github.repository }}",
               BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-              HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}",
               HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
             },
             run: TEST_COMMAND + "\n",
