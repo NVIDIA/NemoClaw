@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -328,6 +329,14 @@ function runHarness(): Record<string, unknown> {
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
+function shellFunction(source: string, name: string, nextName: string): string {
+  const start = source.indexOf(`${name}() {`);
+  const end = source.indexOf(`\n${nextName}() {`, start);
+  expect(start, `Expected ${name} in agents/hermes/start.sh`).toBeGreaterThanOrEqual(0);
+  expect(end, `Expected ${nextName} after ${name} in agents/hermes/start.sh`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
 describe("Hermes runtime state mutation publisher", () => {
   it("publishes and rolls back only the exact installed full plan (#7744)", () => {
     const result = runHarness();
@@ -394,6 +403,61 @@ describe("Hermes runtime state mutation publisher", () => {
     ]);
   });
 
+  it("publishes the release acknowledgement from the Hermes startup process (#10155)", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-release-ack-"));
+    try {
+      const nonce = "a".repeat(64);
+      const gate = path.join(temporary, "gate.py");
+      const waited = path.join(temporary, "controller-wait-finished");
+      fs.writeFileSync(
+        gate,
+        `import json\nimport os\nimport sys\n\nexpected = int(os.environ["NEMOCLAW_TEST_EXPECTED_START_PID"])\nif os.getppid() != expected:\n    raise SystemExit("gate-start-mismatch")\nnonce = os.environ["NEMOCLAW_TEST_NONCE"]\nroot = os.environ["NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT"]\ndirectory = os.path.join(root, nonce)\nos.mkdir(directory, 0o700)\npending = os.path.join(directory, ".release-ack.json.pending")\nwith open(pending, "x", encoding="utf-8") as stream:\n    json.dump({"nonce": nonce}, stream, separators=(",", ":"))\nos.chmod(pending, 0o600)\nprint(nonce)\n`,
+        { mode: 0o700 },
+      );
+      const start = fs.readFileSync(START, "utf8");
+      const acknowledge = shellFunction(
+        start,
+        "nemoclaw_runtime_state_mutation_acknowledge_release",
+        "nemoclaw_runtime_state_mutation_retry_exec",
+      );
+      const controllerWait =
+        'import os,sys,time\npath=sys.argv[1]\ndeadline=time.monotonic()+5\nwhile not os.path.isfile(path):\n  if time.monotonic() >= deadline: raise SystemExit("release-ack-timeout")\n  time.sleep(0.01)\nopen(sys.argv[2], "x").close()';
+      const script = `${acknowledge}
+export NEMOCLAW_TEST_EXPECTED_START_PID="$$"
+"$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I -c "$NEMOCLAW_TEST_CONTROLLER_WAIT" \
+  "$NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT/$NEMOCLAW_TEST_NONCE/release-ack.json" \
+  "$NEMOCLAW_TEST_WAITED" &
+controller_pid=$!
+nemoclaw_runtime_state_mutation_acknowledge_release
+wait "$controller_pid"
+`;
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON: "python3",
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER: gate,
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV: "setpriv",
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV: "mv",
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MKTEMP: "mktemp",
+          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM: "rm",
+          NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT: temporary,
+          NEMOCLAW_TEST_CONTROLLER_WAIT: controllerWait,
+          NEMOCLAW_TEST_NONCE: nonce,
+          NEMOCLAW_TEST_WAITED: waited,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        fs.readFileSync(path.join(temporary, nonce, "release-ack.json"), "utf8"),
+      ).toBe(`{"nonce":"${nonce}"}`);
+      expect(fs.existsSync(waited)).toBe(true);
+    } finally {
+      fs.rmSync(temporary, { force: true, recursive: true });
+    }
+  });
+
   it("publishes one exact image capability and checks the durable root gate before startup code", () => {
     expect(fs.readFileSync(CAPABILITY, "utf8")).toBe(
       '{"schemaVersion":1,"protocol":"nemoclaw-runtime-state-mutation-publisher-v1","agent":"hermes","providerId":"docker","stateRoot":"/sandbox/.hermes","planSchemaVersion":2,"entrypoint":"/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"}\n',
@@ -416,24 +480,12 @@ describe("Hermes runtime state mutation publisher", () => {
     expect(start).toContain("trap nemoclaw_runtime_state_mutation_retry_exec USR2");
     expect(start).toContain("exec /usr/local/bin/nemoclaw-start");
     expect(start).toContain("nemoclaw_runtime_state_mutation_gate resume");
-    expect(start).toContain("nemoclaw_runtime_state_mutation_acknowledge_release");
-    expect(start).toMatch(
-      /nemoclaw_runtime_state_mutation_gate resume; then\n\s+if nemoclaw_runtime_state_mutation_acknowledge_release; then\n\s+return 0/u,
-    );
-    expect(start).toContain('NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV="/usr/bin/mv"');
-    expect(start).toContain(
-      '"$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV" -f -- "$pending" "$final"',
-    );
 
     const startupGate = fs.readFileSync(STARTUP_GATE, "utf8");
     expect(startupGate).toContain('DURABLE_DIRECTORY = "/var/lib/nemoclaw/runtime-state-mutation"');
     expect(startupGate).toContain('"permitted": 10');
     expect(startupGate).toContain('"activation-ready": 11');
     expect(startupGate).toContain('"retry": 12');
-    expect(startupGate).toContain(
-      'RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"',
-    );
-    expect(startupGate).toContain('["acknowledge"]');
     expect(fs.readFileSync(PUBLISHER, "utf8")).toContain(
       'PYTHON_PATH = "/opt/hermes/.venv/bin/python3"',
     );

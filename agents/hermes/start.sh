@@ -31,12 +31,16 @@ readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON="/opt/hermes/.venv/bin/pyth
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER="/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV="/usr/bin/setpriv"
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV="/usr/bin/mv"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MKTEMP="/usr/bin/mktemp"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM="/usr/bin/rm"
 readonly NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT="/run/nemoclaw/runtime-state-mutation-startup"
 
 if [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" ] \
   || [ ! -f "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
   || [ -L "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
   || [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV" ] \
+  || [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MKTEMP" ] \
+  || [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" ] \
   || { [ "$EUID" -eq 0 ] && [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" ]; }; then
   printf '%s\n' '[SECURITY] Required runtime state mutation startup gate is unavailable.' >&2
   exit 1
@@ -56,16 +60,33 @@ nemoclaw_runtime_state_mutation_gate() {
 }
 
 nemoclaw_runtime_state_mutation_acknowledge_release() {
-  local nonce pending final
+  local nonce nonce_file pending final
+  nonce_file="$("$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MKTEMP" \
+    /tmp/nemoclaw-runtime-state-mutation-ack.XXXXXXXXXX)" || return 1
+  if [ ! -f "$nonce_file" ] || [ -L "$nonce_file" ]; then
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" -f -- "$nonce_file"
+    return 1
+  fi
   if [ "$EUID" -eq 0 ]; then
-    nonce="$("$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
       --reuid=sandbox --regid=sandbox --init-groups -- \
       "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
-      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge)" || return 1
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge >"$nonce_file" || {
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" -f -- "$nonce_file"
+      return 1
+    }
   else
-    nonce="$("$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
-      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge)" || return 1
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge >"$nonce_file" || {
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" -f -- "$nonce_file"
+      return 1
+    }
   fi
+  if ! IFS= read -r nonce <"$nonce_file"; then
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" -f -- "$nonce_file"
+    return 1
+  fi
+  "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM" -f -- "$nonce_file"
   if [ "${#nonce}" -ne 64 ]; then
     return 1
   fi

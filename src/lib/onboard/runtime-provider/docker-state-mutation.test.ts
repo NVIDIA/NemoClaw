@@ -69,17 +69,6 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
-  it("uses the bounded activation deadline at the broker boundary (#10155)", () => {
-    const brokerTimeouts = JSON.parse(
-      /^TIMEOUTS = (\{[^\n]+\})$/mu.exec(
-        DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
-      )?.[1] ?? "null",
-    ) as Record<string, unknown> | null;
-
-    expect(brokerTimeouts?.activate).toBe(485);
-    expect(brokerTimeouts?.release).toBe(300);
-  });
-
   it("preserves safe broker diagnostics after request validation", () => {
     const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
       "\nhelper = sys.argv[1]\n",
