@@ -291,7 +291,7 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*does not make a later name-based delete safe.*approved OpenShell recovery guidance`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison.*Contact the OpenShell administrator for an identity-bound recovery or removal procedure`,
               "u",
             ),
           ),
@@ -329,7 +329,7 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*does not make a later name-based delete safe`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison`,
               "u",
             ),
           ),

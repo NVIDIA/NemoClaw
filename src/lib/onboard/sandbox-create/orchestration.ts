@@ -184,8 +184,8 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Created, Evidenc
   const refuseAfterCreate = (validationError: unknown): never => {
     const compensationErrors = cleanupTemporarySources();
     const identityGuidance = exactIdentity
-      ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create; it does not make a later name-based delete safe. Follow approved OpenShell recovery guidance.`
-      : " OpenShell did not return a durable identity for comparison. Follow approved OpenShell recovery guidance.";
+      ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create. Do not delete the sandbox by name, even after this comparison. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.`
+      : " OpenShell did not return a durable identity for comparison. Do not delete the sandbox by name. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.";
     compensationErrors.push(
       new Error(
         `NemoClaw left sandbox '${input.sandboxName}' in place after policy authority validation failed because OpenShell can delete it only by mutable name.${identityGuidance}`,
