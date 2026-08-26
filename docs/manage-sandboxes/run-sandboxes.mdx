@@ -204,10 +204,11 @@ Release the exact fence when the investigation is complete.
 $$nemoclaw my-assistant quarantine release --fence-id <fence-id>
 ```
 
-Release validates the unchanged target authority and persists both the pre-release and final released receipts before it clears the fence.
+Release validates the unchanged target authority, then independently confirms that the exact workload remains stopped and sandbox access remains unavailable.
+Only after both observations succeed does it persist the pre-release and final released receipts and clear the fence.
 It never starts or recovers the sandbox.
 Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
-If release cannot validate the target or persist either receipt, it returns a non-zero result and keeps the fence active for retry.
+If release cannot validate the target, either observation fails or is inconclusive, or either receipt cannot be persisted, it returns a non-zero result and keeps the fence active for retry.
 
 Refer to [`$$nemoclaw <name> quarantine`](../../reference/commands#$$nemoclaw-name-quarantine) for flags and receipt details.
 

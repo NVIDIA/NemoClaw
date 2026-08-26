@@ -2020,8 +2020,8 @@ $$nemoclaw my-assistant quarantine release --fence-id <fence-id> [--json]
 
 The required `--fence-id <id>` value must match the active fence.
 NemoClaw validates that the runtime-provider authority still matches the fenced target.
-It preserves both the pre-release receipt and the final released receipt before it clears the fence.
-A receipt write failure or changed target authority stops release and leaves the fence active for retry.
+It then independently observes that the exact runtime remains stopped and OpenShell sandbox access remains unavailable before it writes either release receipt or clears the fence.
+A failed, inconclusive, or interrupted observation, receipt write failure, or changed target authority stops release and leaves the fence active for retry.
 
 A successful release exits `0` and leaves the sandbox stopped.
 Run `$$nemoclaw my-assistant start` separately when you intend to resume execution.
