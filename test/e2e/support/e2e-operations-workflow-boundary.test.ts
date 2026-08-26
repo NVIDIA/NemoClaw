@@ -491,14 +491,14 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const authentication = workflow.jobs["generate-matrix"].steps!.find(
         (step) => step.name === "Authenticate manual PR dispatch",
       )!;
-      const headSha = "a".repeat(40);
+      const candidateSha = "a".repeat(40);
       const baseSha = "b".repeat(40);
       const workflowSha = "c".repeat(40);
       const checkoutRepository = `${ownerLogin}/NemoClaw`;
       const prefix = [
         "curl() {",
         '  case "${@: -1}" in',
-        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${workflowSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
         "}",
@@ -515,7 +515,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             ...process.env,
             BASE_SHA: baseSha,
             CHECKOUT_REPOSITORY: checkoutRepository,
-            CHECKOUT_SHA: headSha,
+            CHECKOUT_SHA: candidateSha,
             EXPECTED_WORKFLOW_SHA: workflowSha,
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
@@ -578,7 +578,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expectedWorkflowCharacter,
       expectedStderr,
     ) => {
-      const apiHeadSha = "a".repeat(40);
       const apiBaseSha = "b".repeat(40);
       const workflowSha = "c".repeat(40);
       const workflow = readE2eOperationsWorkflow();
@@ -587,7 +586,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       )!;
       const prefix = [
         "curl() {",
-        `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${apiHeadSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${apiBaseSha}"}}'`,
+        `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${workflowSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${apiBaseSha}"}}'`,
         "}",
       ].join("\n");
       const result = spawnSync(
@@ -677,13 +676,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const authentication = workflow.jobs["generate-matrix"].steps!.find(
         (step) => step.name === "Authenticate manual PR dispatch",
       )!;
-      const headSha = "a".repeat(40);
+      const candidateSha = "a".repeat(40);
       const baseSha = "b".repeat(40);
       const workflowSha = "c".repeat(40);
       const prefix = [
         "curl() {",
         '  case "${@: -1}" in',
-        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${workflowSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
         "}",
@@ -697,7 +696,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             ...process.env,
             BASE_SHA: baseSha,
             CHECKOUT_REPOSITORY: checkoutRepository,
-            CHECKOUT_SHA: headSha,
+            CHECKOUT_SHA: candidateSha,
             EXPECTED_WORKFLOW_SHA: workflowSha,
             GITHUB_OUTPUT: "/dev/null",
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",

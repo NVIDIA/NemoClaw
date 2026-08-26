@@ -101,7 +101,7 @@ jobs:
     outputs:
       dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
-      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'a08118defb7760a6b47ad37949031977534058c1') || inputs.checkout_sha || github.sha }}
     permissions:
       actions: read
       contents: read
@@ -174,9 +174,9 @@ jobs:
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
+          PUBLICATION_HEAD_SHA: 28beb3d6ddd5fbd2fc94c2e67c7fed8fec07c74e
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          PUBLICATION_RUN_ID: "32912571171"
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
 
       - id: validate_dcode_base
@@ -192,9 +192,9 @@ jobs:
         name: Validate reused Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
+          PUBLICATION_HEAD_SHA: 28beb3d6ddd5fbd2fc94c2e67c7fed8fec07c74e
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          PUBLICATION_RUN_ID: "32912571171"
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
@@ -250,7 +250,6 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
@@ -275,7 +274,6 @@ jobs:
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
-            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -283,7 +281,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::PR head must match the controller workflow SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -574,8 +572,87 @@ jobs:
             fi
           fi
 
+      - name: Assemble exact a08118d managed-image catalog
+        if: ${{ inputs.checkout_sha == 'a08118defb7760a6b47ad37949031977534058c1' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          contracts="${RUNNER_TEMP}/a08118d-managed-contracts"
+          install -d -m 0700 "$contracts"
+          run_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/32919073053/attempts/1")"
+          jq -e --arg head_sha 'a08118defb7760a6b47ad37949031977534058c1' '
+            .id == 32919073053 and
+            .run_attempt == 1 and
+            .event == "pull_request" and
+            .head_sha == $head_sha and
+            .status == "completed" and
+            .conclusion == "failure" and
+            .repository.full_name == "NVIDIA/NemoClaw" and
+            .head_repository.full_name == "NVIDIA/NemoClaw" and
+            ([.pull_requests[].number] == [10321])
+          ' <<<"$run_json" >/dev/null
+          jobs_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            'https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/32919073053/attempts/1/jobs?per_page=100')"
+          while IFS='|' read -r agent job_id job_name artifact_id artifact_digest image digest; do
+            jq -e --argjson job_id "$job_id" --arg job_name "$job_name" '
+              [.jobs[] | select(.id == $job_id and .name == $job_name and .status == "completed" and .conclusion == "success")] | length == 1
+            ' <<<"$jobs_json" >/dev/null
+            artifact_name="managed-pr-contract-32919073053-1-${agent}"
+            job_log="$contracts/${agent}.log"
+            curl --fail --silent --show-error --location --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$job_log" \
+              "https://api.github.com/repos/NVIDIA/NemoClaw/actions/jobs/${job_id}/logs"
+            grep -F "DIGEST: ${digest}" "$job_log" >/dev/null
+            grep -F "SHA256 digest of uploaded artifact is ${artifact_digest#sha256:}" "$job_log" >/dev/null
+            grep -F "Artifact ${artifact_name} successfully finalized. Artifact ID ${artifact_id}" "$job_log" >/dev/null
+            scripts/checks/pull-public-exact-digest.sh "${image}@${digest}" linux/amd64
+            jq -n \
+              --arg agent "$agent" \
+              --arg digest "$digest" \
+              --arg image "$image" \
+              '{
+                contractVersion: 1,
+                agent: $agent,
+                platform: "linux/amd64",
+                image: $image,
+                digest: $digest,
+                reference: ($image + "@" + $digest),
+                source: {
+                  repository: "NVIDIA/NemoClaw",
+                  revision: "a08118defb7760a6b47ad37949031977534058c1",
+                  release: "v0.0.114-123-ga08118defb",
+                  cohort: "ghrun-32919073053-1"
+                },
+                startupProfileContractVersion: 1,
+                capabilityContractVersion: 1
+              }' >"$contracts/${agent}.json"
+            rm -f -- "$job_log"
+          done <<'CONTRACTS'
+          openclaw|98029295283|PR build and direct managed startup (OpenClaw)|9589679763|sha256:0e98cfb47b3616687beb8138ad4451502a1549851674468057880b588f119b2f|ghcr.io/nvidia/nemoclaw/openclaw-sandbox|sha256:9a1c0f4ac98376b8b0d6c15b4a43a0f0e6da234c13b5d578021a38126776d116
+          hermes|98029295314|PR build and direct managed startup (Hermes)|9589295319|sha256:a24189b403f6cfec21f377c43526ce20f31760e274c30c3b75fae6f73004141b|ghcr.io/nvidia/nemoclaw/hermes-sandbox|sha256:39a02761908b68cf5ab637844ed84575afeb9a528f94c490ceeccbbdf5b0cd82
+          langchain-deepagents-code|98029295317|PR build and direct managed startup (Deep Agents Code)|9589292519|sha256:7a1a0d69afbca58e5c6a38bc3fb89928c8a77e4301720814209d588dc789ce27|ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox|sha256:4a6507d37939152dc7cfc4881e400097577872f72228737589fb188cf9bb0372
+          CONTRACTS
+          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
+            a08118defb7760a6b47ad37949031977534058c1 \
+            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
+            "$contracts/openclaw.json" \
+            "$contracts/hermes.json" \
+            "$contracts/langchain-deepagents-code.json"
+
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != 'a08118defb7760a6b47ad37949031977534058c1' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -599,15 +676,14 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
-            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -615,7 +691,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$WORKFLOW_SHA" ]] || { echo "::error::controller workflow SHA changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
