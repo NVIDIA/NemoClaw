@@ -8,12 +8,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
+  captureSandboxBasePolicy,
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError as isExternalAuthorityRefusalError,
   isPolicyAuthorityRefusalError as isAuthorityRefusalError,
@@ -23,6 +26,7 @@ import {
 } from "../adapters/openshell/policy-authority";
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
+import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -33,10 +37,10 @@ import {
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
-import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { resolveGatewayPortFromName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
-import { ROOT, run, runCapture, runCaptureEx } from "../runner";
+import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import { redact } from "../security/redact";
 import * as registry from "../state/registry";
@@ -53,13 +57,12 @@ import {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
+import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
-  inspectGatewayPresetNames,
-  inspectPresetContentGatewayState,
-  policyValuesEqual,
-} from "./gateway-state";
-import {
+  assertNemoClawPolicyCreationReceiptMatches,
+  type NemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
+  parseNemoClawPolicyCreationReceipt,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
@@ -419,7 +422,7 @@ function getPresetValidationWarning(presetName: string): string | null {
   if (!label) return null;
   const lines = [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
-    `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
+    `To actually enable ${label} messaging, re-run '${CLI_NAME} onboard' and select ${label}`,
     "in the messaging channels step. Channel setup, pairing, and runtime",
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
@@ -498,7 +501,7 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 // whyNotSourceFix: NemoClaw supports CLI releases whose process output is the
 // only available boundary, including versionless network_policies bodies.
 // regressionTest: nemoclaw/src/shared/openshell-policy-boundary.test.ts and
-// test/policy-mutation-read-failure.test.ts.
+// test/runtime/policy/policy-mutation-read-failure.test.ts.
 // removalCondition: remove this fail-soft adapter when every caller consumes a
 // typed OpenShell policy API.
 function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
@@ -591,39 +594,48 @@ export interface PolicyMutationAuthority {
   readonly authorityRecordedNow: boolean;
   readonly gatewayName: string;
   readonly inspection: SandboxPolicyAuthorityInspection;
+  readonly policyCreationReceipt?: NemoClawPolicyCreationReceipt | null;
 }
 
 export const isPolicyAuthorityRefusalError = isAuthorityRefusalError;
 export const isExternalPolicyAuthorityRefusalError = isExternalAuthorityRefusalError;
 
-function inspectLivePolicyAuthority(
+interface LivePolicyBoundary {
+  readonly sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly inspection: SandboxPolicyAuthorityInspection;
+}
+
+function inspectLivePolicyBoundary(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
-): {
-  sandbox: ReturnType<typeof registry.getSandbox>;
-  authority: PolicyMutationAuthority;
-} {
+): LivePolicyBoundary {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
     sandbox = registry.getSandbox(sandboxName);
   } catch {
     throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: sandbox policy authority is unavailable.`,
+      `Refusing to ${operation}: sandbox '${sandboxName}' policy authority is unavailable.`,
+    );
+  }
+  if (!sandbox) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: sandbox '${sandboxName}' policy authority is unavailable.`,
     );
   }
   let recordedGatewayName: string | null;
   try {
-    recordedGatewayName = sandbox ? resolveSandboxGatewayName(sandbox) : null;
+    recordedGatewayName = resolveSandboxGatewayName(sandbox);
   } catch {
     throw new PolicyAuthorityRefusalError(
       `Refusing to ${operation}: the recorded sandbox gateway is unavailable or invalid.`,
     );
   }
   if (recordedGatewayName && requestedGatewayName && requestedGatewayName !== recordedGatewayName) {
-    throw new Error(
-      `Refusing to ${operation}: sandbox '${sandboxName}' is recorded on gateway ` +
-        `'${recordedGatewayName}', not '${requestedGatewayName}'.`,
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the requested gateway does not match the recorded sandbox gateway.`,
     );
   }
   let gatewayName: string;
@@ -638,16 +650,167 @@ function inspectLivePolicyAuthority(
   const inspection = inspectSandboxPolicyAuthority({
     sandboxName,
     gatewayName,
-    runCaptureEx,
   });
-  return {
-    sandbox,
-    authority: {
-      authority: inspection.authority,
-      authorityRecordedNow: false,
+  const gatewayPort = resolveGatewayPortFromName(gatewayName);
+  if (gatewayPort === null) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the sandbox gateway is unavailable or invalid.`,
+    );
+  }
+  return { sandbox, gatewayName, gatewayPort, inspection };
+}
+
+function managedReceiptSandboxBoundary(
+  live: LivePolicyBoundary,
+  sandboxName: string,
+  operation: string,
+): {
+  readonly liveIdentityFingerprint: string;
+  readonly receipt: NemoClawPolicyCreationReceipt;
+} {
+  const { sandbox, gatewayName, gatewayPort } = live;
+  if (
+    sandbox.policyAuthority !== "nemoclaw-managed" ||
+    sandbox.gatewayName !== gatewayName ||
+    sandbox.gatewayPort !== gatewayPort ||
+    typeof sandbox.lifecycleGeneration !== "string" ||
+    typeof sandbox.lifecycleLiveIdentityFingerprint !== "string"
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: NemoClaw policy ownership is unavailable or incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  let liveIdentityFingerprint: string;
+  try {
+    liveIdentityFingerprint = inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName,
       gatewayName,
-      inspection,
-    },
+    });
+  } catch {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the live sandbox identity could not be verified.`,
+      "owner-unknown",
+    );
+  }
+  if (liveIdentityFingerprint !== sandbox.lifecycleLiveIdentityFingerprint) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the live sandbox identity does not match the registered lifecycle.`,
+      "owner-unknown",
+    );
+  }
+
+  let confirmedSandbox: ReturnType<typeof registry.getSandbox>;
+  try {
+    confirmedSandbox = registry.getSandbox(sandboxName);
+  } catch {
+    confirmedSandbox = null;
+  }
+  if (
+    !confirmedSandbox ||
+    confirmedSandbox.pendingRouteReservation === true ||
+    confirmedSandbox.policyAuthority !== sandbox.policyAuthority ||
+    confirmedSandbox.gatewayName !== sandbox.gatewayName ||
+    confirmedSandbox.gatewayPort !== sandbox.gatewayPort ||
+    confirmedSandbox.lifecycleGeneration !== sandbox.lifecycleGeneration ||
+    confirmedSandbox.lifecycleLiveIdentityFingerprint !==
+      sandbox.lifecycleLiveIdentityFingerprint ||
+    !isDeepStrictEqual(confirmedSandbox.policyCreationReceipt, sandbox.policyCreationReceipt)
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the recorded policy creation receipt changed during live verification.`,
+      "owner-unknown",
+    );
+  }
+
+  let receipt: NemoClawPolicyCreationReceipt;
+  try {
+    receipt = parseNemoClawPolicyCreationReceipt(sandbox.policyCreationReceipt);
+  } catch {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the NemoClaw policy creation receipt is unavailable or invalid.`,
+      "owner-unknown",
+    );
+  }
+  if (
+    receipt.gatewayName !== gatewayName ||
+    receipt.gatewayPort !== gatewayPort ||
+    receipt.sandboxName !== sandboxName ||
+    receipt.lifecycleGeneration !== sandbox.lifecycleGeneration ||
+    receipt.sandboxIdentityFingerprint !== liveIdentityFingerprint
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the NemoClaw policy creation receipt does not match the live sandbox identity.`,
+      "owner-unknown",
+    );
+  }
+  return { liveIdentityFingerprint, receipt };
+}
+
+function managedReceiptBoundary(
+  live: LivePolicyBoundary,
+  sandboxName: string,
+  operation: string,
+): {
+  readonly liveIdentityFingerprint: string;
+  readonly receipt: NemoClawPolicyCreationReceipt;
+} {
+  const boundary = managedReceiptSandboxBoundary(live, sandboxName, operation);
+  try {
+    assertNemoClawPolicyCreationReceiptMatches(boundary.receipt, {
+      origin: "sandbox-create",
+      gatewayName: live.gatewayName,
+      gatewayPort: live.gatewayPort,
+      sandboxName,
+      lifecycleGeneration: live.sandbox.lifecycleGeneration as string,
+      sandboxIdentityFingerprint: boundary.liveIdentityFingerprint,
+      policyHash: live.inspection.policyIdentity.hash,
+      policyVersion: live.inspection.policyIdentity.activeVersion,
+    });
+  } catch {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the NemoClaw policy creation receipt does not match the live sandbox policy.`,
+      "owner-unknown",
+    );
+  }
+  return boundary;
+}
+
+function resolvePolicyAuthority(
+  live: LivePolicyBoundary,
+  sandboxName: string,
+  operation: string,
+): PolicyMutationAuthority {
+  if (live.inspection.authority === "externally-managed") {
+    if (live.sandbox.policyAuthority === "nemoclaw-managed") {
+      throw new PolicyAuthorityRefusalError(
+        `Refusing to ${operation}: the live policy is externally managed but the sandbox registry records NemoClaw ownership. The external policy authority must perform the requested policy mutation.`,
+        "externally-managed",
+      );
+    }
+    return {
+      authority: "externally-managed",
+      authorityRecordedNow: false,
+      gatewayName: live.gatewayName,
+      inspection: live.inspection,
+      policyCreationReceipt: null,
+    };
+  }
+
+  if (live.inspection.authority !== "owner-unknown") {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the live sandbox policy authority is invalid.`,
+      "owner-unknown",
+    );
+  }
+  const { receipt } = managedReceiptBoundary(live, sandboxName, operation);
+  return {
+    authority: "nemoclaw-managed",
+    authorityRecordedNow: false,
+    gatewayName: live.gatewayName,
+    inspection: { ...live.inspection, authority: "nemoclaw-managed" },
+    policyCreationReceipt: receipt,
   };
 }
 
@@ -657,79 +820,25 @@ export function inspectPolicyRecoveryAuthority(
   operation: string,
   requestedGatewayName?: string,
 ): PolicyMutationAuthority {
-  const live = inspectLivePolicyAuthority(sandboxName, operation, requestedGatewayName);
-  if (!live.sandbox) {
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: sandbox policy authority is unavailable.`,
-    );
-  }
-  return live.authority;
+  return resolvePolicyAuthority(
+    inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName),
+    sandboxName,
+    operation,
+  );
 }
 
-/** Inspect and, when needed, persist the authority that owns one sandbox policy. */
+/** Inspect the live policy owner without creating an ownership claim from observation. */
 export function inspectPolicyMutationAuthority(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
-  requireRecordedAuthority = false,
+  _requireRecordedAuthority = false,
 ): PolicyMutationAuthority {
-  const live = inspectLivePolicyAuthority(sandboxName, operation, requestedGatewayName);
-  const { sandbox } = live;
-  const { gatewayName, inspection } = live.authority;
-  if (sandbox?.policyAuthority !== undefined) {
-    try {
-      assertRecordedPolicyAuthority(
-        sandbox.policyAuthority,
-        inspection.authority,
-        operation,
-      );
-    } catch (error) {
-      if (
-        sandbox.policyAuthority === "externally-managed" ||
-        inspection.authority === "externally-managed"
-      ) {
-        throw new PolicyAuthorityRefusalError(
-          `${policyAuthorityError(error)} The external policy authority must perform the requested policy mutation.`,
-          inspection.authority,
-        );
-      }
-      throw error;
-    }
-    return {
-      authority: inspection.authority,
-      authorityRecordedNow: false,
-      gatewayName,
-      inspection,
-    };
-  }
-
-  if (requireRecordedAuthority) {
-    throw new Error(
-      `Refusing to ${operation}: policy authority is not recorded for sandbox '${sandboxName}'.`,
-    );
-  }
-  let authorityRecorded: boolean;
-  try {
-    authorityRecorded = Boolean(
-      sandbox &&
-      registry.updateSandbox(sandboxName, {
-        policyAuthority: inspection.authority,
-      }),
-    );
-  } catch {
-    authorityRecorded = false;
-  }
-  if (!authorityRecorded) {
-    throw new Error(
-      `Refusing to ${operation}: NemoClaw could not record policy authority for sandbox '${sandboxName}'.`,
-    );
-  }
-  return {
-    authority: inspection.authority,
-    authorityRecordedNow: true,
-    gatewayName,
-    inspection,
-  };
+  return resolvePolicyAuthority(
+    inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName),
+    sandboxName,
+    operation,
+  );
 }
 
 /** Require NemoClaw ownership before a local policy mutation. */
@@ -738,6 +847,12 @@ export function assertNemoClawManagedPolicy(
   operation: string,
 ): void {
   if (authority.authority === "nemoclaw-managed") return;
+  if (authority.authority === "owner-unknown") {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: NemoClaw cannot verify policy ownership. Recreate this sandbox before requesting a NemoClaw policy mutation.`,
+      authority.authority,
+    );
+  }
   throw new PolicyAuthorityRefusalError(
     `Refusing to ${operation}: this sandbox policy is externally managed. ` +
       "The external policy authority must perform the requested policy mutation.",
@@ -758,6 +873,22 @@ export function recheckPolicyMutationAuthority(
     true,
   );
   assertRecordedPolicyAuthority(recorded.authority, observed.authority, operation);
+  if (
+    recorded.policyCreationReceipt != null &&
+    observed.policyCreationReceipt != null &&
+    (recorded.policyCreationReceipt.gatewayName !== observed.policyCreationReceipt.gatewayName ||
+      recorded.policyCreationReceipt.gatewayPort !== observed.policyCreationReceipt.gatewayPort ||
+      recorded.policyCreationReceipt.sandboxName !== observed.policyCreationReceipt.sandboxName ||
+      recorded.policyCreationReceipt.lifecycleGeneration !==
+        observed.policyCreationReceipt.lifecycleGeneration ||
+      recorded.policyCreationReceipt.sandboxIdentityFingerprint !==
+        observed.policyCreationReceipt.sandboxIdentityFingerprint)
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the NemoClaw policy creation receipt changed sandbox identity.`,
+      "owner-unknown",
+    );
+  }
   assertNemoClawManagedPolicy(observed, operation);
   return observed;
 }
@@ -785,9 +916,6 @@ export function rejectFinalPolicySetResult(
   }
 }
 
-const inspectPolicyAuthority = inspectPolicyMutationAuthority;
-type PolicyAuthorityContext = PolicyMutationAuthority;
-
 function reportPolicyAuthorityFailure(error: unknown): false {
   console.error(`  ${policyAuthorityError(error)}`);
   return false;
@@ -797,9 +925,9 @@ function inspectNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
   gatewayName?: string,
-): PolicyAuthorityContext | null {
+): PolicyMutationAuthority | null {
   try {
-    const context = inspectPolicyAuthority(sandboxName, operation, gatewayName);
+    const context = inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
     assertNemoClawManagedPolicy(context, operation);
     return context;
   } catch (error) {
@@ -812,7 +940,7 @@ function inspectNemoClawManagedPolicy(
 function recheckNemoClawManagedPolicy(
   sandboxName: string,
   operation: string,
-  authority: PolicyAuthorityContext,
+  authority: PolicyMutationAuthority,
 ): boolean {
   try {
     recheckPolicyMutationAuthority(sandboxName, operation, authority);
@@ -892,6 +1020,100 @@ function policySetFailure(
   );
 }
 
+export function finalizePolicyMutationReceipt(
+  sandboxName: string,
+  desiredPolicyDocument: string,
+  previous: PolicyMutationAuthority,
+): void {
+  const previousReceipt = previous.policyCreationReceipt;
+  if (previousReceipt == null) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but no policy creation receipt was available. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  const operation = "complete the sandbox policy update";
+  const live = inspectLivePolicyBoundary(sandboxName, operation, previous.gatewayName);
+  if (live.inspection.authority !== "owner-unknown") {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but OpenShell no longer reports a sandbox-scoped policy. The policy update is incomplete.`,
+      live.inspection.authority,
+    );
+  }
+  const boundary = managedReceiptSandboxBoundary(live, sandboxName, operation);
+  if (!isDeepStrictEqual(boundary.receipt, previousReceipt)) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but its policy creation receipt changed during the update. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  let observedBasePolicy: string;
+  try {
+    observedBasePolicy = captureSandboxBasePolicy(sandboxName, previous.gatewayName);
+  } catch {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the resulting base policy. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+  if (!policyDocumentsMatch(observedBasePolicy, desiredPolicyDocument)) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  const confirmed = inspectLivePolicyBoundary(sandboxName, operation, previous.gatewayName);
+  if (confirmed.inspection.authority !== "owner-unknown") {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but OpenShell no longer reports a sandbox-scoped policy. The policy update is incomplete.`,
+      confirmed.inspection.authority,
+    );
+  }
+  const confirmedBoundary = managedReceiptSandboxBoundary(confirmed, sandboxName, operation);
+  if (
+    !isDeepStrictEqual(confirmedBoundary.receipt, previousReceipt) ||
+    confirmedBoundary.liveIdentityFingerprint !== boundary.liveIdentityFingerprint ||
+    confirmed.inspection.policyIdentity.hash !== live.inspection.policyIdentity.hash ||
+    confirmed.inspection.policyIdentity.activeVersion !==
+      live.inspection.policyIdentity.activeVersion
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but its policy identity changed during verification. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  const nextReceipt: NemoClawPolicyCreationReceipt = {
+    ...previousReceipt,
+    policyHash: confirmed.inspection.policyIdentity.hash,
+    policyVersion: confirmed.inspection.policyIdentity.activeVersion,
+  };
+  if (
+    !registry.compareAndSetSandboxPolicyCreationReceipt(sandboxName, previousReceipt, nextReceipt)
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but could not record the resulting policy identity. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+
+  const completed = inspectPolicyMutationAuthority(
+    sandboxName,
+    operation,
+    previous.gatewayName,
+    true,
+  );
+  if (!isDeepStrictEqual(completed.policyCreationReceipt, nextReceipt)) {
+    throw new PolicyAuthorityRefusalError(
+      `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the recorded policy identity. The policy update is incomplete.`,
+      "owner-unknown",
+    );
+  }
+}
+
 /**
  * Apply a composed policy document while optionally keeping control in the
  * caller on failure. Lifecycle code that owns compensating actions must use
@@ -901,27 +1123,28 @@ function policySetFailure(
  * The submission owns the temp policy file, so the composed policy is already
  * deleted by the time this ends the process for a fatal caller (#9206).
  */
-function setPolicyDocument(
+export function setReceiptBoundPolicyDocument(
   sandboxName: string,
   policyDocument: string,
   options: {
     nonFatal?: boolean;
     gatewayName?: string;
+    operation?: string;
+    authority?: PolicyMutationAuthority;
   } = {},
 ): boolean {
-  let authority: PolicyAuthorityContext;
+  const operation = options.operation ?? "set the sandbox policy";
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, "set the sandbox policy", options.gatewayName);
-    assertNemoClawManagedPolicy(authority, "set the sandbox policy");
-    if (authority.authorityRecordedNow) {
-      authority = inspectPolicyAuthority(
-        sandboxName,
-        "set the sandbox policy",
-        authority.gatewayName,
-        true,
-      );
-      assertNemoClawManagedPolicy(authority, "set the sandbox policy");
+    if (options.authority) {
+      recheckPolicyMutationAuthority(sandboxName, operation, options.authority);
     }
+    authority = inspectPolicyMutationAuthority(
+      sandboxName,
+      operation,
+      options.authority?.gatewayName ?? options.gatewayName,
+    );
+    assertNemoClawManagedPolicy(authority, operation);
   } catch (error) {
     console.error(`  ${policyAuthorityError(error)}`);
     if (options.nonFatal) return false;
@@ -933,7 +1156,16 @@ function setPolicyDocument(
     policyDocument,
     authority.gatewayName,
   );
-  if (outcome.kind === "applied") return true;
+  if (outcome.kind === "applied") {
+    try {
+      finalizePolicyMutationReceipt(sandboxName, policyDocument, authority);
+      return true;
+    } catch (error) {
+      console.error(`  ${policyAuthorityError(error)}`);
+      if (options.nonFatal) return false;
+      process.exit(1);
+    }
+  }
 
   console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
   if (options.nonFatal) return false;
@@ -1058,7 +1290,7 @@ function normalizePersonalOpenInternetPolicy(policyContent: string): string {
   if (
     !isPolicyObject(personalEntry) ||
     !isPolicyObject(reviewedEntry) ||
-    !policyValuesEqual(personalEntry, reviewedEntry)
+    !isDeepStrictEqual(personalEntry, reviewedEntry)
   ) {
     throw new Error(
       `Cannot compose Personal policy: reserved network policy key '${PERSONAL_OPEN_INTERNET_POLICY_KEY}' does not match the reviewed built-in preset.`,
@@ -1127,7 +1359,7 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
     const presentEntries = expectedEntries.filter(([key]) => Object.hasOwn(current, key));
     if (presentEntries.length === 0) return "absent";
     return expectedEntries.every(
-      ([key, value]) => Object.hasOwn(current, key) && policyValuesEqual(current[key], value),
+      ([key, value]) => Object.hasOwn(current, key) && isDeepStrictEqual(current[key], value),
     )
       ? "match"
       : "drift";
@@ -1138,7 +1370,7 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
 
 function policyDocumentsMatch(left: string, right: string): boolean {
   try {
-    return policyValuesEqual(YAML.parse(left), YAML.parse(right));
+    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
   } catch {
     return false;
   }
@@ -1269,12 +1501,12 @@ function activateOpenClawNpmCompatibility(
   const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
   const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, reviewed.preset);
   const currentNpmEntry = networkPolicies[OPENCLAW_NPM_PRESET_KEY];
-  if (!isPolicyObject(currentNpmEntry) || !policyValuesEqual(currentNpmEntry, reviewed.preset)) {
+  if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
     throw new Error(
       `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': the resulting entry differs from the reviewed npm preset.`,
     );
   }
-  if (policyValuesEqual(currentBaselineEntry, compatibilityEntry)) {
+  if (isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
     if (!npmWasActive) {
       throw new Error(
         `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': found a compatibility overlay without an active npm preset.`,
@@ -1282,7 +1514,7 @@ function activateOpenClawNpmCompatibility(
     }
     return { policy: policyContent, widenedBaseline: false };
   }
-  if (!policyValuesEqual(currentBaselineEntry, reviewed.baseline)) {
+  if (!isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) {
     throw new Error(
       `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from the reviewed baseline.`,
     );
@@ -1314,7 +1546,7 @@ function restoreOpenClawNpmCompatibility(
   }
 
   const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
-  if (policyValuesEqual(currentBaselineEntry, reviewed.baseline)) return updatedPolicy;
+  if (isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) return updatedPolicy;
 
   const currentNpmEntry = current.network_policies[OPENCLAW_NPM_PRESET_KEY];
   if (!isPolicyObject(currentNpmEntry)) {
@@ -1323,7 +1555,7 @@ function restoreOpenClawNpmCompatibility(
     );
   }
   const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
-  if (!policyValuesEqual(currentBaselineEntry, compatibilityEntry)) {
+  if (!isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
     throw new Error(
       `Cannot remove '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from both the reviewed baseline and active compatibility overlay.`,
     );
@@ -1386,14 +1618,14 @@ function getOpenClawNpmCompatibilityState(
     if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) return null;
     const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
     const currentNpmEntry = parsed.network_policies[OPENCLAW_NPM_PRESET_KEY];
-    if (!isPolicyObject(currentNpmEntry) || !policyValuesEqual(currentNpmEntry, reviewed.preset)) {
+    if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
       return "drift";
     }
-    if (policyValuesEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], reviewed.baseline)) {
+    if (isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], reviewed.baseline)) {
       return "repair";
     }
     const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
-    return policyValuesEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], compatibilityEntry)
+    return isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], compatibilityEntry)
       ? "match"
       : "drift";
   } catch {
@@ -1710,7 +1942,7 @@ function removePreset(
   if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return false;
 
   if (
-    !setPolicyDocument(sandboxName, updated, {
+    !setReceiptBoundPolicyDocument(sandboxName, updated, {
       nonFatal: options.nonFatal,
       gatewayName: authority.gatewayName,
     })
@@ -1741,7 +1973,7 @@ function pushPolicyYaml(
   options: { nonFatal?: boolean; gatewayName?: string } = {},
 ): boolean {
   if (!assertOpenshellResolvable(options)) return false;
-  return setPolicyDocument(sandboxName, updatedPolicy, options);
+  return setReceiptBoundPolicyDocument(sandboxName, updatedPolicy, options);
 }
 
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
@@ -1943,7 +2175,7 @@ function reconcileBaselineExclusionTransition(
     const committed = registry
       .getBaselineExclusions(sandboxName)
       .find((entry) => entry.key === transition.exclusion.key);
-    if (!committed || !policyValuesEqual(committed, transition.exclusion)) {
+    if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
       console.error(
         `  The durable exclusion for '${key}' changed during the pending restore. The journal was preserved; inspect registry intent before retrying.`,
       );
@@ -2032,7 +2264,7 @@ function restoreTransitionCanFinalize(
   const committed = registry
     .getBaselineExclusions(sandboxName)
     .find((entry) => entry.key === transition.exclusion.key);
-  if (!committed || !policyValuesEqual(committed, transition.exclusion)) {
+  if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
     console.error(
       `  The durable exclusion for '${transition.exclusion.key}' no longer matches the pending restore. The journal was preserved; rebuild remains blocked.`,
     );
@@ -2601,9 +2833,9 @@ function applyPresetContent(
     return false;
   }
   const operation = `apply policy preset '${presetName}'`;
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -2732,7 +2964,7 @@ function applyPresetContent(
   if (policyChanged) {
     if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return false;
     if (
-      !setPolicyDocument(sandboxName, merged, {
+      !setReceiptBoundPolicyDocument(sandboxName, merged, {
         nonFatal: options.nonFatal,
         gatewayName: authority.gatewayName,
       })
@@ -2880,9 +3112,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   const operation = "apply policy presets";
-  let authority: PolicyAuthorityContext;
+  let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyAuthority(sandboxName, operation);
+    authority = inspectPolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -2976,7 +3208,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     // temporary policy. Onboarding defers that exit until its recovery state
     // and outer cleanup have finished.
     if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return false;
-    setPolicyDocument(sandboxName, merged, { gatewayName: authority.gatewayName });
+    setReceiptBoundPolicyDocument(sandboxName, merged, {
+      gatewayName: authority.gatewayName,
+    });
     if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return false;
   }
 
@@ -3318,7 +3552,7 @@ async function selectFromList(
     // path (`policy add <preset>`) re-applies edited presets (#7323).
     process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
     process.stderr.write(
-      `  If its preset file changed, run 'nemoclaw <sandbox> policy add ${item.name}' to re-apply it.\n`,
+      `  If its preset file changed, run '${CLI_NAME} <sandbox> policy add ${item.name}' to re-apply it.\n`,
     );
     return null;
   }
@@ -3364,7 +3598,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   const operation = "apply the permissive sandbox policy";
-  const authority = inspectPolicyAuthority(sandboxName, operation);
+  const authority = inspectPolicyMutationAuthority(sandboxName, operation);
   assertNemoClawManagedPolicy(authority, operation);
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
@@ -3380,8 +3614,15 @@ function applyPermissivePolicy(sandboxName: string): void {
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
-  setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
-  const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
+  setReceiptBoundPolicyDocument(sandboxName, materializedPolicy, {
+    gatewayName: authority.gatewayName,
+  });
+  const observed = inspectPolicyMutationAuthority(
+    sandboxName,
+    operation,
+    authority.gatewayName,
+    true,
+  );
   assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
   assertNemoClawManagedPolicy(observed, operation);
   console.log("  Applied permissive policy.");

@@ -4,7 +4,7 @@
 import type { StdioOptions } from "node:child_process";
 import path from "node:path";
 
-import { type CaptureResult, ROOT, runCaptureEx } from "../../runner";
+import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
@@ -18,15 +18,8 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
-export type ResolvedOpenshellCaptureResult = CaptureResult;
-
-/** Capture one fully resolved OpenShell command with structured finality metadata. */
-export function captureResolvedOpenshellCommand(
-  command: readonly string[],
-  options?: { readonly maxBuffer?: number; readonly timeout?: number },
-): CaptureResult {
-  return runCaptureEx(command, options);
-}
+export { classifyManagedGatewayEndpointBinding } from "./client";
+export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */

@@ -47,6 +47,7 @@ function mockManagedPolicyAuthority(sandboxName: string): void {
   vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
     authority: "nemoclaw-managed",
     effectivePolicy: { version: 1, network_policies: {} },
+    policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
   });
   const receipt = {
     authority: "nemoclaw-managed" as const,
@@ -55,10 +56,13 @@ function mockManagedPolicyAuthority(sandboxName: string): void {
     inspection: {
       authority: "nemoclaw-managed" as const,
       effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
     },
   };
   vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "inspectPolicyRecoveryAuthority").mockReturnValue(receipt);
   vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(receipt);
+  vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined);
 }
 
 describe("shields policy transition", () => {
@@ -153,6 +157,7 @@ describe("shields policy transition", () => {
       inspection: {
         authority: "externally-managed",
         effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:external", activeVersion: 1 },
       },
     });
 
@@ -168,10 +173,11 @@ describe("shields policy transition", () => {
       inspection: {
         authority: "externally-managed" as const,
         effectivePolicy: { version: 1, network_policies: { test: {} } },
+        policyIdentity: { hash: "sha256:external", activeVersion: 1 },
       },
     };
     vi.mocked(policy.inspectPolicyMutationAuthority).mockReturnValue(matchingExternalAuthority);
-    vi.spyOn(policy, "inspectPolicyRecoveryAuthority")
+    vi.mocked(policy.inspectPolicyRecoveryAuthority)
       .mockReturnValueOnce(matchingExternalAuthority)
       .mockReturnValue({
         ...matchingExternalAuthority,
@@ -274,6 +280,11 @@ describe("shields down policy rejection", () => {
       .filter((command) => Array.isArray(command) && command.includes("policy"));
     expect(policyCommands.length).toBeGreaterThan(0);
     expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
+    expect(harness.policyReceiptFinalizeSpy).toHaveBeenCalledWith(
+      "openclaw",
+      expect.stringContaining("network_policies"),
+      expect.objectContaining({ gatewayName }),
+    );
   });
 
   it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
@@ -1010,6 +1021,7 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
       authority: "nemoclaw-managed",
       effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
     });
     const authorityReceipt = {
       authority: "nemoclaw-managed" as const,
@@ -1018,10 +1030,12 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
       inspection: {
         authority: "nemoclaw-managed" as const,
         effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
       },
     };
     vi.spyOn(policy, "inspectPolicyMutationAuthority").mockReturnValue(authorityReceipt);
     vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(authorityReceipt);
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined);
 
     const shields = requireSource(SHIELDS_MODULE) as typeof import("./index.js");
     return { applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot, policySetBodies };

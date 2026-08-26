@@ -17,7 +17,7 @@ describe("onboard managed MCP recreation redirect", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "redirect.js");
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -31,6 +31,7 @@ describe("onboard managed MCP recreation redirect", () => {
     const script = String.raw`
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${mocksPath});
 const normalize = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
@@ -43,7 +44,7 @@ runner.runCapture = (command) => {
   const mocked = require(${mocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
-registry.getSandbox = () => ({
+registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: "alpha",
   agent: "langchain-deepagents-code",
   model: "model",

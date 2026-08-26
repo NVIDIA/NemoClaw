@@ -588,6 +588,118 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(intent)).toBe(serializedIntent);
   });
 
+  it("defers every provider effect and create attachment until activation (#9833)", () => {
+    const tokenDefs = [
+      {
+        name: "sandbox-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: "telegram-super-secret",
+      },
+    ];
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      inferenceProvider: "nvidia-prod",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
+        tokenDefs,
+        () => "telegram",
+      ),
+      primaryMessagingCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN"],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: ["sandbox-existing-discord"],
+      extraProviders: ["custom-provider"],
+      hermesToolGateways: ["github"],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: null,
+    });
+    const events: string[] = [];
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: "example.invalid/image@sha256:abc",
+      policyAuthority: "externally-managed",
+      deferSandboxEffectsUntilPolicyVerification: true,
+      messagingTokenDefs: tokenDefs,
+      prepareInitialSandboxCreatePolicy: () => ({
+        policyPath: "/tmp/policy.yaml",
+        appliedPresets: ["telegram"],
+      }),
+      runProviderPreDeleteCleanup: () => events.push("cleanup"),
+      upsertMessagingProviders: vi.fn(() => {
+        events.push("upsert");
+        return ["sandbox-telegram-bridge"];
+      }),
+      getHermesToolGatewayProviderName: () => {
+        events.push("hermes");
+        return "sandbox-hermes-tools";
+      },
+    });
+
+    expect(events).toEqual([]);
+    expect(plan.createArgs).not.toContain("--provider");
+    expect(plan.messagingProviders).toEqual([
+      "sandbox-telegram-bridge",
+      "sandbox-existing-discord",
+    ]);
+
+    expect(plan.activateDeferredProviderEffects?.()).toEqual([
+      "nvidia-prod",
+      "sandbox-telegram-bridge",
+      "sandbox-existing-discord",
+      "sandbox-hermes-tools",
+      "custom-provider",
+    ]);
+    expect(events).toEqual(["cleanup", "upsert", "hermes"]);
+  });
+
+  it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      inferenceProvider: "nvidia-prod",
+      channels,
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      extraProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      agentName: "openclaw",
+      policyTier: null,
+    });
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: "example.invalid/image@sha256:abc",
+      policyAuthority: "nemoclaw-managed",
+      deferSandboxEffectsUntilPolicyVerification: true,
+      messagingTokenDefs: [],
+      prepareInitialSandboxCreatePolicy: () => ({
+        policyPath: "/tmp/policy.yaml",
+        appliedPresets: [],
+      }),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+
+    expect(plan.createArgs).toEqual(
+      expect.arrayContaining(["--policy", "/tmp/policy.yaml"]),
+    );
+    expect(plan.createArgs).not.toContain("--provider");
+  });
+
   it("omits caller policy when external authority owns sandbox policy (#9833)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",

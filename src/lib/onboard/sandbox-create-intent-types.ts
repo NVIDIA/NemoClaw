@@ -97,6 +97,8 @@ export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
   policyAuthority: SandboxPolicyAuthority;
+  /** Keep provider mutations and attachments behind the exact post-create policy gate. */
+  deferSandboxEffectsUntilPolicyVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
