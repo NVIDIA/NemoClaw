@@ -599,6 +599,8 @@ export function createSetupInference(
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const usesBedrockRuntimeAdapter =
+      provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () => {
         if (!routedProvider) return operation();
@@ -645,8 +647,6 @@ export function createSetupInference(
         // SigV4/bearer adapter rather than the generic curl probe path. Their
         // hostname is constrained to AWS-owned suffixes by the classifier, so
         // do not apply the custom-origin curl pinning contract here.
-        const usesBedrockRuntimeAdapter =
-          provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
         const usesOnboardEndpoint = matchesOnboardEndpoint(
           provider,
           endpointUrl,
@@ -1166,7 +1166,9 @@ export function createSetupInference(
         deps,
         revalidatePolicyRequirements,
       );
-      if ("ok" in result) deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+      if ("ok" in result && !usesBedrockRuntimeAdapter && provider !== "openrouter-api") {
+        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+      }
       return result;
     };
     return sandboxName

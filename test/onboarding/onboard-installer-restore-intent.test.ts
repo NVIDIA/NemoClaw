@@ -424,6 +424,7 @@ runner.runCapture = (command) => {
 registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
+  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
 });
 sandboxState.getLatestBackup = () => {
@@ -483,7 +484,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(
       output.includes("--recreate-sandbox") || output.includes("NEMOCLAW_RECREATE_SANDBOX"),
-      "should hint about --recreate-sandbox flag",
+      `should hint about --recreate-sandbox flag; output:\n${output}`,
     );
   });
 });

@@ -99,6 +99,12 @@ function expectNemoclawScopedRunner(
 }
 
 describe("setupInference dependency failures", () => {
+  it("fails closed before sandbox inference setup without policy authority revalidation", async () => {
+    await expect(
+      onboard.createSetupInference()("test-box", "gpt-test", "openai-api"),
+    ).rejects.toThrow("Sandbox inference setup requires policy authority revalidation.");
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
