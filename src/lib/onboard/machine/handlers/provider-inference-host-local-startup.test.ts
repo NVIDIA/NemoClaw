@@ -245,7 +245,7 @@ function llamaCppLifecycleSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
     async (application) => {
       const model = "llama-cpp-model";
@@ -318,7 +318,7 @@ describe("provider inference host-local startup selection", () => {
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "dispatches an authoritative %s llama.cpp rebuild through the common lifecycle exactly once",
     async (application) => {
       const model = "llama-cpp-model";
@@ -411,7 +411,8 @@ describe("provider inference host-local startup selection", () => {
   });
 
   it.each(
-    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+    (["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const).flatMap(
+      (application) =>
       (["ollama", "nim", "vllm"] as const).map((service) => ({ application, service })),
     ),
   )(
@@ -780,7 +781,7 @@ describe("provider inference host-local startup selection", () => {
     );
   });
 
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "heals the narrow published-route session-marker gap for %s from injected exact authority",
     async (application) => {
       const model = "persisted-served-alias";
@@ -852,7 +853,7 @@ describe("provider inference host-local startup selection", () => {
     },
   );
 
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "recovers an interrupted exact managed startup for %s before route publication",
     async (application) => {
       const model = "persisted-served-alias";
@@ -917,7 +918,7 @@ describe("provider inference host-local startup selection", () => {
     },
   );
 
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "rejects a fresh resumed %s runtime that weakens the current tool contract",
     async (application) => {
       const model = "persisted-served-alias";
@@ -959,7 +960,7 @@ describe("provider inference host-local startup selection", () => {
   );
 
   it.each(
-    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+    (["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const).flatMap((application) =>
       (["published", "interrupted"] as const).map((recoveryKind) => ({
         application,
         recoveryKind,
@@ -1058,7 +1059,7 @@ describe("provider inference host-local startup selection", () => {
   });
 
   it.each(
-    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+    (["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const).flatMap((application) =>
       (["published", "interrupted"] as const).map((recoveryKind) => ({
         application,
         recoveryKind,
@@ -1383,7 +1384,7 @@ describe("provider inference host-local startup selection", () => {
   });
 
   it.each(
-    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+    (["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const).flatMap((application) =>
       (["fresh", "interrupted"] as const).map((recoveryKind) => ({
         application,
         recoveryKind,
