@@ -48,7 +48,7 @@ Sandbox rebuild applies the same rejection classes to recorded custom endpoint m
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 
 Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.
-Set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of hostnames or IP literals to admit an endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
+Set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
 NemoClaw still resolves DNS and pins outbound validation to the complete canonical address set.
 A trusted host can return both public and supported private addresses.
 NemoClaw pins every canonical answer.

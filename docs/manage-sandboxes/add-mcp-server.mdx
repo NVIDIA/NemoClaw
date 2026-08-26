@@ -80,7 +80,7 @@ Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejecte
 Sandbox loopback is not the host service, and trusted-private admission does not create a route to it.
 
 <Warning>
-The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the matching host for this registration.
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the exact matching host for this registration.
 Confirm that you operate the endpoint and its network before you run the command.
 </Warning>
 
@@ -99,7 +99,7 @@ The declaration must equal the normalized host from `--url`.
 NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations before mutation.
 It also rejects a trusted-private hostname when its DNS answers mix public and private addresses, or when any answer is otherwise disallowed.
 
-As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of hosts for the current command.
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
 NemoClaw combines the environment list with any `--trusted-private-host` options.
 It normalizes and deduplicates environment entries, ignores entries unrelated to this URL, and persists only the matching private host.
 The command records the resulting trust intent, so later lifecycle commands do not depend on the ambient environment.

@@ -77,7 +77,7 @@ Use explicit private-host trust when a custom preset targets an operator-control
 This flow applies to REST, WebSocket, JSON-RPC, and MCP endpoint protocols.
 
 <Warning>
-The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each matching private host.
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each exact matching private host.
 Review the preset, resolved addresses, requesting binaries, methods, and paths before you apply it.
 </Warning>
 
@@ -94,7 +94,7 @@ The option is invalid for a built-in preset because maintained presets own their
 NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations.
 It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
 
-As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of hosts for the current command.
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
 NemoClaw combines the environment list with any `--trusted-private-host` options.
 It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
