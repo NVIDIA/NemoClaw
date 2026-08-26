@@ -1002,6 +1002,16 @@ describe("common-egress agent parsing and classification helpers", () => {
       expected: STOCK_REPLY,
     },
     {
+      name: "price paired with a timestamp prefix and trailing characters (#10330)",
+      session: stockSessionJsonLines({
+        payload: stockPayload({
+          text: '{"symbol":"NVDA","regularMarketPrice":192.38,"quoteTime":"2026-08-17T15:59:00Z-invalid"}',
+        }),
+      }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
       name: "date-only reply paired with a source timestamp (#10330)",
       session: stockSessionJsonLines({
         payload: stockPayload({

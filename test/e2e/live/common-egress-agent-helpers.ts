@@ -457,7 +457,15 @@ export function reduceOpenClawToolEvidence(
         new RegExp(`(?:^|[^0-9])${candidate}(?![0-9]|T|\\s+\\d{2}:)`, "u").test(text);
       return dateTokenMatches(expectedDate) || dateTokenMatches(expectedDate.replace(/-/gu, ""));
     }
-    if (text.includes(expected)) return true;
+    const escapedExpected = expected.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    if (
+      new RegExp(
+        `(?:^|[^0-9A-Za-z_.:+-])${escapedExpected}(?![0-9A-Za-z_.:+-])`,
+        "u",
+      ).test(text)
+    ) {
+      return true;
+    }
     for (const match of text.matchAll(/(?:^|\D)(\d{10}|\d{13})(?!\d)/gu)) {
       const raw = match[1];
       if (!raw) continue;
