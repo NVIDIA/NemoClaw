@@ -345,6 +345,7 @@ describe("base-image publication evidence", () => {
 
   it("binds API evidence to the active checked-in workflow identity (#7372)", () => {
     expect(validateWorkflow(workflowMetadata())).toBe(WORKFLOW_ID);
+    expect(validateWorkflow(workflowMetadata({ name: "Images / Base Images" }))).toBe(WORKFLOW_ID);
     expect(() => validateWorkflow(workflowMetadata({ state: "disabled_manually" }))).toThrow(
       /state must be active/u,
     );
@@ -503,6 +504,20 @@ describe("base-image publication evidence", () => {
     });
   });
 
+  it("accepts the renamed trusted workflow while selecting branch reuse", () => {
+    const selection = selectPublicationRun(
+      runsPayload([workflowRun({ name: "Images / Base Images" })]),
+      history(),
+      WORKFLOW_ID,
+      { completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+    });
+  });
+
   it("does not select an incomplete or failed publication for branch reuse", () => {
     expect(
       selectPublicationRun(
@@ -547,7 +562,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be Images \/ Publish Base and Managed Images/u);
+    ).toThrow(/name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {

@@ -11,7 +11,10 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_BRANCH = "main";
 const WORKFLOW_PATH = ".github/workflows/base-image.yaml";
 const WORKFLOW_FILE = "base-image.yaml";
-const WORKFLOW_NAME = "Images / Publish Base and Managed Images";
+const WORKFLOW_NAMES = new Set([
+  "Images / Publish Base and Managed Images",
+  "Images / Base Images",
+]);
 const API_ROOT = "https://api.github.com";
 const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
@@ -149,6 +152,13 @@ function exactString(value: unknown, expected: string, label: string): string {
     throw new Error(`${label} must be ${expected}`);
   }
   return expected;
+}
+
+function trustedWorkflowName(value: unknown, label: string): string {
+  if (typeof value !== "string" || !WORKFLOW_NAMES.has(value)) {
+    throw new Error(`${label} must be one of ${[...WORKFLOW_NAMES].join(", ")}`);
+  }
+  return value;
 }
 
 function sha(value: unknown, label: string): string {
@@ -344,7 +354,7 @@ export function resolveFirstParentHistory(
 export function validateWorkflow(payload: unknown): number {
   const workflow = asRecord(payload);
   const workflowId = positiveSafeInteger(workflow.id, "base-image workflow id");
-  exactString(workflow.name, WORKFLOW_NAME, "base-image workflow name");
+  trustedWorkflowName(workflow.name, "base-image workflow name");
   exactString(workflow.path, WORKFLOW_PATH, "base-image workflow path");
   exactString(workflow.state, "active", "base-image workflow state");
   exactString(workflow.html_url, WORKFLOW_URL, "base-image workflow URL");
@@ -369,7 +379,7 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
   exactString(run.event, "push", `workflow run ${index} event`);
   exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
-  exactString(run.name, WORKFLOW_NAME, `workflow run ${index} name`);
+  trustedWorkflowName(run.name, `workflow run ${index} name`);
   exactString(asRecord(run.repository).full_name, REPOSITORY, `workflow run ${index} repository`);
   exactString(
     asRecord(run.head_repository).full_name,
