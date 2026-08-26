@@ -502,6 +502,7 @@ export function reduceOpenClawToolEvidence(
   const allowedWrapperIdParts = new Set<string>();
   const controlTargetViolationIds = new Set<string>();
   const sessionCallIds = new Set<string>();
+  const sessionToolNames = new Set<string>();
   for (const document of sessionDocuments) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
@@ -511,6 +512,16 @@ export function reduceOpenClawToolEvidence(
       if (block?.type !== "toolCall") continue;
       const id = normalizedId(block.id ?? block.toolCallId ?? block.tool_call_id);
       const name = normalizedName(block.name ?? block.toolName ?? block.tool_name);
+      const argumentsValue = block.arguments ?? block.input ?? block.args;
+      if (name) {
+        if (sessionToolNames.size < MAX_RECORDS || sessionToolNames.has(name)) {
+          sessionToolNames.add(name);
+        } else {
+          addError("session tool name limit exceeded");
+        }
+      }
+      collectProviderMentions(block);
+      collectProviderMentions(argumentsValue);
       if (!id) {
         if (name === "tool_call" || name === "tool_describe") {
           addError("control tool call has no bounded id");
@@ -518,7 +529,6 @@ export function reduceOpenClawToolEvidence(
         continue;
       }
       sessionCallIds.add(id);
-      const argumentsValue = block.arguments ?? block.input ?? block.args;
       const allowedControlTarget = isAllowedWebFetchControlTarget(argumentsValue);
       if ((name === "tool_call" || name === "tool_describe") && !allowedControlTarget) {
         controlTargetViolationIds.add(id);
@@ -603,6 +613,14 @@ export function reduceOpenClawToolEvidence(
         ...(target ? { target } : {}),
       });
     }
+  }
+  for (const name of sessionToolNames) {
+    if (toolCalls.some((record) => record.name === name)) continue;
+    if (toolCalls.length >= MAX_RECORDS) {
+      addError("tool record limit exceeded");
+      break;
+    }
+    toolCalls.push({ name });
   }
 
   const expectedSourceUrl = normalizedUrl(expectedStock?.source_url);

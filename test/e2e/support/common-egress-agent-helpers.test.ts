@@ -1034,10 +1034,11 @@ describe("common-egress agent parsing and classification helpers", () => {
       expected: STOCK_REPLY,
     },
     {
-      name: "dummy fetch plus another tool",
-      session: stockSessionJsonLines({ extraToolName: "exec" }),
-      trajectory: stockTrajectory("exec"),
+      name: "projected evidence hiding a forbidden session tool",
+      session: stockSessionJsonLines({ extraToolName: "web_search" }),
+      trajectory: directStockTrajectoryWithProjection(),
       expected: STOCK_REPLY,
+      checks: { forbiddenToolNames: ["web_search"] },
     },
     {
       name: "fetch content without the claimed price or date",
@@ -1085,10 +1086,10 @@ describe("common-egress agent parsing and classification helpers", () => {
       trajectory: stockTrajectory(),
       expected: { ...STOCK_REPLY, as_of: "2026-08-17", source_timestamp: "2026-08-17T20:00:00Z" },
     },
-  ])("rejects $name", ({ expected, session, trajectory }) => {
+  ])("rejects $name", ({ checks = {}, expected, session, trajectory }) => {
     const evidence = reduceOpenClawToolEvidence(session, trajectory, expected);
 
-    expect(assessPersonalStockToolEvidence(evidence).matches).toBe(false);
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({ matches: false, ...checks });
     expect(
       nvdaPersonalStockReplyMatchesEvidence(
         JSON.stringify(expected),
