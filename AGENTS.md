@@ -333,13 +333,13 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## PR Requirements
 
 - Create feature branch from `main`
-- Let normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide hook verification before submitting
+- Let normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback before submitting
 - Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
 - Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub
 - Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
 - If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
-- Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run validate:pr`
+- Before every agent-managed push, update `refs/remotes/origin/main` explicitly and run `npm run validate:pr` only after confirming that its command, hook configuration, and transitively loaded repository-local execution surfaces match the trusted base; otherwise stop publication
 - Direct PRs follow `.github/PULL_REQUEST_TEMPLATE.md`; the managed documentation workflow uses its generated body
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed

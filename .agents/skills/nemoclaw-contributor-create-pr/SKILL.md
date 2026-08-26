@@ -30,7 +30,7 @@ Before creating a PR, verify the branch.
 1. **Refresh the trusted base ref.**
 
    ```bash
-   git fetch --prune origin main
+   git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
    ```
 
 2. **Use a feature branch.** Do not create a PR from `main`.
@@ -96,7 +96,17 @@ Normal Git hooks provide early feedback:
 Do not use a successful `git commit` or `git push` command as proof that these hooks ran.
 Hook installation can be missing, stale, or redirected through `core.hooksPath`.
 
-After the final commit, refresh `origin/main` and run this command before every push:
+Before executing validation, read its command, hook configuration, and transitively loaded
+repository-local helpers and configuration from `origin/main`. Confirm that each active-checkout
+execution surface is byte-for-byte identical to that trusted-base version. Do not use a
+branch-defined validator as independent evidence for the same branch.
+
+If an execution surface differs, is unavailable, or cannot be traced completely, do not execute
+the candidate validator, push, or open the PR. Report that trusted-base validation is unavailable
+and require a trusted-base validation environment or maintainer direction before publication.
+
+After the final commit, refresh `origin/main` with the explicit remote-tracking ref update in Step 1
+and run this command before every agent-managed push:
 
 ```bash
 npm run validate:pr

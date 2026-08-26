@@ -7,7 +7,8 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Reads the pull request template from the trusted base branch.",
-      "Refreshes `origin/main` and runs `npm run validate:pr` after the final commit and before pushing.",
+      "Updates `refs/remotes/origin/main` explicitly before validation.",
+      "Runs `npm run validate:pr` after the final commit and before pushing only when its complete execution surface matches the trusted base; otherwise stops publication.",
       "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
     ]
   },
