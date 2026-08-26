@@ -173,7 +173,7 @@ function commandError(result: CapturedSandboxCommandResult): OpenShellSandboxErr
     };
   }
   if (
-    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b|status:\s*disconnected/iu.test(
+    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured|unknown gateway)\b|status:\s*disconnected/iu.test(
       output,
     )
   ) {
