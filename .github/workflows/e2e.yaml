@@ -585,8 +585,8 @@ jobs:
             fi
           fi
 
-      - name: Stage exact 170a5fc managed-image catalog
-        if: ${{ inputs.checkout_sha == '170a5fcb446c75468d4a71cb7ac9f72983239148' && inputs.jobs == '' && inputs.targets == 'model-router-provider-routed-inference,onboard-resume,onboard-repair' }}
+      - name: Stage exact 933f105 managed-image catalog
+        if: ${{ inputs.checkout_sha == '933f105eb370acd42c5dc625548efe18ffd07e01' && inputs.jobs == '' && inputs.targets == 'model-router-provider-routed-inference,onboard-resume,onboard-repair' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -595,8 +595,8 @@ jobs:
           import path from "node:path";
           import { assembleManagedImageCatalog } from "./tools/e2e/pr-managed-image-publication.mts";
 
-          const revision = "170a5fcb446c75468d4a71cb7ac9f72983239148";
-          const release = "v0.0.114-140-g170a5fcb4";
+          const revision = "933f105eb370acd42c5dc625548efe18ffd07e01";
+          const release = "v0.0.114-145-g933f105eb3";
           const cohort = "ghrun-32935745132-1";
           const contracts = [
             {
@@ -634,7 +634,7 @@ jobs:
           NODE
 
       - name: Resolve exact PR managed-image catalog
-        if: ${{ inputs.checkout_sha != '' && (inputs.checkout_sha != '170a5fcb446c75468d4a71cb7ac9f72983239148' || inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.checkout_sha != '933f105eb370acd42c5dc625548efe18ffd07e01' || inputs.jobs != '' || inputs.targets != 'model-router-provider-routed-inference,onboard-resume,onboard-repair') && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
