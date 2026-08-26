@@ -324,6 +324,9 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 # create new top-level state while the gateway user cannot remove config files.
 # Immutability is opt-in via `shields up`.
 HERMES_DIR="/sandbox/.hermes"
+if [ -z "${HERMES_LAZY_INSTALL_TARGET+x}" ]; then
+  export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
+fi
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
@@ -2993,6 +2996,11 @@ prepare_hermes_nonroot_runtime() {
   # the actionable, redacted secret-boundary refusal. Repeat after the trusted
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
+  # The non-root Hermes runtime can persist safe config/env changes while it is
+  # running. Reconcile that mutable compatibility anchor only after the secret
+  # boundary is valid; refresh-hashes still requires the recorded MCP intent to
+  # match exactly before it advances the anchor.
+  refresh_hermes_runtime_config_hashes compat || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1

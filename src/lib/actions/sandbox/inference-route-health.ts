@@ -41,6 +41,7 @@ export async function probeSandboxInferenceGatewayHealth(
   sandboxName: string,
   options: {
     captureOpenshellImpl?: typeof captureOpenshellForStatus;
+    gatewayName?: string;
     getSessionAgentImpl?: typeof agentRuntime.getSessionAgent;
   } = {},
 ): Promise<SandboxInferenceRouteHealth | null> {
@@ -50,7 +51,11 @@ export async function probeSandboxInferenceGatewayHealth(
   let result: Awaited<ReturnType<typeof captureOpenshellForStatus>>;
   try {
     result = await capture(
-      buildSandboxInferenceRouteProbeArgs(sandboxName, getSessionAgent(sandboxName)),
+      buildSandboxInferenceRouteProbeArgs(
+        sandboxName,
+        getSessionAgent(sandboxName),
+        options.gatewayName,
+      ),
       {
         ignoreError: true,
         includeStreams: true,

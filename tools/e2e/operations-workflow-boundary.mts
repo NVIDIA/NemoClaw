@@ -35,6 +35,8 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
 const PUBLICATION_REUSE_CONDITION = "${{ steps.publication_mode.outputs.reuse == '1' }}";
+const PR_DCODE_BASE_PAIRING_CONDITION =
+  "${{ steps.publication_mode.outputs.reuse == '1' && needs.generate-matrix.outputs.managed_image_catalog != '' }}";
 const PUBLICATION_REQUIRED_OR_REUSE_CONDITION =
   "${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}";
 const PUBLICATION_CLASSIFIER_SCRIPT =
@@ -314,7 +316,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -327,6 +328,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
+  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
+    errors.push("Manual PR authentication must use the public PR metadata endpoint");
+  }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == refs/heads/*',
@@ -384,6 +388,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
+  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
+    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
   ) {
@@ -590,6 +597,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
+    name: "Base Image Publication / Verify",
+    needs: "generate-matrix",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
@@ -636,6 +645,18 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         },
       },
       {
+        id: "pr_dcode_base",
+        name: "Resolve Deep Agents Code base publication for the exact PR managed image",
+        if: PR_DCODE_BASE_PAIRING_CONDITION,
+        env: {
+          CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
+          CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+          GITHUB_TOKEN: "${{ github.token }}",
+          MANAGED_IMAGE_CATALOG: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
+        },
+        run: "node --experimental-strip-types --no-warnings tools/e2e/pr-dcode-base-publication.mts",
+      },
+      {
         id: "publication",
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
@@ -669,9 +690,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REUSE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
-          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
-          PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32544159037",
+          PUBLICATION_HEAD_SHA:
+            "${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}",
+          PUBLICATION_RUN_ID: "${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
       },
@@ -691,9 +713,11 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Validate reused Deep Agents Code base",
         if: PUBLICATION_REUSE_CONDITION,
         env: {
-          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
-          PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32544159037",
+          EXPECTED_BASE_REF: "${{ steps.pr_dcode_base.outputs.base_ref }}",
+          PUBLICATION_HEAD_SHA:
+            "${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}",
+          PUBLICATION_RUN_ID: "${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },
@@ -842,7 +866,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
-  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
+  if (job.name !== "Results / Require selected jobs" || job.if !== expectedCondition) {
     errors.push("relevant-e2e must be the stable aggregate check for main pushes");
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {

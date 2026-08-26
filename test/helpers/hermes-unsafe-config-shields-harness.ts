@@ -285,8 +285,12 @@ export function createHermesUnsafeConfigHarness(
         .spyOn(policy, "inspectPolicyMutationAuthority")
         .mockReturnValue(managedPolicyMutationAuthority);
       vi
+        .spyOn(policy, "inspectPolicyRecoveryAuthority")
+        .mockReturnValue(managedPolicyMutationAuthority);
+      vi
         .spyOn(policy, "recheckPolicyMutationAuthority")
         .mockReturnValue(managedPolicyMutationAuthority);
+      vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined);
       vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(hermesTarget);
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),

@@ -124,7 +124,10 @@ const setupInference = createSetupInference({
     "BROKEN_API_KEY",
     null,
     [],
-    { preferredInferenceApi: "openai-completions" },
+    {
+      preferredInferenceApi: "openai-completions",
+      revalidatePolicyRequirements: () => {},
+    },
   );
   console.log(JSON.stringify({ outcome: "resolved", calls }));
 })().catch((error) => {

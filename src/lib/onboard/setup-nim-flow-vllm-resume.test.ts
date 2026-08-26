@@ -61,12 +61,76 @@ describe("createSetupNim vLLM resume", () => {
     expect(installVllm).toHaveBeenCalledWith(
       profile,
       expect.objectContaining({
-        checkpointInstallIntent: checkpointVllmInstallModel,
+        checkpointInstallIntent: expect.any(Function),
         modelIntent: "nvidia/resumed-model",
         nonInteractive: true,
       }),
     );
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("refuses checkpoint-first vLLM installation when policy authority changes (#9833)", async () => {
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    const checkpointVllmInstallModel = vi.fn();
+    const installEffect = vi.fn();
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>();
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      vllmInstallModel: "nvidia/resumed-model",
+      steps: { provider_selection: { status: "failed" } },
+    } as unknown as ReturnType<typeof onboardSession.loadSession>);
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.checkpointInstallIntent?.("nvidia/resumed-model");
+      installEffect();
+      options.beforeInstall?.("nvidia/resumed-model");
+      return { ok: true };
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        checkpointVllmInstallModel,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("external policy authority must supply local inference");
+    });
+
+    await expect(
+      setupNim(
+        null,
+        null,
+        null,
+        true,
+        null,
+        null,
+        undefined,
+        undefined,
+        undefined,
+        revalidatePolicyRequirements,
+      ),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "vllm-local",
+        model: "nvidia/resumed-model",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      }),
+      "record managed vLLM install intent",
+    );
+    expect(checkpointVllmInstallModel).not.toHaveBeenCalled();
+    expect(installEffect).not.toHaveBeenCalled();
+    expect(handleVllmSelection).not.toHaveBeenCalled();
   });
 
   it("uses the session fallback to checkpoint and retry a dedicated local profile (#9582)", async () => {

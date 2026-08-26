@@ -89,10 +89,7 @@ describe("handleSandboxState", () => {
         extraProviders: [],
       },
     );
-    expect(calls.finalizeRouteReservation).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.any(String),
-    );
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
@@ -138,6 +135,9 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+    expect(calls.preflightPolicyRequirements).toHaveBeenCalledWith(
+      expect.objectContaining({ hostLocalInferenceRouteOnly: true }),
+    );
   });
 
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {

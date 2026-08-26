@@ -21,13 +21,12 @@ export function buildPolicySetCommand(
 
 /** Read the round-trippable base policy before a mutation. */
 export function buildPolicyGetCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
-    "policy",
-    "get",
-    ...policyGatewayArgs(gatewayName),
-    "--base",
-    sandboxName,
-  ]);
+  return buildOpenshellCommand(buildPolicyGetArgs(sandboxName, gatewayName));
+}
+
+/** Read the round-trippable base policy before a mutation without selecting a binary. */
+export function buildPolicyGetArgs(sandboxName: string, gatewayName?: string): string[] {
+  return ["policy", "get", ...policyGatewayArgs(gatewayName), "--base", sandboxName];
 }
 
 /** Read the effective policy for status and other diagnostics. */
@@ -46,8 +45,8 @@ function policyGatewayArgs(gatewayName?: string): string[] {
 }
 
 /** Read effective sandbox policy and its authority metadata as JSON. */
-export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
+export function buildPolicyGetFullJsonArgs(sandboxName: string, gatewayName?: string): string[] {
+  return [
     "policy",
     "get",
     ...policyGatewayArgs(gatewayName),
@@ -55,5 +54,27 @@ export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?:
     "--output",
     "json",
     sandboxName,
-  ]);
+  ];
+}
+
+/** Read the active global policy and its authority metadata as JSON. */
+export function buildGlobalPolicyGetFullJsonArgs(gatewayName?: string): string[] {
+  return [
+    "policy",
+    "get",
+    ...policyGatewayArgs(gatewayName),
+    "--global",
+    "--full",
+    "--output",
+    "json",
+  ];
+}
+
+/** Check whether the global policy has revision history. */
+export function buildGlobalPolicyListArgs(gatewayName?: string): string[] {
+  return ["policy", "list", ...policyGatewayArgs(gatewayName), "--global", "--limit", "1"];
+}
+
+export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
+  return buildOpenshellCommand(buildPolicyGetFullJsonArgs(sandboxName, gatewayName));
 }

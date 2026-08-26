@@ -30,7 +30,12 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
+    ensureAgentDashboardForward(
+      sandboxName: string,
+      agent: Agent,
+      revalidatePolicyRequirements?: (operation: string) => void,
+    ): Promise<number> | number;
+    revalidatePolicyRequirements?(operation: string): void;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -46,6 +51,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
     ordinaryOpenClawPairingIncompleteMessage(
       sandboxName: string,
@@ -56,6 +62,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       sandboxName: string,
       options: {
         readonly portableRequired: true;
+        readonly revalidatePolicyRequirements?: (operation: string) => void;
       },
     ): Promise<PortableOpenClawPairingSettlementResult>;
     portablePairingIncompleteMessage(
@@ -198,15 +205,18 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableAgent === "ordinary" &&
     selectedAgentName(agent) === "openclaw" &&
     recreateJournalHandoff !== true;
+  const revalidate = (operation: string) => deps.revalidatePolicyRequirements?.(operation);
 
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
+  revalidate(`set sandbox '${sandboxName}' as the default`);
   deps.setDefaultSandbox(sandboxName);
 
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
   if (allStagedMigrated) {
+    revalidate(`remove migrated legacy credentials for sandbox '${sandboxName}'`);
     deps.removeLegacyCredentialsFile();
   } else if (stagedLegacyKeys.length > 0) {
     deps.error(
@@ -218,23 +228,37 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   }
 
   // Sweep stale host files left by older credential migration paths (#3105).
+  revalidate(`remove stale host files for sandbox '${sandboxName}'`);
   deps.cleanupStaleHostFiles();
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
+    revalidate(`recover processes in sandbox '${sandboxName}'`);
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   }
 
   if (manageDashboard && !ordinaryOpenClawPairingRequired) {
     // Recheck the gateway and forward before verification, restarting only when needed.
+    revalidate(`recover processes in sandbox '${sandboxName}'`);
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+    revalidate(`configure the dashboard forward for sandbox '${sandboxName}'`);
+    const dashboardPort = deps.revalidatePolicyRequirements
+      ? await deps.ensureAgentDashboardForward(
+          sandboxName,
+          agent,
+          deps.revalidatePolicyRequirements,
+        )
+      : await deps.ensureAgentDashboardForward(sandboxName, agent);
     if (dashboardPort > 0) {
+      deps.revalidatePolicyRequirements?.(
+        `persist the dashboard port for sandbox '${sandboxName}'`,
+      );
       deps.persistDashboardPort(sandboxName, dashboardPort);
     }
   }
 
+  revalidate(`complete finalization for sandbox '${sandboxName}'`);
   return {
     stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
     unmigratedLegacyKeys,
@@ -270,15 +294,23 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableAgent === "ordinary" &&
     selectedAgentName(agent) === "openclaw" &&
     recreateJournalHandoff !== true;
+  const revalidate = (operation: string) => deps.revalidatePolicyRequirements?.(operation);
 
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {
+    revalidate(`settle portable pairing for sandbox '${sandboxName}'`);
     const pairing =
       portableAgent === "strict-openclaw"
-        ? await deps.settlePortablePairing(sandboxName, {
-            portableRequired: true,
-          })
+        ? await deps.settlePortablePairing(
+            sandboxName,
+            deps.revalidatePolicyRequirements
+              ? {
+                  portableRequired: true,
+                  revalidatePolicyRequirements: deps.revalidatePolicyRequirements,
+                }
+              : { portableRequired: true },
+          )
         : ({
             kind: "incomplete",
             reason: "portable-runtime-identity-invalid",
@@ -288,6 +320,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
         pairing.kind === "incomplete" ? pairing.reason : "portable-runtime-identity-invalid";
       const message = deps.portablePairingIncompleteMessage(sandboxName, reason);
       deps.error(`  ${message}`);
+      revalidate(`report incomplete portable pairing for sandbox '${sandboxName}'`);
       deps.reportDeploymentReadiness(false);
       const sessionUpdates = deps.toSessionUpdates({
         sandboxName,
@@ -307,10 +340,14 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     }
   }
   if (ordinaryOpenClawPairingRequired) {
-    const pairing = await deps.settleOrdinaryOpenClawPairing(sandboxName);
+    revalidate(`settle OpenClaw pairing for sandbox '${sandboxName}'`);
+    const pairing = deps.revalidatePolicyRequirements
+      ? await deps.settleOrdinaryOpenClawPairing(sandboxName, deps.revalidatePolicyRequirements)
+      : await deps.settleOrdinaryOpenClawPairing(sandboxName);
     if (pairing.kind !== "settled") {
       const message = deps.ordinaryOpenClawPairingIncompleteMessage(sandboxName, pairing.reason);
       deps.error(`  ${message}`);
+      revalidate(`report incomplete OpenClaw pairing for sandbox '${sandboxName}'`);
       deps.reportDeploymentReadiness(false);
       const sessionUpdates = deps.toSessionUpdates({
         sandboxName,
@@ -331,9 +368,20 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // The bounded warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before deployment verification.
     if (manageDashboard) {
+      revalidate(`recover processes in sandbox '${sandboxName}'`);
       deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-      const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-      if (dashboardPort > 0) deps.persistDashboardPort(sandboxName, dashboardPort);
+      revalidate(`configure the dashboard forward for sandbox '${sandboxName}'`);
+      const dashboardPort = deps.revalidatePolicyRequirements
+        ? await deps.ensureAgentDashboardForward(
+            sandboxName,
+            agent,
+            deps.revalidatePolicyRequirements,
+          )
+        : await deps.ensureAgentDashboardForward(sandboxName, agent);
+      if (dashboardPort > 0) {
+        revalidate(`record the dashboard port for sandbox '${sandboxName}'`);
+        deps.persistDashboardPort(sandboxName, dashboardPort);
+      }
     }
   }
   if (manageDashboard) {
@@ -341,23 +389,28 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // policy, provider, process, and forwarding state are live. Egress
     // diagnostics remain best-effort, but a confirmed raw credential must
     // prevent a successful handoff (#7425).
+    revalidate(`verify web search isolation for sandbox '${sandboxName}'`);
     const webSearchCredentialBoundarySafe =
       !webSearchEnabled ||
       (webSearchProvider !== null &&
         deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
+    revalidate(`verify deployment for sandbox '${sandboxName}'`);
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl(), sandboxName);
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
     deploymentHealthy =
       webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
+    revalidate(`publish deployment status for sandbox '${sandboxName}'`);
     for (const line of verificationDiagnostics) deps.log(line);
     deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
+    revalidate(`publish terminal readiness for sandbox '${sandboxName}'`);
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
 
+  revalidate(`complete onboarding for sandbox '${sandboxName}'`);
   const sessionUpdates = deps.toSessionUpdates({
     sandboxName,
     provider,

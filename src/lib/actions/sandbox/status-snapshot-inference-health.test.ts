@@ -616,15 +616,18 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       { ok: true },
       {
         agent: "langchain-deepagents-code",
+        gatewayName: "nemoclaw-19080",
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
       },
     );
     const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       ...options,
       deps: {
         ...options.deps,
+        probeSandboxInferenceGatewayHealthImpl,
         probeSandboxInferenceInvocationImpl,
       },
     });
@@ -632,6 +635,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw-19080",
         agentName: "langchain-deepagents-code",
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
@@ -640,6 +644,60 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       {},
       30_000,
     );
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+    });
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+  });
+
+  it("pins Hermes status health to its recorded OpenShell gateway (#10302)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const options = snapshotDeps(
+      gateway,
+      null,
+      { ok: true },
+      {
+        agent: "hermes",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      },
+    );
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+    });
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      },
+      {},
+      30_000,
+    );
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 

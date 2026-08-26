@@ -56,8 +56,9 @@ import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
+import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
 
-export { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+export { resolveCurrentRuntimeProviderBundle };
 export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
@@ -67,6 +68,16 @@ export { probeLlamaCppAttachment } from "../inference/llama-cpp";
 export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
 export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
 export { resumeManagedLlamaCppRuntime };
+
+/** Bind managed llama.cpp resume to the selected runtime provider. */
+export function bindManagedLlamaCppResume(gatewayPort: number) {
+  return (sandboxName: string, revalidatePolicyRequirements?: (operation: string) => void) =>
+    resumeManagedLlamaCppRuntime(sandboxName, {
+      gatewayPort,
+      runtimeProvider: resolveCurrentRuntimeProviderBundle(),
+      revalidatePolicyRequirements,
+    });
+}
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
@@ -100,6 +111,7 @@ export type SetupNim = (
   assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints,
   canProbeRoute?: (provider: string) => boolean,
   recoverySessionId?: string | null,
+  revalidatePolicyRequirements?: (route: ProviderInferenceProbeRoute, operation: string) => void,
 ) => Promise<ProviderSelectionResult>;
 
 export interface SetupNimFlowDeps {
@@ -391,6 +403,23 @@ function applyGatewayRouteDiscoveryConstraints(
 
 function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
   return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+}
+
+function prepareEndpointProviderPolicyRoute(
+  deps: SetupNimFlowDeps,
+  selected: ProviderMenuChoice,
+  state: SetupNimSelectionState,
+): void {
+  if (selected.key === "llama-cpp") {
+    state.provider = LLAMA_CPP_PROVIDER_NAME;
+    state.endpointUrl = LLAMA_CPP_HOST_OPENAI_BASE_URL;
+    state.credentialEnv = LLAMA_CPP_CREDENTIAL_ENV;
+    return;
+  }
+  const tentative = deps.remoteProviderConfig[selected.key];
+  state.provider = tentative.providerName;
+  state.endpointUrl = tentative.endpointUrl;
+  state.credentialEnv = tentative.credentialEnv;
 }
 
 function resolveManagedLlamaCppSafely(
@@ -701,6 +730,23 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   };
 }
 
+function policyCheckedVllmInstallRecovery(
+  recovery: ReturnType<typeof vllmInstallRecoveryOptions>,
+  state: SetupNimSelectionState,
+  seedVllmInstallRoute: (modelId: string) => void,
+): ReturnType<typeof vllmInstallRecoveryOptions> {
+  const checkpointInstallIntent = recovery.checkpointInstallIntent;
+  if (!checkpointInstallIntent) return recovery;
+  return {
+    ...recovery,
+    checkpointInstallIntent: (modelId: string) => {
+      seedVllmInstallRoute(modelId);
+      state.revalidatePolicyRequirements?.("record managed vLLM install intent");
+      checkpointInstallIntent(modelId);
+    },
+  };
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -725,6 +771,7 @@ export function createSetupNim(
     ) => GatewayRouteDiscoveryConstraints,
     canProbeRoute?: (provider: string) => boolean,
     recoverySessionId?: string | null,
+    revalidatePolicyRequirements?: (route: ProviderInferenceProbeRoute, operation: string) => void,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -769,20 +816,20 @@ export function createSetupNim(
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
       };
+      const effectiveInferenceApi = () =>
+        deps.resolveAgentInferenceApi(
+          agent?.name ?? null,
+          state.provider,
+          deps.coerceAgentInferenceApi(agent, state.preferredInferenceApi),
+        );
+      const route = (): ProviderInferenceProbeRoute => ({
+        provider: state.provider,
+        model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
+        endpointUrl: state.endpointUrl,
+        preferredInferenceApi: effectiveInferenceApi(),
+        credentialEnv: state.credentialEnv,
+      });
       state.assertRouteCompatible = () => {
-        const effectiveInferenceApi = () =>
-          deps.resolveAgentInferenceApi(
-            agent?.name ?? null,
-            state.provider,
-            deps.coerceAgentInferenceApi(agent, state.preferredInferenceApi),
-          );
-        const route = (): ProviderInferenceProbeRoute => ({
-          provider: state.provider,
-          model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
-          endpointUrl: state.endpointUrl,
-          preferredInferenceApi: effectiveInferenceApi(),
-          credentialEnv: state.credentialEnv,
-        });
         const constraints = assertRouteCompatible?.(route()) ?? {
           requiredModel: null,
           requiredEndpointUrl: null,
@@ -792,6 +839,8 @@ export function createSetupNim(
         assertRouteCompatible?.(route());
         return constraints;
       };
+      state.revalidatePolicyRequirements = (operation) =>
+        revalidatePolicyRequirements?.(route(), operation);
       return state;
     };
 
@@ -988,6 +1037,10 @@ export function createSetupNim(
 
         if (isEndpointProviderSelection(deps, selected.key)) {
           const state = createSelectionState();
+          prepareEndpointProviderPolicyRoute(deps, selected, state);
+          state.revalidatePolicyRequirements?.(
+            `configure inference provider ${JSON.stringify(state.provider)}`,
+          );
           const result = await handleEndpointProviderSelection({
             deps,
             selected,
@@ -1047,12 +1100,14 @@ export function createSetupNim(
           state.credentialEnv = LLAMA_CPP_CREDENTIAL_ENV;
           state.preferredInferenceApi = "openai-completions";
           state.assertRouteCompatible?.();
+          state.revalidatePolicyRequirements?.("install managed llama.cpp runtime");
           const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
             resolved.selection,
             {
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider: deps.getRuntimeProvider(),
+              revalidatePolicyRequirements: state.revalidatePolicyRequirements,
             },
           );
           if (!installed.ok) {
@@ -1174,18 +1229,27 @@ export function createSetupNim(
           }
           const vllmState = createSelectionState();
           preparedVllmState = vllmState;
+          const seedVllmInstallRoute = (modelId: string): void => {
+            vllmState.provider = "vllm-local";
+            vllmState.model = modelId;
+            vllmState.endpointUrl = null;
+            vllmState.credentialEnv = null;
+            vllmState.preferredInferenceApi = "openai-completions";
+            vllmState.assertRouteCompatible?.();
+          };
+          const vllmRecovery = policyCheckedVllmInstallRecovery(
+            vllmInstallRecoveryOptions(deps),
+            vllmState,
+            seedVllmInstallRoute,
+          );
           const result = await deps.installVllm(vllmProfile, {
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
-            ...vllmInstallRecoveryOptions(deps),
+            ...vllmRecovery,
             beforeInstall: (modelId) => {
-              vllmState.provider = "vllm-local";
-              vllmState.model = modelId;
-              vllmState.endpointUrl = null;
-              vllmState.credentialEnv = null;
-              vllmState.preferredInferenceApi = "openai-completions";
-              vllmState.assertRouteCompatible?.();
+              seedVllmInstallRoute(modelId);
+              vllmState.revalidatePolicyRequirements?.("install managed vLLM runtime");
             },
           });
           if (!result.ok) {
