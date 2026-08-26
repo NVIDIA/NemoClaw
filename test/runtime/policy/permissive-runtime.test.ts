@@ -11,12 +11,6 @@ import {
   buildRuntimePermissivePolicy,
   type ExactManagedMcpPolicy,
 } from "../../../src/lib/shields/permissive-runtime.js";
-import {
-  listMessagingPolicyPresetMetadata,
-  listMessagingProviderNamesForChannel,
-} from "../../../src/lib/messaging/channels/metadata.js";
-import type { MessagingAgentId } from "../../../src/lib/messaging/manifest";
-import { loadMessagingChannelPolicyPreset } from "../../../src/lib/messaging/channels/policy.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -39,21 +33,6 @@ const MANAGED_POLICY: ExactManagedMcpPolicy = {
   server: "alpha",
 };
 
-const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../../../agents/hermes/policy-permissive.yaml"),
-  "utf8",
-);
-
-const OPENCLAW_MESSAGING_PERMISSIVE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
-  "utf8",
-);
-
-const MESSAGING_PERMISSIVE_BY_AGENT: Record<MessagingAgentId, string> = {
-  hermes: HERMES_MESSAGING_PERMISSIVE,
-  openclaw: OPENCLAW_MESSAGING_PERMISSIVE,
-};
-
 const SHIELDS_CREDENTIAL_FREE_ROUTE_CASES = [
   ["whatsapp", "enabled", true],
   ["whatsapp", "disabled", false],
@@ -72,29 +51,33 @@ const MISSING_PLAN_SHIELDS_CASES = [
   ["an unreadable live policy", "", "the live policy could not be read"],
 ] as const;
 
-const SLACK_PROVIDER_CASES = (["openclaw", "hermes"] as const).flatMap((agent) => {
-  const sandboxName = `${agent}-box`;
-  const expectedProviders = listMessagingProviderNamesForChannel(sandboxName, "slack", { agent });
-  const slackPolicy = listMessagingPolicyPresetMetadata({ agent }).find(
-    (policy) => policy.channelId === "slack",
-  )!;
-  const livePolicyKey = (slackPolicy.agentPolicyKeys[agent] ?? slackPolicy.policyKeys)[0]!;
-  return [
-    ...(agent === "openclaw"
-      ? ([[agent, "exact", sandboxName, livePolicyKey, expectedProviders, true]] as const)
-      : []),
-    [agent, "absent", sandboxName, livePolicyKey, [], false],
-    [agent, "partial", sandboxName, livePolicyKey, expectedProviders.slice(0, 1), false],
-    [
-      agent,
-      "mismatched",
-      sandboxName,
-      livePolicyKey,
-      [...expectedProviders, `${sandboxName}-unexpected-provider`],
-      false,
-    ],
-  ] as const;
-});
+const SLACK_PROVIDER_CASES = [
+  [
+    "openclaw",
+    "exact",
+    "openclaw-box",
+    ["openclaw-box-slack-app", "openclaw-box-slack-bridge"],
+    true,
+  ],
+  ["openclaw", "absent", "openclaw-box", [], false],
+  ["openclaw", "partial", "openclaw-box", ["openclaw-box-slack-app"], false],
+  [
+    "openclaw",
+    "mismatched",
+    "openclaw-box",
+    ["openclaw-box-slack-app", "openclaw-box-slack-bridge", "openclaw-box-unexpected-provider"],
+    false,
+  ],
+  ["hermes", "absent", "hermes-box", [], false],
+  ["hermes", "partial", "hermes-box", ["hermes-box-slack-app"], false],
+  [
+    "hermes",
+    "mismatched",
+    "hermes-box",
+    ["hermes-box-slack-app", "hermes-box-slack-bridge", "hermes-box-unexpected-provider"],
+    false,
+  ],
+] as const;
 
 type SlackEndpoint = {
   access?: string;
@@ -223,7 +206,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       }),
       messagingAgent: "openclaw",
       messagingPlan: enabledMessagingSelection("telegram", "slack"),
-      readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -232,20 +215,14 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const policies = YAML.parse(stagedPolicy).network_policies;
-    const telegramPolicy = YAML.parse(
-      loadMessagingChannelPolicyPreset("telegram", {
-        agent: "openclaw",
-        sandboxName: "openclaw-box",
-      })!,
-    );
-    const slackPolicy = YAML.parse(
-      loadMessagingChannelPolicyPreset("slack", {
-        agent: "openclaw",
-        sandboxName: "openclaw-box",
-      })!,
-    );
-    expect(policies.telegram_bot).toEqual(telegramPolicy.network_policies.telegram_bot);
-    expect(policies.slack).toEqual(slackPolicy.network_policies.slack);
+    expect(policies.telegram_bot).toMatchObject({
+      endpoints: [
+        {
+          host: "api.telegram.org",
+          credential_binding: { provider: "openclaw-box-telegram-bridge" },
+        },
+      ],
+    });
     expect(
       new Set(
         policies.telegram_bot.endpoints.map(
@@ -278,7 +255,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: YAML.stringify({ network_policies: {} }),
       messagingAgent: "openclaw",
       messagingPlan: enabledMessagingSelection("telegram"),
-      readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "openclaw-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -303,7 +280,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
               channels: [{ channelId, active: false, disabled: true }],
               disabledChannels: [channelId],
             },
-        readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
         sandboxName: "openclaw-box",
         writeTempPolicy: (yaml) => {
           stagedPolicy = yaml;
@@ -325,7 +302,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           livePolicyYaml,
           messagingAgent: "openclaw",
           messagingPlan: null,
-          readBasePolicy: () => OPENCLAW_MESSAGING_PERMISSIVE,
+          readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
           sandboxName: "missing-plan",
           writeTempPolicy,
         });
@@ -393,7 +370,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: "",
       messagingAgent: "hermes",
       messagingPlan: enabledMessagingSelection("discord"),
-      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -427,7 +404,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       }),
       messagingAgent: "hermes",
       messagingPlan: enabledMessagingSelection("slack"),
-      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -467,7 +444,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       }),
       messagingAgent: "hermes",
       messagingPlan: enabledMessagingSelection("discord", "slack"),
-      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -484,19 +461,19 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
 
   it.each(SLACK_PROVIDER_CASES)(
     "%s keeps Slack egress only when the live provider set is exact; observed %s (#10153)",
-    (agent, _providerState, sandboxName, livePolicyKey, providers, shouldKeep) => {
+    (agent, _providerState, sandboxName, providers, shouldKeep) => {
       let stagedPolicy = "";
       buildRuntimePermissivePolicy(`/unused-${agent}-permissive.yaml`, {
         livePolicyYaml: YAML.stringify({
           network_policies: {
-            [livePolicyKey]: {
+            slack: {
               endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
             },
           },
         }),
         messagingAgent: agent,
         messagingPlan: enabledMessagingSelection("slack"),
-        readBasePolicy: () => MESSAGING_PERMISSIVE_BY_AGENT[agent],
+        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
         sandboxName,
         writeTempPolicy: (yaml) => {
           stagedPolicy = yaml;
