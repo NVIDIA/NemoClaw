@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { processTreeBoundedOpenshellInvocation } from "../adapters/openshell/process-tree-timeout";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, run, runCapture, shellQuote } from "../runner";
 import {
@@ -20,8 +19,6 @@ export interface OpenshellCliDeps {
   setCachedBinary(binary: string): void;
   getGatewayPort(): number;
   getDockerDriverGatewayEndpoint(): string;
-  runCommand?: typeof run;
-  runCaptureCommand?: typeof runCapture;
 }
 
 export interface OpenshellCliHelpers {
@@ -37,9 +34,6 @@ export interface OpenshellCliHelpers {
 }
 
 export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliHelpers {
-  const runCommand = deps.runCommand ?? run;
-  const runCaptureCommand = deps.runCaptureCommand ?? runCapture;
-
   function getOpenshellBinary(): string {
     const cached = deps.getCachedBinary();
     if (cached) return cached;
@@ -66,28 +60,12 @@ export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliH
     return [openshellBinary, ...args];
   }
 
-  function processTreeBoundedInvocation(args: string[], opts: any) {
-    const [binary, ...commandArgs] = openshellArgv(args, opts);
-    const { killProcessTreeOnTimeout, ...runnerOptions } = opts;
-    const bounded = processTreeBoundedOpenshellInvocation(binary, commandArgs, {
-      killProcessTreeOnTimeout,
-      killSignal: runnerOptions.killSignal,
-      timeout: runnerOptions.timeout,
-    });
-    return {
-      argv: [bounded.binary, ...bounded.args],
-      runnerOptions: { ...runnerOptions, killSignal: bounded.killSignal },
-    };
-  }
-
   function runOpenshell(args: string[], opts: any = {}) {
-    const invocation = processTreeBoundedInvocation(args, opts);
-    return runCommand(invocation.argv, invocation.runnerOptions);
+    return run(openshellArgv(args, opts), opts);
   }
 
   function runCaptureOpenshell(args: string[], opts: any = {}) {
-    const invocation = processTreeBoundedInvocation(args, opts);
-    return runCaptureCommand(invocation.argv, invocation.runnerOptions);
+    return runCapture(openshellArgv(args, opts), opts);
   }
 
   function captureOpenshell(args: string[], opts: CaptureOpenshellOptions = {}) {

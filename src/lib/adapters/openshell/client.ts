@@ -12,7 +12,6 @@ import {
 
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
-import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
@@ -29,7 +28,6 @@ interface OpenshellSpawnOptions {
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   timeout?: number;
-  killProcessTreeOnTimeout?: boolean;
   ignoreError?: boolean;
   spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
@@ -55,7 +53,6 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   includeStderr?: boolean;
   includeStreams?: boolean;
-  killSignal?: SpawnSyncOptions["killSignal"];
   maxBuffer?: number;
 }
 
@@ -210,15 +207,14 @@ export function runOpenshellCommand(
   opts: RunOpenshellOptions = {},
 ): SpawnSyncReturns<string> {
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
-  const bounded = processTreeBoundedOpenshellInvocation(binary, args, opts);
-  const result = spawnSyncImpl(bounded.binary, bounded.args, {
+  const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: redirectInheritedChildStdoutToStderr(opts.stdio ?? "inherit"),
     input: opts.input,
     timeout: opts.timeout,
-    killSignal: bounded.killSignal,
+    killSignal: opts.killSignal,
     maxBuffer: opts.maxBuffer,
   });
   if (result.error) {
@@ -240,14 +236,12 @@ export function captureOpenshellCommand(
   opts: CaptureOpenshellOptions = {},
 ): CaptureOpenshellResult {
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
-  const bounded = processTreeBoundedOpenshellInvocation(binary, args, opts);
-  const result = spawnSyncImpl(bounded.binary, bounded.args, {
+  const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
-    killSignal: bounded.killSignal,
     maxBuffer: opts.maxBuffer,
   });
   if (result.error) {

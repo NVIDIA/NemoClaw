@@ -59,7 +59,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     );
 
     recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson", waitForSupervisor: false },
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
       {
         dockerCapture: dockerCaptureFixture(),
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
@@ -90,7 +90,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
 
     recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, backend: "generic", waitForSupervisor: false },
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "generic" },
       {
         dockerCapture: dockerCaptureFixture(),
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),

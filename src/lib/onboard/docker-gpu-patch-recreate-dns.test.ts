@@ -92,10 +92,7 @@ describe("Docker GPU recreate DNS fallback (#3579)", () => {
 
   it("plumbs the discovered upstream through recreate into clone args", () => {
     const deps = recreateDeps("9.9.9.9");
-    recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
-      deps,
-    );
+    recreateOpenShellDockerSandboxWithGpu({ sandboxName: "alpha", timeoutSecs: 1 }, deps);
 
     expect(deps.detectSandboxFallbackDns).toHaveBeenCalled();
     expect(deps.probeContainerDns).toHaveBeenCalledWith({ dnsServer: "9.9.9.9" });
@@ -107,10 +104,7 @@ describe("Docker GPU recreate DNS fallback (#3579)", () => {
 
   it("does not add DNS through recreate when no upstream is discovered", () => {
     const deps = recreateDeps(null);
-    recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
-      deps,
-    );
+    recreateOpenShellDockerSandboxWithGpu({ sandboxName: "alpha", timeoutSecs: 1 }, deps);
 
     expect(deps.dockerRunDetached).not.toHaveBeenCalledWith(
       expect.arrayContaining(["--dns"]),
@@ -129,10 +123,7 @@ describe("Docker GPU recreate DNS fallback (#3579)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     try {
-      recreateOpenShellDockerSandboxWithGpu(
-        { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
-        deps,
-      );
+      recreateOpenShellDockerSandboxWithGpu({ sandboxName: "alpha", timeoutSecs: 1 }, deps);
 
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -161,10 +152,7 @@ describe("Docker GPU recreate DNS fallback (#3579)", () => {
     };
     const deps = recreateDeps("9.9.9.9", inspect);
 
-    recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
-      deps,
-    );
+    recreateOpenShellDockerSandboxWithGpu({ sandboxName: "alpha", timeoutSecs: 1 }, deps);
 
     expect(deps.probeContainerDns).not.toHaveBeenCalled();
     expect(deps.dockerRunDetached).not.toHaveBeenCalledWith(
@@ -182,10 +170,7 @@ describe("Docker GPU recreate DNS fallback (#3579)", () => {
     });
 
     expect(() =>
-      recreateOpenShellDockerSandboxWithGpu(
-        { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
-        deps,
-      ),
+      recreateOpenShellDockerSandboxWithGpu({ sandboxName: "alpha", timeoutSecs: 1 }, deps),
     ).toThrow(/using --dns 9\.9\.9\.9.*servers_unreachable.*before container recreation/s);
     expect(deps.dockerStop).not.toHaveBeenCalled();
   });
