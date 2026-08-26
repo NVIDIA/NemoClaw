@@ -436,6 +436,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("openrouter-api")).toBe(true);
   });
 
+  it("skips the Responses probe for orcarouter-api (OrcaRouter uses Chat Completions here)", () => {
+    expect(shouldSkipResponsesProbe("orcarouter-api")).toBe(true);
+  });
+
   it("skips the Responses probe for completions-only llama.cpp attachment (#8161)", () => {
     expect(shouldSkipResponsesProbe("llama-cpp-local")).toBe(true);
   });

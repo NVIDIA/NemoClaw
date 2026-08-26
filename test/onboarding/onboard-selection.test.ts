@@ -1273,7 +1273,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 };
 
 const commands = [];
-const { messages } = installPromptQueue(credentials, ["8", "1"]);
+const { messages } = installPromptQueue(credentials, ["9", "1"]);
 runner.run = (command, opts = {}) => {
   commands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
@@ -1418,7 +1418,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 const runCommands = [];
 const shellCommands = [];
 let managedOllamaStarted = false;
-const { messages } = installPromptQueue(credentials, ["8", "1"]);
+const { messages } = installPromptQueue(credentials, ["9", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
@@ -2106,7 +2106,7 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", async () => {
-    const answers = ["8", "1"];
+    const answers = ["9", "1"];
     const messages: string[] = [];
     const lines: string[] = [];
     const stateSelections: string[] = [];
@@ -2159,7 +2159,7 @@ const { setupNim } = require(${onboardPath});
     {
       title: "waits for delayed Ollama registration after pulling a starter model",
       scenario: {
-        answers: ["8", "1", "y"],
+        answers: ["9", "1", "y"],
         environment: { NEMOCLAW_TEST_NO_SLEEP: "1" },
         listAfter: { attempts: 7 },
       } as const,
@@ -2175,7 +2175,7 @@ const { setupNim } = require(${onboardPath});
     {
       title: "reprompts when a pulled Ollama model does not appear in discovery (#6038)",
       scenario: {
-        answers: ["8", "1", "y", "2", "llama3.2:3b", "y"],
+        answers: ["9", "1", "y", "2", "llama3.2:3b", "y"],
         environment: { NEMOCLAW_TEST_NO_SLEEP: "1" },
         listAfter: { model: "llama3.2:3b" },
       } as const,
@@ -2201,7 +2201,7 @@ const { setupNim } = require(${onboardPath});
     {
       title: "re-prompts for a model when the user declines the size confirmation",
       scenario: {
-        answers: ["8", "1", "n", "1", "y"],
+        answers: ["9", "1", "n", "1", "y"],
         listAfter: "first-pull",
       } as const,
       verify: ({ payload, pulls }: ReturnType<typeof runOllamaPullScenario>) => {
@@ -2221,7 +2221,7 @@ const { setupNim } = require(${onboardPath});
     {
       title: "bypasses the size confirmation when NEMOCLAW_YES=1 is set",
       scenario: {
-        answers: ["8", "1"],
+        answers: ["9", "1"],
         environment: { NEMOCLAW_YES: "1" },
         listAfter: "first-pull",
       } as const,
@@ -2675,7 +2675,7 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const { messages } = installPromptQueue(credentials, ["4", "", "", ""]);
+const { messages } = installPromptQueue(credentials, ["5", "", "", ""]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = () => "";
 
@@ -3248,7 +3248,7 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
+const { messages } = installPromptQueue(credentials, ["5", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
 
 const { setupNim } = require(${onboardPath});
@@ -3344,7 +3344,7 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const { messages } = installPromptQueue(credentials, ["8"]);
+const { messages } = installPromptQueue(credentials, ["9"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
@@ -3434,7 +3434,7 @@ nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
 // Select option 8 (nim-local), then model 1, and enter the NGC credential.
-const { messages } = installPromptQueue(credentials, ["8", "1", "ngc-test"]);
+const { messages } = installPromptQueue(credentials, ["9", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.

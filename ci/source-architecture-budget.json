@@ -64,7 +64,7 @@
     "src/lib/actions": 19,
     "src/lib/actions/sandbox": 183,
     "src/lib/state": 39,
-    "src/lib/inference": 63,
+    "src/lib/inference": 64,
     "scripts": 42
   }
 }

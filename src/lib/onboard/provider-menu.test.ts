@@ -11,6 +11,7 @@ import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 const REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints" },
   openrouter: { label: "OpenRouter" },
+  orcarouter: { label: "OrcaRouter" },
   openai: { label: "OpenAI" },
   custom: { label: "Other OpenAI-compatible endpoint" },
   anthropic: { label: "Anthropic" },
@@ -53,6 +54,7 @@ describe("buildInferenceProviderMenu", () => {
     expect(result.options.map((option) => option.key)).toEqual([
       "build",
       "openrouter",
+      "orcarouter",
       "openai",
       "custom",
       "anthropic",
@@ -80,6 +82,7 @@ describe("buildInferenceProviderMenu", () => {
     expect(result.options.map((option) => option.key)).toEqual([
       "build",
       "openrouter",
+      "orcarouter",
       "openai",
       "custom",
       "anthropic",

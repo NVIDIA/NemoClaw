@@ -41,7 +41,7 @@ export function normalizeManagedDcodeEndpointUrl(
 
 export function normalizeManagedDcodeModelName(model: string): string {
   const trimmed = model.trim();
-  for (const prefix of ["openai:", "openrouter:"]) {
+  for (const prefix of ["openai:", "openrouter:", "orcarouter:"]) {
     if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
   }
   return trimmed;

@@ -961,9 +961,9 @@ usage() {
   printf "                                  In curl pipes, set this on bash or export it first.\n"
   printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
-  printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
-  printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
+  printf "    NEMOCLAW_PROVIDER             build | openrouter | orcarouter | openai | anthropic\n"
+  printf "                                  | anthropicCompatible | gemini | ollama | custom | nim-local\n"
+  printf "                                  | vllm | routed | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -3809,7 +3809,7 @@ should_defer_hermes_onboarding() {
   # src/lib/onboard/providers.ts. These values select a route; they are not
   # inference credentials.
   case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | orcarouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
     *) return 1 ;;
   esac
 }

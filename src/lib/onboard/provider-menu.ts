@@ -48,6 +48,7 @@ export interface InferenceProviderMenu {
 const BASE_REMOTE_PROVIDER_OPTIONS: readonly ProviderMenuChoice[] = [
   { key: "build", label: "NVIDIA Endpoints" },
   { key: "openrouter", label: "OpenRouter" },
+  { key: "orcarouter", label: "OrcaRouter" },
   { key: "openai", label: "OpenAI" },
   { key: "custom", label: "Other OpenAI-compatible endpoint" },
   { key: "anthropic", label: "Anthropic" },

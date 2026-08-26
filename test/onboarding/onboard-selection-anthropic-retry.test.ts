@@ -99,7 +99,7 @@ describe("onboard Anthropic credential retry UX", {
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "", "retry", "anthropic-good", ""];
+const answers = ["6", "", "retry", "anthropic-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -180,7 +180,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["6", "https://proxy.example.com/v1/messages", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
+const answers = ["7", "https://proxy.example.com/v1/messages", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {

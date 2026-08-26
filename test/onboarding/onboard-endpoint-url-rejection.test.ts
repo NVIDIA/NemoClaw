@@ -222,7 +222,7 @@ printf '000'
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "https://proxy.example.com/v1/custom-path?param=value#frag", "4", "exit"];
+const answers = ["5", "https://proxy.example.com/v1/custom-path?param=value#frag", "5", "exit"];
 const messages = [];
 credentials.prompt = async (message) => {
   messages.push(message);

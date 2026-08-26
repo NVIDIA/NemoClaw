@@ -10,6 +10,7 @@ import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import { isSafeLlamaCppServedModelAlias, LLAMA_CPP_CREDENTIAL_ENV } from "./llama-cpp/contract";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
+import { ORCAROUTER_CREDENTIAL_ENV, ORCAROUTER_PROVIDER_NAME } from "./orcarouter";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
 export { isSafeModelId };
@@ -164,6 +165,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "OPENAI_API_KEY",
         providerLabel: "OpenAI",
       };
+    case ORCAROUTER_PROVIDER_NAME:
+      return {
+        ...base,
+        model: model || DEFAULT_CLOUD_MODEL,
+        credentialEnv: ORCAROUTER_CREDENTIAL_ENV,
+        providerLabel: "OrcaRouter",
+      };
     case OPENROUTER_PROVIDER_NAME:
       return {
         ...base,
@@ -280,6 +288,7 @@ export function getSandboxInferenceConfig(
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
+    case ORCAROUTER_PROVIDER_NAME:
     case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
       providerKey = MANAGED_PROVIDER_ID;

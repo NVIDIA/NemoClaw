@@ -13,6 +13,7 @@ const {
   VLLM_LOCAL_CREDENTIAL_ENV,
   getSandboxInferenceConfig,
 } = require("../inference/config");
+const orcarouter = require("../inference/orcarouter");
 const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
@@ -123,6 +124,7 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
 const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
   "openrouter",
+  "orcarouter",
   "openai",
   "anthropic",
   "anthropicCompatible",
@@ -141,7 +143,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, orcarouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -169,6 +171,17 @@ const REMOTE_PROVIDER_CONFIG = {
     credentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
     endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
     helpUrl: openrouter.OPENROUTER_HELP_URL,
+    modelMode: "catalog",
+    defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
+  },
+  orcarouter: {
+    label: "OrcaRouter",
+    providerName: orcarouter.ORCAROUTER_PROVIDER_NAME,
+    providerType: orcarouter.ORCAROUTER_PROVIDER_TYPE,
+    credentialEnv: orcarouter.ORCAROUTER_CREDENTIAL_ENV,
+    endpointUrl: orcarouter.ORCAROUTER_ENDPOINT_URL,
+    helpUrl: orcarouter.ORCAROUTER_HELP_URL,
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
     skipVerify: true,

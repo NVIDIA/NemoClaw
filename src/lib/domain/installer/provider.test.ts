@@ -16,6 +16,7 @@ describe("installer provider helpers", () => {
     expect(normalizeInstallerProvider("cloud")).toBe("build");
     expect(normalizeInstallerProvider("open-router")).toBe("openrouter");
     expect(normalizeInstallerProvider("OpenRouterAI")).toBe("openrouter");
+    expect(normalizeInstallerProvider("orcarouter")).toBe("orcarouter");
     expect(normalizeInstallerProvider("nim")).toBe("nim-local");
     expect(normalizeInstallerProvider("anthropiccompatible")).toBe("anthropicCompatible");
     expect(normalizeInstallerProvider(" AnthropicCompatible ")).toBe("anthropicCompatible");
@@ -38,11 +39,11 @@ describe("installer provider helpers", () => {
 
   it("keeps help text values aligned with install.sh usage", () => {
     expect(installerProviderHelpValues()).toBe(
-      "build, openrouter, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed",
+      "build, openrouter, orcarouter, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed",
     );
     expect(installerProviderUsageLines()).toEqual([
-      "build | openrouter | openai | anthropic",
-      "anthropicCompatible | gemini | ollama | custom | nim-local | vllm | routed",
+      "build | openrouter | orcarouter | openai",
+      "anthropic | anthropicCompatible | gemini | ollama | custom | nim-local | vllm | routed",
       "aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local, open-router -> openrouter, openrouterai -> openrouter",
     ]);
   });
