@@ -26,7 +26,7 @@ import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
 } from "./docker-gpu-patch-constants";
-import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
 import { restoreDockerGpuPatchBackupAfterRecreateFailure } from "./docker-gpu-patch-rollback";
 import type {
@@ -393,19 +393,40 @@ export function recreateOpenShellDockerSandboxContainer(
       options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
       deps,
     );
-    const reconcile = reconcileSupervisorReconnect(
-      execReady,
-      { newContainerId, backupContainerName, originalName },
-      deps,
-    );
-    if (!reconcile.execReady) {
-      context.rolledBack = reconcile.rolledBack;
-      context.replacementStopConfirmed = reconcile.replacementStopConfirmed;
-      context.replacementRemovalConfirmed = reconcile.replacementRemovalConfirmed;
-      context.replacementPresence = reconcile.replacementPresence;
-      throw reconcile.error;
+    const patchResult = result(false);
+    const finalization = execReady
+      ? finalizeDockerGpuPatchBackup(
+          {
+            result: patchResult,
+            supervisorReady: true,
+            sandboxName: options.sandboxName,
+            finalHandoffTimeoutSecs: options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+          },
+          deps,
+        )
+      : finalizeDockerGpuPatchBackup({ result: patchResult, supervisorReady: false }, deps);
+    context.rolledBack = finalization.rolledBack;
+    context.backupRemoved = finalization.backupRemoved;
+    context.replacementStopConfirmed = finalization.replacementStopConfirmed;
+    context.replacementRemovalConfirmed = finalization.replacementRemovalConfirmed;
+    context.replacementPresence = finalization.replacementPresence;
+    context.lastSandboxPhase = finalization.lastSandboxPhase;
+    if (!execReady) {
+      throw new Error(
+        finalization.rolledBack
+          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
+      );
     }
-    return result(reconcile.backupRemoved);
+    if (finalization.finalHandoffAcknowledged) return result(true);
+    const rebuildRequired = finalization.backupRemoved
+      ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+      : "";
+    throw new Error(
+      finalization.lastSandboxPhase
+        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.${rebuildRequired}`
+        : `OpenShell did not acknowledge the final replacement handoff.${rebuildRequired}`,
+    );
   } catch (error) {
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);
   }

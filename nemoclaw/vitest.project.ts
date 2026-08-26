@@ -9,6 +9,10 @@ const canonicalCredentialFilterBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/credential-filter-boundary.cts",
 );
+const canonicalOpenShellExternalTargetBoundary = path.resolve(
+  import.meta.dirname,
+  "src/shared/openshell-external-target-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
@@ -59,6 +63,10 @@ const pluginVitestProjectOptions = {
       {
         find: /^.*credential-filter-boundary\.cjs$/,
         replacement: canonicalCredentialFilterBoundary,
+      },
+      {
+        find: /^.*openshell-external-target-boundary\.cjs$/,
+        replacement: canonicalOpenShellExternalTargetBoundary,
       },
       {
         find: /^.*openshell-policy-boundary\.cjs$/,

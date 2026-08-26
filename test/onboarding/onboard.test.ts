@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { getBuildIdentity } from "../../src/lib/core/version.js";
 import { appendHostProxyEnvArgs } from "../../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
@@ -699,7 +700,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -753,6 +754,7 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
+    assert.match(result.stdout, /\[reuse\] Skipping sandbox \(my-assistant\)/);
   });
 
   it("accepts gateway inference when system inference is separately not configured", async () => {
@@ -941,6 +943,7 @@ const { createSandbox } = require(${onboardPath});
 
   it("rejects portable managed bootstrap before recreate state mutation (#9068)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
+    const catalogRevision = getBuildIdentity({ rootDir: repoRoot }).sourceRevision;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-managed-recreate-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
@@ -1010,7 +1013,7 @@ catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
       reference: image + "@" + digest,
       source: {
         repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-        revision: "a".repeat(40),
+        revision: ${JSON.stringify(catalogRevision)},
         release,
         cohort: "ghrun-9068-1",
       },

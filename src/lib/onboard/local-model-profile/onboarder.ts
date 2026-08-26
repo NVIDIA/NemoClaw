@@ -99,20 +99,31 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
       );
       return "retry-selection";
     }
+    const seedVllmInstallRoute = (modelId: string): void => {
+      state.provider = "vllm-local";
+      state.model = modelId;
+      state.endpointUrl = null;
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      state.assertRouteCompatible?.();
+    };
+    const checkpointInstallIntent = recovery.checkpointInstallIntent;
     const result = await deps.installVllm(materialized.profile, {
       hasImage: host.hasVllmImage,
       nonInteractive: true,
       promptFn: deps.prompt,
-      ...(recovery.checkpointInstallIntent
-        ? { checkpointInstallIntent: recovery.checkpointInstallIntent }
+      ...(checkpointInstallIntent
+        ? {
+            checkpointInstallIntent: (modelId: string) => {
+              seedVllmInstallRoute(modelId);
+              state.revalidatePolicyRequirements?.("record managed vLLM install intent");
+              checkpointInstallIntent(modelId);
+            },
+          }
         : {}),
       beforeInstall: (modelId) => {
-        state.provider = "vllm-local";
-        state.model = modelId;
-        state.endpointUrl = null;
-        state.credentialEnv = null;
-        state.preferredInferenceApi = "openai-completions";
-        state.assertRouteCompatible?.();
+        seedVllmInstallRoute(modelId);
+        state.revalidatePolicyRequirements?.("install managed vLLM runtime");
       },
     });
     if (!result.ok) return "retry-selection";

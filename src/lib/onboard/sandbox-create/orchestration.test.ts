@@ -3,13 +3,23 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { decisionSelected } from "../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
+import { createSession, normalizeSession } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import {
-  applyAbsentSandboxRebuildPolicyCarryForward,
+  beginSandboxRecreateTransaction,
+  createCreatedSandboxLifecycle,
+  createSandboxRecreateRuntime,
+  fingerprintSandboxRecreateValue,
+  type SandboxRecreateObservation,
+} from "../sandbox-recreate-transaction";
+import {
+  applyManagedSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
   hasManagedMcpRebuildHandoff,
-  proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
+  runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
 
 describe("managed MCP rebuild handoff", () => {
@@ -49,57 +59,19 @@ describe("managed MCP rebuild handoff", () => {
 });
 
 describe("authoritative rebuild policy carry-forward", () => {
-  it("proves the journaled source before mutating its preserved policy row (#9792)", () => {
-    const events: string[] = [];
-    const runtime = { acceptedTarget: false };
-
-    expect(
-      proveRecreateSourceBeforePolicyCarryForward({
-        createRecreateRuntime: () => {
-          events.push("prove-source");
-          return runtime;
-        },
-        carryForward: () => events.push("carry-forward"),
-      }),
-    ).toBe(runtime);
-    expect(events).toEqual(["prove-source", "carry-forward"]);
-  });
-
-  it("replaces stale resumed presets after the outer rebuild deletes the source sandbox (#9792)", () => {
+  it("preserves an intentionally empty managed preset selection (#9792)", () => {
     const note = vi.fn();
     const applyRecreatePolicyCarryForward = vi.fn();
-    const filteredPolicyPresets = ["github"];
+    const revalidatePolicyAuthority = vi.fn();
 
-    applyAbsentSandboxRebuildPolicyCarryForward(
+    applyManagedSandboxRebuildPolicyCarryForward(
       {
         sandboxName: "alpha",
-        liveExists: false,
-        nonInteractive: true,
-        note,
-        rebuildPolicyPresets: filteredPolicyPresets,
-      },
-      applyRecreatePolicyCarryForward,
-    );
-
-    expect(applyRecreatePolicyCarryForward).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      true,
-      note,
-      filteredPolicyPresets,
-    );
-  });
-
-  it("preserves an intentionally empty preset selection after the outer delete (#9792)", () => {
-    const note = vi.fn();
-    const applyRecreatePolicyCarryForward = vi.fn();
-
-    applyAbsentSandboxRebuildPolicyCarryForward(
-      {
-        sandboxName: "alpha",
-        liveExists: false,
+        policyAuthority: "nemoclaw-managed",
         nonInteractive: true,
         note,
         rebuildPolicyPresets: [],
+        revalidatePolicyAuthority,
       },
       applyRecreatePolicyCarryForward,
     );
@@ -110,6 +82,48 @@ describe("authoritative rebuild policy carry-forward", () => {
       note,
       [],
     );
+  });
+
+  it("does not carry managed presets into a live external recreation (#9833)", () => {
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn();
+
+    applyManagedSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName: "alpha",
+        policyAuthority: "externally-managed",
+        nonInteractive: true,
+        note: vi.fn(),
+        rebuildPolicyPresets: ["github"],
+        revalidatePolicyAuthority,
+      },
+      applyRecreatePolicyCarryForward,
+    );
+
+    expect(revalidatePolicyAuthority).not.toHaveBeenCalled();
+    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
+  });
+
+  it("revalidates managed authority before live recreate policy carry-forward (#9833)", () => {
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    expect(() =>
+      applyManagedSandboxRebuildPolicyCarryForward(
+        {
+          sandboxName: "alpha",
+          policyAuthority: "nemoclaw-managed",
+          nonInteractive: true,
+          note: vi.fn(),
+          rebuildPolicyPresets: ["github"],
+          revalidatePolicyAuthority,
+        },
+        applyRecreatePolicyCarryForward,
+      ),
+    ).toThrow("policy authority changed");
+    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
   });
 });
 
@@ -187,5 +201,325 @@ describe("Hermes portable registration adapter", () => {
     ).rejects.toThrow("Hermes portable sandbox registration returned no authority");
     expect(completeRegistration).toHaveBeenCalledOnce();
     expect(readRegistry).toHaveBeenCalledExactlyOnceWith("alpha");
+  });
+});
+
+describe("sandbox create policy authority checks", () => {
+  const CREATED_IDENTITY = "a".repeat(64);
+  const REPLACEMENT_IDENTITY = "b".repeat(64);
+  const createdObservation = {
+    state: "ready" as const,
+    liveIdentityFingerprint: CREATED_IDENTITY,
+  };
+
+  it("refuses sandbox creation before mutation when the final check fails (#9833)", async () => {
+    const create = vi.fn(async () => "created");
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: () => {
+          throw new Error("external policy authority must supply the selected route");
+        },
+        create,
+        captureCreatedSandboxLiveIdentity: vi.fn(() => CREATED_IDENTITY),
+        observeCreatedSandbox: vi.fn(() => createdObservation),
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("checks the named Ready sandbox before registration can continue (#9833)", async () => {
+    const events: string[] = [];
+    const result = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "ready-check" : "create-check"),
+      create: async () => {
+        events.push("create");
+        return "created";
+      },
+      captureCreatedSandboxLiveIdentity: () => {
+        events.push("capture-identity");
+        return CREATED_IDENTITY;
+      },
+      observeCreatedSandbox: vi.fn(() => createdObservation),
+      cleanupTemporarySources: vi.fn(),
+    });
+    events.push("register");
+
+    expect(result).toBe("created");
+    expect(events).toEqual([
+      "create-check",
+      "create",
+      "capture-identity",
+      "ready-check",
+      "register",
+    ]);
+  });
+
+  it("removes create sources and reports the surviving sandbox when final validation fails (#9833)", async () => {
+    const events: string[] = [];
+    const validationError = new Error("external policy authority changed");
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => events.push("create-check"))
+      .mockImplementationOnce(() => {
+        events.push("ready-check");
+        throw validationError;
+      });
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate,
+        create: async () => {
+          events.push("create");
+          return "created";
+        },
+        captureCreatedSandboxLiveIdentity: () => {
+          events.push("capture-identity");
+          return CREATED_IDENTITY;
+        },
+        observeCreatedSandbox: () => {
+          events.push("observe-created");
+          return createdObservation;
+        },
+        cleanupTemporarySources: () => {
+          events.push("cleanup-sources");
+        },
+      }),
+    ).rejects.toThrow("cleanup did not complete");
+
+    expect(events).toEqual([
+      "create-check",
+      "create",
+      "capture-identity",
+      "ready-check",
+      "cleanup-sources",
+      "observe-created",
+    ]);
+  });
+
+  it("reports both source cleanup failure and the surviving sandbox (#9833)", async () => {
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate,
+        create: async () => "created",
+        captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
+        observeCreatedSandbox: () => createdObservation,
+        cleanupTemporarySources: () => {
+          throw new Error("temporary source cleanup failed");
+        },
+      }),
+    ).rejects.toThrow("cleanup did not complete");
+  });
+
+  it("does not delete a matching identity through its mutable name (#9833)", async () => {
+    const observeCreatedSandbox = vi.fn(() => createdObservation);
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate,
+      create: async () => "created",
+      captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
+      observeCreatedSandbox,
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining("deletion targets its mutable name"),
+        }),
+      ]),
+    );
+    expect(observeCreatedSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("does not delete a replacement observed before cleanup (#9833)", async () => {
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate,
+      create: async () => "created",
+      captureCreatedSandboxLiveIdentity: () => CREATED_IDENTITY,
+      observeCreatedSandbox: () => ({
+        state: "ready",
+        liveIdentityFingerprint: REPLACEMENT_IDENTITY,
+      }),
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining("live identity changed") }),
+      ]),
+    );
+  });
+
+  it("persists refusal recovery identity and rejects a same-name replacement after reload (#9833)", async () => {
+    const gatewayName = "nemoclaw-31818";
+    const gatewayPort = 31818;
+    const transactionId = "11111111-1111-4111-8111-111111111111";
+    const targetGeneration = "22222222-2222-4222-8222-222222222222";
+    const targetIntentFingerprint = fingerprintSandboxRecreateValue("fresh-create");
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      sandboxIdentity: decisionSelected({ name: "alpha", agent: "openclaw" }),
+      gatewayAuthority: decisionSelected({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+    };
+    const transaction = beginSandboxRecreateTransaction(session, {
+      sandboxName: "alpha",
+      gatewayName,
+      gatewayPort,
+      sourceEntry: null,
+      observation: { state: "missing", liveIdentityFingerprint: null },
+      targetIntentFingerprint,
+      id: transactionId,
+      targetGeneration,
+    });
+    let observation: SandboxRecreateObservation = {
+      state: "missing",
+      liveIdentityFingerprint: null,
+    };
+    const sessionStore = {
+      loadSession: () => session,
+      updateSession: (mutator: (current: typeof session) => typeof session | void) => {
+        mutator(session);
+        return session;
+      },
+    };
+    const request = {
+      id: transaction.id,
+      targetGeneration: transaction.targetGeneration,
+      targetIntentFingerprint: transaction.targetIntentFingerprint,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      sessionStore,
+      request,
+      "alpha",
+      gatewayName,
+      null,
+      () => observation,
+      vi.fn(),
+    );
+    runtime.advance("creating");
+    const lifecycle = createCreatedSandboxLifecycle(
+      runtime,
+      { sandboxName: "alpha", gatewayName },
+      () => observation,
+    );
+    observation = createdObservation;
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate,
+        create: async () => "created",
+        captureCreatedSandboxLiveIdentity: () =>
+          lifecycle.capture({ lifecycleGeneration: targetGeneration })
+            .lifecycleLiveIdentityFingerprint,
+        observeCreatedSandbox: () => observation,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("cleanup did not complete");
+
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      sandboxName: "alpha",
+      gatewayName,
+      gatewayPort,
+      phase: "created",
+      targetLiveIdentityFingerprint: CREATED_IDENTITY,
+    });
+    const restored = normalizeSession(JSON.parse(JSON.stringify(session)));
+    expect(restored).not.toBeNull();
+    const restoredSession = restored!;
+    expect(restoredSession.checkpoint?.sandboxRecreate).toMatchObject(request);
+    observation = { state: "ready", liveIdentityFingerprint: REPLACEMENT_IDENTITY };
+    expect(() =>
+      createSandboxRecreateRuntime(
+        {
+          loadSession: () => restoredSession,
+          updateSession: (mutator) => {
+            mutator(restoredSession);
+            return restoredSession;
+          },
+        },
+        request,
+        "alpha",
+        gatewayName,
+        null,
+        () => observation,
+        vi.fn(),
+      ),
+    ).toThrow(/not the journaled created sandbox/u);
+  });
+
+  it("leaves the named sandbox in place when its created identity was not captured (#9833)", async () => {
+    const observeCreatedSandbox = vi.fn(() => createdObservation);
+    const revalidate = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority changed");
+      });
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate,
+      create: async () => "created",
+      captureCreatedSandboxLiveIdentity: () => {
+        throw new Error("identity probe failed");
+      },
+      observeCreatedSandbox,
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining("identity was not captured") }),
+      ]),
+    );
+    expect(observeCreatedSandbox).not.toHaveBeenCalled();
   });
 });

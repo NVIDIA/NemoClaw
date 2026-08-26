@@ -8,8 +8,6 @@ const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
-  parseReadySandboxNames: vi.fn(),
-  parseLiveSandboxNames: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
   prompt: vi.fn(),
@@ -24,6 +22,19 @@ const mocks = vi.hoisted(() => ({
   defaultPortableStateDir: vi.fn(),
   withPortableHostFence: vi.fn(),
 }));
+
+let readySandboxNames = new Set<string>();
+let liveSandboxNames = new Set<string>();
+
+function sandboxInventory() {
+  return {
+    sandboxes: [...new Set([...readySandboxNames, ...liveSandboxNames])].map((name) => ({
+      name,
+      phase: null,
+      readiness: readySandboxNames.has(name) ? ("ready" as const) : ("not_ready" as const),
+    })),
+  };
+}
 
 async function runSandboxMutationAction(
   _sandboxName: string,
@@ -56,10 +67,6 @@ vi.mock("./sandbox/snapshot/backup-authority", () => ({
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
-}));
-vi.mock("../runtime-recovery", () => ({
-  parseReadySandboxNames: mocks.parseReadySandboxNames,
-  parseLiveSandboxNames: mocks.parseLiveSandboxNames,
 }));
 // GATEWAY_PORT is baked from NEMOCLAW_GATEWAY_PORT at module load. Pin it so
 // the #6520 orphan-classification tests (which run the real gateway-binding
@@ -109,15 +116,14 @@ describe("backupAll", () => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-good\nsb-bad\n",
-    });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+    readySandboxNames = new Set(["sb-good", "sb-bad"]);
+    liveSandboxNames = new Set();
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockImplementation(async () =>
+      sandboxInventory(),
+    );
     // Defaults keep every pre-#6520 case on its original path: no sandbox is
     // gateway-observed (so orphan classification is decided by the absence
     // gate alone) and no container is ever definitively absent.
-    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
@@ -209,7 +215,7 @@ describe("backupAll", () => {
       ],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    readySandboxNames = new Set(["alpha", "beta"]);
     mocks.backupSandboxState.mockImplementation((name: string) => ({
       success: true,
       backedUpDirs: ["workspace"],
@@ -239,7 +245,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-good" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    readySandboxNames = new Set(["sb-good"]);
     mocks.backupSandboxState.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -272,7 +278,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }, { name: "beta" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    readySandboxNames = new Set(["alpha", "beta"]);
     mocks.withSandboxMutationLock
       .mockRejectedValueOnce(new Error("Timed out waiting for the sandbox mutation lock"))
       .mockImplementation(runSandboxMutationAction);
@@ -309,7 +315,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: "sb-stopped",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
     });
@@ -350,7 +356,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }, { name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad", "sb-good"]));
+    readySandboxNames = new Set(["sb-bad", "sb-good"]);
     mocks.backupSandboxState.mockImplementation((name: string) =>
       name === "sb-bad"
         ? {
@@ -394,7 +400,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }, { name: "beta" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    readySandboxNames = new Set(["alpha", "beta"]);
     const events: string[] = [];
     mocks.withSandboxMutationLock.mockImplementation(
       async (name: string, action: () => unknown) => {
@@ -465,7 +471,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    readySandboxNames = new Set(["alpha"]);
     mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     mocks.backupSandboxState.mockReturnValue({
       success: false,
@@ -495,7 +501,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }, { name: "beta" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    readySandboxNames = new Set(["alpha", "beta"]);
     mocks.openBackupShieldsWindow.mockImplementation((name: string) =>
       name === "alpha" ? null : { relocked: false, wasLocked: false },
     );
@@ -528,7 +534,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }, { name: "beta" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    readySandboxNames = new Set(["alpha", "beta"]);
     mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     mocks.backupSandboxState.mockReturnValue({
       success: true,
@@ -555,7 +561,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    readySandboxNames = new Set(["alpha"]);
     mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     const backupError = new Error("EACCES: permission denied, open '/var/backups/state'");
     mocks.backupSandboxState.mockImplementation(() => {
@@ -592,7 +598,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "alpha" }],
       defaultSandbox: "alpha",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    readySandboxNames = new Set(["alpha"]);
     mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     const orphanMessage = "Agent 'alpha' not found: /agents/alpha/manifest.yaml";
     mocks.backupSandboxState.mockImplementation(() => {
@@ -622,7 +628,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    readySandboxNames = new Set(["sb-good"]);
     mocks.backupSandboxState.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -681,7 +687,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    readySandboxNames = new Set(["sb-good"]);
     mocks.backupSandboxState.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -728,7 +734,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: "sb-stopped",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     const events: string[] = [];
     let lockActive = false;
     mocks.withSandboxMutationLock.mockImplementation(
@@ -799,7 +805,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
     });
@@ -832,7 +838,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
     });
@@ -862,7 +868,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: "sb-stopped",
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     let lockActive = false;
     mocks.withSandboxMutationLock.mockImplementation(
       async (_name: string, action: () => unknown) => {
@@ -917,7 +923,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
     });
@@ -939,7 +945,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -990,11 +996,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-bad\n",
-    });
+    readySandboxNames = new Set(["sb-bad"]);
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
 
     mocks.backupSandboxState.mockImplementation(() => {
       throw new Error("Agent 'orphan' not found: /agents/orphan/manifest.yaml");
@@ -1017,7 +1020,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-orphan" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-orphan"]));
+    readySandboxNames = new Set(["sb-orphan"]);
     mocks.backupSandboxState.mockImplementation(() => {
       throw new Error("Agent 'orphan' not found: /agents/orphan/manifest.yaml");
     });
@@ -1042,11 +1045,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-bad\n",
-    });
+    readySandboxNames = new Set(["sb-bad"]);
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
 
     mocks.backupSandboxState.mockImplementation(() => {
       throw new Error("EACCES: permission denied, open '/var/backups/state'");
@@ -1067,11 +1067,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-bad\n",
-    });
+    readySandboxNames = new Set(["sb-bad"]);
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
 
     mocks.backupSandboxState.mockImplementation(() => {
       throw new Error("Agent 'phantom' not found");
@@ -1091,11 +1088,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-bad\n",
-    });
+    readySandboxNames = new Set(["sb-bad"]);
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
 
     mocks.backupSandboxState.mockImplementation(() => {
       throw new Error("Agent 'phantom' not found: /agents/phantom/binary");
@@ -1152,7 +1146,7 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    readySandboxNames = new Set(["sb-bad"]);
     mocks.backupSandboxState.mockReturnValue({
       success: false,
       unreachable: true,
@@ -1184,11 +1178,8 @@ describe("backupAll", () => {
         sandboxes: [{ name: "sb-bad" }],
         defaultSandbox: null,
       });
-      mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-      mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-        status: 0,
-        output: "sb-bad\n",
-      });
+      readySandboxNames = new Set(["sb-bad"]);
+      mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
       mocks.backupSandboxState.mockImplementation(() => ({
         success: false,
         unreachable: true,
@@ -1230,8 +1221,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
-    mocks.parseLiveSandboxNames.mockReturnValue(new Set(["sb-good"]));
+    readySandboxNames = new Set(["sb-good"]);
+    liveSandboxNames = new Set(["sb-good"]);
     mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
       (name: string) => name === "sb-stranded",
     );
@@ -1282,8 +1273,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-other", gatewayPort: 9999 }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
-    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
+    liveSandboxNames = new Set();
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(true);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1312,8 +1303,8 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-reconnecting" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
-    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
+    liveSandboxNames = new Set();
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1339,16 +1330,12 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-flapping" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
     mocks.captureSandboxListWithGatewayPreflightOrExit
-      .mockResolvedValueOnce({ status: 0, output: "" })
+      .mockResolvedValueOnce({ sandboxes: [] })
       .mockResolvedValueOnce({
-        status: 0,
-        output: "sb-flapping  openshell  2026-07-21 10:00:00  Ready\n",
+        sandboxes: [{ name: "sb-flapping", phase: null, readiness: "ready" }],
       });
-    mocks.parseLiveSandboxNames.mockImplementation((output: string) =>
-      output.includes("sb-flapping") ? new Set(["sb-flapping"]) : new Set(),
-    );
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(true);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1372,12 +1359,9 @@ describe("backupAll", () => {
       sandboxes: [{ name: "sb-flapping" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set());
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "",
-    });
-    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    readySandboxNames = new Set();
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue(sandboxInventory());
+    liveSandboxNames = new Set();
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValueOnce(true).mockReturnValueOnce(false);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
