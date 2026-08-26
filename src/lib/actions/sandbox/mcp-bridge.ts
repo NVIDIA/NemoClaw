@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
+import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -86,7 +87,7 @@ export { statusMcpBridge };
 export interface McpDestroyPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** True when phase one was completed by an earlier destroy process. */
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
@@ -155,7 +156,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(
     sandboxName,

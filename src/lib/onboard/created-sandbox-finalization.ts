@@ -20,7 +20,6 @@ import {
 import * as sandboxState from "../state/sandbox";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
-import { restoreDefaultAfterRecreate } from "./default-preservation";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
@@ -44,6 +43,7 @@ import type {
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
+  gatewayName?: string;
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
   targetAgentType: string;
@@ -121,6 +121,7 @@ export interface CreatedSandboxCompletionOptions {
       chatUiUrl: string,
       options: {
         rollbackSandboxOnFailure: true;
+        gatewayName: string;
         revalidatePolicyAuthority?: (operation: string) => void;
       },
     ) => number;
@@ -223,13 +224,11 @@ export function createOnboardCreatedSandboxRegistration(input: {
 export function completeOrdinaryOnboardSandboxCreation(
   input: {
     readonly sandboxName: string;
-    readonly sandboxWasLiveDefault: boolean;
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
     readonly liveExists: boolean;
   },
   deps: {
-    readonly setDefault: (sandboxName: string) => void;
     readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
     readonly scriptsDir: string;
     readonly gatewayName: string;
@@ -242,7 +241,6 @@ export function completeOrdinaryOnboardSandboxCreation(
   },
 ): string {
   deps.revalidatePolicyAuthority(`completing sandbox '${input.sandboxName}'`);
-  restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
   deps.revalidatePolicyAuthority(`starting DNS setup for sandbox '${input.sandboxName}'`);
   if (input.runtimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
@@ -337,6 +335,7 @@ export function createCreatedSandboxCompletionActions(
     );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      gatewayName: options.registration.gatewayName,
       revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
     });
     deps.revalidatePolicyAuthority?.(
@@ -396,7 +395,9 @@ export function createCreatedSandboxCompletionActions(
       const verifiedLifecycle = lifecycle.revalidate(
         lifecycle.capture(resolveLifecycleRegistrationFields()),
       );
-      return finalizeCreatedSandbox(options.finalization, {
+      return finalizeCreatedSandbox(
+        { ...options.finalization, gatewayName: options.registration.gatewayName },
+        {
         ...deps,
         register: (openclawImagePluginInstalls) =>
           (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
@@ -419,7 +420,8 @@ export function createCreatedSandboxCompletionActions(
             ...verifiedLifecycle,
             inferenceRouteReservation,
           }),
-      });
+        },
+      );
     },
   };
 }
@@ -507,6 +509,7 @@ export function createOnboardCreatedSandboxCompletion(
   ensureHermesDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureHermesForward"],
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
+  reservationSessionId: string | null,
   note: (message: string) => void,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
@@ -561,6 +564,7 @@ export function createOnboardCreatedSandboxCompletion(
         hermesApiPort,
         ...gateway,
         hostMounts: resolvedCreateIntent.hostMounts,
+        reservationSessionId: reservationSessionId ?? undefined,
       },
       gpu: {
         config: gpuConfig,
@@ -684,7 +688,29 @@ export function finalizeCreatedSandbox(
       // - Source-fix constraint: rollback must span sandbox creation and external copies.
       // - Regression: the partial-workspace-restore test validates fresh config before registration.
       // - Removal: drop this fallback when restore failure can roll back sandbox creation atomically.
-      deps.error(`  Warning: partial restore. Manual recovery: ${options.restoreBackupPath}`);
+      deps.error(
+        `  Warning: workspace state restore was incomplete for sandbox '${options.sandboxName}'.`,
+      );
+      if (restore.failedDirs.length > 0) {
+        deps.error(`  Failed directories: ${restore.failedDirs.join(", ")}`);
+      }
+      if (restore.failedFiles.length > 0) {
+        deps.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+      }
+      if (restore.error) deps.error(`  Restore reason: ${restore.error}`);
+      deps.error("  Workspace state restoration did not complete. Registry metadata was not updated.");
+      const gatewayName = options.gatewayName?.trim();
+      if (gatewayName) {
+        deps.error("  Remove the unregistered sandbox from its owning gateway before retrying:");
+        deps.error(
+          `    openshell sandbox delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(options.sandboxName)}`,
+        );
+        deps.error("  Rerun the original onboarding command after the deletion succeeds.");
+      } else {
+        deps.error("  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.");
+      }
+      deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+      return deps.exitProcess(1);
     }
   }
 

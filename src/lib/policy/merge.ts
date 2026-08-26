@@ -3,7 +3,6 @@
 
 import {
   assertExternalPolicyRequirementContainment as assertCanonicalExternalPolicyRequirementContainment,
-  assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
   assertMatchingPolicyAuthority as assertCanonicalMatchingPolicyAuthority,
   parseGlobalPolicyAuthorityMetadata as parseCanonicalGlobalPolicyAuthorityMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
@@ -28,7 +27,6 @@ export const parseSandboxPolicyAuthorityMetadata =
 export const assertMatchingPolicyAuthority = assertCanonicalMatchingPolicyAuthority;
 export const assertExternalPolicyRequirementContainment =
   assertCanonicalExternalPolicyRequirementContainment;
-export const assertPolicyRequirementContainment = assertCanonicalPolicyRequirementContainment;
 export type { OpenShellPolicyAuthority, SandboxPolicyAuthorityInspection };
 
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {

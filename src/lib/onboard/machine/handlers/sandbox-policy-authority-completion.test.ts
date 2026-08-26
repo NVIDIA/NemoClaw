@@ -9,6 +9,7 @@ import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-f
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 function refuseAt(targetOperation: string) {
@@ -24,6 +25,19 @@ function refuseAt(targetOperation: string) {
 }
 
 describe("sandbox completion policy authority", () => {
+  it("rechecks immediately before sandbox creation (#9833)", async () => {
+    const preflightPolicyRequirements = refuseAt("create sandbox 'my-assistant'");
+    const { deps, calls } = createDeps({ preflightPolicyRequirements });
+
+    await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow(
+      /external policy authority must supply/u,
+    );
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("rechecks after the inner create before registry or session completion (#9833)", async () => {
     const preflightPolicyRequirements = refuseAt("complete the created sandbox");
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
@@ -65,6 +79,42 @@ describe("sandbox completion policy authority", () => {
     });
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("rechecks before recording reused sandbox state (#9833)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const preflightPolicyRequirements = refuseAt("record reused sandbox state for 'saved'");
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          pendingRouteReservation: true,
+          reservationSessionId: session.sessionId,
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+        }),
+        preflightPolicyRequirements,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
   });
 
   it.each([

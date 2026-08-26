@@ -213,10 +213,10 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
+const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
 const {
   checkOllamaPortsOrWarn,
   assertOllamaUpgradeApplied,
@@ -1718,17 +1718,17 @@ async function selectAndValidateOllamaModel(
     promptYesNoOrDefault(question, null, defaultIsYes);
   const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
-    const installedModels = getOllamaModelOptions();
+    const installedModels = localInference.getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (lockedModel) {
       model = lockedModel;
     } else if (isNonInteractive()) {
-      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
+      model = resolveNonInteractiveModel(requestedModel, recoveredModel, gpu, installedModels);
     } else {
       model = await promptOllamaModel(gpu, {
-        defaultModel:
-          promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null,
+        defaultModel: isSafeModelId(promptDefaultModel ?? "") ? promptDefaultModel : null,
         excludeModels: probeFailures.excludedModels(),
+        installedModels,
       });
     }
     if (isBackToSelection(model)) {
@@ -1836,9 +1836,9 @@ async function handleNimLocalSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
   const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
-  const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
+  const { models, usableMemoryMB } = nim.getNimModelOptions(localGpu);
   if (models.length === 0) {
-    console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    console.log(`  No NIM model fits ${usableMemoryMB} MB. Falling back to cloud API.`);
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
     return "selected";
@@ -1852,7 +1852,7 @@ async function handleNimLocalSelection(
       sel = models.find((m) => m.name === targetModel);
       if (!sel) {
         const label = args.requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
-        console.error(`  Unsupported ${label}: ${targetModel}`);
+        console.error(nim.nimModelSelectionError(targetModel, label, localGpu));
         process.exit(1);
       }
     } else {
@@ -1861,7 +1861,7 @@ async function handleNimLocalSelection(
     note(`  [non-interactive] NIM model: ${sel.name}`);
   } else {
     console.log("");
-    console.log("  Models that fit your GPU:");
+    console.log(`  Models that fit ${usableMemoryMB} MB of usable GPU memory:`);
     models.forEach((m, i) => {
       console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
     });
@@ -1933,7 +1933,6 @@ async function handleNimLocalSelection(
   console.log(`  Pulling NIM image for ${catalogModel}...`);
   assertSelectionMutationAuthority(state, "install the local NIM runtime");
   nim.pullNimImage(catalogModel);
-
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   assertSelectionMutationAuthority(state, "start the local NIM runtime");
@@ -1943,6 +1942,7 @@ async function handleNimLocalSelection(
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+    nim.stopNimContainerByNameOrThrow(nimContainerNameLocal);
     console.error("  NIM failed to start. Falling back to cloud API.");
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
@@ -3007,7 +3007,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           sandboxCreateOrchestrationRuntime,
           opts.policyTier,
         );
-
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -3091,8 +3090,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         recordRepairEvent,
       });
 
-      // #2753: for an unfinished sandbox, an explicit requested name precedes
-      // the checkpointed name from the interrupted session.
+      // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
         recordedSandboxName,
@@ -3197,21 +3195,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             isInferenceRouteReady,
             isRoutedInferenceProvider,
             reconcileModelRouter,
-            reupsertRoutedProvider: (gatewayName, p, url, ce) => {
-              const r = routedInference.upsertRoutedProvider(p, url, ce, {
-                upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(
-                  upsertProvider,
-                  gatewayName,
-                ),
-                hydrateCredentialEnv,
-              });
-              return {
-                ok: r.ok,
-                endpointUrl: r.endpointUrl,
-                message: r.result.message,
-                status: r.result.status,
-              };
-            },
+            reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
+              upsertProvider,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+              hydrateCredentialEnv,
+            }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
@@ -3229,7 +3217,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
-
         sandbox: {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
@@ -3313,6 +3300,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+            finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>

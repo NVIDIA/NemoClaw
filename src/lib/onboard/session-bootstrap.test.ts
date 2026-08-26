@@ -122,36 +122,6 @@ describe("prepareOnboardSession", () => {
     expect(deps.clearSession).not.toHaveBeenCalled();
   });
 
-  it("stops resume before side effects when saved APF compatibility selection is invalid (#9833)", async () => {
-    const loadSession = vi.fn((): Session | null => {
-      throw new Error(
-        "Refusing to load the onboarding session: the saved APF compatibility selection is invalid.",
-      );
-    });
-    const { deps } = createDeps(null, { loadSession });
-
-    await expect(
-      prepareOnboardSession(
-        {
-          resume: true,
-          fresh: false,
-          requestedFromDockerfile: null,
-          requestedSandboxName: null,
-          cannotPrompt: true,
-          nonInteractive: true,
-        },
-        deps,
-      ),
-    ).rejects.toThrow(/saved APF compatibility selection is invalid/u);
-
-    expect(loadSession).toHaveBeenCalledOnce();
-    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
-    expect(deps.setOnboardBrandingAgent).not.toHaveBeenCalled();
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(deps.saveSession).not.toHaveBeenCalled();
-    expect(deps.clearSession).not.toHaveBeenCalled();
-  });
-
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);
@@ -166,7 +136,6 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
-        apfInterceptorRequested: true,
         requestedHostMounts: [
           { source: "/srv/project", target: "/sandbox/project", readOnly: true },
         ],
@@ -184,7 +153,6 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-    expect(result.session?.apfInterceptorRequested).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
@@ -359,7 +327,6 @@ describe("prepareOnboardSession", () => {
       status: "failed",
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
-      apfInterceptorRequested: true,
       steps: {
         ...createSession().steps,
         sandbox: completeSandboxStep(),
@@ -387,7 +354,6 @@ describe("prepareOnboardSession", () => {
     expect(deps.applySessionRecovery).toHaveBeenCalledWith(initial);
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-    expect(result.session?.apfInterceptorRequested).toBe(true);
     expect(result.session?.metadata.hostMounts).toEqual([
       { source: "/srv/project", target: "/sandbox/project", readOnly: true },
     ]);
@@ -547,42 +513,6 @@ describe("prepareOnboardSession", () => {
       "  Run: nemoclaw onboard              # start a fresh onboarding session",
     );
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
-  });
-
-  it("requires a fresh run when APF selection conflicts with resume intent (#9833)", async () => {
-    const initial = createSession({ apfInterceptorRequested: false });
-    const conflict: ResumeConfigConflict = {
-      field: "APF interceptor",
-      requested: "selected",
-      recorded: "not selected",
-    };
-    const getResumeConfigConflicts = vi.fn(() => [conflict]);
-    const { deps } = createDeps(initial, { getResumeConfigConflicts });
-
-    await expect(
-      prepareOnboardSession(
-        {
-          resume: true,
-          fresh: false,
-          requestedFromDockerfile: null,
-          requestedSandboxName: null,
-          cannotPrompt: false,
-          nonInteractive: false,
-          apfInterceptorRequested: true,
-        },
-        deps,
-      ),
-    ).rejects.toThrow(ExitError);
-
-    expect(getResumeConfigConflicts).toHaveBeenCalledWith(
-      initial,
-      expect.objectContaining({ apfInterceptorRequested: true }),
-    );
-    expect(deps.error).toHaveBeenCalledWith(
-      "  Run: nemoclaw onboard --fresh --apf-interceptor  # start with APF interceptor selection",
-    );
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(initial.apfInterceptorRequested).toBe(false);
   });
 
   it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {

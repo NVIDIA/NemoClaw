@@ -290,4 +290,35 @@ describe("onboard Hermes dashboard helpers", () => {
       expect.anything(),
     );
   });
+
+  it("leaves the sandbox running after Hermes dashboard rollback (#9833)", () => {
+    const runOpenshell = vi.fn();
+    const forwarding = createHermesDashboardOnboardForwarding({
+      agentName: "hermes",
+      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      ensureForward: vi.fn(() => false),
+      note: vi.fn(),
+      runOpenshell,
+      getApiForwardPort: () => "8642",
+      fail: (message): never => {
+        throw new Error(message);
+      },
+    });
+    const state = forwarding.resolveStateForPort(18789);
+
+    expect(() => forwarding.ensureForState(state, "my-hermes", true)).toThrow(
+      /left the sandbox running/u,
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
+      ignoreError: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "my-hermes"],
+      { ignoreError: true },
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "my-hermes"],
+      expect.anything(),
+    );
+  });
 });

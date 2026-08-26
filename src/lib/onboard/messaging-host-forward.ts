@@ -21,7 +21,6 @@ export interface MessagingHostForwardRollbackOptions {
   readonly buildRollbackMessage: (
     sandboxName: string,
     err: unknown,
-    deleteSucceeded: boolean,
   ) => readonly string[];
   readonly cliName: () => string;
   readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
@@ -119,16 +118,12 @@ function abortMessagingHostForwardFailure({
     );
     rollback.runOpenshell(["forward", "stop", port, sandboxName], { ignoreError: true });
   }
-  rollback.beforeMutation?.(`remove sandbox '${sandboxName}' after dashboard failure`);
-  const deleteResult = rollback.runOpenshell(["sandbox", "delete", sandboxName], {
-    ignoreError: true,
-  });
   const error = new Error(
     `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +
       `re-run \`${rollback.cliName()} onboard\`, or choose a different messaging channel port.`,
   );
   const writeError = rollback.error ?? console.error;
-  for (const line of rollback.buildRollbackMessage(sandboxName, error, deleteResult.status === 0)) {
+  for (const line of rollback.buildRollbackMessage(sandboxName, error)) {
     writeError(line);
   }
   const exit = rollback.exit ?? process.exit;

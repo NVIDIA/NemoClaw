@@ -239,7 +239,7 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
-  /** Operator-selected APF compatibility mode; this is not observed policy provenance. */
+  /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
@@ -846,7 +846,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     typeof data.apfInterceptorRequested !== "boolean"
   ) {
     throw new InvalidPersistedApfInterceptorIntentError(
-      "Refusing to load the onboarding session: the saved APF compatibility selection is invalid.",
+      "Refusing to load the onboarding session: the saved APF selection is invalid.",
     );
   }
   const policyAuthority = readPolicyAuthority(data.policyAuthority);

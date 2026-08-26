@@ -37,6 +37,7 @@ vi.mock("node:fs", async (importOriginal) => {
   const memory = inMemoryFsMethods(store, { realpaths, spy: vi.fn });
   return {
     ...original,
+    existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
     renameSync: memory.renameSync,
@@ -55,9 +56,8 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   };
 });
 
-const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } = await import(
-  "./runner.js"
-);
+const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
+  await import("./runner.js");
 
 const matchingProvider = MATCHING_RUNTIME_PROVIDER_LISTING;
 const matchingInferenceProvider = MATCHING_INFERENCE_PROVIDER_LISTING;
@@ -316,9 +316,7 @@ describe("blueprint identity wrapper", () => {
         "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
       ),
     ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
-    expect(
-      commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"),
-    ).toBeLessThan(
+    expect(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime")).toBeLessThan(
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
@@ -393,38 +391,41 @@ describe("blueprint identity wrapper", () => {
       { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" },
       /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
     ],
-  ])("fails closed when a concurrently created sandbox %s", async (_label, racedSandbox, expectedError) => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    responseQueue([
-      ["sandbox get test-sandbox", [failureResult("sandbox not found"), racedSandbox]],
-      [
-        "provider get acme-okta-runtime",
+  ])(
+    "fails closed when a concurrently created sandbox %s",
+    async (_label, racedSandbox, expectedError) => {
+      process.env.OKTA_CLIENT_ID = "client-id";
+      process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+      process.env.OKTA_CLIENT_SECRET = "client-secret";
+      responseQueue([
+        ["sandbox get test-sandbox", [failureResult("sandbox not found"), racedSandbox]],
         [
-          failureResult("provider not found"),
-          ...Array.from({ length: 4 }, () => ({
-            exitCode: 0,
-            stdout: matchingProvider,
-            stderr: "",
-          })),
+          "provider get acme-okta-runtime",
+          [
+            failureResult("provider not found"),
+            ...Array.from({ length: 4 }, () => ({
+              exitCode: 0,
+              stdout: matchingProvider,
+              stderr: "",
+            })),
+          ],
         ],
-      ],
-      [
-        "sandbox create --from openclaw --name test-sandbox --forward 18789",
-        [failureResult("sandbox already exists")],
-      ],
-    ]);
+        [
+          "sandbox create --from openclaw --name test-sandbox --forward 18789",
+          [failureResult("sandbox already exists")],
+        ],
+      ]);
 
-    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      expectedError,
-    );
+      await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+        expectedError,
+      );
 
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
-    expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
-    expect(commands).toContain("provider delete acme-okta-runtime");
-  });
+      const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+      expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
+      expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
+      expect(commands).toContain("provider delete acme-okta-runtime");
+    },
+  );
 
   it("fails before identity mutation when a reused sandbox's inference provider cannot be inspected", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";

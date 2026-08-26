@@ -142,7 +142,7 @@ export function applyReusedSandboxDashboardState(
     );
   }
   input.revalidatePolicyRequirements?.(
-    `restore dashboard state for sandbox ${JSON.stringify(input.sandboxName)}`,
+    `restore dashboard state for sandbox '${input.sandboxName}'`,
   );
   const dashboardPort = manageDashboard
     ? input.revalidatePolicyRequirements
@@ -153,9 +153,7 @@ export function applyReusedSandboxDashboardState(
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
-    input.revalidatePolicyRequirements?.(
-      `record dashboard URL for sandbox ${JSON.stringify(input.sandboxName)}`,
-    );
+    input.revalidatePolicyRequirements?.(`record dashboard URL for sandbox '${input.sandboxName}'`);
     input.env.CHAT_UI_URL = chatUiUrl;
   }
   const hermesDashboardState = manageDashboard
@@ -163,7 +161,7 @@ export function applyReusedSandboxDashboardState(
     : { enabled: false, config: null };
   if (manageDashboard) {
     input.revalidatePolicyRequirements?.(
-      `restore Hermes dashboard state for sandbox ${JSON.stringify(input.sandboxName)}`,
+      `restore Hermes dashboard state for sandbox '${input.sandboxName}'`,
     );
     input.hermesDashboardForwarding.ensureForState(
       hermesDashboardState,
@@ -172,9 +170,7 @@ export function applyReusedSandboxDashboardState(
       input.revalidatePolicyRequirements,
     );
   }
-  input.revalidatePolicyRequirements?.(
-    `update reused sandbox metadata for ${JSON.stringify(input.sandboxName)}`,
-  );
+  input.revalidatePolicyRequirements?.(`update reused sandbox metadata for '${input.sandboxName}'`);
   input.updateReusedSandboxMetadata(
     input.sandboxName,
     input.agent,
@@ -186,7 +182,7 @@ export function applyReusedSandboxDashboardState(
     input.revalidatePolicyRequirements,
   );
   input.revalidatePolicyRequirements?.(
-    `record reused dashboard state for sandbox ${JSON.stringify(input.sandboxName)}`,
+    `record reused dashboard state for sandbox '${input.sandboxName}'`,
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),

@@ -122,7 +122,7 @@ describe("onboard session", () => {
     const malformed = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
     malformed.apfInterceptorRequested = "true";
     fs.writeFileSync(session.SESSION_FILE, JSON.stringify(malformed), { mode: 0o600 });
-    const refusal = /saved APF compatibility selection is invalid/u;
+    const refusal = /saved APF selection is invalid/u;
     expect(() => session.loadSession()).toThrow(refusal);
     expect(fs.readFileSync(session.SESSION_FILE, "utf8")).toContain(
       '"apfInterceptorRequested":"true"',

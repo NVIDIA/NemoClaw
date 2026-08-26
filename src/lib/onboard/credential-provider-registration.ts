@@ -28,18 +28,6 @@ export interface MessagingProviderRegistrationOptions {
   revalidatePolicyRequirements?(operation: string): void;
 }
 
-function policyAuthorityCheckedRunner(
-  runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  revalidatePolicyRequirements: MessagingProviderRegistrationOptions["revalidatePolicyRequirements"],
-  operation: string,
-): OpenshellCliHelpers["runOpenshell"] {
-  if (!revalidatePolicyRequirements) return runOpenshell;
-  return (...args) => {
-    revalidatePolicyRequirements(operation);
-    return runOpenshell(...args);
-  };
-}
-
 type PreparedCredentialProviders = {
   messagingTokenDefs: MessagingTokenDef[];
 };
@@ -203,7 +191,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    const runWebSearchOpenshell = policyAuthorityCheckedRunner(
+    const runWebSearchOpenshell = providers.policyAuthorityCheckedRunner(
       runOpenshell,
       options.revalidatePolicyRequirements,
       "import a web-search provider profile",
@@ -247,10 +235,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     type: string,
     credentialEnv: string,
   ): boolean {
-    return credentialBindingMatchesGateway(
-      { name, type, credentialEnv },
-      gatewayRunner(),
-    );
+    return credentialBindingMatchesGateway({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function preflightRequiredCredentialProviderBindings(

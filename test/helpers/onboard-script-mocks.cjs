@@ -55,6 +55,47 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "profile") return null;
+  const profileActionIndex = providerIndex + 2;
+  const profileAction =
+    args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
+  if (profileAction === "export") {
+    const requestedProfile = args[args.indexOf("export") + 1];
+    if (requestedProfile !== profileId) return null;
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        id: profileId,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inference_capable: inferenceCapable,
+      }),
+      stderr: "",
+    };
+  }
+  const fileIndex = args.indexOf("--file");
+  if (
+    profileAction === "import" &&
+    (fileIndex < 0 || !String(args[fileIndex + 1] ?? "").endsWith(`/${profileId}.yaml`))
+  ) {
+    return null;
+  }
+  return profileAction === "import"
+    ? { status: 0, stdout: "", stderr: "" }
+    : { status: 1, stdout: "", stderr: "unsupported provider profile command" };
+}
+
+function mockManagedEndpointlessProviderProfileRun(command) {
+  return (
+    mockEndpointlessProviderProfileRun(command, "openai", true) ??
+    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
 function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
@@ -63,6 +104,14 @@ function createStatefulMessagingProviderRunner({
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
+  const messagingProfile = JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  });
+  let messagingProfileImported = false;
   let lifecycleReleased = false;
   return (command, options = {}) => {
     const normalized = normalizeCommand(command);
@@ -77,10 +126,17 @@ function createStatefulMessagingProviderRunner({
         args[profileActionIndex] === "-g"
           ? args[profileActionIndex + 2]
           : args[profileActionIndex];
+      if (profileAction === "export") {
+        return messagingProfileImported
+          ? { status: 0, stdout: messagingProfile, stderr: "" }
+          : { status: 1, stdout: "", stderr: "provider profile not found" };
+      }
       const fileIndex = args.indexOf("--file");
-      return profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]
-        ? { status: 0 }
-        : { status: 1, stderr: "unsupported provider profile command" };
+      if (profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]) {
+        messagingProfileImported = true;
+        return { status: 0 };
+      }
+      return { status: 1, stderr: "unsupported provider profile command" };
     }
     if (
       args[providerIndex - 1] === "sandbox" &&
@@ -252,6 +308,9 @@ function mockSandboxExecCurl(command, options = {}) {
 }
 
 function mockOnboardRunCapture(command, options = {}) {
+  // The companion runner seam models the exact post-commit Docker proof. Install
+  // it lazily after each scenario has replaced runner.run with its local recorder.
+  mockDockerSandboxLifecycleReleaseFromRunner();
   const normalized = normalizeCommand(command);
   if (
     normalized.startsWith("docker ps -a --no-trunc ") &&
@@ -332,11 +391,35 @@ function mockStandaloneGatewayTeardownAuthority() {
 
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  if (runner.run.__nemoclawDockerLifecycleFixture === true) return;
   const run = runner.run;
+  let finalCommitReleased = false;
   let lifecycleReleased = false;
-  runner.run = (command, options) => {
+  const wrappedRun = (command, options) => {
     const normalized = normalizeCommand(command);
-    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (
+      finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.endsWith("--format {{.ID}}")
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    if (
+      finalCommitReleased &&
+      normalized ===
+        `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from("true\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
     if (lifecycleReleased && normalized.includes("sandbox list")) {
       return {
         status: 0,
@@ -344,8 +427,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
         stderr: Buffer.alloc(0),
       };
     }
-    return run(command, options);
+    const result = run(command, options);
+    if (normalized.startsWith("docker rm ") && result?.status === 0) {
+      lifecycleReleased = true;
+      if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
+        finalCommitReleased = true;
+      }
+    }
+    return result;
   };
+  wrappedRun.__nemoclawDockerLifecycleFixture = true;
+  runner.run = wrappedRun;
 }
 
 function mockManagedImageFallback() {
@@ -377,6 +469,10 @@ function mockManagedImageCatalog() {
   const contract = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/contract.ts"),
   );
+  const { getBuildIdentity } = require(path.resolve(__dirname, "../../src/lib/core/version.ts"));
+  const sourceRevision = getBuildIdentity({
+    rootDir: path.resolve(__dirname, "../.."),
+  }).sourceRevision;
   catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
     Object.fromEntries(
       contract.SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
@@ -393,7 +489,7 @@ function mockManagedImageCatalog() {
             reference: `${image}@${digest}`,
             source: {
               repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-              revision: "a".repeat(40),
+              revision: sourceRevision,
               release,
               cohort: "ghrun-9068-1",
             },
@@ -574,6 +670,8 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  mockEndpointlessProviderProfileRun,
+  mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,

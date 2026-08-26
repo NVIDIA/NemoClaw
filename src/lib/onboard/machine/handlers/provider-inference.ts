@@ -736,6 +736,74 @@ function resolvedHostLocalPolicyRouteEvidence(
     : null;
 }
 
+function resolveInitialHostLocalPolicyRoute(input: {
+  resumeProviderSelection: boolean;
+  sandboxName: string | null;
+  provider: string | null;
+  model: string | null;
+  application: string;
+  acceleration: HostLocalOllamaAccelerationAuthority;
+  effectiveResume: boolean;
+  endpointUrl: string | null;
+  endpointSource: InferenceEndpointSource | null;
+  onboardEndpointUrl: string | null;
+  resolver: HostLocalInferenceStartupSelectionResolver;
+}): {
+  routeOnly: boolean;
+  proofAuthority: HostLocalInferenceSandboxProofAuthority | null;
+  routeKnown: boolean;
+  selection: {
+    sandboxName: string;
+    provider: string;
+    model: string;
+    setupOptions: HostLocalInferenceSetupOptions;
+  } | null;
+} {
+  if (
+    !input.resumeProviderSelection ||
+    !input.sandboxName ||
+    !input.provider ||
+    !input.model ||
+    !isHostLocalInferenceProvider(input.provider)
+  ) {
+    return {
+      routeOnly: false,
+      proofAuthority: null,
+      routeKnown: !isHostLocalInferenceProvider(input.provider ?? ""),
+      selection: null,
+    };
+  }
+  const setupOptions = hostLocalInferenceSetupOptions(input.resolver, {
+    application: input.application,
+    sandboxName: input.sandboxName,
+    provider: input.provider,
+    model: input.model,
+    acceleration: input.acceleration,
+    requireToolCalling: null,
+    freshRequireToolCalling: true,
+    allowPublishedResume: true,
+    recover: isCanonicalHostLocalResume({
+      effectiveResume: input.effectiveResume,
+      provider: input.provider,
+      endpointUrl: input.endpointUrl,
+      endpointSource: input.endpointSource,
+    }),
+  });
+  const routeEvidence = resolvedHostLocalPolicyRouteEvidence(setupOptions, input.provider, input);
+  if (!routeEvidence) {
+    throw new Error("Host-local inference policy route evidence was not resolved.");
+  }
+  return {
+    ...routeEvidence,
+    selection: {
+      sandboxName: input.sandboxName,
+      provider: input.provider,
+      model: input.model,
+      setupOptions,
+    },
+  };
+}
+
 function hasActiveMessagingChannels(
   selectedMessagingChannels: string[],
   session: Session | null,
@@ -1088,14 +1156,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
-  let hostLocalInferenceRouteOnly = isCanonicalHostLocalResume({
-    effectiveResume,
-    provider: provider ?? "",
-    endpointUrl,
-    endpointSource,
-  });
-  let hostLocalInferenceRouteKnown =
-    !isHostLocalInferenceProvider(provider ?? "") || hostLocalInferenceRouteOnly;
+  let hostLocalInferenceRouteOnly = false;
+  let hostLocalInferenceRouteKnown = !isHostLocalInferenceProvider(provider ?? "");
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
   const hostLocalInferenceResolutionCache = new Map<
     string,
@@ -1162,6 +1224,32 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     authoritativeResumeConfig,
     deps.isNonInteractive() ? requestedSandboxName : null,
   );
+  const initialResumeProviderSelection = canResumeProviderSelection(
+    forceProviderSelection,
+    effectiveResume,
+    authoritativeResumeConfig,
+    session,
+    reviewRecoveryState(session, sandboxName),
+    provider,
+    model,
+  );
+  const initialHostLocalPolicyRoute = resolveInitialHostLocalPolicyRoute({
+    resumeProviderSelection: initialResumeProviderSelection,
+    sandboxName: reusableResumeSandboxName,
+    provider,
+    model,
+    application: agentName(agent),
+    acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
+    effectiveResume,
+    endpointUrl,
+    endpointSource,
+    onboardEndpointUrl,
+    resolver: resolveHostLocalInferenceStartupSelection,
+  });
+  hostLocalInferenceRouteOnly = initialHostLocalPolicyRoute.routeOnly;
+  hostLocalInferenceProofAuthority = initialHostLocalPolicyRoute.proofAuthority;
+  hostLocalInferenceRouteKnown = initialHostLocalPolicyRoute.routeKnown;
+  prospectiveHostLocalPolicyRoute = initialHostLocalPolicyRoute.selection;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -1933,12 +2021,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     endpointUrl = hostLocalRoute.endpointUrl;
     endpointSource = hostLocalRoute.endpointSource;
     onboardEndpointUrl = hostLocalRoute.onboardEndpointUrl;
-    revalidatePolicyRequirements("record successful inference configuration");
+    revalidatePolicyRequirements("record inference runtime metadata");
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
     if (deferProviderSelectionUntilInference) {
       // Provider selection remains in progress until its inference route has
       // configured successfully. This retains the selected provider/model for
       // interruption recovery without claiming a usable route prematurely.
+      revalidatePolicyRequirements("record successful deferred provider selection");
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -1957,8 +2046,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
-      revalidatePolicyRequirements("record successful deferred provider selection");
     }
+    revalidatePolicyRequirements("record successful inference configuration");
     session = await deps.recordStepComplete(
       "inference",
       deps.toSessionUpdates({
@@ -1975,7 +2064,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
-    revalidatePolicyRequirements("finish successful inference configuration");
     break;
   }
 

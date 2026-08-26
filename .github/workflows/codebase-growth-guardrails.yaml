@@ -41,4 +41,4 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          npx vitest run --project integration test/growth-guardrails.test.ts
+          npx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts

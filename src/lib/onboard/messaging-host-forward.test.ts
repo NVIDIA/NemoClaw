@@ -171,9 +171,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
 
   it("rolls back and exits when the forward cannot be started", () => {
     const ensureForward = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[]) => ({
-      status: args[0] === "sandbox" && args[1] === "delete" ? 0 : 0,
-    }));
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const errors: string[] = [];
 
     expect(() =>
@@ -190,8 +188,8 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
           exit: (code) => {
             throw new Error(`process.exit(${code})`);
           },
-          buildRollbackMessage: (_sandboxName, err, deleteSucceeded) => [
-            `rollback:${deleteSucceeded}`,
+          buildRollbackMessage: (_sandboxName, err) => [
+            "rollback:manual",
             err instanceof Error ? err.message : String(err),
           ],
         },
@@ -204,11 +202,12 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3978", "demo"], {
       ignoreError: true,
     });
-    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "demo"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).toHaveBeenCalledTimes(3);
-    expect(errors.join("\n")).toContain("rollback:true");
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "demo"],
+      expect.anything(),
+    );
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(errors.join("\n")).toContain("rollback:manual");
     expect(errors.join("\n")).toContain(
       "Failed to start Microsoft Teams webhook forward on port 3978",
     );

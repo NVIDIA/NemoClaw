@@ -195,8 +195,6 @@ describe("external policy authority onboarding composition", () => {
           liveIdentityFingerprint: "a".repeat(64),
         }),
         cleanupTemporarySources: vi.fn(),
-        deleteCreatedSandbox: vi.fn(),
-        waitForCreatedSandboxAbsence: vi.fn(() => true),
       }),
     ).resolves.toBe(launch);
 

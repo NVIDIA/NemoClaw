@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
@@ -17,7 +16,6 @@ import {
   type SandboxPolicyAuthorityInspection,
 } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
-import { assertPolicyRequirementContainment } from "../../policy/merge";
 import { type InitialSandboxPolicy, prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { requiredObservabilityPolicyPresets } from "../observability-policy-presets";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../policy-presets";
@@ -31,11 +29,6 @@ type PolicyAuthorityInspectionDeps = {
   readonly inspectGlobalPolicyAuthority?: typeof inspectGlobalPolicyAuthority;
   readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
 };
-
-export interface ApfInterceptorPolicyVerification {
-  /** APF mode records the observed policy as read-only without claiming APF provenance. */
-  readonly authority: "externally-managed";
-}
 
 /** Bind the global policy authority before provider selection can mutate gateway state. */
 export function qualifyGlobalPolicyAuthority(
@@ -79,122 +72,28 @@ function readInitialPolicy(policy: InitialSandboxPolicy, operation: string): str
 
 function cleanupRequirement(policy: InitialSandboxPolicy, operation: string): void {
   if (policy.cleanup && policy.cleanup() !== true) {
-    throw new Error(`Refusing to ${operation}: the temporary sandbox policy could not be removed.`);
+    throw new Error(
+      `Temporary sandbox policy cleanup failed while trying to ${operation}. Inspect and remove the temporary sandbox policy before retrying.`,
+    );
   }
 }
 
-function canonicalPolicyValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalPolicyValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, canonicalPolicyValue((value as Record<string, unknown>)[key])]),
+function attachCleanupFailure(primaryError: unknown, cleanupError: unknown): Error {
+  const primaryMessage =
+    primaryError instanceof Error ? primaryError.message : "Policy authority validation failed.";
+  const cleanupMessage =
+    cleanupError instanceof Error
+      ? cleanupError.message
+      : "Temporary sandbox policy cleanup failed. Inspect and remove the temporary sandbox policy before retrying.";
+  const cause = new AggregateError(
+    [primaryError, cleanupError],
+    "Policy authority validation and temporary policy cleanup both failed.",
   );
-}
-
-function effectivePolicyFingerprint(policy: Record<string, unknown>): string {
-  return createHash("sha256")
-    .update(JSON.stringify(canonicalPolicyValue(policy)), "utf8")
-    .digest("hex");
-}
-
-function assertValidObservedEffectivePolicy(policy: Record<string, unknown>): void {
-  if (Object.keys(policy).length === 0) {
-    throw new Error("the observed effective policy is missing");
+  const message = `${primaryMessage} ${cleanupMessage}`;
+  if (primaryError instanceof PolicyAuthorityRefusalError) {
+    return new PolicyAuthorityRefusalError(message, primaryError.observedAuthority, { cause });
   }
-  if (
-    Object.hasOwn(policy, "version") &&
-    (typeof policy.version !== "number" || !Number.isInteger(policy.version) || policy.version < 1)
-  ) {
-    throw new Error("the observed effective policy version is invalid");
-  }
-  if (
-    Object.hasOwn(policy, "network_policies") &&
-    (typeof policy.network_policies !== "object" ||
-      policy.network_policies === null ||
-      Array.isArray(policy.network_policies))
-  ) {
-    throw new Error("the observed effective network policy is invalid");
-  }
-}
-
-/**
- * Verify the effective policy selected by APF-compatible sandbox creation.
- *
- * The operator selection is not provenance. OpenShell 0.0.85 exposes no
- * client-verifiable APF receipt, so this boundary proves only sandbox-scoped
- * effective-policy metadata for the exact sandbox, required-policy containment,
- * and in-process stability.
- */
-export function createApfInterceptorPolicyVerifier(
-  input: {
-    readonly sandboxName: string;
-    readonly gatewayName: string;
-    readonly prepareRequiredPolicy: () => InitialSandboxPolicy;
-  },
-  deps: Pick<PolicyAuthorityInspectionDeps, "inspectSandboxPolicyAuthority"> = {},
-): (operation: string) => ApfInterceptorPolicyVerification {
-  let verifiedEffectivePolicyFingerprint: string | null = null;
-  return (operation): ApfInterceptorPolicyVerification => {
-    const inspection = (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
-      sandboxName: input.sandboxName,
-      gatewayName: input.gatewayName,
-    });
-    if (inspection.authority !== "nemoclaw-managed") {
-      throw new PolicyAuthorityRefusalError(
-        `Refusing to ${operation}: APF-interceptor mode requires one sandbox-scoped effective policy; a global policy source is ambiguous.`,
-      );
-    }
-
-    const requiredPolicy = input.prepareRequiredPolicy();
-    let verification: ApfInterceptorPolicyVerification;
-    try {
-      const parsedPolicy = parseRequiredPolicy(
-        readInitialPolicy(requiredPolicy, operation),
-        operation,
-      );
-      try {
-        assertValidObservedEffectivePolicy(inspection.effectivePolicy);
-        assertPolicyRequirementContainment(inspection, parsedPolicy);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
-        throw new PolicyAuthorityRefusalError(
-          `Refusing to ${operation} for sandbox ${JSON.stringify(input.sandboxName)}: ${detail}. The observed policy remains read-only.`,
-        );
-      }
-      const observedFingerprint = effectivePolicyFingerprint(inspection.effectivePolicy);
-      if (
-        verifiedEffectivePolicyFingerprint !== null &&
-        observedFingerprint !== verifiedEffectivePolicyFingerprint
-      ) {
-        throw new PolicyAuthorityRefusalError(
-          `Refusing to ${operation} for sandbox ${JSON.stringify(input.sandboxName)}: the observed effective policy changed after APF-interceptor verification.`,
-        );
-      }
-      verifiedEffectivePolicyFingerprint ??= observedFingerprint;
-      verification = { authority: "externally-managed" };
-    } catch (verificationError) {
-      try {
-        cleanupRequirement(requiredPolicy, operation);
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [verificationError, cleanupError],
-          `Refusing to ${operation}: policy verification and temporary policy cleanup both failed.`,
-        );
-      }
-      throw verificationError;
-    }
-    try {
-      cleanupRequirement(requiredPolicy, operation);
-    } catch (cleanupError) {
-      throw new AggregateError(
-        [cleanupError],
-        `Refusing to ${operation}: temporary policy cleanup failed after policy verification.`,
-      );
-    }
-    return verification;
-  };
+  return new Error(message, { cause });
 }
 
 /** Resolve and verify policy authority before sandbox lifecycle effects. */
@@ -235,6 +134,7 @@ export function qualifySandboxPolicyAuthority(
   if (inspection.authority !== "externally-managed") return inspection;
 
   const requiredPolicy = input.prepareRequiredPolicy();
+  let primaryError: unknown;
   try {
     const parsedPolicy = parseRequiredPolicy(
       readInitialPolicy(requiredPolicy, input.operation),
@@ -250,16 +150,23 @@ export function qualifySandboxPolicyAuthority(
         sandboxName: input.sandboxName,
       });
     }
-  } finally {
-    cleanupRequirement(requiredPolicy, input.operation);
+  } catch (error) {
+    primaryError = error;
   }
+  try {
+    cleanupRequirement(requiredPolicy, input.operation);
+  } catch (cleanupError) {
+    if (primaryError === undefined) throw cleanupError;
+    throw attachCleanupFailure(primaryError, cleanupError);
+  }
+  if (primaryError !== undefined) throw primaryError;
   return inspection;
 }
 
 type ProviderPolicyRequirements = {
   readonly gatewayName: string;
   readonly sandboxName: string | null;
-  readonly agent: AgentDefinition;
+  readonly agent: AgentDefinition | null;
   readonly selectedMessagingChannels: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly gpuPassthrough: boolean;
@@ -343,8 +250,8 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
   ) => void;
 } {
   const preflightPolicyRequirements = (requirements: ProviderPolicyRequirements): void => {
-    const sandboxName =
-      requirements.sandboxName ?? getDefaultSandboxNameForAgent(requirements.agent);
+    const agent = requirements.agent ?? runtime.agentDefs.loadAgent("openclaw");
+    const sandboxName = requirements.sandboxName ?? getDefaultSandboxNameForAgent(agent);
     const observed = runtime.inspectSandboxForCreate(sandboxName);
     qualifySandboxPolicyAuthority(
       {
@@ -358,7 +265,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         operation: requirements.operation,
         prepareRequiredPolicy: () =>
           prepareInitialSandboxCreatePolicy(
-            runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
+            runtime.agentOnboard.getAgentPolicyPath(agent) ??
               path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
             [...requirements.selectedMessagingChannels],
             {
@@ -368,10 +275,10 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
                 provider: requirements.provider,
                 hostLocalInferenceRouteOnly: requirements.hostLocalInferenceRouteOnly,
                 webSearchConfig: requirements.webSearchConfig,
-                agentName: requirements.agent.name,
+                agentName: agent.name,
                 observabilityEnabled: requirements.observabilityEnabled,
               }),
-              agentName: requirements.agent.name,
+              agentName: agent.name,
               policyTier: observed.existingEntry?.policyTier ?? policyTier,
               baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
             },
