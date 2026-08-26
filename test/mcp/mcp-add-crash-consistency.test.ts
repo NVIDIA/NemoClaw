@@ -19,6 +19,7 @@ type CrashBoundary =
   | "credential-command-race"
   | "credential-projection-coalesced"
   | "credential-projection-delayed-hostless"
+  | "credential-projection-intermediate"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -47,7 +48,8 @@ if (
   crashAfter === "credential-projection-coalesced" ||
   crashAfter === "credential-projection-delayed-hostless"
 ) {
-  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS =
+    crashAfter === "credential-projection-delayed-hostless" ? "4" : "2";
 }
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
@@ -70,6 +72,7 @@ let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
 let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
+let intermediateProjectionObservationCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -262,6 +265,14 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
       stderr: "",
     };
   }
+  if (crashAfter === "credential-projection-intermediate" && isObservation) {
+    intermediateProjectionObservationCountThisProcess += 1;
+    const revision =
+      intermediateProjectionObservationCountThisProcess === 1
+        ? Math.max(1, providerVersion() - 1)
+        : providerVersion();
+    return { status: 0, stdout: "v" + revision, stderr: "" };
+  }
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
     stdout: isObservation ? (marked("updated") || marked("provider") ? childCredentialRevision() : "absent") : "",
@@ -273,7 +284,9 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
-    mark("adapter");
+    const revision = command.match(/openshell:resolve:env:(v[0-9]{1,20})_FAKE_MCP_SECRET/)?.[1];
+    fs.appendFileSync(marker("adapter-write-log"), (revision || "missing") + "\n", { mode: 0o600 });
+    fs.writeFileSync(marker("adapter"), (revision || "missing") + "\n", { mode: 0o600 });
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
   }
@@ -606,6 +619,77 @@ bridge.statusMcpBridge("crash-test", "fake").then(
   });
 }
 
+function runCommittedStatusProcess(home: string) {
+  const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+const fs = require("node:fs");
+const path = require("node:path");
+const marker = (name) => path.join(process.env.HOME, name + ".marker");
+const providerVersion = fs.readFileSync(marker("provider-version"), "utf8").trim();
+const adapterRevision = fs.readFileSync(marker("adapter"), "utf8").trim();
+const registry = require("./src/lib/state/registry.js");
+const entry = registry.getSandbox("crash-test").mcp.bridges.fake;
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const policies = require("./src/lib/policy/index.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+providerCommands.runOpenshellProviderCommand = (args) => {
+  if (args[0] === "provider" && args[1] === "get") {
+    return {
+      status: 0,
+      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion + "\nCredential keys: FAKE_MCP_SECRET\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    return {
+      status: 0,
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + entry.providerName + " nemoclaw-mcp-v1 1 0\n",
+      stderr: "",
+    };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+policies.getPresetContentGatewayState = () => "match";
+processRecovery.executeSandboxExecCommand = () => ({
+  status: 0,
+  stdout: "v" + providerVersion,
+  stderr: "",
+});
+processRecovery.executeSandboxCommand = (_sandbox, command) => ({
+  status: 0,
+  stdout: command.includes("openshell:resolve:env:" + adapterRevision + "_FAKE_MCP_SECRET")
+    ? "registered\n"
+    : "mismatch\n",
+  stderr: "",
+});
+
+require("./src/lib/actions/sandbox/mcp-bridge.js").statusMcpBridge("crash-test", "fake").then(
+  (status) => {
+    process.stdout.write(JSON.stringify(status[0]));
+    process.exit(0);
+  },
+  (error) => {
+    console.error(error && error.stack || error);
+    process.exit(2);
+  },
+);
+`;
+  return spawnSync(process.execPath, ["-e", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+    timeout: 30_000,
+  });
+}
+
 function readBridge(home: string): Record<string, unknown> {
   const parsed = JSON.parse(
     fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
@@ -618,13 +702,13 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
-  it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
+  it("commits one current-revision bridge after concurrent add and delayed projection (#10300)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
       // Create the fixture before either process loads the registry. The
       // behavior under test starts at the lifecycle lock, after fixture creation.
       initializeSandboxRegistry(home);
-      const script = buildAddProcessScript(home, "credential-projection-coalesced", true, false);
+      const script = buildAddProcessScript(home, "credential-projection-intermediate", true, false);
       const first = spawnScript(home, script);
       const second = spawnScript(home, script);
       const results = await Promise.all([collectProcess(first), collectProcess(second)]);
@@ -635,19 +719,27 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
-      const credentialRepublishCount = fs
-        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
-        .split("\n")
-        .filter(Boolean).length;
-      expect(credentialRepublishCount).toBe(1);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+      const finalProviderRevision = `v${fs.readFileSync(
+        path.join(home, "provider-version.marker"),
+        "utf8",
+      )}`;
+      const adapterWrites = fs
+        .readFileSync(path.join(home, "adapter-write-log.marker"), "utf8")
+        .trim()
+        .split("\n");
+      expect(adapterWrites).toEqual([finalProviderRevision]);
       expect(readBridge(home).addState).toBeUndefined();
+      const status = runCommittedStatusProcess(home);
+      expect(status.status, `${status.stdout}\n${status.stderr}`).toBe(0);
+      expect(JSON.parse(status.stdout)).toMatchObject({
+        provider: { attached: true, credentialReady: true },
+        policy: { gatewayPresent: true },
+        adapter: { registered: true },
+      });
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

@@ -19,7 +19,7 @@ import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
-  registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
@@ -435,63 +435,71 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    const hasHostCredential = Object.hasOwn(adapterEnvValues, entry.env[0]);
-    let synchronizationBaseline =
-      providerResult.action === "updated" ? previousCredentialRevision : undefined;
-    if (hasHostCredential) {
-      // OpenShell 0.0.106 can miss a credential update published before the
-      // bound policy generation. Republish while that policy is active and
-      // compare the opaque sandbox-wide credential revision observed
-      // immediately before that mutation with fresh execs afterward. Provider
-      // resource versions are unrelated to credential placeholder revisions,
-      // so this pre-mutation observation is the exact stale-revision barrier.
-      synchronizationBaseline = observeMcpCredentialRevision(sandboxName, entry);
+    let refreshedAfterObservedAbsence = false;
+    let credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+      ...(providerResult.action === "updated"
+        ? {
+            previousRevision: previousCredentialRevision,
+          }
+        : {}),
+      // A no-field provider update advances only the provider resource version.
+      // If the credential remains available, republish it after observing an
+      // absence; otherwise, a hostless recovery advances the provider revision.
+      refreshAfterObservedAbsence: () => {
+        refreshedAfterObservedAbsence = true;
+        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+        // refresh without publishing the credential into fresh sandbox execs.
+        // sourceBoundary: OpenShell owns provider revision projection.
+        // whyNotSourceFix: NemoClaw can only observe absence after the bound
+        // policy is active, then republish when this process still has the host
+        // credential value. Hostless recovery retains the credential-free path.
+        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+        // the persisted provider identity before republish.
+        // removalCondition: remove the credential-bearing republish when the
+        // supported OpenShell version guarantees that a post-policy no-field
+        // refresh projects the bound credential into fresh sandbox execs.
+        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+          allowExisting: true,
+          expectedProviderId: entry.providerId,
+          requireExisting: true,
+        });
+        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+      },
+    });
+    if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
+      // OpenShell 0.0.106 polls provider state every ten seconds. First prove
+      // the pre-republish generation is installed, then republish while the
+      // bound policy is active and require a different observed revision.
+      // This prevents a quick series of reads from accepting an intermediate
+      // generation while the final credential-bearing update is still queued.
       upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
+      credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+        previousRevision: credentialRevision,
+      });
     }
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      ...(synchronizationBaseline !== undefined
-        ? { previousRevision: synchronizationBaseline }
-        : {}),
-      // A no-field provider update advances only the provider resource version.
-      // Hostless recovery has no post-policy credential-bearing mutation to
-      // wait for, so it advances the provider revision only after a fresh exec
-      // proves the credential absent. A host credential was already
-      // republished above and must be allowed to project without another
-      // update racing its opaque revision.
-      ...(!hasHostCredential
-        ? {
-            refreshAfterObservedAbsence: () => {
-              // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
-              // refresh without publishing the credential into fresh sandbox execs.
-              // sourceBoundary: OpenShell owns provider revision projection.
-              // whyNotSourceFix: NemoClaw can only observe absence after the bound
-              // policy is active. Hostless recovery retains the credential-free path.
-              // regressionTest: mcp-add-crash-consistency.test.ts covers hostless
-              // recovery; mcp-provider-ownership.test.ts covers loss of the
-              // persisted provider identity before refresh.
-              // removalCondition: remove this refresh when the supported OpenShell
-              // version guarantees bound credentials project into fresh execs.
-              refreshMcpProviderEnvironment(entry);
-            },
-          }
-        : {}),
-    });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
-    registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
-      // An exact adapter entry is evidence of a post-commit process death.
-      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // Credential-bearing adapters must project the same live revision
-      // OpenShell will recognize at egress. The canonical placeholder omits
-      // the provider identity required by revision-bound credentials.
-      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+    registerAgentAdapterAtCurrentCredentialRevision(
+      sandboxName,
+      adapter,
+      entry,
+      adapterEnvValues,
       credentialRevision,
-    });
+      {
+        // An exact adapter entry is evidence of a post-commit process death.
+        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+        // Credential-bearing adapters must project the same live revision
+        // OpenShell will recognize at egress. The canonical placeholder omits
+        // the provider identity required by revision-bound credentials.
+        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+      },
+    );
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
