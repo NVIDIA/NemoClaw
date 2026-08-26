@@ -2590,7 +2590,7 @@ function validateExactPrManagedImageCatalogBoundary(
   );
   if (
     managedCatalog?.if !==
-      "${{ inputs.checkout_sha != '' && inputs.checkout_sha != '43411aa34e5c66b336b543005865ad5ba301f365' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+      "${{ inputs.checkout_sha != '' && inputs.checkout_sha != '033f1218472e6a02b02a6948126dd59e7d259df8' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
     !isDeepStrictEqual(asRecord(managedCatalog?.env), {
       BASE_SHA: "${{ inputs.base_sha }}",
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -2610,7 +2610,7 @@ function validateExactPrManagedImageCatalogBoundary(
   );
   if (
     reusedManagedCatalog?.if !==
-      "${{ inputs.checkout_sha == '43411aa34e5c66b336b543005865ad5ba301f365' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+      "${{ inputs.checkout_sha == '033f1218472e6a02b02a6948126dd59e7d259df8' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
     !stringValue(reusedManagedCatalog?.run).includes(
       "managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}",
     ) ||
