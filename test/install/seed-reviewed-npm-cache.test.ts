@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   type CachePut,
@@ -72,6 +72,7 @@ function request(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
@@ -199,6 +200,26 @@ describe("reviewed npm cache seed", () => {
     ).trim();
 
     expect(integrity).toBe(input.integrity);
+  });
+
+  it("rejects an unreviewed npm version before loading npm cache internals", async () => {
+    const input = fixture();
+    const binDirectory = path.join(input.root, "bin");
+    const tracePath = path.join(input.root, "npm.trace");
+    const npmPath = path.join(binDirectory, "npm");
+    fs.mkdirSync(binDirectory);
+    fs.writeFileSync(
+      npmPath,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "$NPM_TRACE"\nprintf '99.0.0\\n'\n`,
+    );
+    fs.chmodSync(npmPath, 0o755);
+    vi.stubEnv("PATH", `${binDirectory}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("NPM_TRACE", tracePath);
+
+    await expect(seedReviewedNpmCache(request(input))).rejects.toThrow(
+      "reviewed npm cache seed does not support npm@99.0.0; expected npm@10.9.4 or npm@11.17.0",
+    );
+    expect(fs.readFileSync(tracePath, "utf8")).toBe("--version\n");
   });
 
   it("rejects missing, extra, and integrity-mismatched archives", async () => {

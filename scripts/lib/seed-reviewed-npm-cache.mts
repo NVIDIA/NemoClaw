@@ -63,6 +63,7 @@ type LockedPackage = Readonly<{
 }>;
 
 const INSTALL_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+const REVIEWED_CI_NPM_VERSIONS = new Set(["10.9.4", "11.17.0"]);
 
 function packageNameFromLockLocation(location: string): string {
   const marker = "node_modules/";
@@ -248,6 +249,12 @@ function packumentUrl(registryOrigin: string, packageName: string): string {
 }
 
 function loadCachePut(): CachePut {
+  const npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+  if (!REVIEWED_CI_NPM_VERSIONS.has(npmVersion)) {
+    throw new Error(
+      `reviewed npm cache seed does not support npm@${npmVersion}; expected npm@10.9.4 or npm@11.17.0`,
+    );
+  }
   const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
   const require = createRequire(import.meta.url);
   const cacachePath = require.resolve("cacache", {
