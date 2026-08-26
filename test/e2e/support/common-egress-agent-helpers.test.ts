@@ -43,6 +43,7 @@ const STOCK_REPLY = {
   source_url: STOCK_SOURCE_URL,
   as_of: "2026-08-17T15:59:00Z",
 } satisfies NvdaPersonalStockReply;
+const DAY_MS = 24 * 60 * 60_000;
 
 function stockPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -921,6 +922,25 @@ describe("common-egress agent parsing and classification helpers", () => {
         Date.parse("2026-08-18T12:00:00Z"),
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    { boundary: "the allowed past-age limit", expected: true, nowOffsetMs: 5 * DAY_MS, outcome: "accepts" },
+    { boundary: "one millisecond beyond the past-age limit", expected: false, nowOffsetMs: 5 * DAY_MS + 1, outcome: "rejects" },
+    { boundary: "the allowed future-skew limit", expected: true, nowOffsetMs: -DAY_MS, outcome: "accepts" },
+    { boundary: "one millisecond beyond the future-skew limit", expected: false, nowOffsetMs: -DAY_MS - 1, outcome: "rejects" },
+  ])("$outcome a quote at $boundary", ({ expected, nowOffsetMs }) => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines(),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+    const reply = JSON.stringify(STOCK_REPLY);
+    const quoteTimeMs = Date.parse(STOCK_REPLY.as_of);
+
+    expect(nvdaPersonalStockReplyMatchesEvidence(reply, evidence, quoteTimeMs + nowOffsetMs)).toBe(
+      expected,
+    );
   });
 
   it.each([

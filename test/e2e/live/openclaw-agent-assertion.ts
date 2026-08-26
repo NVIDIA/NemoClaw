@@ -28,8 +28,6 @@ import {
 
 const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const OPENCLAW_AGENT_ATTEMPTS = 3;
-const MAX_LATEST_STOCK_AGE_MS = 8 * 24 * 60 * 60_000;
-const MAX_SOURCE_CLOCK_SKEW_MS = 36 * 60 * 60_000;
 
 export interface OpenClawAgentAssertionEvidence {
   reply: string;
@@ -247,10 +245,6 @@ export async function runPersonalStockAgentAssertion(
   const assessmentArtifact = projectPersonalStockToolEvidenceArtifact(stock.toolEvidence!);
   const quote = parseNvdaPersonalStockReply(stock.reply);
   expect(quote).not.toBeNull();
-  const quoteTime = Date.parse(quote!.as_of);
-  const now = Date.now();
-  expect(quoteTime).toBeGreaterThanOrEqual(now - MAX_LATEST_STOCK_AGE_MS);
-  expect(quoteTime).toBeLessThanOrEqual(now + MAX_SOURCE_CLOCK_SKEW_MS);
   const sourceUrl = new URL(quote!.source_url);
   expect(sourceUrl.protocol).toBe("https:");
   await artifacts.writeJson(`actions/${args.label}-assessment.json`, assessmentArtifact);
