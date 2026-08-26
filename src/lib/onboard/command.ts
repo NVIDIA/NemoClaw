@@ -547,6 +547,12 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   if (error instanceof PortableInferenceDescriptorError) {
     return reportOnboardCommandError(deps, `  ${error.message}`);
   }
+  if (
+    error instanceof Error &&
+    (error as Error & { code?: unknown }).code === "NEMOCLAW_UNVERIFIABLE_STATIC_PROVIDER_PROFILE"
+  ) {
+    return reportOnboardCommandError(deps, `  ${error.message}`);
+  }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not
   // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
   // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same

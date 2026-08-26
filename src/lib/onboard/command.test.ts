@@ -13,6 +13,7 @@ import { servingProfileProvenance } from "../inference/serving/profile-provenanc
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
 import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { UnverifiableStaticProviderProfileError } from "./credential-provider-registration";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
@@ -1235,6 +1236,27 @@ describe("onboard command options", () => {
     expect(output).toContain("unsupported gateway-management contract version");
     // No stack frames leaked into the user-facing output.
     expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+  });
+
+  it("prints a clean CLI error when a static provider profile cannot be verified", async () => {
+    const errors: string[] = [];
+    const onboardError = new UnverifiableStaticProviderProfileError("selected-gateway");
+    expect(onboardError.message).toContain("No provider profile was changed");
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw onboardError;
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain("OpenShell gateway 'selected-gateway'");
     expect(output).not.toContain("    at ");
   });
 

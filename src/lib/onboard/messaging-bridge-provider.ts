@@ -17,9 +17,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
+import type {
+  CheckedInBoundaryComparison,
+  RegisteredProfileComparison,
+} from "../adapters/openshell/provider-profile";
+import {
+  compareExportedProfileToCheckedIn,
+  isMissingProviderProfile,
+  normalizeOpenshellDiagnostic,
+  openshellResultDiagnostic,
+} from "../adapters/openshell/provider-profile";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
 import type {
@@ -40,14 +50,20 @@ const PROVIDER_PROFILE_FILE_BY_AGENT: Readonly<Record<MessagingAgentId, string>>
   hermes: "hermes.yaml",
 };
 
+type RunOpenshellResult = {
+  status: number | null;
+  stderr?: string | Buffer | null;
+  stdout?: string | Buffer | null;
+  error?: Error;
+};
+
 type RunOpenshell = (
   args: string[],
-  // The runner accepts a wider options shape; we only set ignoreError + stdio
-  // here, so erase the type at the boundary to keep this module free of the
-  // runner.ts internals.
+  // The runner accepts a wider options shape. Keep this module free of the
+  // runner.ts internals by erasing that shape at the injected boundary.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   opts: any,
-) => { status: number | null; stderr?: string | Buffer | null; stdout?: string | Buffer | null };
+) => RunOpenshellResult;
 
 type TokenDefShape = { name: string; providerType?: string; token: string | null };
 
@@ -119,6 +135,8 @@ export interface MatchRegisteredStaticMessagingProfileDeps {
   readonly root: string;
   readonly runOpenshell: RunOpenshell;
   readonly profiles?: readonly MessagingBridgeProfile[];
+  readonly manifests?: readonly ChannelManifest[];
+  readonly existsSync?: (file: string) => boolean;
   readonly readFileSync?: (file: string) => string;
 }
 
@@ -145,80 +163,107 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
-function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
-  if (
-    typeof doc.id !== "string" ||
-    !Array.isArray(doc.credentials) ||
-    !Array.isArray(doc.endpoints) ||
-    !Array.isArray(doc.binaries) ||
-    typeof doc.inference_capable !== "boolean"
-  ) {
-    return null;
-  }
-  const credentials = doc.credentials.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const credential = entry as Record<string, unknown>;
-    return {
-      name: credential.name,
-      env_vars: credential.env_vars,
-      required: credential.required,
-      auth_style: credential.auth_style,
-      header_name: credential.header_name,
-      query_param: credential.query_param,
-      refresh: credential.refresh ?? null,
-    };
-  });
-  if (credentials.some((entry) => entry === null)) return null;
-  return {
-    id: doc.id,
-    credentials,
-    endpoints: doc.endpoints,
-    binaries: doc.binaries,
-    inference_capable: doc.inference_capable,
-  };
-}
-
-function staticProfileMatchesCheckedInBoundary(
+/**
+ * Whether an exported profile is the checked-in YAML this codebase ships for
+ * it. The checked-in boundary itself defines what's allowed for both static
+ * and refreshing profiles; a profile ID match alone is not proof this is that
+ * checked-in profile (#10371).
+ *
+ * Compares through OpenShell's export representation, since a refresh block
+ * does not round-trip byte-identically, and distinguishes a read that never
+ * completed from confirmed drift.
+ */
+function compareProfileToCheckedIn(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
-): boolean {
-  try {
-    const actual = JSON.parse(exported) as Record<string, unknown>;
-    const expected = YAML.parse(readFileSync(profile.profilePath)) as Record<string, unknown>;
-    const actualBoundary = credentialBoundary(actual);
-    const expectedBoundary = credentialBoundary(expected);
-    return (
-      actualBoundary !== null &&
-      expectedBoundary !== null &&
-      expectedBoundary.id === profile.profileId &&
-      Array.isArray(expectedBoundary.endpoints) &&
-      expectedBoundary.endpoints.length === 0 &&
-      Array.isArray(expectedBoundary.binaries) &&
-      expectedBoundary.binaries.length === 0 &&
-      expectedBoundary.inference_capable === false &&
-      isDeepStrictEqual(actualBoundary, expectedBoundary)
-    );
-  } catch {
-    return false;
+): CheckedInBoundaryComparison {
+  return compareExportedProfileToCheckedIn(
+    exported,
+    () => readFileSync(profile.profilePath),
+    profile.profileId,
+  );
+}
+
+type MessagingBridgeProfileCandidate = Pick<
+  MessagingBridgeProfile,
+  "agent" | "channelId" | "profilePath" | "sourceSecretEnv"
+>;
+
+function messagingBridgeProfileCandidates(input: {
+  root: string;
+  manifests: readonly ChannelManifest[];
+  existsSync: (file: string) => boolean;
+}): MessagingBridgeProfileCandidate[] {
+  const candidates: MessagingBridgeProfileCandidate[] = [];
+  for (const manifest of input.manifests) {
+    const sourceSecretEnv = primarySecretEnv(manifest);
+    if (!sourceSecretEnv) continue;
+    for (const agent of manifest.supportedAgents) {
+      const profilePath = channelProviderProfilePath(input.root, manifest.id, agent);
+      if (!profilePath || !input.existsSync(profilePath)) continue;
+      candidates.push({ agent, channelId: manifest.id, profilePath, sourceSecretEnv });
+    }
   }
+  return candidates;
+}
+
+function discoverStaticProfileForInspection(
+  providerType: string,
+  deps: MatchRegisteredStaticMessagingProfileDeps,
+): MessagingBridgeProfile | "indeterminate" | null {
+  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
+  const candidates = messagingBridgeProfileCandidates({
+    root: deps.root,
+    manifests: deps.manifests ?? createBuiltInChannelManifestRegistry().list(),
+    existsSync: deps.existsSync ?? ((file) => fs.existsSync(file)),
+  });
+  for (const candidate of candidates) {
+    let content: string;
+    let declaredId: unknown;
+    try {
+      content = readFileSync(candidate.profilePath);
+      declaredId = (YAML.parse(content) as Record<string, unknown> | null)?.id;
+    } catch {
+      return "indeterminate";
+    }
+    if (declaredId !== providerType) continue;
+    const parsed = parseProfileYaml(content);
+    if (!parsed) return "indeterminate";
+    if (parsed.strategy !== null) return null;
+    return { ...candidate, ...parsed };
+  }
+  return null;
 }
 
 /** Compare a registered static profile with its checked-in credential boundary. */
 export function matchesRegisteredStaticMessagingProfile(
   providerType: string,
   deps: MatchRegisteredStaticMessagingProfileDeps,
-): boolean | null {
-  const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
-    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
-  );
+): RegisteredProfileComparison | null {
+  const profile = deps.profiles
+    ? (deps.profiles.find(
+        (candidate) => candidate.profileId === providerType && candidate.strategy === null,
+      ) ?? null)
+    : discoverStaticProfileForInspection(providerType, deps);
+  if (profile === "indeterminate") return "indeterminate";
   if (!profile) return null;
   const exported = deps.runOpenshell(
     ["provider", "profile", "export", profile.profileId, "--output", "json"],
-    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
   );
-  if (exported.status !== 0) return false;
-  return staticProfileMatchesCheckedInBoundary(
+  if (exported.status !== 0) {
+    return Number.isInteger(exported.status) &&
+      isMissingProviderProfile(openshellResultDiagnostic(exported), profile.profileId)
+      ? "absent"
+      : "indeterminate";
+  }
+  return compareProfileToCheckedIn(
     profile,
     bufferOrStringToText(exported.stdout),
     deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
@@ -272,8 +317,14 @@ function parseProfileYaml(
   const refresh = credential.refresh as Record<string, unknown> | undefined;
   const strategy =
     typeof refresh?.strategy === "string" && refresh.strategy ? refresh.strategy : null;
-  if (strategy === null && (!Array.isArray(doc?.endpoints) || doc.endpoints.length !== 0)) {
-    return null;
+  if (strategy === null) {
+    const isStaticCredentialBoundary =
+      Array.isArray(doc?.endpoints) &&
+      doc.endpoints.length === 0 &&
+      Array.isArray(doc?.binaries) &&
+      doc.binaries.length === 0 &&
+      doc.inference_capable === false;
+    if (!isStaticCredentialBoundary) return null;
   }
   const scopes = Array.isArray(refresh?.scopes)
     ? refresh.scopes.filter((s): s is string => typeof s === "string")
@@ -304,16 +355,11 @@ export function listMessagingBridgeProfiles(
   const manifests = deps.manifests ?? createBuiltInChannelManifestRegistry().list();
 
   const profiles: MessagingBridgeProfile[] = [];
-  for (const manifest of manifests) {
-    const sourceSecretEnv = primarySecretEnv(manifest);
-    if (!sourceSecretEnv) continue;
-    for (const agent of manifest.supportedAgents) {
-      const profilePath = channelProviderProfilePath(root, manifest.id, agent);
-      if (!profilePath || !existsSync(profilePath)) continue;
-      const parsed = parseProfileYaml(readFileSync(profilePath));
-      if (!parsed) continue;
-      profiles.push({ channelId: manifest.id, agent, profilePath, sourceSecretEnv, ...parsed });
-    }
+  const candidates = messagingBridgeProfileCandidates({ root, manifests, existsSync });
+  for (const candidate of candidates) {
+    const parsed = parseProfileYaml(readFileSync(candidate.profilePath));
+    if (!parsed) continue;
+    profiles.push({ ...candidate, ...parsed });
   }
   return profiles;
 }
@@ -464,84 +510,156 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
   const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
-  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+  const rejectMismatchedProfile = (profile: MessagingBridgeProfile): void => {
     errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' already registered in the selected ` +
+        `OpenShell gateway does not match NemoClaw's checked-in ${profile.channelId} credential contract.`,
     );
-    errorLog("    Remove the conflicting profile and re-run onboarding.");
+    errorLog(
+      "    Find the selected gateway's name with 'openshell gateway info', then remove the " +
+        `conflicting profile from that gateway (openshell provider profile -g <gateway-name> ` +
+        `delete ${profile.profileId}) and re-run onboarding. Other sandboxes that use the same ` +
+        "gateway may share this profile — confirm the effect before removing it.",
+    );
+    exit(1);
+  };
+
+  const rejectUnverifiableProfile = (profile: MessagingBridgeProfile): void => {
+    errorLog(
+      `\n  ✗ Could not verify the OpenShell provider profile '${profile.profileId}' already ` +
+        `registered in the selected OpenShell gateway against NemoClaw's checked-in ` +
+        `${profile.channelId} credential contract.`,
+    );
+    errorLog(
+      `    The gateway's export was not readable as JSON, or ${profile.profilePath} could not be ` +
+        "read as a provider profile. An unfinished check is not proof the registered profile " +
+        "drifted, so it was left in place. Resolve the read failure and re-run onboarding.",
+    );
+    exit(1);
+  };
+
+  const rejectProbeFailure = (
+    profile: MessagingBridgeProfile,
+    operation: string,
+    rawDiagnostic: string,
+  ): void => {
+    const diagnostic = compactText(deps.redact(rawDiagnostic));
+    errorLog(
+      `\n  ✗ Could not check whether the ${profile.channelId} provider profile is already ` +
+        `registered (${operation} failed).`,
+    );
+    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
+    errorLog(
+      "    Confirm the OpenShell gateway is reachable and this account is authorized, then re-run onboarding.",
+    );
     exit(1);
   };
 
   for (const profile of active) {
     // Onboard registers each bridge provider twice: once up front so an
     // interrupted run can resume, then again during create-plan materialization.
-    // Probe first and skip the re-import so the second pass never hits OpenShell's
-    // "already exists" error. A fresh gateway answers the probe with a harmless
-    // "not found" that suppressOutput hides — only the exit status says whether
-    // the profile already exists.
+    // Probe before import so the second registration reuses the host-global
+    // profile. Only a recognized missing-profile result permits an import.
     const alreadyRegistered = deps.runOpenshell(
       ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
     );
     if (alreadyRegistered.status === 0) {
-      if (
-        profile.strategy === null &&
-        !staticProfileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
+      const comparison = compareProfileToCheckedIn(
+        profile,
+        bufferOrStringToText(alreadyRegistered.stdout),
+        readFileSync,
+      );
+      if (comparison === "indeterminate") {
+        rejectUnverifiableProfile(profile);
+        return;
+      }
+      if (comparison === "mismatch") {
+        rejectMismatchedProfile(profile);
         return;
       }
       continue;
     }
-    // Probe failed for something other than "not found" (gateway down, auth, …):
-    // surface it instead of masking a real problem.
-    const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
-      alreadyRegistered.stdout,
-    )}`;
-    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
-      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
-      const probeText = compactText(deps.redact(probeDiagnostic));
-      if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
+    // A nonzero probe status alone is not proof the profile is missing — the
+    // gateway could be unreachable, this account unauthorized, or the probe
+    // could have timed out or spawned incorrectly. Only a recognized "not
+    // found" diagnostic makes it safe to proceed to import; anything else
+    // must stop here rather than attempt a state-changing import in
+    // response to a read that never actually completed.
+    const probeDiagnostic = openshellResultDiagnostic(alreadyRegistered);
+    if (
+      !Number.isInteger(alreadyRegistered.status) ||
+      !isMissingProviderProfile(probeDiagnostic, profile.profileId)
+    ) {
+      rejectProbeFailure(profile, "provider profile export", probeDiagnostic);
+      return;
     }
 
     const result = deps.runOpenshell(
       ["provider", "profile", "import", "--file", profile.profilePath],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
     );
     if (result.status === 0) continue;
 
     // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
-    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) {
-      if (profile.strategy !== null) continue;
+    // Normalize the diagnostic because OpenShell can wrap `already exists`
+    // across a box-drawing continuation (#10159, #10371).
+    const rawDiagnostic = openshellResultDiagnostic(result);
+    if (/already exists/iu.test(normalizeOpenshellDiagnostic(rawDiagnostic))) {
       const racedProfile = deps.runOpenshell(
         ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+        {
+          ignoreError: true,
+          suppressOutput: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
       );
-      if (
-        racedProfile.status !== 0 ||
-        !staticProfileMatchesCheckedInBoundary(
+      // A nonzero post-race export status means the export itself failed
+      // (gateway unreachable, unauthorized, timed out) — the profile content
+      // was never read, so this is not proof of a conflict. Report the real
+      // cause instead of telling the operator to delete a profile that may
+      // be fine.
+      if (racedProfile.status !== 0) {
+        rejectProbeFailure(
           profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
+          "post-race provider profile export",
+          openshellResultDiagnostic(racedProfile),
+        );
+        return;
+      }
+      const racedComparison = compareProfileToCheckedIn(
+        profile,
+        bufferOrStringToText(racedProfile.stdout),
+        readFileSync,
+      );
+      if (racedComparison === "indeterminate") {
+        rejectUnverifiableProfile(profile);
+        return;
+      }
+      if (racedComparison === "mismatch") {
+        rejectMismatchedProfile(profile);
         return;
       }
       continue;
     }
 
     const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(
-      `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`,
-    );
+    errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
+    errorLog(
+      "    Fix the error above. If OpenShell requires an update, rerun the NemoClaw installer. Then rerun onboarding.",
+    );
     exit(result.status || 1);
     return;
   }

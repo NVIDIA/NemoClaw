@@ -125,6 +125,21 @@ export interface CredentialProviderRegistrationDeps {
   persistMigratedLegacyKeys(): void;
 }
 
+export class UnverifiableStaticProviderProfileError extends Error {
+  readonly code = "NEMOCLAW_UNVERIFIABLE_STATIC_PROVIDER_PROFILE";
+
+  constructor(gatewayName: string) {
+    super(
+      "The gateway export or checked-in profile was unavailable or invalid. NemoClaw could not " +
+        `verify the static provider profile for OpenShell gateway '${gatewayName}' against its ` +
+        "checked-in credential boundary. No provider profile was changed. Confirm the gateway is " +
+        "reachable, this account is authorized, and the checked-in profile is readable and valid. " +
+        "Then rerun onboarding.",
+    );
+    this.name = "UnverifiableStaticProviderProfileError";
+  }
+}
+
 function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
@@ -279,7 +294,10 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfileMatches === false) return false;
+    if (staticProfileMatches === "indeterminate") {
+      throw new UnverifiableStaticProviderProfileError(deps.getGatewayName());
+    }
+    if (staticProfileMatches === "absent" || staticProfileMatches === "mismatch") return false;
     return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
       providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
       {

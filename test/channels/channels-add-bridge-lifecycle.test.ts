@@ -188,12 +188,19 @@ beforeEach(() => {
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
     const command = withoutGateway(args);
     const providerMissing = command[0] === "provider" && command[1] === "get";
+    const profileMissing =
+      command[0] === "provider" && command[1] === "profile" && command.includes("export");
+    const missing = providerMissing || profileMissing;
     return {
       pid: 0,
       output: [null, "", ""],
       stdout: isRefreshStatus(args) ? refreshStatusTable(command) : "",
-      stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
-      status: providerMissing ? 1 : 0,
+      stderr: profileMissing
+        ? "custom provider profile not found"
+        : providerMissing
+          ? `provider '${args[args.length - 1]}' not found`
+          : "",
+      status: missing ? 1 : 0,
       signal: null,
     };
   });

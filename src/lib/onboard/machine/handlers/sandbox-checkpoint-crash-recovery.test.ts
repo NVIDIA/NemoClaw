@@ -111,8 +111,28 @@ function fakeGatewayRunOpenshell() {
     return OK_RESULT;
   };
 
+  const PROFILE_NOT_FOUND: StubbedRunOpenshellResult = {
+    status: 1,
+    stdout: "",
+    stderr: "custom provider profile not found",
+  };
+  // Export probes only the built-in messaging-bridge profile this fixture
+  // already registers (id "nemoclaw-mcp-v1"); any other profile id
+  // (brave/tavily/tavily-hermes-v1) is a fresh host that has never imported
+  // it, matching this fixture's original always-import intent for
+  // web-search provider registration (#10371). Look up "export" by index,
+  // not a fixed position, since gateway scoping inserts "-g <gateway>"
+  // between "profile" and "export".
+  const handleProfile = (args: string[]): StubbedRunOpenshellResult => {
+    const exportIndex = args.indexOf("export");
+    const probedId = exportIndex === -1 ? null : args[exportIndex + 1];
+    return probedId !== null && probedId !== "nemoclaw-mcp-v1"
+      ? PROFILE_NOT_FOUND
+      : EXACT_MESSAGING_PROFILE;
+  };
+
   const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
-    profile: () => EXACT_MESSAGING_PROFILE,
+    profile: handleProfile,
     get: handleGet,
     create: handleCreate,
     update: () => OK_RESULT,
@@ -1124,6 +1144,39 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(liveCheckCount).toBeGreaterThan(1);
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
+  });
+
+  it("stops checkpoint recovery when a registered provider cannot be verified", async () => {
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        bindings: {
+          credentialEnvs: [],
+          registeredProviders: [
+            {
+              name: "my-assistant-discord-bridge",
+              type: "discord-hermes-static-v1",
+              credentialEnv: "DISCORD_BOT_TOKEN",
+            },
+          ],
+        },
+      }),
+    );
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      providerMatchesGatewayCredential: () => {
+        throw new Error("registered provider profile could not be verified");
+      },
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("registered provider profile could not be verified");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("creates the missing sandbox when its exact registered provider binding remains live (#7022)", async () => {

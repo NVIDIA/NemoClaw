@@ -3337,7 +3337,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         finalization: {
           stagedLegacyKeys,
           migratedLegacyKeys,
-          webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+          webSearchEnabled: (config) => braveProviderProfile.shouldEnableWebSearch(config),
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {

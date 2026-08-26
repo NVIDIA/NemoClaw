@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
@@ -207,7 +208,10 @@ describe("credential provider registration", () => {
           "--output",
           "json",
         ],
-        expect.objectContaining({ suppressOutput: true }),
+        expect.objectContaining({
+          suppressOutput: true,
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        }),
       );
       expect(
         runOpenshell.mock.calls
@@ -216,6 +220,53 @@ describe("credential provider registration", () => {
       ).toEqual([]);
     },
   );
+
+  it("reports an unreadable static profile separately from confirmed drift", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? { status: 1, stdout: "", stderr: "gateway unavailable" }
+        : providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(() =>
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toThrow(
+      "static provider profile for OpenShell gateway 'test-gateway' against its checked-in " +
+        "credential boundary",
+    );
+  });
+
+  it("treats a missing static profile as unavailable instead of unreadable", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "custom provider profile 'discord-hermes-static-v1' not found",
+          }
+        : providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toBe(false);
+  });
 
   it("uses one selected gateway for static profile and provider identity", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
@@ -380,6 +431,14 @@ describe("credential provider registration", () => {
         "provider get -g test-gateway alpha-discord-bridge",
         providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
       ],
+      // Not registered yet, so ensureWebSearchProviderProfiles (#10371) takes
+      // the import path below instead of its already-registered boundary
+      // check — this test is about provider/receipt registration, not
+      // profile-content validation.
+      [
+        "provider profile -g test-gateway export brave --output json",
+        { status: 1, stdout: "", stderr: "custom provider profile not found" },
+      ],
     ]);
     const defaultResult = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn(
@@ -452,7 +511,7 @@ describe("credential provider registration", () => {
 
   it("creates a missing messaging provider and records its receipt (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "custom provider profile not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
       args[0] === "provider" && args[1] === "get" ? missing : success,
@@ -496,7 +555,7 @@ describe("credential provider registration", () => {
 
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "custom provider profile not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
       (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
@@ -630,7 +689,7 @@ describe("credential provider registration", () => {
     const session = {
       stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
     } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "custom provider profile not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const responses = new Map([
       [
@@ -720,7 +779,7 @@ describe("credential provider registration", () => {
       const session = {
         stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
       } as unknown as Session;
-      const missing = { status: 1, stdout: "", stderr: "not found" };
+      const missing = { status: 1, stdout: "", stderr: "custom provider profile not found" };
       const success = { status: 0, stdout: "", stderr: "" };
       const responses = new Map([
         ["provider get -g test-gateway alpha-slack-bridge", missing],

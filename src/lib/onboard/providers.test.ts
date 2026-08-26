@@ -677,9 +677,17 @@ describe("onboard provider helpers", () => {
         },
       ],
       (command) => {
-        commands.push(command.join(" "));
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-        return { status: 0, stdout: "", stderr: "" };
+        const commandText = command.join(" ");
+        commands.push(commandText);
+        return (
+          new Map<string, RunResult>([
+            [
+              "provider profile export brave --output json",
+              { status: 1, stdout: "", stderr: "custom provider profile not found" },
+            ],
+            ["provider get alpha-brave-search", { status: 1, stdout: "", stderr: "" }],
+          ]).get(commandText) ?? { status: 0, stdout: "", stderr: "" }
+        );
       },
     );
 
@@ -914,8 +922,16 @@ describe("onboard provider helpers", () => {
         },
       ],
       (command) => {
-        commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        const commandText = command.join(" ");
+        commands.push(commandText);
+        return (
+          new Map<string, RunResult>([
+            [
+              "provider profile export brave --output json",
+              { status: 1, stdout: "", stderr: "custom provider profile not found" },
+            ],
+          ]).get(commandText) ?? { status: 0, stdout: "", stderr: "" }
+        );
       },
     );
 
@@ -923,6 +939,7 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      "provider profile export brave --output json",
       expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
@@ -1234,14 +1251,23 @@ describe("onboard provider helpers", () => {
         },
       ],
       (command) => {
-        commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        const commandText = command.join(" ");
+        commands.push(commandText);
+        return (
+          new Map<string, RunResult>([
+            [
+              "provider profile export brave --output json",
+              { status: 1, stdout: "", stderr: "custom provider profile not found" },
+            ],
+          ]).get(commandText) ?? { status: 0, stdout: "", stderr: "" }
+        );
       },
       { replaceExisting: true },
     );
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      "provider profile export brave --output json",
       expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
