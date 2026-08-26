@@ -220,7 +220,8 @@ Return these fields:
 - price: the quote price as a JSON number
 - source_url: the exact URL for the paired web_fetch call
 - as_of: the quote's own market or update timestamp
-Copy an ISO 8601 source date or timestamp exactly. For a Unix-epoch field such as regularMarketTime, convert that field exactly to ISO 8601.
+Copy an extended ISO 8601 source date or timestamp exactly. Convert a compact YYYYMMDD source date to YYYY-MM-DD.
+For a Unix-epoch field such as regularMarketTime, convert that field exactly to ISO 8601.
 Never use the current clock, fetch time, or an unrelated date for as_of.`;
 
 export async function runPersonalStockAgentAssertion(
