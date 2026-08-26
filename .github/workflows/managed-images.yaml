@@ -15,7 +15,7 @@
 # never contributes to the all-agent cohort, so Pi cannot reach onboarding agent
 # selection before the activation change merges.
 
-name: Images / Build, Test, and Publish Managed Images
+name: Images / Managed Images
 
 on:
   workflow_call:
@@ -69,7 +69,7 @@ env:
 
 jobs:
   pr-reviewed-npm-audit:
-    name: PR reviewed npm audit
+    name: PR / Dependencies / Audit npm packages
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -118,7 +118,7 @@ jobs:
           report-dir: artifacts/reviewed-npm-audit
 
   pr-staging-qa-deep-code:
-    name: Staging QA base permission regression (Deep Agents Code)
+    name: PR / Deep Agents Code / Test image permissions
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     timeout-minutes: 90
@@ -373,7 +373,7 @@ jobs:
           fi
 
   pr-build-and-entrypoint:
-    name: PR build and direct managed startup (${{ matrix.display_name }})
+    name: PR / ${{ matrix.display_name }} / Build image and test entrypoint
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
@@ -998,7 +998,7 @@ jobs:
           retention-days: 1
 
   pr-managed-activation:
-    name: PR exact all-agent managed runtime activation
+    name: PR / Agent runtimes / Test activation
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -1080,7 +1080,7 @@ jobs:
           retention-days: 1
 
   pr-openclaw-mcp-discovery:
-    name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+    name: PR / OpenClaw / Test MCP discovery / Run ${{ matrix.pass }}
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -1210,7 +1210,7 @@ jobs:
           retention-days: 1
 
   pi-candidate:
-    name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
+    name: PR / Pi / Build and validate image / ${{ matrix.arch }}
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -1623,7 +1623,7 @@ jobs:
           retention-days: 7
 
   pi-candidate-publish:
-    name: Publish and validate the Pi candidate managed image (${{ matrix.arch }})
+    name: Publish / Pi / Build and validate image / ${{ matrix.arch }}
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -1635,7 +1635,7 @@ jobs:
     steps: *pi_candidate_steps
 
   publication-identity:
-    name: Record managed image publication identity
+    name: Publish / Record image identity
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1652,7 +1652,7 @@ jobs:
           printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   build-and-validate:
-    name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
+    name: Publish / ${{ matrix.display_name }} / Build and validate image / ${{ matrix.arch }}
     if: github.event_name != 'pull_request'
     needs: publication-identity
     runs-on: ${{ matrix.runner }}
@@ -2366,7 +2366,7 @@ jobs:
           retention-days: 1
 
   promote:
-    name: Promote complete multi-platform managed image cohort
+    name: Publish / Promote images
     needs:
       - publication-identity
       - build-and-validate
