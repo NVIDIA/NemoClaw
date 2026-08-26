@@ -375,7 +375,7 @@ When used, validate its cleanup receipts because the Brev workspace receives cre
 SELECTED_LAUNCHABLE_CHECK_FILE="$EVIDENCE_DIR/selected-launchable-check.json"
 run_or_stop "Launchable check-run selection" jq -er '
   ([.[].check_runs[]? |
-    select(.name == "Exact staging Brev Launchable" and
+    select(.name == "Staging Brev Launchable" and
       .status == "completed" and .conclusion == "success")] |
     sort_by(.completed_at) | last) as $check |
   if $check == null then
@@ -400,7 +400,7 @@ run_or_stop "Launchable job read" gh api \
 run_or_stop "Launchable job validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --argjson run "$LAUNCHABLE_RUN_ID" --argjson job "$LAUNCHABLE_JOB_ID" '
   .id == $job and .run_id == $run and .head_sha == $sha and
-  .name == "Exact staging Brev Launchable" and
+  .name == "Staging Brev Launchable" and
   .status == "completed" and .conclusion == "success"
 ' "$LAUNCHABLE_JOB_FILE" >/dev/null
 LAUNCHABLE_JOB_FIELDS_FILE="$EVIDENCE_DIR/launchable-job-fields.txt"

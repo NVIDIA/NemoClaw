@@ -145,7 +145,7 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
   ],
 ];
 
-describe("exact staging Brev Launchable identity workflow boundary", () => {
+describe("staging Brev Launchable identity workflow boundary", () => {
   it("keeps the explicit trusted-main identity job valid (#9925)", () => {
     expect(validateE2eWorkflow(workflow())).toEqual([]);
   });

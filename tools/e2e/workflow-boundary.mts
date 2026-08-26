@@ -1900,8 +1900,8 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  if (job.name !== "Exact staging Brev Launchable") {
-    errors.push("staging-brev-launchable must identify the exact Launchable E2E contract");
+  if (job.name !== "Staging Brev Launchable") {
+    errors.push("staging-brev-launchable must identify the Launchable E2E contract");
   }
   if (job.needs !== "generate-matrix") {
     errors.push("staging-brev-launchable must depend on the authorized generate-matrix job");
@@ -2050,8 +2050,8 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
 function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = STAGING_BREV_IDENTITY_JOB_ID;
   const job = asRecord(jobs[jobName]);
-  if (job.name !== "Exact staging Brev Launchable identity") {
-    errors.push(`${jobName} must identify the exact image and runtime identity contract`);
+  if (job.name !== "Staging Brev Launchable identity") {
+    errors.push(`${jobName} must identify the image and runtime identity contract`);
   }
   if (job.needs !== "generate-matrix") {
     errors.push(`${jobName} must depend only on the authorized generate-matrix job`);
@@ -2092,7 +2092,7 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     INSTANCE_NAME: "nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}",
     E2E_AGENT_RUNTIME: "none",
     E2E_OBSERVABLE_OUTCOME:
-      "Exact staging image boots, passes the SSH access probe, and matches the baked runtime identity",
+      "The staging image boots, passes the SSH access probe, and matches the baked runtime identity",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint",
   };
   if (!isDeepStrictEqual(jobEnv, expectedJobEnv)) {
@@ -2326,7 +2326,7 @@ function validateStagingBrevLaunchableInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Exact staging Brev Launchable") ||
+    !description.includes("staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
     !description.includes("full E2E run")
   ) {
@@ -2653,7 +2653,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
+      "workflow_dispatch jobs input description must identify how to include staging Brev Launchable",
     );
   }
   if (!jobsDescription.includes("staging-brev-launchable-identity")) {

@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
+        description: "Include staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -2558,7 +2558,7 @@ jobs:
           path: e2e-artifacts/live/retired-selector-compatibility/
 
   staging-brev-launchable:
-    name: Exact staging Brev Launchable
+    name: Staging Brev Launchable
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
@@ -2573,7 +2573,7 @@ jobs:
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Exact staging image boots and completes the full E2E scenario"
+      E2E_OBSERVABLE_OUTCOME: "The staging image boots and completes the full E2E scenario"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable Docker host; NVIDIA hosted inference"
     steps:
       - name: Checkout trusted Launchable lane
@@ -2623,7 +2623,7 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   staging-brev-launchable-identity:
-    name: Exact staging Brev Launchable identity
+    name: Staging Brev Launchable identity
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == 'staging-brev-launchable-identity' && inputs.targets == '' }}
     runs-on: ubuntu-latest
@@ -2639,7 +2639,7 @@ jobs:
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "Exact staging image boots, passes the SSH access probe, and matches the baked runtime identity"
+      E2E_OBSERVABLE_OUTCOME: "The staging image boots, passes the SSH access probe, and matches the baked runtime identity"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint"
     steps:
       - name: Checkout trusted Launchable identity lane
