@@ -119,6 +119,85 @@ describe("mergeOpenClawRestoredConfig", () => {
     ]);
   });
 
+  it("keeps the rebuilt heartbeat over a stale snapshot interval (#10244)", () => {
+    // #10244: NEMOCLAW_AGENT_HEARTBEAT_EVERY=2m reaches the generated config, but
+    // the durable `agents` overlay restored the snapshot's cadence, so a rebuilt
+    // sandbox ran OpenClaw's 30m default instead of the configured 2m.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m" },
+            model: { primary: "inference/stale" },
+            timeoutSeconds: 900,
+            thinkingDefault: "on",
+          },
+          list: [{ id: "researcher", model: "inference/pinned-by-user" }],
+        },
+        customAgents: { researcher: { prompt: "be thorough" } },
+      },
+      {
+        agents: {
+          defaults: {
+            heartbeat: { every: "2m" },
+            model: { primary: "inference/fresh" },
+            timeoutSeconds: 300,
+          },
+        },
+      },
+    ) as { agents: { defaults: Record<string, unknown>; list: unknown }; customAgents: unknown };
+
+    expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+    // Unrelated durable agent settings still restore from the backup.
+    expect(merged.agents.defaults.timeoutSeconds).toBe(900);
+    expect(merged.agents.defaults.thinkingDefault).toBe("on");
+    expect(merged.agents.list).toEqual([{ id: "researcher", model: "inference/pinned-by-user" }]);
+    expect(merged.customAgents).toEqual({ researcher: { prompt: "be thorough" } });
+  });
+
+  // A snapshot can carry a disabled, partial, or non-object heartbeat. The fresh
+  // subtree is authoritative whole, so none of these merge into it.
+  it.each([null, false, "off", {}, { enabled: false }, { every: "" }])(
+    "keeps the rebuilt heartbeat over a snapshot recording %j (#10244)",
+    (stale) => {
+      const merged = mergeOpenClawRestoredConfig(
+        { agents: { defaults: { heartbeat: stale } } },
+        { agents: { defaults: { heartbeat: { every: "2m" } } } },
+      ) as { agents: { defaults: { heartbeat: unknown } } };
+
+      expect(merged.agents.defaults.heartbeat).toEqual({ every: "2m" });
+    },
+  );
+
+  it("does not resurrect a heartbeat that the rebuilt config omits (#10244)", () => {
+    // An unconfigured heartbeat leaves OpenClaw on its own default. Restoring the
+    // snapshot's value would silently re-enable a cadence the operator removed.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { heartbeat: { every: "30m" }, thinkingDefault: "on" },
+          list: [{ id: "main", model: "inference/stale" }],
+        },
+      },
+      { agents: { defaults: { model: { primary: "inference/fresh" } } } },
+    ) as { agents: { defaults: Record<string, unknown>; list: { model: string }[] } };
+
+    expect(merged.agents.defaults).not.toHaveProperty("heartbeat");
+    expect(merged.agents.defaults.thinkingDefault).toBe("on");
+    expect(merged.agents.list[0].model).toBe("inference/fresh");
+
+    // The same holds when the rebuild carries no agents section at all, and a
+    // merge with no agents on either side must not invent one.
+    const withoutAgents = mergeOpenClawRestoredConfig(
+      { agents: { defaults: { heartbeat: { every: "30m" }, thinkingDefault: "on" } } },
+      { gateway: { auth: { token: "fresh" } } },
+    ) as { agents: { defaults: Record<string, unknown> } };
+
+    expect(withoutAgents.agents.defaults).not.toHaveProperty("heartbeat");
+    expect(withoutAgents.agents.defaults.thinkingDefault).toBe("on");
+    expect(mergeOpenClawRestoredConfig({}, {})).not.toHaveProperty("agents");
+  });
+
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
