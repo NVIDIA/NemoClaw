@@ -473,6 +473,203 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     ).toBe(false);
   });
 
+  it.each([
+    [
+      "a failed status read",
+      (args: string[]) =>
+        args.join(" ") === "status"
+          ? { exitCode: 1, stdout: "", stderr: "gateway unavailable" }
+          : defaultCommandResult(args),
+      /Failed to inspect the active OpenShell gateway/u,
+    ],
+    [
+      "a disconnected status",
+      (args: string[]) =>
+        args.join(" ") === "status"
+          ? { exitCode: 0, stdout: "Status: Disconnected\nGateway: test-gateway\n", stderr: "" }
+          : defaultCommandResult(args),
+      /Failed to prove the active OpenShell gateway identity/u,
+    ],
+    [
+      "a missing gateway endpoint",
+      (args: string[]) =>
+        args.join(" ") === "gateway info -g test-gateway"
+          ? { exitCode: 0, stdout: "Gateway ready\n", stderr: "" }
+          : defaultCommandResult(args),
+      /did not report one gateway endpoint/u,
+    ],
+    [
+      "an invalid gateway endpoint",
+      (args: string[]) =>
+        args.join(" ") === "gateway info -g test-gateway"
+          ? { exitCode: 0, stdout: "Gateway endpoint: not-a-url\n", stderr: "" }
+          : defaultCommandResult(args),
+      /reported an invalid gateway endpoint/u,
+    ],
+    [
+      "an unsupported gateway endpoint protocol",
+      (args: string[]) =>
+        args.join(" ") === "gateway info -g test-gateway"
+          ? { exitCode: 0, stdout: "Gateway endpoint: ftp:\/\/127.0.0.1:8080\n", stderr: "" }
+          : defaultCommandResult(args),
+      /unsupported gateway endpoint protocol/u,
+    ],
+    [
+      "an invalid gateway endpoint port",
+      (args: string[]) =>
+        args.join(" ") === "gateway info -g test-gateway"
+          ? { exitCode: 0, stdout: "Gateway endpoint: http:\/\/127.0.0.1:0\n", stderr: "" }
+          : defaultCommandResult(args),
+      /reported an invalid gateway port/u,
+    ],
+  ])("stops before effects for %s (#9833)", async (_caseName, result, expected) => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => result(args));
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expected);
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("redacts a thrown gateway receipt inspection before effects (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "gateway info -g test-gateway"
+        ? Promise.reject(new Error("GATEWAY_TOKEN=must-not-appear"))
+        : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      "OpenShell gateway receipt inspection failed.",
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    [
+      "throws",
+      async () => {
+        throw new Error("POLICY_TOKEN=must-not-appear");
+      },
+    ],
+    [
+      "returns a failure",
+      async () => ({ exitCode: 1, stdout: "", stderr: "POLICY_TOKEN=must-not-appear" }),
+    ],
+  ])("redacts a global authority command that %s (#9833)", async (_caseName, result) => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? result()
+        : defaultCommandResult(args),
+    );
+
+    const error = await actionApply("default", minimalBlueprint()).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      "OpenShell global policy authority inspection failed. Policy-dependent operations must stop.",
+    );
+    expect((error as Error).message).not.toContain("must-not-appear");
+  });
+
+  it.each([
+    ["empty", "", /empty global policy authority metadata/u],
+    [
+      "invalid identity",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        hash: "",
+        active_version: 0,
+        policy: {},
+      }),
+      /invalid global policy authority metadata/u,
+    ],
+    [
+      "non-mapping policy",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        hash: "sha256:global-policy",
+        active_version: 1,
+        policy: [],
+      }),
+      /invalid global policy authority metadata/u,
+    ],
+  ])("fails closed on %s active global metadata (#9833)", async (_caseName, stdout, expected) => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
+        : args.join(" ") === "policy get -g test-gateway --global --full --output json"
+          ? { exitCode: 0, stdout, stderr: "" }
+          : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expected);
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("treats a superseded global revision as absent and supplies the managed policy (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? { exitCode: 0, stdout: "VERSION STATUS\n1 superseded\n", stderr: "" }
+        : args.join(" ") === "policy get -g test-gateway --global --full --output json"
+          ? {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                scope: "global",
+                status: "superseded",
+                policy_source: "global",
+              }),
+              stderr: "",
+            }
+          : defaultCommandResult(args),
+    );
+
+    await actionApply("default", minimalBlueprint());
+
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      expect.arrayContaining(["sandbox", "create", "--policy", TEST_SANDBOX_POLICY_PATH]),
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["cannot be read", "/tmp/missing-policy.yaml", () => {}, /could not be read/u],
+    [
+      "is invalid",
+      TEST_SANDBOX_POLICY_PATH,
+      () => store.set(TEST_SANDBOX_POLICY_PATH, { type: "file", content: "version: [" }),
+      /is invalid/u,
+    ],
+  ])(
+    "stops before create when the configured policy %s (#9833)",
+    async (_caseName, path, prepare, expected) => {
+      vi.stubEnv("OPENSHELL_SANDBOX_POLICY", path);
+      prepare();
+
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expected);
+      expect(
+        mockExeca.mock.calls.some(
+          (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("stops before provider and policy mutation when sandbox authority is malformed (#9833)", async () => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
       args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
@@ -534,6 +731,26 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       scope: "sandbox",
       sandbox_name: "test-sandbox",
       policy_creation_receipt: policyCreationReceipt(),
+    };
+  }
+
+  function validReconciliationPlan() {
+    const policy = targetPolicy();
+    return {
+      run_id: "reconcile-run",
+      sandbox_name: "test-sandbox",
+      sandbox_created_by_apply: true,
+      policy_additions: blueprint().components!.policy!.additions!,
+      policy_authority: managedPolicyAuthority(),
+      policy_transition: {
+        status: "incomplete",
+        sandbox_name: "test-sandbox",
+        gateway: "test-gateway",
+        gateway_port: 8080,
+        expected_authority: "nemoclaw-managed",
+        policy_addition_names: ["nim_service"],
+        target_policy_digest: targetPolicyDigest(policy),
+      },
     };
   }
 
@@ -715,6 +932,69 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     ).toBe(false);
   });
 
+  it("rejects a created sandbox whose effective policy was not supplied by NemoClaw (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed")
+        : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /did not prove the exact policy supplied by this NemoClaw create transaction/u,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects managed receipt reuse after the policy becomes global (#9833)", async () => {
+    const policyResult = sequentialCommandResult(
+      "policy get -g test-gateway --full --output json test-sandbox",
+      [
+        sandboxPolicyAuthorityResult("test-sandbox"),
+        sandboxPolicyAuthorityResult("test-sandbox", "externally-managed"),
+      ],
+    );
+    mockExeca.mockImplementation(
+      async (_cmd: string, args: string[]) => policyResult(args) ?? defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /live sandbox policy is no longer sandbox-scoped/u,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a verified external boundary after its gateway binding changes (#9833)", async () => {
+    const additions = blueprint().components!.policy!.additions!;
+    const gatewayResult = sequentialCommandResult("gateway info -g test-gateway", [
+      gatewayInfoResult(),
+      gatewayInfoResult(9090),
+    ]);
+    mockExeca.mockImplementation(
+      async (_cmd: string, args: string[]) =>
+        gatewayResult(args) ??
+        (args.join(" ") === "policy list -g test-gateway --global --limit 1"
+          ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
+          : args.join(" ") === "policy get -g test-gateway --global --full --output json"
+            ? globalPolicyAuthorityResult(additions)
+            : args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+              ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed", additions)
+              : defaultCommandResult(args)),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /verified external policy boundary no longer matches/u,
+    );
+    expect(policySetCalls()).toEqual([]);
+  });
+
   it("reports incomplete creation when receipt directory durability fails (#9833)", async () => {
     mockedFsyncSync.mockImplementation(
       throwOnCall(6, new Error("simulated receipt directory fsync failure")),
@@ -779,6 +1059,73 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         policy_addition_names: ["nim_service"],
       },
     });
+  });
+
+  it.each([
+    ["a non-object plan", []],
+    ["a missing authority receipt", { ...validReconciliationPlan(), policy_authority: undefined }],
+    [
+      "an external authority receipt",
+      {
+        ...validReconciliationPlan(),
+        policy_authority: {
+          authority: "externally-managed",
+          gateway: "test-gateway",
+          gateway_port: 8080,
+          scope: "global",
+        },
+      },
+    ],
+    [
+      "an invalid transition receipt",
+      { ...validReconciliationPlan(), policy_transition: undefined },
+    ],
+    [
+      "a transition for another sandbox",
+      {
+        ...validReconciliationPlan(),
+        policy_transition: {
+          ...validReconciliationPlan().policy_transition,
+          sandbox_name: "replacement-sandbox",
+        },
+      },
+    ],
+    [
+      "a transition for another gateway",
+      {
+        ...validReconciliationPlan(),
+        policy_transition: {
+          ...validReconciliationPlan().policy_transition,
+          gateway: "replacement-gateway",
+        },
+      },
+    ],
+    ["invalid policy additions", { ...validReconciliationPlan(), policy_additions: [] }],
+    ["mismatched policy additions", { ...validReconciliationPlan(), policy_additions: {} }],
+    [
+      "a policy target with a mismatched digest",
+      {
+        ...validReconciliationPlan(),
+        policy_transition: {
+          ...validReconciliationPlan().policy_transition,
+          target_policy_digest: "a".repeat(64),
+        },
+      },
+    ],
+  ])("refuses reconciliation from %s (#9833)", async (caseName, plan) => {
+    const runId = `invalid-reconciliation-${caseName.replaceAll(" ", "-")}`;
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, { type: "file", content: JSON.stringify(plan) });
+    store.set(`${stateDir}/merged-policy.yaml`, {
+      type: "file",
+      content: YAML.stringify(targetPolicy()),
+    });
+
+    await expect(actionReconcile(runId)).rejects.toThrow(
+      new RegExp(`Cannot read reconciliation plan for run ${runId}`),
+    );
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 
   it("reconciles only the exact intended policy and rotates the receipt (#9833)", async () => {
@@ -896,6 +1243,94 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     });
     await expect(actionRollback(runId)).rejects.toThrow(/policy creation transition is invalid/u);
     expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it("reports a non-object run receipt as invalid (#9833)", () => {
+    const runId = "non-object-receipt";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, { type: "file", content: "[]" });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      status: "unknown",
+      receipt_error_kind: "invalid",
+    });
+  });
+
+  it("reports a pending policy creation checkpoint without granting authority (#9833)", () => {
+    const runId = "pending-policy-creation";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        run_id: runId,
+        policy_creation_transition: {
+          status: "pending",
+          gateway: "test-gateway",
+          gateway_port: 8080,
+          sandbox_name: "test-sandbox",
+          lifecycle_generation: FIXED_RUN_UUID,
+        },
+      }),
+    });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      policy_creation_transition: { status: "pending" },
+    });
+    expect(stdoutCapture.jsonOutput()).not.toHaveProperty("policy_authority");
+  });
+
+  it("reports an invalid policy transition receipt without exposing it (#9833)", () => {
+    const runId = "invalid-policy-transition";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        run_id: runId,
+        policy_transition: { status: "pending" },
+      }),
+    });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      status: "unknown",
+      receipt_error_kind: "invalid",
+    });
+  });
+
+  it("reports the exact recovery action for an incomplete policy transition (#9833)", () => {
+    const runId = "incomplete-policy-transition";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({ ...validReconciliationPlan(), run_id: runId }),
+    });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      policy_transition: {
+        status: "incomplete",
+        reconciliation_required: true,
+        reconciliation_action: expect.stringContaining("reconcile"),
+      },
+    });
   });
 
   it("rejects a malformed managed receipt before rollback mutation (#9833)", async () => {

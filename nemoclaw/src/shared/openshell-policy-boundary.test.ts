@@ -9,6 +9,7 @@ import {
   assertMatchingPolicyAuthority,
   assertNemoClawPolicyCreationReceiptMatches,
   assertPolicyRequirementContainment,
+  parseActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata,
@@ -118,6 +119,98 @@ describe("sandbox policy authority boundary", () => {
     ["mismatched", metadata("sandbox", "beta"), /invalid sandbox policy authority metadata/u],
   ])("rejects %s sandbox authority metadata", (_caseName, raw, expected) => {
     expect(() => parseSandboxPolicyAuthorityMetadata(raw, "alpha")).toThrow(expected);
+  });
+
+  it("accepts a loaded global policy as active external authority (#9833)", () => {
+    expect(
+      parseActiveGlobalPolicyAuthorityMetadata(
+        JSON.stringify({
+          scope: "global",
+          status: "loaded",
+          policy_source: "global",
+          active_version: 9,
+          hash: "sha256:global",
+          policy,
+        }),
+      ),
+    ).toEqual({
+      state: "active",
+      inspection: {
+        authority: "externally-managed",
+        effectivePolicy: policy,
+        policyIdentity: { activeVersion: 9, hash: "sha256:global" },
+      },
+    });
+  });
+
+  it("treats a superseded global revision as absent without requiring an identity (#9833)", () => {
+    expect(
+      parseActiveGlobalPolicyAuthorityMetadata(
+        JSON.stringify({
+          scope: "global",
+          status: "superseded",
+          policy_source: "global",
+        }),
+      ),
+    ).toEqual({ state: "absent" });
+  });
+
+  it.each([
+    ["empty output", " \n\t", /empty global policy authority metadata/u],
+    ["malformed JSON", "{", /malformed global policy authority metadata/u],
+    ["non-object JSON", "[]", /malformed global policy authority metadata/u],
+    [
+      "invalid authority metadata",
+      JSON.stringify({ scope: "sandbox", status: "loaded", policy_source: "global" }),
+      /invalid global policy authority metadata/u,
+    ],
+    [
+      "sandbox-scoped global metadata",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        sandbox: "alpha",
+      }),
+      /invalid global policy authority metadata/u,
+    ],
+    [
+      "missing loaded policy",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        active_version: 9,
+        hash: "sha256:global",
+      }),
+      /invalid global policy authority metadata/u,
+    ],
+    [
+      "empty policy identity",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        active_version: 9,
+        hash: "",
+        policy,
+      }),
+      /invalid sandbox policy identity metadata/u,
+    ],
+    [
+      "malformed policy identity",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        active_version: "9",
+        hash: "sha256:global",
+        policy,
+      }),
+      /invalid sandbox policy identity metadata/u,
+    ],
+  ])("rejects %s for global policy authority inspection (#9833)", (_name, raw, expected) => {
+    expect(() => parseActiveGlobalPolicyAuthorityMetadata(raw)).toThrow(expected);
   });
 
   it("accepts matching authority and rejects invalid or changed authority", () => {
