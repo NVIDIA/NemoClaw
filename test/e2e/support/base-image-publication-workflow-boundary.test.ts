@@ -279,6 +279,16 @@ describe("base-image publication workflow boundary (#7372)", () => {
       (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
     ],
     [
+      "catalogue managed-image revision",
+      (value) =>
+        (value.jobs["catalogue-nvidia-inference"].with!.managed_image_revision =
+          "${{ inputs.checkout_sha }}"),
+    ],
+    [
+      "catalogue publication dependency",
+      (value) => (value.jobs["catalogue-nvidia-inference"].needs = ["generate-matrix"]),
+    ],
+    [
       "cloud-onboard publication dependency",
       (value) => (value.jobs["cloud-onboard"].needs = ["generate-matrix"]),
     ],
