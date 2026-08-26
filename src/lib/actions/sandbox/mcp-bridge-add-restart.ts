@@ -19,7 +19,7 @@ import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
-  registerAgentAdapterAtCurrentCredentialRevision,
+  registerAgentAdapter,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
@@ -485,21 +485,15 @@ async function addMcpBridgeUnlocked(
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
-    registerAgentAdapterAtCurrentCredentialRevision(
-      sandboxName,
-      adapter,
-      entry,
-      adapterEnvValues,
+    registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
+      // An exact adapter entry is evidence of a post-commit process death.
+      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+      // The wait above already proved the same revision stable in consecutive
+      // fresh execs, so repeating reconciliation here can outlive the caller's
+      // bounded provider-synchronization contract.
+      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
       credentialRevision,
-      {
-        // An exact adapter entry is evidence of a post-commit process death.
-        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-        // Credential-bearing adapters must project the same live revision
-        // OpenShell will recognize at egress. The canonical placeholder omits
-        // the provider identity required by revision-bound credentials.
-        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
-      },
-    );
+    });
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
