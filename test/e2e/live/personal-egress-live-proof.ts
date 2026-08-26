@@ -18,10 +18,10 @@ import {
 export const PERSONAL_PUBLIC_FETCH_PR_TARGET = "ubuntu-repo-cloud-openclaw";
 
 export interface PersonalRuntimeEgressEvidence {
+  braveAndTavilyApiKeysAbsent: true;
   deniedTargets: ["loopback", "link-local"];
   personalPolicyActive: true;
   publicFetchTools: ["curl"];
-  searchCredentialsAbsent: true;
 }
 
 export interface PersonalPublicFetchEvidence {
@@ -169,9 +169,9 @@ probe_denied link-local http://169.254.169.254/latest/meta-data/
   expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=link-local");
 
   return {
+    braveAndTavilyApiKeysAbsent: true,
     deniedTargets: ["loopback", "link-local"],
     personalPolicyActive: true,
     publicFetchTools: ["curl"],
-    searchCredentialsAbsent: true,
   };
 }
