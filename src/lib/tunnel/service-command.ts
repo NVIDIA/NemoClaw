@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { assertSandboxActivationAllowed } from "../actions/sandbox/quarantine/guard";
+
 export interface SandboxSummary {
   defaultSandbox?: string | null;
 }
 
 export interface StartCommandDeps {
+  assertActivationAllowed?: typeof assertSandboxActivationAllowed;
   listSandboxes: () => SandboxSummary;
   startAll: (options: { sandboxName?: string }) => Promise<void>;
 }
@@ -31,7 +34,11 @@ export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): 
 }
 
 export async function runStartCommand(deps: StartCommandDeps): Promise<void> {
-  await deps.startAll({ sandboxName: resolveDefaultSandboxName(deps.listSandboxes) });
+  const sandboxName = resolveDefaultSandboxName(deps.listSandboxes);
+  if (sandboxName) {
+    (deps.assertActivationAllowed ?? assertSandboxActivationAllowed)(sandboxName, "tunnel:start");
+  }
+  await deps.startAll({ sandboxName });
 }
 
 export function runStopCommand(deps: StopCommandDeps): void {

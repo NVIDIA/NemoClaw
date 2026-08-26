@@ -4,6 +4,7 @@
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
+import { assertSandboxActivationAllowed } from "../actions/sandbox/quarantine/guard";
 
 const TRYCLOUDFLARE_HOST = "trycloudflare.com";
 
@@ -76,6 +77,7 @@ export function computeTunnelAllowedOrigins(
 }
 
 export interface RegisterTunnelOriginDeps {
+  assertActivationAllowed: typeof assertSandboxActivationAllowed;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
   readConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
   writeConfig: (sandboxName: string, target: AgentConfigTarget, config: ConfigObject) => void;
@@ -108,6 +110,7 @@ function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<Register
     !deps.resolveAgentConfig || !deps.readConfig || !deps.writeConfig || !deps.recomputeHash;
   const config = needsConfig ? (require("../sandbox/config") as SandboxConfigModule) : undefined;
   return {
+    assertActivationAllowed: deps.assertActivationAllowed ?? assertSandboxActivationAllowed,
     resolveAgentConfig: deps.resolveAgentConfig ?? config!.resolveAgentConfig,
     readConfig: deps.readConfig ?? config!.readSandboxConfig,
     writeConfig: deps.writeConfig ?? config!.writeSandboxConfig,
@@ -179,6 +182,7 @@ export function registerTunnelOrigin(
       return;
     }
 
+    resolved.assertActivationAllowed(sandboxName, "tunnel:start");
     applyAllowedOrigins(config, origins);
     resolved.writeConfig(sandboxName, target, config);
     resolved.recomputeHash(sandboxName, target);
