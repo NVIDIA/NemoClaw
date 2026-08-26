@@ -2,23 +2,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-} from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseAuditConfig } from "../audit-reviewed-npm-graph.mts";
 import { verifyReviewedNpmLockPackages } from "../lib/reviewed-npm-archive.mts";
-import type { CachePut } from "../lib/seed-reviewed-npm-cache.mts";
+import { type CachePut, seedReviewedNpmCache } from "../lib/seed-reviewed-npm-cache.mts";
 
 const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
@@ -39,41 +29,18 @@ export type ReviewedSourceRegistryPackage = Readonly<{
 }>;
 
 export type ReviewedSourceRegistryArtifactRequest = Readonly<{
+  allowedNestedShrinkwrapPackages: readonly string[];
   artifactDirectory: string;
   cacheDirectory: string;
+  lockfilePath: string;
   reviewed: ReviewedSourceRegistryPackage;
+  reviewedPackagesWithoutIntegrity: readonly Readonly<{
+    label: string;
+    packageSpec: string;
+    tarballUrl: string;
+  }>[];
+  registryOrigin: string;
 }>;
-
-function loadCachePut(): CachePut {
-  const require = createRequire(import.meta.url);
-  const npmRoot = String(
-    require("node:child_process").execFileSync("npm", ["root", "-g"], { encoding: "utf8" }),
-  ).trim();
-  const cacachePath = require.resolve("cacache", { paths: [join(npmRoot, "npm", "node_modules")] });
-  return (require(cacachePath) as Readonly<{ put: CachePut }>).put;
-}
-
-function readRegularArchive(file: string): Buffer {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(file, "r");
-    const opened = fstatSync(descriptor);
-    const pathEntry = lstatSync(file);
-    if (
-      !opened.isFile() ||
-      !pathEntry.isFile() ||
-      pathEntry.isSymbolicLink() ||
-      opened.dev !== pathEntry.dev ||
-      opened.ino !== pathEntry.ino ||
-      opened.size > MAXIMUM_ARCHIVE_BYTES
-    ) {
-      throw new Error("archive must be one bounded non-symlink regular file");
-    }
-    return readFileSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-}
 
 export async function seedReviewedSourceRegistryArtifact(
   request: ReviewedSourceRegistryArtifactRequest,
@@ -94,48 +61,37 @@ export async function seedReviewedSourceRegistryArtifact(
   if (entries.length !== 1 || entries[0] !== request.reviewed.artifactName) {
     throw new Error("reviewed OpenShell SDK artifact directory has unexpected contents");
   }
-  const archive = readRegularArchive(join(artifactDirectory, request.reviewed.artifactName));
-  const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
-  if (actualIntegrity !== request.reviewed.integrity) {
-    throw new Error(
-      "reviewed OpenShell SDK artifact integrity does not match the approved package",
-    );
-  }
-  const cachePut = put ?? loadCachePut();
-  const cachePath = join(resolve(request.cacheDirectory), "_cacache");
-  await cachePut(
-    cachePath,
-    `make-fetch-happen:request-cache:${request.reviewed.tarballUrl}`,
-    archive,
+  const archivePath = resolve(join(artifactDirectory, request.reviewed.artifactName));
+  await seedReviewedNpmCache(
     {
-      metadata: {
-        options: { compress: true },
-        reqHeaders: {},
-        resHeaders: {
-          "cache-control": "public, immutable, max-age=31557600",
-          "content-type": "application/octet-stream",
+      allowedNestedShrinkwrapPackages: request.allowedNestedShrinkwrapPackages,
+      allowNestedShrinkwrap: false,
+      archives: new Map([[request.reviewed.packageSpec, archivePath]]),
+      cacheDirectory: request.cacheDirectory,
+      lockfilePath: request.lockfilePath,
+      maximumArchiveBytes: MAXIMUM_ARCHIVE_BYTES,
+      registryOrigin: request.registryOrigin,
+      reviewedPackagesWithoutIntegrity: request.reviewedPackagesWithoutIntegrity,
+      reviewedRegistryPackages: [
+        {
+          expectedIntegrity: request.reviewed.integrity,
+          label: request.reviewed.label,
+          packageSpec: request.reviewed.packageSpec,
+          tarballUrl: request.reviewed.tarballUrl,
         },
-        time: 0,
-        url: request.reviewed.tarballUrl,
-      },
+      ],
+      selectedPackageSpecs: new Set([request.reviewed.packageSpec]),
+      tarballsOnly: true,
     },
+    put,
   );
-  await cachePut(cachePath, `pacote:tarball:${request.reviewed.packageSpec}`, archive);
 }
 
-export async function prepareCiNpmInstall(
-  request: PreparationRequest,
-  put?: CachePut,
-): Promise<void> {
-  const targetRoot = resolve(request.targetRoot);
-  const cacheDirectory = resolve(request.cacheDirectory);
+function inspectReviewedLocks(targetRoot: string) {
   const config = parseAuditConfig(
     readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
   );
-  if (config.sourceRegistryPackages.length !== 1) {
-    throw new Error("reviewed npm configuration must name one source-registry package");
-  }
-  const reviewed = config.sourceRegistryPackages[0];
+  const reviewed = config.sourceRegistryPackage;
   const reviewedRegistryPackages = [
     {
       expectedIntegrity: reviewed.integrity,
@@ -144,16 +100,41 @@ export async function prepareCiNpmInstall(
       tarballUrl: reviewed.tarballUrl,
     },
   ];
-  const packageSets = ["package-lock.json", "nemoclaw/package-lock.json"].map((relativePath) =>
-    verifyReviewedNpmLockPackages({
+  const lockfiles = ["package-lock.json", "nemoclaw/package-lock.json"].map((relativePath) => {
+    const lockfilePath = join(targetRoot, relativePath);
+    const packages = verifyReviewedNpmLockPackages({
       allowedNestedShrinkwrapPackages: config.sourceNestedShrinkwrapPackages,
-      lockfilePath: join(targetRoot, relativePath),
+      lockfilePath,
       registryOrigin: config.registryOrigin,
-      reviewedRegistryPackages,
       reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,
-    }),
-  );
-  const sdkIsLocked = packageSets.some((packages) => packages.includes(reviewed.packageSpec));
+      reviewedRegistryPackages,
+    });
+    return { lockfilePath, packages };
+  });
+  return {
+    config,
+    reviewed,
+    reviewedLockfilePath: lockfiles.find(({ packages }) => packages.includes(reviewed.packageSpec))
+      ?.lockfilePath,
+  };
+}
+
+export function inspectCiNpmInstall(targetRoot: string) {
+  const inspected = inspectReviewedLocks(resolve(targetRoot));
+  return {
+    artifactName: inspected.reviewed.artifactName,
+    required: inspected.reviewedLockfilePath !== undefined,
+  } as const;
+}
+
+export async function prepareCiNpmInstall(
+  request: PreparationRequest,
+  put?: CachePut,
+): Promise<void> {
+  const targetRoot = resolve(request.targetRoot);
+  const cacheDirectory = resolve(request.cacheDirectory);
+  const { config, reviewed, reviewedLockfilePath } = inspectReviewedLocks(targetRoot);
+  const sdkIsLocked = reviewedLockfilePath !== undefined;
 
   if (request.mode === "registry") return;
   if (!request.artifactDirectory) {
@@ -168,10 +149,21 @@ export async function prepareCiNpmInstall(
     if (sdkIsLocked) throw new Error("reviewed OpenShell SDK artifact is required");
     return;
   }
-  if (!sdkIsLocked) {
+  if (!reviewedLockfilePath) {
     throw new Error("reviewed OpenShell SDK artifact is not used by either lockfile");
   }
-  await seedReviewedSourceRegistryArtifact({ artifactDirectory, cacheDirectory, reviewed }, put);
+  await seedReviewedSourceRegistryArtifact(
+    {
+      allowedNestedShrinkwrapPackages: config.sourceNestedShrinkwrapPackages,
+      artifactDirectory,
+      cacheDirectory,
+      lockfilePath: reviewedLockfilePath,
+      registryOrigin: config.registryOrigin,
+      reviewed,
+      reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,
+    },
+    put,
+  );
 }
 
 function requestFromEnvironment(): PreparationRequest {
@@ -190,7 +182,15 @@ function requestFromEnvironment(): PreparationRequest {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  prepareCiNpmInstall(requestFromEnvironment()).catch((error) => {
+  const mode = process.env.NEMOCLAW_CI_NPM_PACKAGE_MODE;
+  const targetRoot = process.env.NEMOCLAW_CI_TARGET_ROOT;
+  const task =
+    mode === "inspect" && targetRoot
+      ? Promise.resolve(inspectCiNpmInstall(targetRoot)).then((result) =>
+          process.stdout.write(`${JSON.stringify(result)}\n`),
+        )
+      : prepareCiNpmInstall(requestFromEnvironment());
+  task.catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

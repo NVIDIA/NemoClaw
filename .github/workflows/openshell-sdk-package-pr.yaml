@@ -9,7 +9,7 @@ run-name: "OpenShell SDK PR #${{ github.event.pull_request.number }} head ${{ gi
 # check out or execute pull request content because its token can read packages.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   package-openshell-sdk:
+    if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
     permissions:
       contents: read
       packages: read
@@ -48,15 +49,20 @@ jobs:
           scope: "@nvidia"
 
       - name: Download and verify exact OpenShell SDK package
+        id: package
         env:
           NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
           NODE_AUTH_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts
+        run: |
+          set -euo pipefail
+          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          [ -n "$artifact_path" ]
+          printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload verified OpenShell SDK archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openshell-sdk-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/openshell-sdk/nvidia-openshell-sdk-0.0.106.tgz
+          path: ${{ steps.package.outputs.artifact_path }}
           if-no-files-found: error
           retention-days: 1

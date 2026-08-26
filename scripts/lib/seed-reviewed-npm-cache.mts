@@ -21,7 +21,11 @@ import {
   lockedArchives,
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
-import { verifyReviewedNpmLockPackages } from "./reviewed-npm-archive.mts";
+import {
+  type ReviewedNpmArchiveRequest,
+  type ReviewedNpmPackageWithoutIntegrity,
+  verifyReviewedNpmLockPackages,
+} from "./reviewed-npm-archive.mts";
 
 export type CachePut = (
   cachePath: string,
@@ -31,12 +35,18 @@ export type CachePut = (
 ) => Promise<unknown>;
 
 export type ReviewedNpmCacheSeedRequest = Readonly<{
+  allowedNestedShrinkwrapPackages?: readonly string[];
+  allowNestedShrinkwrap?: boolean;
   archives: ReadonlyMap<string, string>;
   cacheDirectory: string;
   lockfilePath: string;
+  maximumArchiveBytes?: number;
   packumentsOnly?: boolean;
+  reviewedPackagesWithoutIntegrity?: readonly ReviewedNpmPackageWithoutIntegrity[];
+  reviewedRegistryPackages?: readonly ReviewedNpmArchiveRequest[];
   registryOrigin: string;
   selectedPackageSpecs?: ReadonlySet<string>;
+  tarballsOnly?: boolean;
 }>;
 
 type LockedPackage = Readonly<{
@@ -72,11 +82,21 @@ function requireObject(value: unknown, label: string): Record<string, unknown> {
 function readLockedPackages(
   lockfilePath: string,
   registryOrigin: string,
+  request: Pick<
+    ReviewedNpmCacheSeedRequest,
+    | "allowedNestedShrinkwrapPackages"
+    | "allowNestedShrinkwrap"
+    | "reviewedPackagesWithoutIntegrity"
+    | "reviewedRegistryPackages"
+  > = {},
 ): readonly LockedPackage[] {
   const expectedSpecs = new Set(
     verifyReviewedNpmLockPackages({
-      allowNestedShrinkwrap: true,
+      allowedNestedShrinkwrapPackages: request.allowedNestedShrinkwrapPackages,
+      allowNestedShrinkwrap: request.allowNestedShrinkwrap ?? true,
       lockfilePath,
+      reviewedPackagesWithoutIntegrity: request.reviewedPackagesWithoutIntegrity,
+      reviewedRegistryPackages: request.reviewedRegistryPackages,
       registryOrigin,
     }),
   );
@@ -135,7 +155,11 @@ function readLockedPackages(
   return locked;
 }
 
-function readArchive(archivePath: string, packageSpec: string): Buffer {
+function readArchive(
+  archivePath: string,
+  packageSpec: string,
+  maximumArchiveBytes?: number,
+): Buffer {
   if (!isAbsolute(archivePath)) {
     throw new Error(`reviewed npm cache seed archive must be absolute: ${packageSpec}`);
   }
@@ -153,6 +177,9 @@ function readArchive(archivePath: string, packageSpec: string): Buffer {
       opened.ino !== pathEntry.ino
     ) {
       throw new Error("archive must be a non-symlink regular file");
+    }
+    if (maximumArchiveBytes !== undefined && opened.size > maximumArchiveBytes) {
+      throw new Error("archive must be a bounded regular file");
     }
     return readFileSync(descriptor);
   } catch (error) {
@@ -257,7 +284,10 @@ export async function seedReviewedNpmCache(
     );
   }
   const registryOrigin = parsedRegistry.origin;
-  const locked = readLockedPackages(request.lockfilePath, registryOrigin);
+  if (request.packumentsOnly && request.tarballsOnly) {
+    throw new Error("reviewed npm cache seed cannot select both packuments-only and tarballs-only");
+  }
+  const locked = readLockedPackages(request.lockfilePath, registryOrigin, request);
   const selectedPackageSpecs =
     request.selectedPackageSpecs ??
     new Set(locked.map(({ name, version }) => `${name}@${version}`));
@@ -277,7 +307,7 @@ export async function seedReviewedNpmCache(
         throw new Error(`reviewed npm cache seed archive is missing: ${packageSpec}`);
       expectedArchives.delete(packageSpec);
       unexpectedArchives.delete(packageSpec);
-      const archive = readArchive(archivePath, packageSpec);
+      const archive = readArchive(archivePath, packageSpec, request.maximumArchiveBytes);
       const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
       if (actualIntegrity !== entry.integrity) {
         throw new Error(
@@ -299,20 +329,22 @@ export async function seedReviewedNpmCache(
       await put(cachePath, `pacote:tarball:${packageSpec}`, archive);
     }
 
-    const version = {
-      ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
-      ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
-      dist: { integrity: entry.integrity, tarball: entry.resolved },
-      ...(entry.hasShrinkwrap ? { hasShrinkwrap: true } : {}),
-      name: entry.name,
-      ...(entry.optionalDependencies ? { optionalDependencies: entry.optionalDependencies } : {}),
-      ...(entry.peerDependencies ? { peerDependencies: entry.peerDependencies } : {}),
-      ...(entry.peerDependenciesMeta ? { peerDependenciesMeta: entry.peerDependenciesMeta } : {}),
-      version: entry.version,
-    };
-    const versions = packumentVersions.get(entry.name) ?? {};
-    versions[entry.version] = version;
-    packumentVersions.set(entry.name, versions);
+    if (!request.tarballsOnly) {
+      const version = {
+        ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
+        ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
+        dist: { integrity: entry.integrity, tarball: entry.resolved },
+        ...(entry.hasShrinkwrap ? { hasShrinkwrap: true } : {}),
+        name: entry.name,
+        ...(entry.optionalDependencies ? { optionalDependencies: entry.optionalDependencies } : {}),
+        ...(entry.peerDependencies ? { peerDependencies: entry.peerDependencies } : {}),
+        ...(entry.peerDependenciesMeta ? { peerDependenciesMeta: entry.peerDependenciesMeta } : {}),
+        version: entry.version,
+      };
+      const versions = packumentVersions.get(entry.name) ?? {};
+      versions[entry.version] = version;
+      packumentVersions.set(entry.name, versions);
+    }
     seeded.push(packageSpec);
   }
   for (const [packageName, versions] of [...packumentVersions].sort(([left], [right]) =>

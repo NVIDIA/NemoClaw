@@ -18,10 +18,7 @@ export function packageReviewedOpenShellSdk(outputDirectory: string): string {
   const config = parseAuditConfig(
     readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
   );
-  if (config.sourceRegistryPackages.length !== 1) {
-    throw new Error("reviewed npm configuration must name one source-registry package");
-  }
-  const reviewed = config.sourceRegistryPackages[0];
+  const reviewed = config.sourceRegistryPackage;
   const archive = packReviewedNpmArchive({
     env: process.env,
     expectedIntegrity: reviewed.integrity,

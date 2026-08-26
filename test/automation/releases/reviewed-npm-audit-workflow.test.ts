@@ -128,7 +128,13 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       schemaVersion: 2,
       severityThreshold: "high",
       sourceNestedShrinkwrapPackages: [],
-      sourceRegistryPackages: [],
+      sourceRegistryPackage: {
+        artifactName: "reviewed-package-1.0.0.tgz",
+        integrity: "sha512-reviewedintegrity",
+        label: "reviewed package 1.0.0",
+        packageSpec: "@example/reviewed@1.0.0",
+        tarballUrl: "https://npm.pkg.github.com/download/@example/reviewed/1.0.0/reviewed",
+      },
       sourceRegistryPackagesWithoutIntegrity: [],
     };
 
@@ -142,17 +148,15 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const config = parseAuditConfig(fs.readFileSync(configFile, "utf-8"));
 
     expect(config.archiveTarVersion).toBe("7.5.21");
-    expect(config.sourceRegistryPackages).toEqual([
-      {
-        artifactName: "nvidia-openshell-sdk-0.0.106.tgz",
-        integrity:
-          "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
-        label: "OpenShell TypeScript SDK 0.0.106",
-        packageSpec: "@nvidia/openshell-sdk@0.0.106",
-        tarballUrl:
-          "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d",
-      },
-    ]);
+    expect(config.sourceRegistryPackage).toEqual({
+      artifactName: "nvidia-openshell-sdk-0.0.106.tgz",
+      integrity:
+        "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
+      label: "OpenShell TypeScript SDK 0.0.106",
+      packageSpec: "@nvidia/openshell-sdk@0.0.106",
+      tarballUrl:
+        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d",
+    });
     expect(config.sourceNestedShrinkwrapPackages).toEqual([
       "@earendil-works/pi-coding-agent@0.80.6",
     ]);
@@ -169,6 +173,18 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       private: true,
       version: "1.0.0",
     });
+  });
+
+  // source-shape-contract: security -- One reviewed package field prevents a second package identity from bypassing the credential-isolation workflow
+  it("rejects the removed plural source-registry package shape", () => {
+    const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
+    const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;
+    config.sourceRegistryPackages = [config.sourceRegistryPackage];
+    delete config.sourceRegistryPackage;
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
   });
 
   it("rejects an affected tar release for the reviewed archive graph", () => {
@@ -439,14 +455,12 @@ esac
           () => {
             installCalled = true;
           },
-          [
-            {
-              integrity,
-              label: "reviewed fixture package",
-              packageSpec: "fixture-package@1.0.0",
-              tarballUrl,
-            },
-          ],
+          {
+            integrity,
+            label: "reviewed fixture package",
+            packageSpec: "fixture-package@1.0.0",
+            tarballUrl,
+          },
         ),
       ).toBe(destination);
       expect(installCalled).toBe(true);
@@ -475,14 +489,12 @@ esac
           () => {
             installCalled = true;
           },
-          [
-            {
-              integrity: "sha512-another-value",
-              label: "reviewed fixture package",
-              packageSpec: "fixture-package@1.0.0",
-              tarballUrl,
-            },
-          ],
+          {
+            integrity: "sha512-another-value",
+            label: "reviewed fixture package",
+            packageSpec: "fixture-package@1.0.0",
+            tarballUrl,
+          },
         ),
       ).toThrow(
         "reviewed npm lock package does not match its approved registry identity: node_modules/fixture-package",

@@ -25,10 +25,13 @@ describe("base-controlled OpenShell SDK package workflow", () => {
   // source-shape-contract: security -- The package credential must remain in a base-loaded workflow that uploads only the verified SDK archive
   it("keeps package access out of pull request controlled execution", () => {
     expect(workflow.on).toEqual({
-      pull_request_target: { types: ["opened", "synchronize", "reopened"] },
+      pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
     });
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(job.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(job.if).toBe(
+      "${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+    );
     expect(job["timeout-minutes"]).toBe(5);
 
     const checkout = step("Checkout base-controlled package verifier");
@@ -44,9 +47,10 @@ describe("base-controlled OpenShell SDK package workflow", () => {
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toBe(
+    expect(fetch.run).toContain(
       "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
     );
+    expect(fetch.run).toContain("artifact_path=");
     expect(
       (job.steps ?? [])
         .filter((candidate) => candidate.name !== fetch.name)
@@ -59,9 +63,16 @@ describe("base-controlled OpenShell SDK package workflow", () => {
     expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
     expect(upload.with).toMatchObject({
       name: "openshell-sdk-${{ github.event.pull_request.head.sha }}",
-      path: "${{ runner.temp }}/openshell-sdk/nvidia-openshell-sdk-0.0.106.tgz",
+      path: "${{ steps.package.outputs.artifact_path }}",
       "if-no-files-found": "error",
       "retention-days": 1,
     });
+  });
+
+  // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates
+  it("derives the package and archive identity from the base-controlled decision", () => {
+    const serialized = JSON.stringify(workflow);
+    expect(serialized).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(serialized).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });
 });

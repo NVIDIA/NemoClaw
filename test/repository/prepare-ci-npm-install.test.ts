@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,10 +29,39 @@ function fixture() {
   temporaryRoots.push(root);
   const artifactDirectory = join(root, "artifact");
   const cacheDirectory = join(root, "cache");
+  const lockfilePath = join(root, "package-lock.json");
   mkdirSync(artifactDirectory);
   mkdirSync(cacheDirectory);
   writeFileSync(join(artifactDirectory, artifactName), archiveBytes);
-  return { artifactDirectory, cacheDirectory, root };
+  writeFileSync(
+    lockfilePath,
+    JSON.stringify({
+      lockfileVersion: 3,
+      name: "reviewed-sdk-artifact-fixture",
+      packages: {
+        "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
+        "node_modules/@nvidia/openshell-sdk": {
+          integrity: reviewed.integrity,
+          resolved: reviewed.tarballUrl,
+          version: "0.0.106",
+        },
+      },
+      version: "1.0.0",
+    }),
+  );
+  return { artifactDirectory, cacheDirectory, lockfilePath, root };
+}
+
+function request(source: ReturnType<typeof fixture>) {
+  return {
+    allowedNestedShrinkwrapPackages: [],
+    artifactDirectory: source.artifactDirectory,
+    cacheDirectory: source.cacheDirectory,
+    lockfilePath: source.lockfilePath,
+    registryOrigin: "https://registry.npmjs.org/",
+    reviewed,
+    reviewedPackagesWithoutIntegrity: [],
+  };
 }
 
 afterEach(() => {
@@ -48,14 +77,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
       calls.push([cache, key, data, options]);
     });
 
-    await seedReviewedSourceRegistryArtifact(
-      {
-        artifactDirectory: source.artifactDirectory,
-        cacheDirectory: source.cacheDirectory,
-        reviewed,
-      },
-      put,
-    );
+    await seedReviewedSourceRegistryArtifact(request(source), put);
 
     expect(put).toHaveBeenCalledTimes(2);
     expect(calls.map((call) => call[1])).toEqual([
@@ -70,16 +92,9 @@ describe("trusted OpenShell SDK archive preparation", () => {
     const put = vi.fn(async () => undefined);
     writeFileSync(join(source.artifactDirectory, artifactName), "changed archive");
 
-    await expect(
-      seedReviewedSourceRegistryArtifact(
-        {
-          artifactDirectory: source.artifactDirectory,
-          cacheDirectory: source.cacheDirectory,
-          reviewed,
-        },
-        put,
-      ),
-    ).rejects.toThrow("integrity does not match");
+    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+      "integrity mismatch",
+    );
     expect(put).not.toHaveBeenCalled();
   });
 
@@ -90,31 +105,28 @@ describe("trusted OpenShell SDK archive preparation", () => {
     rmSync(join(source.artifactDirectory, artifactName));
     symlinkSync(join(source.root, "outside.tgz"), join(source.artifactDirectory, artifactName));
 
-    await expect(
-      seedReviewedSourceRegistryArtifact(
-        {
-          artifactDirectory: source.artifactDirectory,
-          cacheDirectory: source.cacheDirectory,
-          reviewed,
-        },
-        put,
-      ),
-    ).rejects.toThrow("non-symlink regular file");
+    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+      "non-symlink regular file",
+    );
     expect(put).not.toHaveBeenCalled();
 
     rmSync(join(source.artifactDirectory, artifactName));
     writeFileSync(join(source.artifactDirectory, artifactName), archiveBytes);
     writeFileSync(join(source.artifactDirectory, "unexpected.tgz"), archiveBytes);
-    await expect(
-      seedReviewedSourceRegistryArtifact(
-        {
-          artifactDirectory: source.artifactDirectory,
-          cacheDirectory: source.cacheDirectory,
-          reviewed,
-        },
-        put,
-      ),
-    ).rejects.toThrow("unexpected contents");
+    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+      "unexpected contents",
+    );
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized artifact before writing the npm cache", async () => {
+    const source = fixture();
+    const put = vi.fn(async () => undefined);
+    truncateSync(join(source.artifactDirectory, artifactName), 32 * 1024 * 1024 + 1);
+
+    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+      "bounded regular file",
+    );
     expect(put).not.toHaveBeenCalled();
   });
 });

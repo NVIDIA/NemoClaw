@@ -54,7 +54,7 @@ type AuditConfig = Readonly<{
   schemaVersion: 2;
   severityThreshold: Severity;
   sourceNestedShrinkwrapPackages: readonly string[];
-  sourceRegistryPackages: readonly SourceRegistryPackage[];
+  sourceRegistryPackage: SourceRegistryPackage;
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
 type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
@@ -174,22 +174,19 @@ export function parseAuditConfig(contents: string): AuditConfig {
     ) ||
     new Set(parsed.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec))
       .size !== parsed.sourceRegistryPackagesWithoutIntegrity.length ||
-    !Array.isArray(parsed.sourceRegistryPackages) ||
-    parsed.sourceRegistryPackages.some(
-      (reviewed) =>
-        typeof reviewed.artifactName !== "string" ||
-        !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(reviewed.artifactName) ||
-        typeof reviewed.label !== "string" ||
-        !reviewed.label ||
-        typeof reviewed.packageSpec !== "string" ||
-        !reviewed.packageSpec ||
-        typeof reviewed.integrity !== "string" ||
-        !reviewed.integrity ||
-        typeof reviewed.tarballUrl !== "string" ||
-        !reviewed.tarballUrl,
-    ) ||
-    new Set(parsed.sourceRegistryPackages.map(({ packageSpec }) => packageSpec)).size !==
-      parsed.sourceRegistryPackages.length ||
+    typeof parsed.sourceRegistryPackage !== "object" ||
+    parsed.sourceRegistryPackage === null ||
+    Array.isArray(parsed.sourceRegistryPackage) ||
+    typeof parsed.sourceRegistryPackage.artifactName !== "string" ||
+    !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(parsed.sourceRegistryPackage.artifactName) ||
+    typeof parsed.sourceRegistryPackage.label !== "string" ||
+    !parsed.sourceRegistryPackage.label ||
+    typeof parsed.sourceRegistryPackage.packageSpec !== "string" ||
+    !parsed.sourceRegistryPackage.packageSpec ||
+    typeof parsed.sourceRegistryPackage.integrity !== "string" ||
+    !parsed.sourceRegistryPackage.integrity ||
+    typeof parsed.sourceRegistryPackage.tarballUrl !== "string" ||
+    !parsed.sourceRegistryPackage.tarballUrl ||
     parsed.lockedGraphs.some(
       (graph) =>
         typeof graph.id !== "string" ||
@@ -363,7 +360,7 @@ export function materializeSourceGraph(
   destination: string,
   registryOrigin: string,
   installProductionDependencies: (directory: string) => void = installProductionSourceDependencies,
-  sourceRegistryPackages: readonly ReviewedPackage[] = [],
+  sourceRegistryPackage?: ReviewedPackage,
   sourceNestedShrinkwrapPackages: readonly string[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
@@ -373,14 +370,16 @@ export function materializeSourceGraph(
     lockfilePath: sourceLock,
     omitDev: true,
     registryOrigin,
-    reviewedRegistryPackages: sourceRegistryPackages.map(
-      ({ integrity, label, packageSpec, tarballUrl }) => ({
-        expectedIntegrity: integrity,
-        label,
-        packageSpec,
-        tarballUrl,
-      }),
-    ),
+    reviewedRegistryPackages: sourceRegistryPackage
+      ? [
+          {
+            expectedIntegrity: sourceRegistryPackage.integrity,
+            label: sourceRegistryPackage.label,
+            packageSpec: sourceRegistryPackage.packageSpec,
+            tarballUrl: sourceRegistryPackage.tarballUrl,
+          },
+        ]
+      : [],
   });
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
@@ -519,7 +518,7 @@ function auditSourceGraph(
     path.join(tempRoot, "source-graph"),
     config.registryOrigin,
     installProductionSourceDependencies,
-    config.sourceRegistryPackages,
+    config.sourceRegistryPackage,
     config.sourceNestedShrinkwrapPackages,
   );
   return auditMaterializedSourceGraph({

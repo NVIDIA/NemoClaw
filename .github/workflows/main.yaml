@@ -187,6 +187,7 @@ jobs:
       actions: read
       code-quality: write
       contents: read
+      packages: read
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10

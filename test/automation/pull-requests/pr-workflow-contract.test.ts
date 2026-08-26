@@ -84,6 +84,7 @@ const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
 const dependencyInstallJobs = [
   "build-typecheck",
+  "cli-tests",
   "installer-integration",
   "cli-test-shards",
   "plugin-tests",
@@ -394,6 +395,7 @@ describe("pull request and main workflow contracts", () => {
     ).toEqual([
       ["build-typecheck", "read"],
       ["cli-test-shards", "read"],
+      ["cli-tests", "read"],
       ["installer-integration", "read"],
       ["plugin-tests", "read"],
       ["static-checks", "read"],
@@ -405,6 +407,7 @@ describe("pull request and main workflow contracts", () => {
     const actions = [
       sharedActions.staticChecks,
       sharedActions.buildTypecheck,
+      sharedActions.cliCoverageMerge,
       sharedActions.installerIntegration,
       sharedActions.cliCoverageShard,
       sharedActions.pluginCoverage,
@@ -430,22 +433,25 @@ describe("pull request and main workflow contracts", () => {
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
     expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
-    expect(
-      requiredWorkflowStep(packageJob, "Checkout base package workflow identity").with,
-    ).toMatchObject({
+    expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
       ref: "${{ github.event.pull_request.base.sha }}",
-      "sparse-checkout": ".github/workflows/openshell-sdk-package-pr.yaml",
+      path: ".trusted-sdk-package-decision",
     });
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
+    expect(locate.run).toContain(
+      ".trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
+    );
     expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
     expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
     expect(locate.run).toContain("required=false");
+    expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });
 
   // source-shape-contract: security -- Every PR dependency consumer must receive the verified archive without package access
   it.each(dependencyInstallJobs)("passes the verified SDK archive to %s", (jobName) => {
     const job = prWorkflow.jobs[jobName];
-    expect(job.needs).toEqual(["changes", "openshell-sdk-package"]);
+    expect(job.needs).toEqual(expect.arrayContaining(["changes", "openshell-sdk-package"]));
     expect(job.permissions?.packages).toBeUndefined();
     const download = requiredWorkflowStep(job, "Download verified OpenShell SDK archive");
     expect(download.uses).toBe(
