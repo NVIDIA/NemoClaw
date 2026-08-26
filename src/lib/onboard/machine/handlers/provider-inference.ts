@@ -1742,7 +1742,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
-        authoritativeResumeConfig || !sandboxStepComplete
+        authoritativeResumeConfig || session?.status === "failed" || !sandboxStepComplete
           ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;

@@ -45,6 +45,28 @@ describe("resume with an operator-requested sandbox name (#8953)", () => {
     expect(result.sandboxName).toBe("fvr-p09-resume");
   });
 
+  it("re-reserves a completed sandbox route when resuming a failed session (#10236)", async () => {
+    const session = interruptedResumeSession();
+    session.status = "failed";
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "fvr-p09-resume",
+      requestedSandboxName: "fvr-p09-resume",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).toHaveBeenCalledWith(
+      "fvr-p09-resume",
+      expect.objectContaining({ reservationSessionId: session.sessionId }),
+    );
+    expect(result.sandboxName).toBe("fvr-p09-resume");
+  });
+
   it("still prompts on interactive resume so the operator can confirm the name", async () => {
     const session = interruptedResumeSession();
     const { deps, calls } = createDeps({
