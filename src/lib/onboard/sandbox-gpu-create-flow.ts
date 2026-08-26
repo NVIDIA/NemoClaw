@@ -101,16 +101,28 @@ export function createSandboxCreateSourceCleanup(
   source: { readonly cleanup?: () => boolean; readonly cleanupExact?: () => boolean },
   requireExact: boolean,
 ): () => boolean {
-  return () =>
-    cleanupSandboxCreateSource(source.cleanup, { exactCleanup: source.cleanupExact, requireExact });
+  let completed = false;
+  return () => {
+    if (completed) return true;
+    completed = cleanupSandboxCreateSource(source.cleanup, {
+      exactCleanup: source.cleanupExact,
+      requireExact,
+    });
+    return completed;
+  };
 }
 
 /** Bind cleanup for the one staged build context owned by this create attempt. */
 export function createSandboxBuildContextCleanup(
   context: { readonly cleanupBuildCtx?: () => boolean } | null,
-): () => void {
+): () => boolean {
+  let completed = false;
   return () => {
-    if (context?.cleanupBuildCtx?.()) process.removeListener("exit", context.cleanupBuildCtx);
+    if (completed) return true;
+    if (!context?.cleanupBuildCtx) return true;
+    completed = context.cleanupBuildCtx();
+    if (completed) process.removeListener("exit", context.cleanupBuildCtx);
+    return completed;
   };
 }
 

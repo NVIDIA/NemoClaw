@@ -187,14 +187,6 @@ jobs:
             rm -- "$link"
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
-      - name: Download specialist session artifacts
-        if: ${{ env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR != '' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: pr-review-specialist-*
-          path: pr-workdir/.pr-review-advisor-sessions
-          merge-multiple: true
-
       - name: Install Pi SDK
         run: |
           set -euo pipefail
@@ -313,22 +305,13 @@ jobs:
             printf '# %s\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' "$PR_REVIEW_ADVISOR_COMMENT_TITLE" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload advisor artifacts
-        if: ${{ always() && matrix.advisor.interest == '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.advisor.artifact_name }}
-          path: artifacts/${{ matrix.advisor.artifact_dir }}/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload native specialist session
+      - name: Upload specialist review
         id: upload-specialist-session
         if: ${{ always() && matrix.advisor.interest != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.advisor.artifact_name }}
-          path: artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-${{ matrix.advisor.interest }}-session.jsonl
+          path: artifacts/${{ matrix.advisor.artifact_dir }}/
           if-no-files-found: error
           retention-days: 14
 
@@ -370,63 +353,11 @@ jobs:
             exit 0
           fi
 
-  review:
-    name: Synthesis
-    needs: review-specialists
-    if: ${{ needs.review-specialists.result == 'success' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      issues: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      matrix:
-        advisor:
-          - {
-              interest: "",
-              label: Synthesis,
-              model: azure/openai/gpt-5.6-terra,
-              sandbox_name: pr-adv-synthesis,
-              artifact_dir: pr-review-advisor,
-              artifact_name: pr-review-advisor,
-            }
-    env:
-      PI_SDK_VERSION: "0.80.6"
-      TYPEBOX_VERSION: "1.1.38"
-      YAML_VERSION: "2.8.3"
-      UNDICI_VERSION: "8.10.0"
-      VITEST_VERSION: "4.1.9"
-      FD_FIND_VERSION: "9.0.0-1"
-      RIPGREP_VERSION: "14.1.0-1"
-      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
-      PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
-      PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100"
-      PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
-      PR_REVIEW_ADVISOR_INTEREST: ""
-      PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: ${{ github.workspace }}/pr-workdir/.pr-review-advisor-sessions
-      PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
-      PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
-      PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
-      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
-      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
-      SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}
-      ADVISOR_DIR: ${{ github.workspace }}/advisor
-      TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}
-      PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
-    steps: *advisor-analysis-steps
-
   publish:
-    name: Publish advisor
-    needs: review
-    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review.result == 'success' }}
-    # Publication is best-effort and must never hide the primary analysis
-    # lane's required outcome in the review matrix above.
+    name: Publish advisor link
+    needs: review-specialists
+    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review-specialists.result == 'success' }}
+    # Publication is best-effort and must never hide a specialist review failure.
     continue-on-error: true
     permissions:
       contents: read
@@ -435,21 +366,9 @@ jobs:
     timeout-minutes: 10
     env:
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
-      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
-      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor"
-      PR_REVIEW_ADVISOR_WORKFLOW_PATH: .github/workflows/pr-review-advisor.yaml
-      PR_REVIEW_ADVISOR_EVENT_NAME: ${{ github.event_name }}
-      PR_REVIEW_ADVISOR_RUN_ID: ${{ github.run_id }}
-      PR_REVIEW_ADVISOR_RUN_ATTEMPT: ${{ github.run_attempt }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
-      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor
-      PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152"
-      PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576"
     steps:
       - name: Checkout trusted comment publisher (workflow revision)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -466,35 +385,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install trusted publisher dependencies
-        working-directory: advisor
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      # With no run-id or repository override, download-artifact can only read
-      # the named artifact produced by this same workflow run.
-      - name: Download primary advisor artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: pr-review-advisor
-          path: publish-artifacts/pr-review-advisor
-
-      - name: Validate advisor artifacts
+      - name: Post PR review advisor link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node --experimental-strip-types \
-            "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"
-
-      - name: Post PR review advisor comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
+          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/completion-comment.mts" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
-            --summary "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md" \
-            --analysis-result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json" \
-            --result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
-            --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
-            --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
-            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"
+            --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"

@@ -92,6 +92,36 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
+  it("stops resume before side effects when saved policy authority is invalid (#9833)", async () => {
+    const loadSession = vi.fn((): Session | null => {
+      throw new Error(
+        "Refusing to load the onboarding session: the saved policy authority is invalid.",
+      );
+    });
+    const { deps } = createDeps(null, { loadSession });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/saved policy authority is invalid/u);
+
+    expect(loadSession).toHaveBeenCalledOnce();
+    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+    expect(deps.setOnboardBrandingAgent).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+    expect(deps.clearSession).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);

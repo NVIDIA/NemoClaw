@@ -1129,9 +1129,11 @@ describe("Hermes portable onboarding transaction", () => {
     const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
 
     expect(run(["sandbox", "get", "alpha"]).status).toBe(0);
+    expect(run(["sandbox", "delete", "alpha"]).status).toBe(0);
     expect(run(["sandbox", "exec", "--name", "alpha", "--", "true"]).status).toBe(0);
     expect(capture.mock.calls).toEqual([
       [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
+      [["sandbox", "delete", "-g", "nemoclaw", "alpha"]],
       [["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]],
     ]);
     expect(() => run(["sandbox", "get", "beta"])).toThrow("unsupported OpenShell command");
