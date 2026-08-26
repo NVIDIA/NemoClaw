@@ -5,6 +5,22 @@ import { createHash } from "node:crypto";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
+const SANDBOX_ID_MAX_LENGTH = 512;
+
+export function isOpenShellSandboxId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= SANDBOX_ID_MAX_LENGTH &&
+    SANDBOX_ID_RE.test(value)
+  );
+}
+
+export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {
+  return isOpenShellSandboxId(sandboxId)
+    ? createHash("sha256").update(sandboxId).digest("hex")
+    : null;
+}
 
 export function parseOpenShellSandboxId(output: string): string | null {
   const matches = [
@@ -12,17 +28,12 @@ export function parseOpenShellSandboxId(output: string): string | null {
       .replace(ANSI_RE, "")
       .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
   ].map((match) => match[1] ?? "");
-  return matches.length === 1 && SANDBOX_ID_RE.test(matches[0] as string)
-    ? (matches[0] as string)
-    : null;
+  return matches.length === 1 && isOpenShellSandboxId(matches[0]) ? (matches[0] as string) : null;
 }
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
 export function fingerprintOpenShellSandboxLiveIdentity(output: string): string | null {
-  const clean = String(output).replace(ANSI_RE, "");
-  const match = clean.match(/^\s*Id:\s+(\S+)\s*$/im);
-  if (!match?.[1] || match[1].length > 512) return null;
-  return createHash("sha256").update(match[1]).digest("hex");
+  return fingerprintOpenShellSandboxId(parseOpenShellSandboxId(output) ?? "");
 }
 
 export function resolveOpenShellSandboxId(

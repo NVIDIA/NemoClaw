@@ -9,7 +9,6 @@ import {
   observeMcpCredentialRevision,
   type McpAttachedCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
-import { inspectMcpProvider } from "./mcp-bridge-provider";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
 export type McpScrubbedAdapterEntry = McpBridgeEntry & {
@@ -33,25 +32,12 @@ export function scrubManagedMcpAdapterOrThrow(
   entry: McpBridgeEntry,
 ): McpScrubbedAdapterEntry {
   const observation = observeMcpCredentialRevision(sandboxName, entry);
-  let credentialRevision: McpAttachedCredentialRevision | undefined;
-  if (observation !== "absent" && observation !== "canonical") {
-    credentialRevision = observation;
-  } else if (observation === "absent") {
-    const provider = inspectMcpProvider(entry.providerName);
-    if (
-      provider.exists &&
-      provider.id === entry.providerId &&
-      provider.resourceVersion !== null &&
-      provider.resourceVersion > 0
-    ) {
-      credentialRevision = `v${provider.resourceVersion}`;
-    }
-  }
-  if (!credentialRevision) {
+  if (observation === "absent" || observation === "canonical") {
     throw new McpBridgeError(
       `Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server '${entry.server}'.`,
     );
   }
+  const credentialRevision: McpAttachedCredentialRevision = observation;
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
   const removal = unregisterAgentAdapter(sandboxName, adapter, entry, {
     envValues: {},

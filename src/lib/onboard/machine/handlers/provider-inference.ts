@@ -628,7 +628,9 @@ function hostLocalInferenceSetupOptions(
               !hasPublishedResume &&
               hasInterruptedRecovery))
         : selected.request.service === "ollama"
-          ? !input.allowPublishedResume && !hasPublishedResume && !hasInterruptedRecovery
+          ? input.allowPublishedResume
+            ? hasPublishedResume && !hasInterruptedRecovery
+            : !hasPublishedResume && !hasInterruptedRecovery
           : input.allowPublishedResume
             ? !(hasPublishedResume && hasInterruptedRecovery)
             : !hasPublishedResume && !hasInterruptedRecovery;
@@ -640,12 +642,12 @@ function hostLocalInferenceSetupOptions(
   return selected ? { hostLocalInference: selected } : {};
 }
 
-type EarlyManagedLlamaLifecycleSelection = {
+type EarlyManagedHostLocalLifecycleSelection = {
   readonly sandboxName: string;
   readonly setupOptions: HostLocalInferenceSetupOptions;
 };
 
-function resolveEarlyManagedLlamaLifecycleSelection(input: {
+function resolveEarlyManagedHostLocalLifecycleSelection(input: {
   readonly resumeProviderSelection: boolean;
   readonly provider: string | null;
   readonly model: string | null;
@@ -656,10 +658,10 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
   readonly endpointUrl: string | null;
   readonly endpointSource: InferenceEndpointSource | null;
   readonly resolver: HostLocalInferenceStartupSelectionResolver;
-}): EarlyManagedLlamaLifecycleSelection | null {
+}): EarlyManagedHostLocalLifecycleSelection | null {
   if (
     !input.resumeProviderSelection ||
-    input.provider !== "llama-cpp-local" ||
+    (input.provider !== "llama-cpp-local" && input.provider !== "ollama-local") ||
     typeof input.model !== "string" ||
     typeof input.sandboxName !== "string"
   ) {
@@ -678,7 +680,7 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
       allowPublishedResume: true,
       recover: isCanonicalHostLocalResume({
         effectiveResume: input.effectiveResume,
-        provider: "llama-cpp-local",
+        provider: input.provider,
         endpointUrl: input.endpointUrl,
         endpointSource: input.endpointSource,
       }),
@@ -687,7 +689,7 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
 }
 
 async function ensureLegacyManagedLlamaCppResumeReady(
-  selection: EarlyManagedLlamaLifecycleSelection | null,
+  selection: EarlyManagedHostLocalLifecycleSelection | null,
   provider: string | null,
   sandboxName: string | null,
   ensure: (
@@ -697,7 +699,7 @@ async function ensureLegacyManagedLlamaCppResumeReady(
   ) => Promise<boolean>,
   revalidatePolicyRequirements?: (operation: string) => void,
 ): Promise<void> {
-  if (selection?.setupOptions.hostLocalInference?.request.service === "llama-cpp") return;
+  if (selection?.setupOptions.hostLocalInference) return;
   await ensure(provider, sandboxName, revalidatePolicyRequirements);
 }
 
@@ -1008,6 +1010,41 @@ async function repairResumedLocalInference(
   });
 }
 
+type ResumedHostLocalInferenceRepairDeps = LocalInferenceRepairDeps &
+  Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "isNonInteractive" | "log"
+  >;
+
+async function repairOrRecoverResumedHostLocalInference(
+  selection: EarlyManagedHostLocalLifecycleSelection | null,
+  provider: string,
+  model: string,
+  agent: unknown,
+  revalidatePolicyRequirements: (operation: string, requiredProvider?: string | null) => void,
+  forceInferenceSetup: boolean,
+  deps: ResumedHostLocalInferenceRepairDeps,
+): Promise<boolean> {
+  const request = selection?.setupOptions.hostLocalInference?.request;
+  if (request?.service === "ollama" && "managed" in request) {
+    deps.log("  [resume] Recovering managed Ollama through its receipt-bound runtime.");
+    return true;
+  }
+  revalidatePolicyRequirements(
+    `repair local inference provider ${JSON.stringify(provider)}`,
+    provider,
+  );
+  await repairResumedLocalInference(provider, model, agent, {
+    ...deps,
+    repairLocalInferenceSystemdOverrideOrExit: (options) =>
+      deps.repairLocalInferenceSystemdOverrideOrExit({
+        ...options,
+        isNonInteractive: deps.isNonInteractive,
+      }),
+  });
+  return forceInferenceSetup;
+}
+
 type ConfigurationReviewDeps<Agent> = Pick<
   ProviderInferenceStateOptions<unknown, Agent, unknown>["deps"],
   | "checkpointSandboxIdentity"
@@ -1310,7 +1347,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider,
       model,
     );
-    const earlyManagedLlamaLifecycleSelection = resolveEarlyManagedLlamaLifecycleSelection({
+    const earlyManagedHostLocalLifecycleSelection = resolveEarlyManagedHostLocalLifecycleSelection({
       resumeProviderSelection,
       provider,
       model,
@@ -1345,7 +1382,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         `recover managed runtime for inference provider ${JSON.stringify(provider)}`,
       );
       await ensureLegacyManagedLlamaCppResumeReady(
-        earlyManagedLlamaLifecycleSelection,
+        earlyManagedHostLocalLifecycleSelection,
         provider,
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
@@ -1437,18 +1474,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       compatibleEndpointReasoning = configuredReasoning.reasoning;
       compatibleEndpointReasoningEffort = configuredReasoning.effort;
-      revalidatePolicyRequirements(
-        `repair local inference provider ${JSON.stringify(resumedSelection.provider)}`,
+      forceInferenceSetup = await repairOrRecoverResumedHostLocalInference(
+        earlyManagedHostLocalLifecycleSelection,
         resumedSelection.provider,
+        resumedSelection.model,
+        agent,
+        revalidatePolicyRequirements,
+        forceInferenceSetup,
+        deps,
       );
-      await repairResumedLocalInference(resumedSelection.provider, resumedSelection.model, agent, {
-        ...deps,
-        repairLocalInferenceSystemdOverrideOrExit: (options) =>
-          deps.repairLocalInferenceSystemdOverrideOrExit({
-            ...options,
-            isNonInteractive: deps.isNonInteractive,
-          }),
-      });
     } else {
       // An incomplete Station Express resume intentionally retries setupNim here. The outer
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
@@ -1630,7 +1664,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           allowToolsIncompatible = !required;
         },
         initial:
-          earlyManagedLlamaLifecycleSelection ??
+          earlyManagedHostLocalLifecycleSelection ??
           (cachedProspectiveHostLocalPolicyRoute?.provider === selectedProvider &&
           cachedProspectiveHostLocalPolicyRoute.model === selectedModel
             ? {
@@ -1743,7 +1777,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
-        authoritativeResumeConfig || !sandboxStepComplete
+        authoritativeResumeConfig ||
+        session?.machine.recoveryReceipt?.reason === "failed_terminal_snapshot" ||
+        !sandboxStepComplete
           ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;

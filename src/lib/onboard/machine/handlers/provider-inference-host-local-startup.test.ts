@@ -38,7 +38,6 @@ const receiptWriter = {
   targetSha256: "1".repeat(64),
   writeExact: (value: string) => value,
 };
-
 function publishedManagedReceipt(
   service: "nim" | "vllm",
   model: string,
@@ -1281,6 +1280,7 @@ describe("provider inference host-local startup selection", () => {
       allowPublishedResume: true,
       recover: true,
     });
+    expect(calls.repair).not.toHaveBeenCalled();
     const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
     expect(setupCall[7]).toEqual(
       expect.objectContaining({
