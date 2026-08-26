@@ -214,6 +214,19 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
+  it("routes both Pi qualification targets through the NVIDIA API key profile", () => {
+    const targetIds = ["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"];
+    const plan = buildE2eWorkflowPlan({ targets: targetIds.join(",") });
+
+    expect(targetIds.map((id) => catalogueTarget(id).profile)).toEqual([
+      "nvidia-api",
+      "nvidia-api",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual(targetIds);
+    expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
+  });
+
   it.each(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"])(
     "preserves the profile, timeout, install mode, packages, and environment for migrated targets [%s]",
     (target) => {
