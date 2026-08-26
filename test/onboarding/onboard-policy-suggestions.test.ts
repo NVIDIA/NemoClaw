@@ -502,8 +502,11 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "hermes",
     });
-    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
-        hermesOpen.includes(preset))).toBe(true);
+    expect(
+      ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
+        hermesOpen.includes(preset),
+      ),
+    ).toBe(true);
     expect(hermesOpen).toContain("weather");
     expect(hermesOpen).toContain("public-reference");
     expect(hermesOpen).not.toContain("openclaw-pricing");
@@ -513,7 +516,11 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "openclaw",
     });
-    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) => !openclawOpen.includes(preset))).toBe(true);
+    expect(
+      ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every(
+        (preset) => !openclawOpen.includes(preset),
+      ),
+    ).toBe(true);
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");
@@ -586,6 +593,12 @@ describe("onboard policy preset suggestions", () => {
   it.each(["hermes", "openclaw"] as const)(
     "omits credential-bound Discord egress for %s until the channel is active (#10153)",
     (agent) => {
+      const inactive = computeSetupPresetSuggestions("open", {
+        agent,
+        enabledChannels: [],
+        knownPresetNames: known,
+        env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
+      });
       const slackOnly = computeSetupPresetSuggestions("open", {
         agent,
         enabledChannels: ["slack"],
@@ -595,8 +608,10 @@ describe("onboard policy preset suggestions", () => {
         agent,
         enabledChannels: ["discord"],
         knownPresetNames: known,
+        env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
       });
 
+      expect(inactive).not.toContain("discord");
       expect(slackOnly).toContain("slack");
       expect(slackOnly).not.toContain("discord");
       expect(discord).toContain("discord");
