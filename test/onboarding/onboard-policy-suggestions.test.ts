@@ -20,6 +20,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         provider?: string | null;
         agent?: string | null;
         observabilityEnabled?: boolean | null;
+        customPresetNames?: ReadonlySet<string> | null;
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
@@ -502,8 +503,11 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "hermes",
     });
-    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
-        hermesOpen.includes(preset))).toBe(true);
+    expect(
+      ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
+        hermesOpen.includes(preset),
+      ),
+    ).toBe(true);
     expect(hermesOpen).toContain("weather");
     expect(hermesOpen).toContain("public-reference");
     expect(hermesOpen).not.toContain("openclaw-pricing");
@@ -513,7 +517,11 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "openclaw",
     });
-    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) => !openclawOpen.includes(preset))).toBe(true);
+    expect(
+      ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every(
+        (preset) => !openclawOpen.includes(preset),
+      ),
+    ).toBe(true);
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");
@@ -581,6 +589,30 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(suggestions.filter((name: string) => name === "telegram")).toHaveLength(1);
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
+  });
+
+  it("keeps OpenClaw open-tier messaging presets aligned with active channels", () => {
+    const messagingPresets = ["slack", "discord", "telegram", "wechat", "whatsapp", "teams"];
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: ["slack"],
+      knownPresetNames: [...known, "wechat", "whatsapp", "teams"],
+    });
+
+    expect(suggestions.filter((name: string) => messagingPresets.includes(name))).toEqual([
+      "slack",
+    ]);
+  });
+
+  it("preserves an explicitly-owned custom messaging preset", () => {
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: ["slack"],
+      knownPresetNames: known,
+      customPresetNames: new Set(["Discord"]),
+    });
+
+    expect(suggestions).toContain("discord");
   });
 
   it("omits credential-bound Hermes Discord egress until the channel is active", () => {

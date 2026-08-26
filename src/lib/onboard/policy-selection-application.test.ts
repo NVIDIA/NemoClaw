@@ -78,6 +78,46 @@ describe("onboarding policy application", () => {
     ]);
   });
 
+  it("drops inactive built-in OpenClaw messaging presets from recorded resume state", async () => {
+    vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+      { name: "slack" },
+      { name: "discord" },
+    ] as ReturnType<typeof policies.listSetupPolicyPresets>);
+    vi.mocked(policies.getAppliedPresets).mockReturnValue(["slack", "discord"]);
+    vi.mocked(policies.listCustomPresets).mockReturnValue([]);
+    syncPresetSelection.mockImplementation(() => undefined);
+    const application = createOnboardPolicyApplication({
+      localInferenceProviders: [],
+      step: vi.fn(),
+      note: vi.fn(),
+      isNonInteractive: vi.fn(() => true),
+      prompt: vi.fn(async () => ""),
+      selectFromNumberedMenuOrExit,
+      makeOnboardCancelExit: (rollback, cleanup) => () => {
+        cleanup();
+        rollback.markCancelled();
+      },
+      sandboxCancelRollback: { markCancelled: vi.fn() },
+      useColor: false,
+      withSandboxMutationLock: async (_sandboxName, action) => await action(),
+      waitForSandboxReady: vi.fn(() => true),
+      waitForSandboxControlPlaneReady: vi.fn(() => true),
+      setPolicyTier: vi.fn(),
+      getRecordedPolicyTier: vi.fn(() => "open"),
+      parsePolicyPresetEnv: vi.fn(() => []),
+      env: {},
+    });
+
+    await expect(
+      application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: ["slack", "discord"],
+        enabledChannels: ["slack"],
+        agent: "openclaw",
+      }),
+    ).resolves.toEqual(["slack"]);
+    expect(syncPresetSelection).toHaveBeenCalledWith("alpha", ["slack", "discord"], ["slack"]);
+  });
+
   describe("non-interactive selection with a previously-applied channel preset", () => {
     function createApplication(env: Record<string, string>) {
       vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
@@ -107,7 +147,10 @@ describe("onboarding policy application", () => {
         setPolicyTier: vi.fn(),
         getRecordedPolicyTier: vi.fn(() => "balanced"),
         parsePolicyPresetEnv: vi.fn((value: string) =>
-          value.split(",").map((name) => name.trim()).filter(Boolean),
+          value
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
         ),
         env,
       });
