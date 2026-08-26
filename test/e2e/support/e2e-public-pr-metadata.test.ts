@@ -76,25 +76,30 @@ describe("public PR metadata authentication", () => {
     );
   });
 
-  it.each(["workflow", "generate-matrix job"] as const)(
-    "rejects an inherited GITHUB_TOKEN from the %s scope",
-    (scope) => {
-      const workflow = readE2eOperationsWorkflow();
-      if (scope === "workflow") {
-        workflow.env = { ...(workflow.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
-      } else {
-        const matrixJob = workflow.jobs["generate-matrix"];
-        matrixJob.env = { ...(matrixJob.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
-      }
+  it("rejects an inherited workflow GITHUB_TOKEN", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.env = { ...(workflow.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
 
-      expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-        expect.arrayContaining([
-          "Manual PR authentication must use the public read-only metadata endpoint",
-          "Manual PR checkout validation must use the public read-only metadata endpoint",
-        ]),
-      );
-    },
-  );
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "Manual PR authentication must use the public read-only metadata endpoint",
+        "Manual PR checkout validation must use the public read-only metadata endpoint",
+      ]),
+    );
+  });
+
+  it("rejects an inherited generate-matrix GITHUB_TOKEN", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const matrixJob = workflow.jobs["generate-matrix"];
+    matrixJob.env = { ...(matrixJob.env ?? {}), GITHUB_TOKEN: "${{ github.token }}" };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "Manual PR authentication must use the public read-only metadata endpoint",
+        "Manual PR checkout validation must use the public read-only metadata endpoint",
+      ]),
+    );
+  });
 
   it.each([
     ["denied response", "curl() { return 22; }"],
