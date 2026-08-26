@@ -2841,6 +2841,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
             servingProfileProvenance: opts.servingProfileProvenance ?? null,
             apfInterceptorRequested: opts.apfInterceptorRequested ?? null,
+            recreateSandboxRequested: RECREATE_SANDBOX,
             checkpointProfile: lockedRuntime.checkpointProfile,
             portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
@@ -2906,7 +2907,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         );
         process.exit(1);
       }
-
       registerIncompleteOnboardExitHandlerForSession(
         onboardSession,
         () => completed || preserveIncompleteSession,
@@ -3089,7 +3089,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
-
       // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
@@ -3219,6 +3218,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         sandbox: {
           gatewayName: GATEWAY_NAME,
+          apfInterceptorRequested: session?.apfInterceptorRequested === true,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
           ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),

@@ -26,6 +26,22 @@ import {
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
+/** Refuse APF mode until the generic exact-create checkpoint is present in the base. */
+export function requireVerifiedApfCreateBoundary(
+  createIntent: Pick<
+    SandboxCreateIntent,
+    "apfInterceptorRequested" | "deferSandboxEffectsUntilPolicyVerification"
+  > | null,
+): void {
+  if (createIntent?.apfInterceptorRequested !== true) return;
+  if (createIntent.deferSandboxEffectsUntilPolicyVerification !== true) {
+    throw new Error("APF interceptor create intent is missing deferred-effect authority.");
+  }
+  throw new Error(
+    "APF interceptor selection requires exact post-create policy verification before onboarding effects. This build cannot supply that boundary, so no sandbox was created.",
+  );
+}
+
 type SandboxRecreateReasonInput = {
   sandboxName: string;
   recreateForAgentDrift: boolean;
@@ -438,6 +454,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
+    requireVerifiedApfCreateBoundary(createIntent);
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
@@ -1342,6 +1359,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
+              retainSandboxOnAutomaticFailure: createIntent?.apfInterceptorRequested === true,
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
@@ -1431,6 +1449,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         policyTier: resolvedCreatePolicyTier,
         policyAuthority: resolvedPolicyAuthority,
         revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
+        retainSandboxOnAutomaticFailure: createIntent?.apfInterceptorRequested === true,
         dashboardRemoteBindPrepared,
       },
       prebuild.imageRef,
@@ -1577,6 +1596,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
         liveExists,
+        retainSandboxOnAutomaticFailure: createIntent?.apfInterceptorRequested === true,
       },
       {
         runFile,

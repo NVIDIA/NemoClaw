@@ -68,6 +68,17 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it.each(["--resume", "--recreate-sandbox"])(
+    "rejects --apf-interceptor with %s before dispatch (#9833)",
+    async (lifecycleFlag) => {
+      await expect(
+        OnboardCliCommand.run(["--apf-interceptor", lifecycleFlag], rootDir),
+      ).rejects.toThrow(/apf-interceptor|resume|recreate-sandbox/);
+
+      expect(runOnboardAction).not.toHaveBeenCalled();
+    },
+  );
+
   it("accepts an exact managed runtime catalog without candidate activation", async () => {
     await OnboardCliCommand.run(
       ["--temp-managed-runtime-catalog", "managed-catalog.json"],

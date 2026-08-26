@@ -48,7 +48,9 @@ describe("buildOnboardFlags --apf-interceptor help", () => {
 
     expect(flags["apf-interceptor"].hidden).not.toBe(true);
     expect(flags["apf-interceptor"].allowNo).not.toBe(true);
-    expect(flags["apf-interceptor"].description).toContain("verify the resulting sandbox policy");
+    expect(flags["apf-interceptor"].description).toContain("contained sandbox-scoped policy");
+    expect(flags["apf-interceptor"].description).toContain("without claiming its provenance");
+    expect(flags["apf-interceptor"].exclusive).toEqual(["resume", "recreate-sandbox"]);
     expect(onboardUsage.join(" ")).toContain("--apf-interceptor");
   });
 });

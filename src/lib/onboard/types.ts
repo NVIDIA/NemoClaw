@@ -56,7 +56,11 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
+  /** Keep provider and credential effects behind the exact post-create policy gate. */
+  readonly deferSandboxEffectsUntilPolicyVerification?: true;
   readonly recreate: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */

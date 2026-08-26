@@ -207,6 +207,8 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Leave the sandbox in place when cleanup would address it only by mutable name. */
+  retainSandboxOnAutomaticFailure?: boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -360,6 +362,15 @@ export async function runSandboxGpuCreateFlow(
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
       cleanupNativeFailure: (failure) => {
+        if (input.retainSandboxOnAutomaticFailure) {
+          return {
+            safe: false,
+            reason: `sandbox '${input.sandboxName}' requires exact-identity cleanup`,
+            deleteStatus: null,
+            sandboxPresent: null,
+            containerIds: null,
+          };
+        }
         return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
           input.sandboxName,
           failure,
@@ -388,10 +399,7 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
@@ -477,8 +485,10 @@ export async function runSandboxGpuCreateFlow(
       gpuCreateOutcome.nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
-        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+          : input.retainSandboxOnAutomaticFailure
+            ? `  NemoClaw left sandbox '${input.sandboxName}' in place because automatic cleanup cannot delete it by mutable name.`
+            : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
     );
     process.exit(1);
   }

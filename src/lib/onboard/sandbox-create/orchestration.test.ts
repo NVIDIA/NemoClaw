@@ -19,8 +19,30 @@ import {
   completeHermesPortableSandboxRegistration,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
+  requireVerifiedApfCreateBoundary,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("APF create dependency boundary", () => {
+  it("does not affect ordinary sandbox creation (#9833)", () => {
+    expect(() => requireVerifiedApfCreateBoundary(null)).not.toThrow();
+    expect(() =>
+      requireVerifiedApfCreateBoundary({
+        apfInterceptorRequested: undefined,
+        deferSandboxEffectsUntilPolicyVerification: undefined,
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses APF creation before effects until the exact checkpoint is available (#9833)", () => {
+    expect(() =>
+      requireVerifiedApfCreateBoundary({
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilPolicyVerification: true,
+      }),
+    ).toThrow(/exact post-create policy verification.*no sandbox was created/u);
+  });
+});
 
 describe("managed MCP rebuild handoff", () => {
   const targetIntentFingerprint = "a".repeat(64);

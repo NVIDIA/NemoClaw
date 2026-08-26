@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
+  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   finalizeCreatedSandbox,
@@ -869,11 +870,48 @@ describe("created OpenClaw sandbox finalization", () => {
 });
 
 describe("created sandbox completion actions", () => {
+  it("does not arm mutable-name cancellation rollback for an APF-compatible sandbox", () => {
+    const armCancelRollback = vi.fn();
+
+    expect(
+      completeOrdinaryOnboardSandboxCreation(
+        {
+          sandboxName: "openclaw",
+          runtimeFields: {
+            gpuEnabled: false,
+            hostGpuDetected: false,
+            sandboxGpuEnabled: false,
+            sandboxGpuMode: "0",
+            sandboxGpuDevice: null,
+            sandboxGpuProof: null,
+            openshellDriver: "docker",
+            openshellVersion: "0.0.106",
+          },
+          messagingProviders: [],
+          liveExists: false,
+          retainSandboxOnAutomaticFailure: true,
+        },
+        {
+          runFile: vi.fn(),
+          scriptsDir: "/repo/scripts",
+          gatewayName: "nemoclaw",
+          providerExistsInGateway: () => true,
+          armCancelRollback,
+          dockerInfoFormat: () => "",
+          runCapture: () => "",
+          revalidatePolicyAuthority: vi.fn(),
+          applyVmDnsMonkeypatch: vi.fn(),
+        },
+      ),
+    ).toBe("openclaw");
+    expect(armCancelRollback).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["ordinary", true, false],
+    ["retained ordinary", true, false],
     ["schema-5", false, true],
   ] as const)(
-    "keeps %s dashboard completion ordered and bounded (#9203)",
+    "keeps %s dashboard completion ordered and bounded (#9833)",
     async (_route, manageDashboard, schema5) => {
       const order: string[] = [];
       const gpuProof = {
@@ -893,8 +931,13 @@ describe("created sandbox completion actions", () => {
         order.push("registry");
         return input as unknown as SandboxEntry;
       });
+      const ensureForward = vi.fn(() => {
+        order.push("dashboard-forward");
+        return 8644;
+      });
       const completion = createCreatedSandboxCompletionActions(
         {
+          retainSandboxOnAutomaticFailure: true,
           finalization: {
             sandboxName: "hermes",
             restoreBackupPath: null,
@@ -953,10 +996,7 @@ describe("created sandbox completion actions", () => {
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward: () => {
-              order.push("dashboard-forward");
-              return 8644;
-            },
+            ensureForward,
             getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
             ensureHermesForward: () => order.push("dashboard-hermes"),
@@ -1047,6 +1087,17 @@ describe("created sandbox completion actions", () => {
         "registry",
       ]);
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
+      expect(ensureForward.mock.calls).toEqual(
+        manageDashboard
+          ? [
+              [
+                "hermes",
+                "http://127.0.0.1:8643",
+                expect.objectContaining({ rollbackSandboxOnFailure: false }),
+              ],
+            ]
+          : [],
+      );
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",

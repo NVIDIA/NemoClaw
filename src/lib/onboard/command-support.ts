@@ -109,7 +109,8 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
     "apf-interceptor": Flags.boolean({
       description:
-        "Create without a caller policy and verify the resulting sandbox policy for APF compatibility",
+        "Create without a caller policy and require a contained sandbox-scoped policy without claiming its provenance",
+      exclusive: ["resume", "recreate-sandbox"],
     }),
     gpu: Flags.boolean({
       description: "Require OpenShell GPU passthrough for the gateway and sandbox",

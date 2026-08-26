@@ -652,6 +652,10 @@ export function createSandboxGpuCreateAttemptRunner(
         console.error(
           "  NemoClaw left the portable sandbox in place because it could not verify the exact runtime identity.",
         );
+      } else if (input.retainSandboxOnAutomaticFailure) {
+        console.error(
+          `  NemoClaw left sandbox '${input.sandboxName}' in place because automatic cleanup cannot delete it by mutable name.`,
+        );
       } else {
         const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
           ignoreError: true,

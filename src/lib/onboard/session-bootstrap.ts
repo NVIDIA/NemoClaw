@@ -321,6 +321,7 @@ export function createPortableOnboardEnvironmentScope(
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
+  recreateSandboxRequested?: boolean;
   requestedFromDockerfile: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
@@ -355,7 +356,6 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
-      apfInterceptorRequested?: boolean | null;
       hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
@@ -447,6 +447,21 @@ function reportLegacyResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never 
   deps.exitProcess(1);
 }
 
+function reportUnsupportedApfLifecycle(
+  reason: "resume" | "recreate",
+  deps: OnboardSessionBootstrapDeps,
+): never {
+  deps.error(
+    reason === "resume"
+      ? "  APF interceptor selection cannot resume an onboarding session."
+      : "  APF interceptor selection cannot recreate a sandbox.",
+  );
+  deps.error(
+    `  Start a new sandbox with a new name: ${deps.cliName()} onboard --fresh --apf-interceptor --name <sandbox>`,
+  );
+  deps.exitProcess(1);
+}
+
 function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   const result = deps.resolveResumeCheckpoint();
   if (result?.status === "unsupported_future") {
@@ -511,12 +526,6 @@ async function exitForResumeConflicts(
     }
     reportResumeConflict(conflict, deps);
   }
-  if (conflicts.some((conflict) => conflict.field === "APF interceptor")) {
-    deps.error(
-      `  Run: ${deps.cliName()} onboard --fresh --apf-interceptor  # start with APF interceptor selection`,
-    );
-    deps.exitProcess(1);
-  }
   deps.error(`  Run: ${deps.cliName()} onboard              # start a fresh onboarding session`);
   deps.error("  Or rerun with the original settings to continue that session.");
   deps.exitProcess(1);
@@ -555,6 +564,9 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
+    reportUnsupportedApfLifecycle("resume", deps);
+  }
   deps.requireHostMountRuntimeSupport(
     input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
     input.checkpointProfile,
@@ -578,7 +590,6 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
-    apfInterceptorRequested: input.apfInterceptorRequested ?? null,
     hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
@@ -606,6 +617,9 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  if (input.apfInterceptorRequested === true && input.recreateSandboxRequested === true) {
+    reportUnsupportedApfLifecycle("recreate", deps);
+  }
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();

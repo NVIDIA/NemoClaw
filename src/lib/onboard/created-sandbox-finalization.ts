@@ -97,6 +97,8 @@ type RegistrationSeed = Omit<
 >;
 
 export interface CreatedSandboxCompletionOptions {
+  /** Prevent automatic rollback that can address the sandbox only by mutable name. */
+  readonly retainSandboxOnAutomaticFailure?: boolean;
   readonly finalization: CreatedSandboxFinalizationOptions;
   readonly registration: RegistrationSeed;
   readonly gpu: {
@@ -120,7 +122,7 @@ export interface CreatedSandboxCompletionOptions {
       sandboxName: string,
       chatUiUrl: string,
       options: {
-        rollbackSandboxOnFailure: true;
+        rollbackSandboxOnFailure: boolean;
         gatewayName: string;
         revalidatePolicyAuthority?: (operation: string) => void;
       },
@@ -130,7 +132,7 @@ export interface CreatedSandboxCompletionOptions {
     readonly ensureHermesForward: (
       state: HermesDashboardOnboardState,
       sandboxName: string,
-      rollback: true,
+      rollback: boolean,
       revalidatePolicyAuthority?: (operation: string) => void,
     ) => void;
   };
@@ -227,6 +229,8 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
     readonly liveExists: boolean;
+    /** Prevent automatic cancellation rollback that deletes by mutable sandbox name. */
+    readonly retainSandboxOnAutomaticFailure?: boolean;
   },
   deps: {
     readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
@@ -262,7 +266,9 @@ export function completeOrdinaryOnboardSandboxCreation(
   deps.revalidatePolicyAuthority(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
   warnIfLandlockUnsupported(deps);
-  if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
+  if (!input.liveExists && !input.retainSandboxOnAutomaticFailure) {
+    deps.armCancelRollback(input.sandboxName);
+  }
   return input.sandboxName;
 }
 
@@ -334,7 +340,7 @@ export function createCreatedSandboxCompletionActions(
       `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
-      rollbackSandboxOnFailure: true,
+      rollbackSandboxOnFailure: !options.retainSandboxOnAutomaticFailure,
       gatewayName: options.registration.gatewayName,
       revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
     });
@@ -352,7 +358,7 @@ export function createCreatedSandboxCompletionActions(
     options.dashboard.ensureHermesForward(
       hermesDashboardState,
       options.finalization.sandboxName,
-      true,
+      !options.retainSandboxOnAutomaticFailure,
       deps.revalidatePolicyAuthority,
     );
     deps.revalidatePolicyAuthority?.(
@@ -474,6 +480,7 @@ type OnboardPreparedPolicy = Pick<
   "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
 > & {
   readonly revalidatePolicyAuthority: (operation: string) => void;
+  readonly retainSandboxOnAutomaticFailure?: boolean;
 };
 
 /** Assemble the exact post-Ready owners without adding an onboarding decision. */
@@ -516,6 +523,7 @@ export function createOnboardCreatedSandboxCompletion(
   const { createIntent, resolvedCreateIntent } = createContext;
   return createCreatedSandboxCompletionActions(
     {
+      retainSandboxOnAutomaticFailure: preparedPolicy.retainSandboxOnAutomaticFailure,
       finalization: {
         sandboxName,
         restoreBackupPath,

@@ -189,6 +189,8 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
   hermesPortableLifecycle?: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  apfInterceptorRequested?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
@@ -550,6 +552,21 @@ type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
 };
 
+/** Add APF-owned fields to a future exact-gated fresh create intent. */
+export function apfCreateIntentFields(
+  requested: boolean,
+): Pick<
+  CompleteSandboxCreateIntent,
+  "apfInterceptorRequested" | "deferSandboxEffectsUntilPolicyVerification"
+> {
+  return requested
+    ? {
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilPolicyVerification: true,
+      }
+    : {};
+}
+
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
   readonly sandboxName: string | null;
@@ -900,6 +917,7 @@ class SandboxStateFlow<
     const lightFingerprint = [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       policyFingerprint,
+      this.options.apfInterceptorRequested === true ? "apf-interceptor" : "caller-policy",
       this.options.provider,
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
@@ -1732,6 +1750,7 @@ class SandboxStateFlow<
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
@@ -1761,6 +1780,29 @@ class SandboxStateFlow<
       ...rebuildPolicyPresetSelection,
       extraProviders,
     };
+  }
+
+  private assertApfFreshCreate(sandboxName: string, decision: SandboxCreationDecision): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    if (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create") {
+      throw new Error(
+        "APF interceptor selection requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
+      );
+    }
+    if (this.deps.getSandboxRegistryEntry(sandboxName)) {
+      throw new Error(
+        `APF interceptor selection cannot adopt registered sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+    const observed = this.deps.getSandboxRecreateObservation(sandboxName);
+    if (observed.state !== "missing") {
+      throw new Error(
+        `APF interceptor selection cannot adopt live sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+    throw new Error(
+      "APF interceptor selection requires exact post-create policy verification before credential or provider effects. This build cannot supply that boundary, so no sandbox was created.",
+    );
   }
 
   private beginSandboxRecreateJournal(
@@ -2228,6 +2270,7 @@ class SandboxStateFlow<
       : state;
     const requestedSandboxName =
       nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    this.assertApfFreshCreate(requestedSandboxName, decision);
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
