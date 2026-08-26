@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Governance / Open PRs
+name: Governance / Enforce Open PR Limit
 
 # pull_request_target runs in the base repository context. This workflow never
 # checks out or executes pull request code.
@@ -15,7 +15,6 @@ permissions:
 
 jobs:
   check-pr-limit:
-    name: Close PRs over author limit
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:

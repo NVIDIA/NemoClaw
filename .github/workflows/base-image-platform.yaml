@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Base Image Platform
+name: Images / Build Base Image Platform
 
 on:
   workflow_call:
@@ -50,7 +50,7 @@ permissions:
 
 jobs:
   build:
-    name: Platform Digest / ${{ inputs.agent }} / ${{ inputs.arch }}
+    name: Build ${{ inputs.agent }} base image (${{ inputs.arch }})
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     permissions:
