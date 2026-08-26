@@ -147,7 +147,6 @@ function bindWeeklyMilestoneReport(
   const epics = Array.isArray(snapshot.epics)
     ? (snapshot.epics as Array<Record<string, unknown>>)
     : [];
-  const epicByNodeId = new Map(epics.map((epic) => [epic.nodeId, epic]));
   const presentationEntries = Array.isArray(presentation.epics)
     ? (presentation.epics as Array<Record<string, unknown>>)
     : [];
@@ -229,67 +228,6 @@ function bindSnapshotRepositoryCommit(snapshot: Record<string, unknown>, commitS
   }
   collection.receiptsSha256 = canonicalSha256(receipts);
   snapshot.snapshotSha256 = canonicalSha256(withoutTopLevelKey(snapshot, "snapshotSha256"));
-}
-
-function syntheticReceiptScope(
-  snapshot: Record<string, unknown>,
-  queryId: string,
-): Record<string, unknown> {
-  const repositoryScope = { owner: "NVIDIA", name: "NemoClaw" };
-  if (queryId === "authenticated-viewer") return { restPath: "user" };
-  if (
-    queryId === "repository-milestones" ||
-    queryId === "repository-summary" ||
-    queryId === "repository-open-issues" ||
-    queryId === "tag-refs" ||
-    queryId === "discussion-categories"
-  ) {
-    return repositoryScope;
-  }
-  const milestoneMatch = /^milestone-(\d+)-issues$/u.exec(queryId);
-  if (milestoneMatch) {
-    return {
-      ...repositoryScope,
-      milestoneNumber: Number(milestoneMatch[1]),
-    };
-  }
-  const issueMatch = /^issue-(\d+)-subissues$/u.exec(queryId);
-  if (issueMatch) {
-    return { ...repositoryScope, issueNumber: Number(issueMatch[1]) };
-  }
-  if (queryId === "work-tracking-issues") {
-    return { ...repositoryScope, requests: [] };
-  }
-  const collection = snapshot.collection as Record<string, unknown>;
-  const receipts = collection.receipts as Array<Record<string, unknown>>;
-  if (queryId === "tag-default-branch-ancestry") {
-    const ancestry = receipts.find((receipt) => receipt.queryId === queryId)
-      ?.sourceRecords as Array<Record<string, unknown>>;
-    const commitSha = (snapshot.repository as Record<string, unknown>).commitSha;
-    return {
-      restPaths: ancestry.map(
-        (record) =>
-          `repos/NVIDIA/NemoClaw/compare/${String(record.commitSha)}...${String(commitSha)}`,
-      ),
-    };
-  }
-  if (queryId === "announcement-discussions") {
-    return { ...repositoryScope, categoryId: "CATEGORY_ANNOUNCEMENTS" };
-  }
-  const window = snapshot.window as { start: string; end: string };
-  if (queryId === "stargazers-window" || queryId === "forks-window") {
-    return { ...repositoryScope, window };
-  }
-  const lastIncluded = new Date(Date.parse(window.end) - 1).toISOString().slice(0, 10);
-  const range = `${window.start.slice(0, 10)}..${lastIncluded}`;
-  const searchTextById: Record<string, string> = {
-    "merged-prs-window": `repo:NVIDIA/NemoClaw is:pr is:merged merged:${range}`,
-    "vdr-opened-window": `repo:NVIDIA/NemoClaw is:issue label:VDR created:${range}`,
-    "vdr-closed-window": `repo:NVIDIA/NemoClaw is:issue label:VDR closed:${range}`,
-    "uat-opened-window": `repo:NVIDIA/NemoClaw is:issue label:UAT created:${range}`,
-    "uat-closed-window": `repo:NVIDIA/NemoClaw is:issue label:UAT closed:${range}`,
-  };
-  return { queryText: searchTextById[queryId] };
 }
 
 export function syntheticFixtureInputs(): {
@@ -543,7 +481,11 @@ export function syntheticFixtureInputs(): {
   ]);
 
   const collection = snapshot.collection as Record<string, unknown>;
-  for (const receipt of collection.receipts as Array<Record<string, unknown>>) {
+  const receipts = collection.receipts as Array<Record<string, unknown>>;
+  if (!receipts.some((receipt) => receipt.queryId === "tag-default-branch-ancestry")) {
+    throw new Error("Synthetic receipt is missing: tag-default-branch-ancestry");
+  }
+  for (const receipt of receipts) {
     const expectedSource = expectedReceiptSourceForQuery(String(receipt.queryId));
     if (!expectedSource)
       throw new Error(`Synthetic receipt has no source kind: ${receipt.queryId}`);
@@ -555,7 +497,12 @@ export function syntheticFixtureInputs(): {
     if (expectedSource === "github-rest-or-single-object") {
       receipt.pageCount = (receipt.sourceRecords as unknown[]).length;
     }
-    const scope = syntheticReceiptScope(snapshot, String(receipt.queryId));
+    const scope = expectedReceiptScopeForSnapshot(
+      snapshot as never,
+      receipts as never,
+      String(receipt.queryId),
+    );
+    if (!scope) throw new Error(`Synthetic receipt scope is invalid: ${String(receipt.queryId)}`);
     receipt.scope = scope;
     receipt.requestSha256 = receiptRequestSha256(String(receipt.querySha256), scope);
     receipt.declaredTotalCount = (receipt.sourceRecords as unknown[]).length;
@@ -687,3 +634,8 @@ export function semanticReadback(model: Record<string, unknown>): Record<string,
 }
 
 export const slideModelSchemaPath = path.join(skillRoot, "references", "slide-model.schema.json");
+export const roadmapPresentationPath = path.join(
+  skillRoot,
+  "references",
+  "roadmap-presentation.json",
+);

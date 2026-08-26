@@ -154,10 +154,11 @@ It also receives each reviewed open unmilestoned Epic whose `presentationMilesto
 that milestone.
 This runtime grouping does not claim or change a GitHub milestone.
 The model chunks eligible milestones into ordered groups of three.
-The collector reads milestone aliases plus Epic identity and `presentationMilestoneNodeId` values
-from the checked-in presentation-map argument. It uses those Epic fields only to collect complete
-evidence for an explicitly grouped open unmilestoned Epic. It does not use checked-in Epic entries
-to define visible wording or classification.
+The collector reads only milestone aliases from the checked-in file passed with
+`--presentation-map`.
+It retains each candidate's complete body, native subissue, `## Work Tracking`, and progress
+evidence so the owner can select a presentation grouping after collection.
+Checked-in Epic entries do not control collection, visible wording, classification, or grouping.
 
 For `net_change`, also pass both approved baseline files:
 

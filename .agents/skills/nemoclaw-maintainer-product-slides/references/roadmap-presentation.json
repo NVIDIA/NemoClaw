@@ -150,7 +150,7 @@
       "displayTitle": "OpenShell Qualification",
       "shortenedOutcome": "Qualify and pin v0.0.101",
       "boundBodySha256": "b1b92719fe116c007dd78a19f41502c6b3c98ac3a3bf1a90c2b037adc4399d79",
-      "displayOrder": 6
+      "displayOrder": 16
     },
     {
       "epicNodeId": "I_kwDORnw8lM8AAAABNnQJhg",
@@ -159,7 +159,7 @@
       "roadmapArea": "Usability and Onboarding",
       "shortenedOutcome": "Qualify one external-gateway workflow",
       "boundBodySha256": "be56ec5e6600495982d28ec8947a96e925dd4a6200a583cdeac521391779adcb",
-      "displayOrder": 7
+      "displayOrder": 17
     }
   ]
 }

@@ -29,7 +29,7 @@ import {
   roadmapEpicDisplayText,
   roadmapFocusText,
 } from "./compare-output-parity.mts";
-import { validateSlideModel } from "./validate-slide-model.mts";
+import { canonicalJson, canonicalSha256, validateSlideModel } from "./validate-slide-model.mts";
 
 type DynamicValue = ReturnType<typeof JSON.parse>;
 type ManagedRole = (typeof MANAGED_ROLES)[number];
@@ -413,25 +413,6 @@ const MANAGED_ROLES = [
 ] as const;
 const MANAGED_MARKER = /^\[NEMOCLAW-MANAGED-SLIDE v1\]\nrole=([^\n]+)\n/u;
 const SLIDE_MODEL_SCHEMA = new URL("../references/slide-model.schema.json", import.meta.url);
-
-function normalize(value: DynamicValue): DynamicValue {
-  if (typeof value === "string") return value.replace(/\r\n?/gu, "\n");
-  if (Array.isArray(value)) return value.map(normalize);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort((left, right) => left.localeCompare(right))
-      .map((key) => [key, normalize(value[key])]),
-  );
-}
-
-function canonicalJson(value: DynamicValue): string {
-  return `${JSON.stringify(normalize(value))}\n`;
-}
-
-function canonicalSha256(value: DynamicValue): string {
-  return createHash("sha256").update(canonicalJson(value)).digest("hex");
-}
 
 export async function templateSlideCountFromPptxBytes(
   JSZip: DynamicValue,
@@ -2321,7 +2302,7 @@ async function runTemplateFidelityCheck({
   );
 }
 
-async function runTemplateFidelityWorkflow({
+export async function runTemplateFidelityWorkflow({
   runtime,
   workflow,
   frozenInputs,

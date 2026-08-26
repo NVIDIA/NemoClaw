@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,16 +9,17 @@ import {
   inHalfOpenWindow,
   normalizeProgress,
   paginateConnection,
-  presentationMappedUnmilestonedEpics,
   receiptRequestSha256,
   requiredReceiptQueryIds,
   selectStableTags,
   workTrackingIssueNumbers,
   canonicalJson,
+  canonicalSha256,
   planManagedSlideRefresh,
   validateSlideModel,
   buildSyntheticModel,
   readJson,
+  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
   rehashModel,
@@ -109,10 +108,32 @@ describe("NemoClaw product slide source and model contracts", () => {
     ).toThrow(/identify every repeated managed roadmap slide instance/u);
   });
 
-  it("canonicalizes object keys while preserving semantic array order", () => {
-    expect(canonicalJson({ z: 1, a: ["second", "first"], nested: { y: 2, x: 1 } })).toBe(
-      '{"a":["second","first"],"nested":{"x":1,"y":2},"z":1}\n',
+  it("canonicalizes object keys by UTF-16 code unit and normalizes line endings", () => {
+    const value = {
+      z: ["second", "first"],
+      a: "line one\r\nline two\rline three",
+      A: "upper",
+      "!": "punctuation",
+      nested: { b: 2, B: 1, "?": "nested punctuation" },
+      "\uE000": "BMP private-use",
+      "\u{10000}": "astral",
+    };
+
+    expect(canonicalJson(value)).toBe(
+      '{"!":"punctuation","A":"upper","a":"line one\\nline two\\nline three","nested":{"?":"nested punctuation","B":1,"b":2},"z":["second","first"],"𐀀":"astral","":"BMP private-use"}\n',
     );
+    expect(canonicalSha256(value)).toBe(
+      canonicalSha256({ ...value, a: "line one\nline two\nline three" }),
+    );
+  });
+
+  it("keeps each seeded Epic presentation order unique", () => {
+    const presentation = readJson<{ epics: Array<{ displayOrder: number }> }>(
+      roadmapPresentationPath,
+    );
+    const displayOrders = presentation.epics.map((entry) => entry.displayOrder);
+
+    expect(new Set(displayOrders).size).toBe(displayOrders.length);
   });
 
   it("records complete multi-page collection evidence", () => {
@@ -210,47 +231,6 @@ describe("NemoClaw product slide source and model contracts", () => {
     expect(workTrackingIssueNumbers(body)).toEqual([101, 102]);
   });
 
-  it("selects only identity-bound unmilestoned Epics with an eligible presentation milestone", () => {
-    const milestone = {
-      id: "M_SYNTHETIC_Q3",
-      number: 7,
-      title: "Roadmap: Q3 2026",
-      description: null,
-      dueOn: "2026-09-30T00:00:00.000Z",
-      state: "OPEN" as const,
-      closedAt: null,
-      url: "https://github.com/NVIDIA/NemoClaw/milestone/7",
-    };
-    const openEpics = [9816, 9817].map((issueNumber) => ({
-      id: `E_SYNTHETIC_${String(issueNumber)}`,
-      number: issueNumber,
-      title: `Epic ${String(issueNumber)}`,
-      state: "OPEN" as const,
-      url: `https://github.com/NVIDIA/NemoClaw/issues/${String(issueNumber)}`,
-      closedAt: null,
-      issueType: { id: "IT_EPIC", name: "Epic" },
-      milestone: null,
-    }));
-    const resolved = presentationMappedUnmilestonedEpics(
-      openEpics,
-      [
-        {
-          epicNodeId: openEpics[0].id,
-          issueNumber: openEpics[0].number,
-          presentationMilestoneNodeId: milestone.id,
-        },
-        {
-          epicNodeId: openEpics[1].id,
-          issueNumber: openEpics[1].number,
-          presentationMilestoneNodeId: "M_UNKNOWN",
-        },
-      ],
-      [milestone],
-    );
-
-    expect(resolved.map(({ issue }) => issue.number)).toEqual([9816]);
-  });
-
   it("uses a half-open seven-day interval", () => {
     const start = "2026-08-06T12:00:00.000Z";
     const end = "2026-08-13T12:00:00.000Z";
@@ -289,7 +269,7 @@ describe("NemoClaw product slide source and model contracts", () => {
 
   it("builds a valid four-role model in the supplied milestone order", () => {
     const model = buildSyntheticModel();
-    const schema = JSON.parse(fs.readFileSync(slideModelSchemaPath, "utf8"));
+    const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
     const result = validateSlideModel(model, schema, "preview");
     const slides = model.slides as Array<Record<string, unknown>>;
 

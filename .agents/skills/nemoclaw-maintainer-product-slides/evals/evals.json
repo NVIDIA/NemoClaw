@@ -91,7 +91,7 @@
   },
   {
     "id": "positive-unmilestoned-epic-presentation-grouping",
-    "question": "Include the open unmilestoned Kubernetes In-Cluster Epic #9816 in the selected Q3 display row without assigning it to a GitHub milestone. The owner-reviewed runtime map targets Q3 with `presentationMilestoneNodeId`.",
+    "question": "Include the open unmilestoned Kubernetes In-Cluster Epic #9816 in the selected Q3 roadmap display row and Q3 weekly scorecard row without assigning it to a GitHub milestone. The owner-reviewed runtime map targets Q3 with `presentationMilestoneNodeId`.",
     "expected_skill": "nemoclaw-maintainer-product-slides",
     "ground_truth": "An owner-reviewed presentation grouping can place an open unmilestoned Epic in one selected milestone without claiming or changing native GitHub state.",
     "expected_behavior": [

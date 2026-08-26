@@ -928,12 +928,12 @@ function receiptSourceFindings(
   const nativeEpicSourceRecords = snapshot.milestones.flatMap((milestone) =>
     receiptRecords(receipts, `milestone-${milestone.number}-issues`),
   );
-  const presentationMappedEpicSourceRecords = snapshot.epics
+  const unmilestonedEpicCandidateSourceRecords = snapshot.epics
     .filter((epic) => epic.milestoneNodeId === null)
     .flatMap((epic) => openIssueRecords.filter((issue) => issue.id === epic.nodeId));
   const expectedWorkTrackingRequests = [
     ...nativeEpicSourceRecords,
-    ...presentationMappedEpicSourceRecords,
+    ...unmilestonedEpicCandidateSourceRecords,
   ].flatMap((issue) => {
     const issueType = asRecord(issue.issueType);
     if (
@@ -1817,10 +1817,15 @@ export function buildSlideModel(options: {
     if (sourceFinding.code === "EPIC_MILESTONE_MISSING") {
       const issueNumberMatch = /#([1-9]\d*)/u.exec(sourceFinding.message);
       const issueNumber = issueNumberMatch ? Number(issueNumberMatch[1]) : null;
+      const unmilestonedEpic = options.snapshot.epics.find(
+        (epic) => epic.issueNumber === issueNumber && epic.milestoneNodeId === null,
+      );
       const presentationEntry = options.presentation.epics.find(
-        (entry) => entry.issueNumber === issueNumber,
+        (entry) =>
+          entry.issueNumber === issueNumber && entry.epicNodeId === unmilestonedEpic?.nodeId,
       );
       if (
+        unmilestonedEpic?.state === "OPEN" &&
         presentationEntry?.presentationMilestoneNodeId &&
         options.snapshot.milestones.some(
           (milestone) => milestone.nodeId === presentationEntry.presentationMilestoneNodeId,
@@ -1960,7 +1965,7 @@ export function buildSlideModel(options: {
       milestoneIds.has(presentationEntry.presentationMilestoneNodeId)
     ) {
       displayMilestoneByEpic.set(epic.nodeId, presentationEntry.presentationMilestoneNodeId);
-    } else {
+    } else if (epic.milestoneNodeId !== null || epic.state !== "OPEN") {
       blockers.push(
         blocker(
           "EPIC_MILESTONE_UNRESOLVED",
@@ -1972,11 +1977,14 @@ export function buildSlideModel(options: {
     }
   }
 
-  const selectedPresentationKeys = new Set(
+  const selectedEpics = options.snapshot.epics.filter((epic) =>
+    displayMilestoneByEpic.has(epic.nodeId),
+  );
+  const collectedEpicKeys = new Set(
     options.snapshot.epics.map((epic) => `${epic.nodeId}\u0000${epic.issueNumber}`),
   );
   for (const entry of options.presentation.epics) {
-    if (!selectedPresentationKeys.has(`${entry.epicNodeId}\u0000${entry.issueNumber}`)) {
+    if (!collectedEpicKeys.has(`${entry.epicNodeId}\u0000${entry.issueNumber}`)) {
       blockers.push(
         blocker(
           "PRESENTATION_MAPPING_UNSELECTED_EPIC",
@@ -1987,7 +1995,7 @@ export function buildSlideModel(options: {
       );
     }
   }
-  const orderedEpics = [...options.snapshot.epics].sort((left, right) => {
+  const orderedEpics = [...selectedEpics].sort((left, right) => {
     const leftOrder = presentationByEpic.get(left.nodeId)?.displayOrder ?? Number.MAX_SAFE_INTEGER;
     const rightOrder =
       presentationByEpic.get(right.nodeId)?.displayOrder ?? Number.MAX_SAFE_INTEGER;

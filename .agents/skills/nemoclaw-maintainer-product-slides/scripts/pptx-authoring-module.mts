@@ -6,7 +6,9 @@
 // file, where the bundled presentation runtime executes the artifact edits.
 
 import fs from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { FileBlob, PresentationFile } from "@oai/artifact-tool";
 
@@ -916,16 +918,7 @@ function parseArgs(argv) {
   return options;
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const [model, roleMap, frameMap] = await Promise.all([
-    fs.readFile(path.resolve(options.model), "utf8").then(JSON.parse),
-    fs.readFile(path.resolve(options.roleMap), "utf8").then(JSON.parse),
-    fs.readFile(path.resolve(options.templateFrameMap), "utf8").then(JSON.parse),
-  ]);
-  const starterPptxPath = path.resolve(options.templateStarter);
-  const presentation = await PresentationFile.importPptx(await FileBlob.load(starterPptxPath));
-
+export function applyManagedSlides(presentation, model, roleMap, frameMap) {
   for (const slideModel of model.slides) {
     const role = slideModel.role;
     if (!MANAGED_ROLES.includes(role)) throw new Error(`Unknown managed role: ${role}`);
@@ -996,6 +989,19 @@ async function main() {
     slide.speakerNotes.textFrame.setText(slideModel.managedNotes);
     slide.speakerNotes.setVisible(false);
   }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const [model, roleMap, frameMap] = await Promise.all([
+    fs.readFile(path.resolve(options.model), "utf8").then(JSON.parse),
+    fs.readFile(path.resolve(options.roleMap), "utf8").then(JSON.parse),
+    fs.readFile(path.resolve(options.templateFrameMap), "utf8").then(JSON.parse),
+  ]);
+  const starterPptxPath = path.resolve(options.templateStarter);
+  const presentation = await PresentationFile.importPptx(await FileBlob.load(starterPptxPath));
+
+  applyManagedSlides(presentation, model, roleMap, frameMap);
 
   await fs.mkdir(path.dirname(path.resolve(options.output)), {
     recursive: true,
@@ -1004,7 +1010,12 @@ async function main() {
   await pptx.save(path.resolve(options.output));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack : String(error));
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exitCode = 1;
+  });
+}

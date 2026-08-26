@@ -115,6 +115,8 @@ Use this repository-wide receipt to report the remaining open Epics in each open
 lifecycle finding.
 For each open result with no milestone whose `issueType.name` is exactly `Epic`, retain it as a
 presentation-grouping candidate.
+Collect the same body, native subissue, `## Work Tracking`, and progress evidence for every
+candidate before any runtime presentation map exists.
 Include it only when its owner-reviewed runtime entry contains `presentationMilestoneNodeId` that
 equals the node ID of one selected eligible milestone.
 That field does not change or claim the Epic's native GitHub milestone.

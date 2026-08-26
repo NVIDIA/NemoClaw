@@ -434,7 +434,7 @@ export type ResolvedMilestoneSelection = {
   displayTitle: string;
 };
 
-type RawIssue = {
+export type RawIssue = {
   id: string;
   number: number;
   title: string;
@@ -465,15 +465,9 @@ export type RawOpenIssue = {
   milestone: null | { id: string; number: number };
 };
 
-type DetailedRawOpenIssue = RawOpenIssue & {
+export type DetailedRawOpenIssue = RawOpenIssue & {
   body: string;
   createdAt: string;
-};
-
-type PresentationMilestoneEntry = {
-  epicNodeId: string;
-  issueNumber: number;
-  presentationMilestoneNodeId?: string;
 };
 
 type RawDiscussion = {
@@ -639,43 +633,66 @@ export function roadmapLifecycleFindings(
 }
 
 export function unmilestonedEpicFindings(openIssues: RawOpenIssue[]): ValidationFinding[] {
-  return openIssues.flatMap((issue) =>
-    issue.state === "OPEN" && issue.issueType?.name === "Epic" && issue.milestone === null
-      ? [
-          {
-            code: "EPIC_MILESTONE_MISSING",
-            message: `Open native Epic #${issue.number} ${issue.title} has no milestone and was omitted.`,
-            remediation:
-              "Assign the Epic to an eligible milestone or add an owner-reviewed presentation grouping, then recollect all evidence.",
-            role: "roadmap-executive" as const,
-          },
-        ]
-      : [],
+  return openUnmilestonedEpicCandidates(openIssues).map((issue) => ({
+    code: "EPIC_MILESTONE_MISSING",
+    message: `Open native Epic #${issue.number} ${issue.title} has no milestone and requires an owner-reviewed presentation grouping before it can appear.`,
+    remediation:
+      "Assign the Epic to an eligible milestone and recollect, or add an owner-reviewed presentation grouping and rebuild the model.",
+    role: "roadmap-executive" as const,
+  }));
+}
+
+export function openUnmilestonedEpicCandidates<T extends RawOpenIssue>(openIssues: T[]): T[] {
+  return openIssues.filter(
+    (issue) =>
+      issue.state === "OPEN" && issue.issueType?.name === "Epic" && issue.milestone === null,
   );
 }
 
-export function presentationMappedUnmilestonedEpics(
-  openIssues: RawOpenIssue[],
-  presentationEntries: PresentationMilestoneEntry[],
-  selectedMilestones: RawMilestone[],
-): Array<{ issue: RawOpenIssue; displayMilestone: RawMilestone }> {
-  const selectedMilestoneById = new Map(
-    selectedMilestones.map((milestone) => [milestone.id, milestone] as const),
-  );
-  return openIssues.flatMap((issue) => {
-    if (issue.issueType?.name !== "Epic" || issue.milestone !== null) return [];
-    const matchingEntries = presentationEntries.filter(
-      (entry) => entry.issueNumber === issue.number || entry.epicNodeId === issue.id,
-    );
-    if (matchingEntries.length !== 1) return [];
-    const entry = matchingEntries[0];
-    const displayMilestone = entry.presentationMilestoneNodeId
-      ? selectedMilestoneById.get(entry.presentationMilestoneNodeId)
-      : undefined;
-    return entry.issueNumber === issue.number && entry.epicNodeId === issue.id && displayMilestone
-      ? [{ issue, displayMilestone }]
-      : [];
-  });
+export function collectRoadmapEpicEvidence(options: {
+  selectedMilestones: RawMilestone[];
+  openIssues: DetailedRawOpenIssue[];
+  collectMilestoneIssues: (milestone: RawMilestone) => RawIssue[];
+  collectEpicEvidence: (
+    issue: RawIssue | DetailedRawOpenIssue,
+    nativeMilestone: RawMilestone | null,
+  ) => void;
+}): { excludedIssues: Array<Record<string, unknown>>; findings: ValidationFinding[] } {
+  const excludedIssues: Array<Record<string, unknown>> = [];
+  const findings: ValidationFinding[] = [];
+  for (const milestone of options.selectedMilestones) {
+    const issues = options.collectMilestoneIssues(milestone);
+    for (const issue of issues) {
+      if (issue.issueType?.name !== "Epic") {
+        excludedIssues.push({
+          nodeId: issue.id,
+          issueNumber: issue.number,
+          title: issue.title,
+          nativeIssueType: issue.issueType?.name ?? null,
+          milestoneNodeId: milestone.id,
+          reason: "native issue type is not Epic",
+        });
+        continue;
+      }
+      options.collectEpicEvidence(issue, milestone);
+    }
+  }
+
+  const unmilestonedEpicCandidates = openUnmilestonedEpicCandidates(options.openIssues);
+  findings.push(...unmilestonedEpicFindings(unmilestonedEpicCandidates));
+  for (const issue of unmilestonedEpicCandidates) {
+    if (typeof issue.body !== "string" || typeof issue.createdAt !== "string") {
+      findings.push({
+        code: "EPIC_RECEIPT_MISMATCH",
+        message: `Open native Epic #${issue.number} lacks complete body evidence and was omitted.`,
+        remediation: "Recollect the complete repository-open-issues connection.",
+        role: "roadmap-executive",
+      });
+      continue;
+    }
+    options.collectEpicEvidence(issue, null);
+  }
+  return { excludedIssues, findings };
 }
 
 function validateMilestoneLifecycle(milestone: RawMilestone): void {
@@ -940,7 +957,7 @@ export function requiredReceiptQueryIds(snapshot: {
       .filter((epic) => epic.milestoneNodeId === milestone.nodeId)
       .map((epic) => `issue-${epic.issueNumber}-subissues`),
   ]);
-  const presentationMappedEpicReceipts = snapshot.epics
+  const unmilestonedEpicCandidateReceipts = snapshot.epics
     .filter((epic) => epic.milestoneNodeId === null)
     .map((epic) => `issue-${epic.issueNumber}-subissues`);
   return [
@@ -949,7 +966,7 @@ export function requiredReceiptQueryIds(snapshot: {
     "repository-summary",
     "repository-open-issues",
     ...roadmapReceipts,
-    ...presentationMappedEpicReceipts,
+    ...unmilestonedEpicCandidateReceipts,
     "work-tracking-issues",
     "tag-refs",
     "tag-default-branch-ancestry",
@@ -1030,10 +1047,10 @@ export function expectedReceiptScopeForSnapshot(
       scopeRecords(receipts, `milestone-${milestone.number}-issues`),
     );
     const openIssueRecords = scopeRecords(receipts, "repository-open-issues");
-    const presentationMappedEpicRecords = snapshot.epics
+    const unmilestonedEpicCandidateRecords = snapshot.epics
       .filter((epic) => epic.milestoneNodeId === null)
       .flatMap((epic) => openIssueRecords.filter((issue) => issue.number === epic.issueNumber));
-    for (const issue of [...nativeEpicRecords, ...presentationMappedEpicRecords]) {
+    for (const issue of [...nativeEpicRecords, ...unmilestonedEpicCandidateRecords]) {
       if (
         (issue.issueType as Record<string, unknown> | null)?.name !== "Epic" ||
         typeof issue.body !== "string" ||
@@ -1887,16 +1904,13 @@ export function collectGitHubSnapshot(options: CliOptions): Record<string, unkno
     startedAt,
   );
   let aliases: Record<string, string> = {};
-  let presentationEntries: PresentationMilestoneEntry[] = [];
   if (options.presentationMap) {
     const presentation = JSON.parse(
       readFileSync(path.resolve(options.presentationMap), "utf8"),
     ) as {
       milestoneAliases?: Record<string, string>;
-      epics?: PresentationMilestoneEntry[];
     };
     aliases = presentation.milestoneAliases ?? {};
-    presentationEntries = Array.isArray(presentation.epics) ? presentation.epics : [];
   }
 
   const base = collectMilestones(owner, name, receipts);
@@ -1941,31 +1955,6 @@ export function collectGitHubSnapshot(options: CliOptions): Record<string, unkno
   const selectedMilestones = milestoneSelections.map(({ milestone }) => milestone);
   const epics: Array<Record<string, unknown>> = [];
   const excludedIssues: Array<Record<string, unknown>> = [];
-  const presentationMappedEpics = presentationMappedUnmilestonedEpics(
-    openIssues,
-    presentationEntries,
-    selectedMilestones,
-  );
-  const presentationMappedEpicIds = new Set(presentationMappedEpics.map(({ issue }) => issue.id));
-  const unresolvedUnmilestonedEpics = openIssues.filter(
-    (issue) =>
-      issue.issueType?.name === "Epic" &&
-      issue.milestone === null &&
-      !presentationMappedEpicIds.has(issue.id),
-  );
-  findings.push(...unmilestonedEpicFindings(unresolvedUnmilestonedEpics));
-  for (const issue of unresolvedUnmilestonedEpics) {
-    if (issue.issueType?.name === "Epic" && issue.milestone === null) {
-      excludedIssues.push({
-        nodeId: issue.id,
-        issueNumber: issue.number,
-        title: issue.title,
-        nativeIssueType: issue.issueType.name,
-        milestoneNodeId: null,
-        reason: "native Epic has no milestone",
-      });
-    }
-  }
   const trackedIssueRecords: Array<Record<string, unknown>> = [];
   const trackedQueryRequests: Array<{
     parentIssueNumber: number;
@@ -2034,40 +2023,19 @@ export function collectGitHubSnapshot(options: CliOptions): Record<string, unkno
       progress: normalizeProgress(children),
     });
   };
-  for (const milestone of selectedMilestones) {
-    const issues = collectMilestoneIssues(owner, name, milestone, receipts);
-    for (const issue of issues) {
-      if (issue.issueType?.name !== "Epic") {
-        excludedIssues.push({
-          nodeId: issue.id,
-          issueNumber: issue.number,
-          title: issue.title,
-          nativeIssueType: issue.issueType?.name ?? null,
-          milestoneNodeId: milestone.id,
-          reason: "native issue type is not Epic",
-        });
-        continue;
-      }
-      collectEpic(issue, milestone);
-    }
-  }
-  for (const { issue } of presentationMappedEpics) {
-    if (typeof issue.body !== "string" || typeof issue.createdAt !== "string") {
-      findings.push({
-        code: "EPIC_RECEIPT_MISMATCH",
-        message: `Open native Epic #${issue.number} lacks complete body evidence and was omitted.`,
-        remediation: "Recollect the complete repository-open-issues connection.",
-        role: "roadmap-executive",
-      });
-      continue;
-    }
-    collectEpic(issue as DetailedRawOpenIssue, null);
-  }
+  const roadmapEvidence = collectRoadmapEpicEvidence({
+    selectedMilestones,
+    openIssues,
+    collectMilestoneIssues: (milestone) => collectMilestoneIssues(owner, name, milestone, receipts),
+    collectEpicEvidence: collectEpic,
+  });
+  excludedIssues.push(...roadmapEvidence.excludedIssues);
+  findings.push(...roadmapEvidence.findings);
   const uniqueEpicIds = new Set(epics.map((epic) => epic.nodeId));
   if (uniqueEpicIds.size !== epics.length) {
     findings.push({
       code: "EPIC_DUPLICATE",
-      message: "One native Epic appeared more than once in the eligible milestones.",
+      message: "One native Epic appeared more than once in the collected roadmap evidence.",
       remediation:
         "Stop; have an authorized owner correct the native milestone assignment through its owning GitHub workflow, then recollect all evidence.",
     });

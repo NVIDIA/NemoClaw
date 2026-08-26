@@ -1034,7 +1034,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
       fs.writeFileSync(docPath, committed);
       fs.writeFileSync(path.join(repoRoot, "ci/platform-matrix.json"), "{}\n");
       runGit("add", ".");
-      runGit("commit", "-m", "test: add immutable evidence");
+      runGit("commit", "--no-gpg-sign", "-m", "test: add immutable evidence");
       const commitSha = runGit("rev-parse", "HEAD");
       fs.writeFileSync(docPath, "# Architecture\n\n## Reviewed Scope\n\nDirty lie.\n");
 
@@ -1084,14 +1084,14 @@ describe("NemoClaw product slide evidence fails closed", () => {
         `from pathlib import Path\nPath(${JSON.stringify(markerPath)}).write_text("executed")\n`,
       );
       runGit("add", ".");
-      runGit("commit", "-m", "test: add untrusted generator");
+      runGit("commit", "--no-gpg-sign", "-m", "test: add untrusted generator");
       const selectedCommit = runGit("rev-parse", "HEAD");
       fs.writeFileSync(
         path.join(repoRoot, "scripts/generate-platform-docs.py"),
         "raise SystemExit(0)\n",
       );
       runGit("add", ".");
-      runGit("commit", "-m", "test: review generator");
+      runGit("commit", "--no-gpg-sign", "-m", "test: review generator");
 
       expect(() =>
         collectDocumentationEvidence({
@@ -1117,7 +1117,7 @@ describe("NemoClaw product slide evidence fails closed", () => {
       runGit("config", "user.email", "nemoclaw-test@example.com");
       fs.writeFileSync(path.join(repoRoot, "tracked.txt"), "tracked\n");
       runGit("add", ".");
-      runGit("commit", "-m", "test: initialize repository");
+      runGit("commit", "--no-gpg-sign", "-m", "test: initialize repository");
       runGit("remote", "add", "origin", "https://evilgithub.com/NVIDIA/NemoClaw.git");
 
       expect(() =>

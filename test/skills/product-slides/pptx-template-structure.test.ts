@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -14,20 +15,140 @@ import {
   audienceStrings,
   capabilityDividerInventoryFromSlideXml,
   COMPLETED_EPIC_CONTEXT_COLOR,
-  createTemplateFidelityStarterComparisonLayouts,
   createTemporaryPptxAuthoringSurface,
   expectedMetricText,
   hyperlinkInventoryFromSlideXml,
   managedOperationTextByIdentity,
+  runTemplateFidelityWorkflow,
   validateCapabilityClassificationWarningAuthorization,
   validateRoadmapCapabilityDeleteAuthorization,
   validateRoadmapExecutiveDeleteAuthorization,
-  validateTemplateLayoutFidelity,
   validateWeeklyMilestoneRowLayout,
   validateWeeklyMilestoneRowRoleMap,
   weeklyMilestoneLabelText,
   validateSingleSlideLayoutPair,
 } from "./pptx-template-test-support";
+
+type FakeParagraph = {
+  runs?: Array<{ run?: unknown; textStyle?: Record<string, unknown> }>;
+  [key: string]: unknown;
+};
+
+function createFakeText(initial = "") {
+  let value = initial;
+  let paragraphs: FakeParagraph[] = [];
+  const ranges: Array<{
+    text: string;
+    link?: { uri: string; isExternal: boolean };
+    underline?: unknown;
+    color?: unknown;
+  }> = [];
+  return {
+    style: {} as Record<string, unknown>,
+    get value() {
+      return value;
+    },
+    get paragraphs() {
+      return paragraphs;
+    },
+    ranges,
+    toString() {
+      return value;
+    },
+    set(next: FakeParagraph[]) {
+      paragraphs = structuredClone(next);
+      value = next
+        .map((paragraph) => (paragraph.runs ?? []).map((run) => String(run.run ?? "")).join(""))
+        .join("\n");
+    },
+    replace(search: string, replacement: string) {
+      value = value.replace(search, replacement);
+    },
+    get(text: string) {
+      const range = { text } as (typeof ranges)[number];
+      ranges.push(range);
+      return range;
+    },
+  };
+}
+
+function createFakeShape(name: string, initialText = "") {
+  const text = createFakeText(initialText);
+  const shape = {
+    id: `fake-${name}`,
+    name,
+    position: {} as Record<string, unknown>,
+    deleted: false,
+    text,
+    delete() {
+      shape.deleted = true;
+    },
+  };
+  Object.defineProperty(shape, "text", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return text;
+    },
+    set(value: unknown) {
+      text.set([{ runs: [{ run: String(value) }] }]);
+    },
+  });
+  return shape;
+}
+
+function createFakeSlide(elements: Array<Record<string, unknown>>) {
+  const addedShapes: Array<ReturnType<typeof createFakeShape> & Record<string, unknown>> = [];
+  const connectors: Array<Record<string, unknown>> = [];
+  const notes = { text: "", visible: true };
+  return {
+    elements: { items: elements },
+    addedShapes,
+    connectors,
+    shapes: {
+      add(options: Record<string, unknown>) {
+        const shape = Object.assign(createFakeShape(String(options.name ?? "added")), options);
+        addedShapes.push(shape);
+        return shape;
+      },
+      connect(
+        from: ReturnType<typeof createFakeShape>,
+        to: ReturnType<typeof createFakeShape>,
+        options: Record<string, unknown>,
+      ) {
+        const connector = {
+          id: `fake-connector-${connectors.length + 1}`,
+          name: "",
+          connector: { fromIdx: 0, toIdx: 1 },
+          from,
+          to,
+          options,
+          reboundFrom: null as null | { id: string; index: number },
+          reboundTo: null as null | { id: string; index: number },
+          setConnectorFrom(node: { id: string }, index: number) {
+            connector.reboundFrom = { id: node.id, index };
+          },
+          setConnectorTo(id: string, index: number) {
+            connector.reboundTo = { id, index };
+          },
+        };
+        connectors.push(connector);
+        return connector;
+      },
+    },
+    speakerNotes: {
+      textFrame: {
+        setText(value: string) {
+          notes.text = value;
+        },
+      },
+      setVisible(value: boolean) {
+        notes.visible = value;
+      },
+    },
+    notes,
+  };
+}
 
 describe("NemoClaw PowerPoint template authoring contracts", () => {
   it("keeps protected template links out of the model-managed hyperlink inventory", () => {
@@ -184,10 +305,20 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
     ).toThrow(/roadmap-capability\.1.*exact native classification warning zone/u);
   });
 
-  it("copies the actual plain-JavaScript authoring source to an owner-only .mjs surface", async () => {
+  it("copies the owner-only authoring surface and applies every managed slide role", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pptx-authoring-surface-"));
     const runtimeNodeModules = path.join(temp, "runtime-node-modules");
     fs.mkdirSync(runtimeNodeModules);
+    const artifactToolDir = path.join(runtimeNodeModules, "@oai", "artifact-tool");
+    fs.mkdirSync(artifactToolDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(artifactToolDir, "package.json"),
+      JSON.stringify({ name: "@oai/artifact-tool", type: "module", exports: "./index.js" }),
+    );
+    fs.writeFileSync(
+      path.join(artifactToolDir, "index.js"),
+      "export const FileBlob = {}; export const PresentationFile = {};\n",
+    );
     let surface: Awaited<ReturnType<typeof createTemporaryPptxAuthoringSurface>> | undefined;
     try {
       const sourcePath = path.resolve(
@@ -207,144 +338,459 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
       expect(fs.realpathSync(path.join(surface.directory, "node_modules"))).toBe(
         fs.realpathSync(runtimeNodeModules),
       );
-      const text = copied.toString("utf8");
-      expect(text).toContain('from "@oai/artifact-tool"');
-      expect(text).toContain("PresentationFile.importPptx(");
-      expect(text).toContain("slide.shapes.connect(");
-      expect(text).toContain('tail: { type: "triangle", width: "med", length: "med" }');
-      expect(text).not.toContain('head: { type: "triangle", width: "med", length: "med" }');
-      expect(text).toContain("connectorShape.setConnectorFrom(fromNode, fromIdx)");
-      expect(text).toContain("connectorShape.setConnectorTo(toNode.id, toIdx)");
-      expect(text).toContain("for (const node of stagingNodes.values()) node.delete()");
-      expect(text).toContain("const baseStyle = artifactTextStyle(operation.textStyle)");
-      expect(text).toContain("...(operation.paragraphStyle ?? {})");
-      expect(text).toContain("outcomeParagraphStyle(operation, index, outcomes.length)");
-      expect(text).toContain("operation.paragraphStyles.length === 0");
-      expect(text).toContain("function retainedOperations(");
-      expect(text).toContain("const deletedNames = applyAuthorizedDeletes(");
-      expect(text).toContain("Unused runtime outcome target was not deleted by its frame map");
-      expect(text).toContain('if (next === "")');
-      expect(text).toContain('target.text.set([{ runs: [{ run: "" }], bulletCharacter: "" }])');
-      expect(text).toContain("if (index === outcomeCount - 1) return styles.at(-1)");
-      expect(text).toContain("function epicCompletionPrefix(item, context)");
-      expect(text).toContain('return item.state === "CLOSED" ? "✓ " : ""');
-      expect(text).toContain('const COMPLETED_EPIC_CONTEXT_COLOR = "#5B5B5B"');
-      expect(text).toContain("${outcome.featureTitle}:`");
-      expect(text).toContain("color: COMPLETED_EPIC_CONTEXT_COLOR");
-      expect(text).not.toContain("link: { uri: outcome.url, isExternal: true }");
-      expect(text).toContain('underline: "none"');
-      expect(text).not.toContain(
-        "addLink(target, `${outcome.featureTitle}: ${outcome.text}`, outcome.url)",
-      );
-      expect(text).toContain("target.text.style = artifactTextStyle(operation.textFrameStyle)");
-      expect(text).toContain("structuredParagraphStyle(");
-      expect(text).toContain("paragraphStyle.lineSpacingPercent = Math.round(");
-      expect(text).toContain("paragraphStyle.bulletCharacter = style.bulletCharacter");
-      const outcomeListAuthoring = text.slice(
-        text.indexOf("function applyOutcomeListOperations"),
-        text.indexOf("function metricById"),
-      );
-      const textFrameStyleAssignment =
-        "target.text.style = artifactTextStyle(operation.textFrameStyle)";
-      const outcomeListSet = outcomeListAuthoring.indexOf("target.text.set(\n      outcomes.map");
-      expect(outcomeListSet).toBeGreaterThan(-1);
-      expect(outcomeListAuthoring.match(/target\.text\.style = artifactTextStyle/g)).toHaveLength(
-        1,
-      );
-      expect(outcomeListAuthoring.indexOf(textFrameStyleAssignment)).toBeLessThan(outcomeListSet);
-      expect(outcomeListAuthoring.lastIndexOf(textFrameStyleAssignment)).toBeLessThan(
-        outcomeListSet,
-      );
-      expect(text).toContain("function capabilityEpicReferenceText(item)");
-      expect(text).toContain("function capabilityEpicRuns(\n  item,\n  textStyle,");
-      expect(text).toContain("const topRow = contract.table.topRow");
-      expect(text).toContain('table.cells.set(topRow, contract.table.areaLabelColumn, "")');
-      expect(text).toContain("retainedOperations(contract.operations, deletedNames)");
-      expect(text).not.toContain("capabilityFocusText(");
-      expect(text).toContain("function replaceRoadmapFocusText(target, item)");
-      expect(text).toContain("Roadmap focus target does not match the template label structure");
-      expect(text).toContain("nextText = replaceRoadmapFocusText(target, focusItem)");
-      expect(text).toContain("${item.title}`,");
-      expect(text).toContain('const labelStyle = { ...textStyle, bold: true, underline: "none" }');
-      expect(text).toContain(
-        'const referenceStyle = { ...referenceTextStyle, bold: false, underline: "none" }',
-      );
-      expect(text).toContain("capabilityEpicReferenceText(item),");
-      expect(text).not.toContain("addLink(nativeCell, item.title, item.url)");
-      expect(text).toContain("...capabilityEpicRuns(item, warningTextStyle)");
-      expect(text).toContain("referenceTextStyle = textStyle");
-      expect(text).toContain("linkTextStyle = referenceTextStyle");
-      expect(text).toContain("textStyle: linkedReferenceStyle");
-      expect(text).toContain("contract.table.referenceTextStyle ?? contract.table.cellTextStyle");
-      expect(text).toContain("contract.table.linkTextStyle ??");
-      expect(text).toContain(
-        "capabilityEpicRuns(item, cellTextStyle, referenceTextStyle, linkTextStyle)",
-      );
-      expect(text).toContain("`Capability item ${item.contentId}`,\n          linkTextStyle");
-      expect(text).toContain("function weeklyEvidenceItems(row, kind)");
-      expect(text).toContain("String(target.text).split(/\\s+\\|\\s+/u)");
-      expect(text).toContain(
-        "Runtime momentum target does not match the template metric structure",
-      );
-      expect(text).toContain("/^(\\d+ OPENED)(\\s+\\|\\s+)(\\d+ CLOSED)$/u.exec(source)");
-      expect(text).toContain("replaceText(target, textValue(metric.value))");
-      expect(text).toContain(
-        'return row.risks.length > 0 ? row.risks : [{ label: "", text: "None" }]',
-      );
-      expect(text).toContain("function applyMilestoneRowOperations");
-      expect(text).toContain("function replaceWeeklyMilestoneLabelText(target, title)");
-      expect(text).toContain("replaceWeeklyMilestoneLabelText(target, row.title)");
-      expect(text).toContain("paragraphStyle: { ...(operation.paragraphStyle ?? {}) }");
-      expect(text).toContain(
-        "...structuredParagraphStyle(paragraphContract, operation.textFrameStyle)",
-      );
-      expect(text).toContain("{ run: `${item.label}: `, textStyle: { ...style, bold: true } }");
-      expect(text).toContain("function applyGeometryOperations");
-      expect(text).toContain("target.position = runtimePositionFromEmu(operation.positionEmu)");
-      expect(text).toContain("const sourceTitle = String(title.text)");
-      expect(text).toContain("const outputTitle = textValue(model.title)");
-      expect(text).toContain(
-        "title.text.replace(sourceTitle.slice(emphasis.length), outputTitle.slice(emphasis.length))",
-      );
-      expect(text).toContain(
-        "Markitecture title rewrite must preserve the template's emphasized title prefix",
-      );
-      expect(text).toContain("operation.linkTextStyle");
-      expect(text).toContain("range.color = textStyle.color");
-      expect(text).toContain("frames.connectorLabelTypeface ?? frames.nodeTypeface");
-      expect(text).toContain("bold: frames.connectorLabelBold ?? false");
-      expect(text).toContain("PresentationFile.exportPptx(");
-      expect(text).not.toMatch(/\b(?:interface|enum|namespace)\s+[A-Za-z_$]/u);
       const syntax = spawnSync(process.execPath, ["--check", surface.modulePath], {
         encoding: "utf8",
       });
       expect(syntax.status, syntax.stderr).toBe(0);
+      const actualEntrypoint = spawnSync(process.execPath, [surface.modulePath], {
+        encoding: "utf8",
+      });
+      expect(actualEntrypoint.status).toBe(1);
+      expect(actualEntrypoint.stderr).toMatch(/Missing authoring option: model/u);
+      const unknownArgument = spawnSync(
+        process.execPath,
+        [surface.modulePath, "--unsupported", "value"],
+        { encoding: "utf8" },
+      );
+      expect(unknownArgument.status).toBe(1);
+      expect(unknownArgument.stderr).toMatch(/Unknown authoring argument: --unsupported/u);
+
+      const executiveTitle = createFakeShape("executive-title", "Old roadmap");
+      const executiveOutcomes = createFakeShape("executive-outcomes", "Old outcomes");
+      const executiveSlide = createFakeSlide([
+        executiveTitle as unknown as Record<string, unknown>,
+        executiveOutcomes as unknown as Record<string, unknown>,
+      ]);
+
+      const capabilityTitle = createFakeShape("capability-title", "Old capability");
+      const capabilityCell = createFakeShape("capability-cell");
+      const capabilityCells = new Map([["1:1", capabilityCell]]);
+      const tableWrites = new Map<string, unknown>();
+      const capabilityTable = {
+        name: "capability-table",
+        cells: {
+          set(row: number, column: number, value: unknown) {
+            tableWrites.set(`${row}:${column}`, value);
+            capabilityCells.get(`${row}:${column}`)?.text.set([{ runs: [{ run: String(value) }] }]);
+          },
+        },
+        getCell(row: number, column: number) {
+          return capabilityCells.get(`${row}:${column}`) ?? createFakeShape("unused-cell");
+        },
+      };
+      const capabilitySlide = createFakeSlide([
+        capabilityTitle as unknown as Record<string, unknown>,
+        capabilityTable as unknown as Record<string, unknown>,
+      ]);
+
+      const markitectureTitle = createFakeShape("markitecture-title", "NemoClaw old flow");
+      const markitectureSlide = createFakeSlide([
+        markitectureTitle as unknown as Record<string, unknown>,
+      ]);
+
+      const weeklyTitle = createFakeShape("weekly-title", "Old weekly title");
+      const latestRelease = createFakeShape("latest-release", "v0.0.1");
+      const weeklyLabel = createFakeShape("weekly-label", "OLD\nLABEL");
+      const weeklyUpdates = createFakeShape("weekly-updates", "Old updates");
+      const weeklyRisks = createFakeShape("weekly-risks", "Old risks");
+      const weeklySlide = createFakeSlide([
+        weeklyTitle as unknown as Record<string, unknown>,
+        latestRelease as unknown as Record<string, unknown>,
+        weeklyLabel as unknown as Record<string, unknown>,
+        weeklyUpdates as unknown as Record<string, unknown>,
+        weeklyRisks as unknown as Record<string, unknown>,
+      ]);
+
+      const slides = [executiveSlide, capabilitySlide, markitectureSlide, weeklySlide];
+      const presentation = {
+        slides: {
+          getItem(index: number) {
+            return slides[index];
+          },
+        },
+        resolve() {
+          throw new Error("The fake runtime does not use anchor IDs");
+        },
+      };
+      const closedExecutiveOutcome = {
+        contentId: "roadmap.outcome.9816",
+        state: "CLOSED",
+        featureTitle: "Kubernetes In-Cluster",
+        text: "Qualify one external gateway workflow",
+      };
+      const model = {
+        slides: [
+          {
+            role: "roadmap-executive",
+            title: "NemoClaw Feature Roadmap",
+            milestones: [{ outcomes: [closedExecutiveOutcome] }],
+            managedNotes: "executive notes",
+          },
+          {
+            role: "roadmap-capability",
+            title: "NemoClaw Feature Roadmap",
+            rows: ["Usability and Onboarding"],
+            columns: [{ milestoneNodeId: "M_Q3", title: "Q3" }],
+            cells: [
+              {
+                roadmapArea: "Usability and Onboarding",
+                milestoneNodeId: "M_Q3",
+                items: [
+                  {
+                    contentId: "capability.epic.9816",
+                    title: "Kubernetes In-Cluster",
+                    state: "CLOSED",
+                    url: "https://github.com/NVIDIA/NemoClaw/issues/9816",
+                  },
+                ],
+              },
+            ],
+            unclassified: [],
+            managedNotes: "capability notes",
+          },
+          {
+            role: "markitecture",
+            title: "NemoClaw system flow",
+            nodes: [
+              { contentId: "node.operator", text: "Operator" },
+              { contentId: "node.sandbox", text: "Sandbox" },
+            ],
+            connectors: [
+              {
+                contentId: "connector.operator-sandbox",
+                from: "node.operator",
+                to: "node.sandbox",
+                lineStyle: "solid",
+                label: "launches",
+              },
+            ],
+            managedNotes: "markitecture notes",
+          },
+          {
+            role: "weekly-release",
+            title: "NemoClaw Weekly Executive Scorecard",
+            metrics: [{ contentId: "metric.latest-release", value: "v1.2.3" }],
+            milestoneRows: [
+              {
+                title: "GTC Berlin",
+                updates: [{ label: "Kubernetes", text: "Qualification completed" }],
+                risks: [],
+              },
+            ],
+            managedNotes: "weekly notes",
+          },
+        ],
+      };
+      const markitectureZone = { left: 0, top: 0, width: 100, height: 100 };
+      const roleMap = {
+        roles: {
+          "roadmap-executive": {
+            operations: [{ target: { name: "executive-title" }, valuePath: "title" }],
+            outcomeListOperations: [
+              {
+                target: { name: "executive-outcomes" },
+                outcomesPath: "milestones.0.outcomes",
+                textStyle: { fontSize: 18, color: "#141414" },
+                paragraphStyle: { bulletCharacter: "•" },
+              },
+            ],
+            geometryOperations: [
+              {
+                target: { name: "executive-title" },
+                positionEmu: { left: 95_250, top: 190_500, width: 952_500, height: 381_000 },
+              },
+            ],
+          },
+          "roadmap-capability": {
+            operations: [{ target: { name: "capability-title" }, valuePath: "title" }],
+            table: {
+              target: { name: "capability-table" },
+              topRow: 0,
+              areaLabelColumn: 0,
+              firstMilestoneColumn: 1,
+              milestoneColumnCount: 1,
+              areaRows: { "Usability and Onboarding": 1 },
+              cellTextStyle: { fontSize: 16, color: "#141414" },
+              referenceTextStyle: { fontSize: 14, color: "#5B5B5B" },
+              linkTextStyle: { fontSize: 14, color: "#76B900", underline: "none" },
+            },
+          },
+          markitecture: {
+            title: {
+              target: { name: "markitecture-title" },
+              emphasis: "NemoClaw",
+            },
+            geometry: {
+              nodeFill: "#EEEEEE",
+              nodeLine: "#76B900",
+              nodeFontSize: 18,
+              nodeTypeface: "Arial",
+              nodeTextColor: "#141414",
+              nodeInsets: { top: 2, right: 2, bottom: 2, left: 2 },
+              connectorColor: "#76B900",
+              connectorWidth: 2,
+              connectorLabelFontSize: 12,
+              secondaryTextColor: "#5B5B5B",
+              nodeFrames: {
+                "node.operator": {
+                  position: { left: 10, top: 10, width: 20, height: 10 },
+                },
+                "node.sandbox": {
+                  position: { left: 60, top: 10, width: 20, height: 10 },
+                },
+              },
+              connectorFrames: {
+                "connector.operator-sandbox": {
+                  line: { left: 30, top: 10, width: 30, height: 10 },
+                  label: { left: 38, top: 22, width: 14, height: 6 },
+                },
+              },
+            },
+          },
+          "weekly-release": {
+            operations: [{ target: { name: "weekly-title" }, valuePath: "title" }],
+            metricOperations: [
+              {
+                target: { name: "latest-release" },
+                kind: "single",
+                metricContentId: "metric.latest-release",
+              },
+            ],
+            milestoneRowOperations: [
+              { target: { name: "weekly-label" }, rowIndex: 0, kind: "label" },
+              {
+                target: { name: "weekly-updates" },
+                rowIndex: 0,
+                kind: "updates",
+                nativeBullets: true,
+                textStyle: { fontSize: 14, color: "#141414" },
+                paragraphStyle: { bulletCharacter: "•" },
+              },
+              {
+                target: { name: "weekly-risks" },
+                rowIndex: 0,
+                kind: "risks",
+                nativeBullets: true,
+                textStyle: { fontSize: 14, color: "#141414" },
+                paragraphStyle: { bulletCharacter: "•" },
+              },
+            ],
+          },
+        },
+      };
+      const frameMap = {
+        outputSlides: [
+          { outputSlide: 1, narrativeRole: "roadmap-executive", editTargets: [] },
+          { outputSlide: 2, narrativeRole: "roadmap-capability", editTargets: [] },
+          {
+            outputSlide: 3,
+            narrativeRole: "markitecture",
+            editTargets: [
+              {
+                action: "rewrite",
+                sourceElementName: "markitecture-title",
+              },
+              ...[
+                "node.operator",
+                "node.sandbox",
+                "connector.operator-sandbox",
+                "connector.operator-sandbox:label",
+              ].map((contentId) => ({
+                action: "add",
+                contentId,
+                newPrimitiveAllowed: true,
+                mustNotOverlapInherited: true,
+                zone: markitectureZone,
+              })),
+            ],
+          },
+          { outputSlide: 4, narrativeRole: "weekly-release", editTargets: [] },
+        ],
+      };
+      const authoring = (await import(pathToFileURL(surface.modulePath).href)) as {
+        applyManagedSlides(
+          presentationValue: unknown,
+          modelValue: unknown,
+          roleMapValue: unknown,
+          frameMapValue: unknown,
+        ): void;
+      };
+
+      authoring.applyManagedSlides(presentation, model, roleMap, frameMap);
+
+      expect(executiveTitle.text.value).toBe("NemoClaw Feature Roadmap");
+      expect(executiveTitle.position).toEqual({ left: 10, top: 20, width: 100, height: 40 });
+      expect(executiveOutcomes.text.value).toBe(
+        "✓ Kubernetes In-Cluster: Qualify one external gateway workflow",
+      );
+      expect(executiveOutcomes.text.paragraphs[0].runs).toEqual([
+        expect.objectContaining({
+          run: "✓ Kubernetes In-Cluster:",
+          textStyle: expect.objectContaining({ bold: true, underline: "none" }),
+        }),
+        expect.objectContaining({
+          run: " Qualify one external gateway workflow",
+          textStyle: expect.objectContaining({ color: "#5B5B5B", underline: "none" }),
+        }),
+      ]);
+      expect(capabilityTitle.text.value).toBe("NemoClaw Feature Roadmap");
+      expect(tableWrites.get("1:0")).toBe("Usability and Onboarding");
+      expect(capabilityCell.text.value).toBe("✓ Kubernetes In-Cluster (#9816)");
+      expect(capabilityCell.text.ranges).toEqual([
+        expect.objectContaining({
+          text: "#9816",
+          link: {
+            uri: "https://github.com/NVIDIA/NemoClaw/issues/9816",
+            isExternal: true,
+          },
+          underline: "none",
+          color: "#76B900",
+        }),
+      ]);
+      expect(markitectureTitle.text.value).toBe("NemoClaw system flow");
+      expect(
+        markitectureSlide.addedShapes.filter((shape) =>
+          String(shape.name).startsWith("nemoclaw:node."),
+        ),
+      ).toHaveLength(2);
+      expect(markitectureSlide.addedShapes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "nemoclaw:connector.operator-sandbox:label",
+          }),
+        ]),
+      );
+      expect(markitectureSlide.connectors).toEqual([
+        expect.objectContaining({
+          name: "nemoclaw:connector.operator-sandbox",
+          options: expect.objectContaining({
+            tail: { type: "triangle", width: "med", length: "med" },
+          }),
+          reboundFrom: expect.objectContaining({ index: 0 }),
+          reboundTo: expect.objectContaining({ index: 1 }),
+        }),
+      ]);
+      expect(
+        markitectureSlide.addedShapes
+          .filter((shape) => String(shape.name).startsWith("nemoclaw-staging:"))
+          .every((shape) => shape.deleted),
+      ).toBe(true);
+      expect(weeklyTitle.text.value).toBe("NemoClaw Weekly Executive Scorecard");
+      expect(latestRelease.text.value).toBe("v1.2.3");
+      expect(weeklyLabel.text.value).toBe("GTC\nBERLIN");
+      expect(weeklyUpdates.text.value).toBe("Kubernetes: Qualification completed");
+      expect(weeklyUpdates.text.paragraphs[0]).toMatchObject({
+        paragraphStyle: { bulletCharacter: "•" },
+      });
+      expect(weeklyRisks.text.value).toBe("None");
+      expect(slides.map((slide) => slide.notes)).toEqual([
+        { text: "executive notes", visible: false },
+        { text: "capability notes", visible: false },
+        { text: "markitecture notes", visible: false },
+        { text: "weekly notes", visible: false },
+      ]);
     } finally {
       fs.rmSync(surface?.directory ?? temp, { recursive: true, force: true });
       fs.rmSync(temp, { recursive: true, force: true });
     }
   });
 
-  it("runs strict raw-layout validation before comparison normalization and the standard helper", () => {
-    const source = fs.readFileSync(
-      path.resolve(".agents/skills/nemoclaw-maintainer-product-slides/scripts/build-pptx.mts"),
-      "utf8",
+  it("rejects invalid raw geometry before comparison normalization can conceal it", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-layout-fidelity-"));
+    const workflowWorkspace = path.join(temp, "workflow");
+    const starterLayoutDir = path.join(temp, "starter");
+    const finalLayoutDir = path.join(temp, "final");
+    const comparisonLayoutDir = path.join(workflowWorkspace, "template-fidelity-starter-layout");
+    const mustNotRun = path.join(temp, "must-not-run");
+    fs.mkdirSync(workflowWorkspace);
+    fs.mkdirSync(starterLayoutDir);
+    fs.mkdirSync(finalLayoutDir);
+    const starterElement = {
+      order: 1,
+      kind: "shape",
+      name: "weekly-source",
+      bbox: [80, 180, 200, 30],
+      fillColor: "#FFFFFF",
+      paragraphs: [{ text: "SOURCE", runs: [{ text: "SOURCE", color: "#666666" }] }],
+    };
+    const finalElement = structuredClone(starterElement);
+    finalElement.bbox = [101, 200, 300, 40];
+    const starter = { inheritedLayers: [], elements: [starterElement] };
+    const final = { inheritedLayers: [], elements: [finalElement] };
+    const frameMap = {
+      outputSlides: [
+        {
+          outputSlide: 1,
+          narrativeRole: "weekly-release",
+          editTargets: [{ action: "rewrite-and-reposition", sourceElementName: "weekly-source" }],
+        },
+      ],
+    };
+    fs.writeFileSync(
+      path.join(starterLayoutDir, "starter-slide-01.layout.json"),
+      JSON.stringify(starter),
     );
-    const workflow = source.slice(
-      source.indexOf("async function runTemplateFidelityWorkflow"),
-      source.indexOf("function sha256Bytes"),
+    fs.writeFileSync(
+      path.join(finalLayoutDir, "final-slide-01.layout.json"),
+      JSON.stringify(final),
     );
-    const strictValidation = workflow.indexOf("await validateTemplateLayoutFidelity(");
-    const standardWorkflow = workflow.indexOf("await runTemplateFidelityCheck(");
-    expect(strictValidation).toBeGreaterThan(-1);
-    expect(standardWorkflow).toBeGreaterThan(strictValidation);
-    const standardCheck = source.slice(
-      source.indexOf("async function runTemplateFidelityCheck"),
-      source.indexOf("async function runTemplateFidelityWorkflow"),
-    );
-    expect(
-      standardCheck.indexOf("await createTemplateFidelityStarterComparisonLayouts("),
-    ).toBeLessThan(standardCheck.indexOf("await runRuntimeProcess("));
+    try {
+      await expect(
+        runTemplateFidelityWorkflow({
+          runtime: {
+            runtimeNode: mustNotRun,
+            runtimeNodeModules: mustNotRun,
+            runtimeBinDir: mustNotRun,
+            skillDir: mustNotRun,
+            tmpDir: mustNotRun,
+          },
+          workflow: {
+            workspace: workflowWorkspace,
+            frameMap: mustNotRun,
+            inspect: mustNotRun,
+            inspectManifest: mustNotRun,
+            audit: mustNotRun,
+            deviationLog: mustNotRun,
+            starterPptx: mustNotRun,
+            starterPreviewDir: mustNotRun,
+            starterLayoutDir,
+            finalLayoutDir,
+          },
+          frozenInputs: {
+            templatePath: mustNotRun,
+            modelPath: mustNotRun,
+            roleMapPath: mustNotRun,
+            frameMapPath: mustNotRun,
+            inspectPath: mustNotRun,
+          },
+          frameMap,
+          model: { slides: [{ role: "weekly-release" }] },
+          roleMap: {
+            roles: {
+              "weekly-release": {
+                geometryOperations: [
+                  {
+                    target: { name: "weekly-source" },
+                    positionEmu: {
+                      left: 952_500,
+                      top: 1_905_000,
+                      width: 2_857_500,
+                      height: 381_000,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          finalPptx: mustNotRun,
+          authoringSurface: { directory: mustNotRun, modulePath: mustNotRun },
+        }),
+      ).rejects.toThrow(/integer-EMU geometry contract/u);
+      expect(fs.existsSync(comparisonLayoutDir)).toBe(false);
+      expect(fs.existsSync(mustNotRun)).toBe(false);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it("requires one native label, Updates, and Risks / Blockers target for each weekly row", () => {

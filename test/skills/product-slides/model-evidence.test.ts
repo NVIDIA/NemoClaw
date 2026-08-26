@@ -339,22 +339,26 @@ describe("NemoClaw product slide source and model contracts", () => {
       const requiredProvenReceipt = provenReceipt as Record<string, unknown>;
       requiredProvenReceipt.termination = "window-cutoff";
       requiredProvenReceipt.terminalHasNextPage = true;
+      const declaredTotalCount = requiredProvenReceipt.declaredTotalCount;
+      const sourceRecords = requiredProvenReceipt.sourceRecords as Array<Record<string, unknown>>;
+      expect(sourceRecords.length).toBeGreaterThan(1);
       requiredProvenReceipt.sourceRecords = [
+        ...sourceRecords.slice(0, -1),
         {
           ...recordIdentity,
           [timestampField]: "2026-08-06T11:59:59.999Z",
         },
       ];
       rehashSnapshotReceipt(proven.snapshot, queryId);
-      expect(
-        publicationCodes(
-          buildSyntheticModel({
-            snapshot: proven.snapshot,
-            presentation: proven.presentation,
-            narrative: proven.narrative,
-          }),
-        ),
-      ).not.toContain("COLLECTION_RECEIPT_INCOMPLETE");
+      requiredProvenReceipt.declaredTotalCount = declaredTotalCount;
+      rehashSnapshot(proven.snapshot);
+      const provenModel = buildSyntheticModel({
+        snapshot: proven.snapshot,
+        presentation: proven.presentation,
+        narrative: proven.narrative,
+      });
+      expect(publicationCodes(provenModel)).toEqual([]);
+      expect((provenModel.publication as Record<string, unknown>).eligible).toBe(true);
     },
   );
 

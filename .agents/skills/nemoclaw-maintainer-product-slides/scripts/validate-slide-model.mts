@@ -117,6 +117,12 @@ function normalizeString(value: string): string {
   return value.replace(/\r\n?/gu, "\n");
 }
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export function canonicalize(value: unknown): JsonValue {
   if (value === null || typeof value === "boolean" || typeof value === "number") {
     return value;
@@ -131,7 +137,7 @@ export function canonicalize(value: unknown): JsonValue {
     const object = value as Record<string, unknown>;
     return Object.fromEntries(
       Object.keys(object)
-        .sort((left, right) => left.localeCompare(right))
+        .sort(compareUtf16CodeUnits)
         .map((key) => [key, canonicalize(object[key])]),
     );
   }

@@ -6,6 +6,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { canonicalJson } from "./validate-slide-model.mts";
+
 export const NATIVE_KINDS = {
   "roadmap-executive": ["line", "shape", "text"],
   "roadmap-capability": ["shape", "table", "text"],
@@ -13,8 +15,6 @@ export const NATIVE_KINDS = {
   "weekly-release": ["shape", "text"],
 } as const;
 
-type JsonObject = { [key: string]: JsonValue };
-type JsonValue = JsonObject | JsonValue[] | boolean | number | string | null;
 type DynamicValue = ReturnType<typeof JSON.parse>;
 export type ManagedRole = keyof typeof NATIVE_KINDS;
 export type ProtectedTextSha256ByRole = Partial<Record<ManagedRole, readonly string[]>>;
@@ -157,21 +157,6 @@ export function normalizeNativeKinds(role: string, nativeObjectKinds: readonly s
     else normalized.add(kind);
   }
   return [...normalized].sort();
-}
-
-function normalize(value: unknown): JsonValue {
-  if (typeof value === "string") return value.replace(/\r\n?/gu, "\n");
-  if (Array.isArray(value)) return value.map(normalize);
-  if (!value || typeof value !== "object") return value as JsonValue;
-  return Object.fromEntries(
-    Object.keys(value as Record<string, unknown>)
-      .sort((left, right) => left.localeCompare(right))
-      .map((key) => [key, normalize((value as Record<string, unknown>)[key])]),
-  );
-}
-
-function canonicalJson(value: unknown): string {
-  return `${JSON.stringify(normalize(value))}\n`;
 }
 
 function sha256(value: string): string {

@@ -36,23 +36,35 @@ Generated roadmap content does not establish a support commitment.
 11. Create a new Google Slides copy for every run. Never edit the default or alternate source template.
 12. Default to `preview`. For a Google target write, require explicit approval and a fresh target revision read. For PowerPoint publication, require the exact reviewed preview and bound publication evidence.
 13. Keep every runtime input and artifact in one owner-only directory until the user completes review and directs cleanup.
+14. Before GitHub collection, verify the applicable prerequisites:
+    - an active GitHub CLI login;
+    - if Google Slides is requested, the Google Slides authoring skill and Drive connection;
+    - if PowerPoint is requested, a successfully loaded bundled presentation runtime.
+    If a prerequisite is missing, stop before collection and report the exact missing capability.
 
-Read these references before collection or rendering:
+Load only the references required for the current stage. Read each selected reference completely
+before acting:
 
-- [Runtime inputs and commands](references/runtime-inputs.md)
-- [Source contract](references/source-contract.md)
-- [Slide contract](references/slide-contract.md)
-- [Template contract](references/template-contract.md)
-- [Slide-model schema](references/slide-model.schema.json)
-- [Milestone alias and presentation seed](references/roadmap-presentation.json)
-- [Markitecture claim ledger](references/markitecture-claims.json)
+- Before collection, read [runtime inputs and commands](references/runtime-inputs.md), the
+  [source contract](references/source-contract.md), and the
+  [milestone alias and presentation seed](references/roadmap-presentation.json).
+- Before building or validating the model, read the
+  [slide contract](references/slide-contract.md) and
+  [slide-model schema](references/slide-model.schema.json).
+- Before collecting markitecture evidence, read the
+  [Markitecture claim ledger](references/markitecture-claims.json).
+- Before either rendering workflow, read the
+  [template contract](references/template-contract.md).
+
+Do not preload references for a later stage.
 
 ## Build One Frozen Model
 
 Run the stages in this order:
 
 1. Collect GitHub evidence with `scripts/collect-github-snapshot.mts`.
-2. Create the owner-only runtime presentation map from the included Epics in that snapshot.
+2. Create the owner-only runtime presentation map from every Epic assigned to a selected native
+   milestone and each open unmilestoned candidate the owner selects for presentation grouping.
 3. Collect documentation evidence from the snapshot's recorded Git commit with `scripts/collect-doc-evidence.mts`.
 4. Review and condense source-bound milestone updates and risks into a runtime narrative input.
 5. Build `slide-model.json` with `scripts/build-slide-model.mts`.
@@ -68,8 +80,9 @@ Never use stale cached GitHub data when the user did not supply `--snapshot`.
 Bind every narrative edit to its source object and body hash.
 
 Create `presentation-map.json` under the owner-only runtime directory after snapshot collection.
-Give every included Epic exactly one entry with the snapshot's node ID, issue number, and body
-SHA-256. Use a reviewed `displayTitle` of two to four words and a reviewed
+Give every Epic assigned to a selected native milestone and each selected unmilestoned candidate
+exactly one entry with the snapshot's node ID, issue number, and body SHA-256. Use a reviewed
+`displayTitle` of two to four words and a reviewed
 `shortenedOutcome` of three to ten words. The body hash binds both summaries.
 Do not use source prose as visible fallback text.
 
@@ -101,8 +114,9 @@ In that case, show the same short label in the unclassified preview and block pu
 reviewed area is present.
 The checked-in `roadmap-presentation.json` may resolve milestone aliases during collection.
 Its Epic entries are optional seeds for the owner-only runtime map.
-After collection, keep only included Epics, review every field, and bind each entry to the current
-snapshot body hash.
+After collection, keep every Epic assigned to a selected native milestone plus only the open
+unmilestoned candidates the owner selects for presentation grouping. Review every field and bind
+each entry to the current snapshot body hash.
 Never pass the checked-in seed directly to model construction or publication.
 
 Allow the public template to use approved GitHub-backed NemoClaw roadmap examples from the public

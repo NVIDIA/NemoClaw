@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { expect } from "vitest";
 
 import {
@@ -14,7 +12,6 @@ import {
   inHalfOpenWindow,
   normalizeProgress,
   paginateConnection,
-  presentationMappedUnmilestonedEpics,
   receiptRequestSha256,
   requiredReceiptQueryIds,
   selectStableTags,
@@ -33,6 +30,7 @@ import {
   buildSyntheticModel,
   fixturePath,
   readJson,
+  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
 } from "../../helpers/nemoclaw-product-slides-fixture";
@@ -603,7 +601,6 @@ export {
   inHalfOpenWindow,
   normalizeProgress,
   paginateConnection,
-  presentationMappedUnmilestonedEpics,
   receiptRequestSha256,
   requiredReceiptQueryIds,
   selectStableTags,
@@ -618,6 +615,7 @@ export {
   buildSyntheticModel,
   fixturePath,
   readJson,
+  roadmapPresentationPath,
   slideModelSchemaPath,
   syntheticFixtureInputs,
 };
