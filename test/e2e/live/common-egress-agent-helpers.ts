@@ -662,7 +662,8 @@ export function reduceOpenClawToolEvidence(
       expectedUrlMatches:
         expectedUrl !== null &&
         call?.requestedUrl === expectedUrl &&
-        normalizedUrl(payload?.url) === expectedUrl,
+        normalizedUrl(payload?.url) === expectedUrl &&
+        normalizedUrl(payload?.finalUrl) === expectedUrl,
       httpSuccess,
       maxCharsWithinLimit: call?.maxCharsWithinLimit === true,
       paired,

@@ -446,6 +446,25 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
   });
 
+  it("rejects a public fetch redirected away from the fixed target", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        payload: publicFetchPayload({ finalUrl: "https://example.com/redirected" }),
+      }),
+      publicFetchTrajectory(),
+      PUBLIC_FETCH_EXPECTATION,
+    );
+
+    expect(evidence.webFetchResults).toContainEqual(
+      expect.objectContaining({ expectedContentMatches: true, expectedUrlMatches: false }),
+    );
+    expect(assessPersonalPublicFetchToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 0,
+      unexpectedWebFetchResults: 1,
+    });
+  });
+
   it("rejects a different public fetch target recorded only as a tool execution", () => {
     const evidence = reduceOpenClawToolEvidence(
       publicFetchSessionJsonLines(),
