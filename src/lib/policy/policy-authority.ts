@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  inspectGlobalPolicyAuthority,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,
@@ -14,6 +15,7 @@ import { assertExternalPolicyRequirementContainment, assertMatchingPolicyAuthori
 type JsonObject = Record<string, unknown>;
 
 export {
+  inspectGlobalPolicyAuthority,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,

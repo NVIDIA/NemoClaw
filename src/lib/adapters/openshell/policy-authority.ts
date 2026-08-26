@@ -9,6 +9,7 @@ import {
 } from "../../sandbox-name-contract";
 import {
   type OpenShellPolicyAuthority,
+  parseGlobalPolicyAuthorityMetadata,
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
@@ -28,8 +29,8 @@ export class PolicyAuthorityRefusalError extends Error {
   readonly code = POLICY_AUTHORITY_REFUSAL_CODE;
   readonly observedAuthority?: SandboxPolicyAuthority;
 
-  constructor(message: string, observedAuthority?: SandboxPolicyAuthority) {
-    super(message);
+  constructor(message: string, observedAuthority?: SandboxPolicyAuthority, options?: ErrorOptions) {
+    super(message, options);
     this.name = "PolicyAuthorityRefusalError";
     this.observedAuthority = observedAuthority;
   }
@@ -54,6 +55,10 @@ export function isExternalPolicyAuthorityRefusalError(error: unknown): boolean {
 
 interface SandboxPolicyAuthorityInspectionOptions {
   readonly sandboxName: string;
+  readonly gatewayName?: string;
+}
+
+interface GlobalPolicyAuthorityInspectionOptions {
   readonly gatewayName?: string;
 }
 
@@ -147,6 +152,52 @@ export function inspectSandboxPolicyAuthority({
   } catch (error) {
     failInspection(
       "sandbox",
+      error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
+    );
+  }
+}
+
+/** Inspect whether an active global policy will manage a sandbox created next. */
+export function inspectGlobalPolicyAuthority({
+  gatewayName,
+}: GlobalPolicyAuthorityInspectionOptions = {}): SandboxPolicyAuthorityInspection {
+  const validatedGatewayName =
+    gatewayName === undefined
+      ? undefined
+      : validatePolicyAuthorityName(gatewayName, "gateway name");
+  const history = capturePolicyQuery(
+    [
+      "policy",
+      "list",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--global",
+      "--limit",
+      "1",
+    ],
+    "global",
+    "policy history",
+  );
+  if (history.trim().length === 0) {
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+  }
+  const raw = capturePolicyQuery(
+    [
+      "policy",
+      "get",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--global",
+      "--full",
+      "--output",
+      "json",
+    ],
+    "global",
+    "machine-readable policy",
+  );
+  try {
+    return parseGlobalPolicyAuthorityMetadata(raw);
+  } catch (error) {
+    failInspection(
+      "global",
       error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
     );
   }

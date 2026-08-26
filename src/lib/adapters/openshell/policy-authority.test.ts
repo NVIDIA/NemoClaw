@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as openshellRuntimeModule from "./runtime";
 import {
+  inspectGlobalPolicyAuthority,
   inspectSandboxPolicyAuthority,
   policyAuthorityInternals,
 } from "./policy-authority";
@@ -36,6 +37,16 @@ function sandboxMetadata(overrides: Record<string, unknown> = {}): Record<string
     sandbox: "alpha",
     status: "effective",
     policy_source: "sandbox",
+    policy: { version: 1, network_policies: { baseline: { endpoints: ["base.test"] } } },
+    ...overrides,
+  };
+}
+
+function globalMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    scope: "global",
+    status: "loaded",
+    policy_source: "global",
     policy: { version: 1, network_policies: { baseline: { endpoints: ["base.test"] } } },
     ...overrides,
   };
@@ -114,6 +125,76 @@ describe("OpenShell policy authority inspection", () => {
       "json",
       "alpha",
     ]);
+  });
+
+  it("uses empty bounded global history as managed authority (#9833)", () => {
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult(""));
+
+    expect(inspectGlobalPolicyAuthority({ gatewayName: "nemoclaw-18080" })).toEqual({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
+    expect(captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
+      "policy",
+      "list",
+      "-g",
+      "nemoclaw-18080",
+      "--global",
+      "--limit",
+      "1",
+    ]);
+  });
+
+  it("uses loaded global metadata as external authority (#9833)", () => {
+    const policy = { version: 1, network_policies: { required: { endpoints: ["api.test"] } } };
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult("revision-1"))
+      .mockReturnValueOnce(captureResult(JSON.stringify(globalMetadata({ policy }))));
+
+    expect(inspectGlobalPolicyAuthority({ gatewayName: "nemoclaw-18080" })).toEqual({
+      authority: "externally-managed",
+      effectivePolicy: policy,
+    });
+    expect(captureOpenshell.mock.calls[1]?.[0]).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw-18080",
+      "--global",
+      "--full",
+      "--output",
+      "json",
+    ]);
+  });
+
+  it("treats a superseded global revision as managed authority (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult("revision-1"))
+      .mockReturnValueOnce(captureResult(JSON.stringify(globalMetadata({ status: "superseded" }))));
+
+    expect(inspectGlobalPolicyAuthority()).toEqual({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
+  });
+
+  it.each([
+    ["malformed metadata", "{"],
+    ["wrong scope", JSON.stringify(globalMetadata({ scope: "sandbox" }))],
+    ["unknown status", JSON.stringify(globalMetadata({ status: "pending" }))],
+  ])("fails closed on %s after global history is present (#9833)", (_caseName, raw) => {
+    const secret = "captured-global-policy-secret";
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult("revision-1"))
+      .mockReturnValueOnce(captureResult(`${raw}${secret}`));
+
+    const error = errorFrom(() => inspectGlobalPolicyAuthority());
+    expect(error.message).toContain("inspection failed");
+    expect(error.message).not.toContain(secret);
   });
 
   it("rejects invalid sandbox and gateway identities before querying policy (#9833)", () => {
