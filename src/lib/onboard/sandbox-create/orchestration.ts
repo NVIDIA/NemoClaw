@@ -395,7 +395,7 @@ type ProviderEffectBoundary = {
     | undefined;
 };
 
-function createProviderEffectBoundary(input: {
+export function createProviderEffectBoundary(input: {
   readonly deferred: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -455,8 +455,10 @@ function createProviderEffectBoundary(input: {
         },
         {
           runOpenshell: input.runOpenshell,
-          revalidateSandboxIdentity: (operation) =>
-            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation),
+          revalidateSandboxIdentity: (operation) => {
+            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
+            context.revalidatePolicyRequirements(operation);
+          },
         },
       );
     },

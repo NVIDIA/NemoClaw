@@ -8,11 +8,89 @@ import {
   applyManagedSandboxRebuildPolicyCarryForward,
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
+  createProviderEffectBoundary,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("deferred provider effect authority", () => {
+  it("refuses a second provider attachment after policy authority changes (#9833)", async () => {
+    const events: string[] = [];
+    const recordPolicyCheck = (operation: string) => {
+      events.push(`policy: ${operation}`);
+    };
+    const revalidatePolicyRequirements = vi.fn(recordPolicyCheck);
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(args.join(" "));
+      revalidatePolicyRequirements
+        .mockImplementationOnce(recordPolicyCheck)
+        .mockImplementationOnce((operation) => {
+          recordPolicyCheck(operation);
+          throw new Error("policy authority changed after the first provider attachment");
+        });
+      return { status: 0 };
+    });
+    const revalidateSandboxIdentity = vi.fn((_exactIdentity: string, operation: string) => {
+      events.push(`identity: ${operation}`);
+    });
+    const boundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        providerExistsInGateway: vi.fn(() => true),
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: () => ["first", "second"],
+      revalidatePolicyAuthorityBeforeCreate: vi.fn(),
+      runOpenshell: runOpenshell as never,
+      revalidateSandboxIdentity,
+    });
+    const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
+    expect(runAfterVerifiedCreate).toBeTypeOf("function");
+
+    await expect(
+      runAfterVerifiedCreate?.({
+        registration: {
+          policyAuthority: "externally-managed",
+          policyCreationReceipt: null,
+          observedPolicyAuthority: "externally-managed",
+          policyIdentity: { hash: "b".repeat(64), activeVersion: 1 },
+        },
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 18790,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "direct" as never,
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed after the first provider attachment");
+
+    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "first"],
+      { ignoreError: true, suppressOutput: true },
+    );
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "a".repeat(64),
+      "attaching provider 'second' to sandbox 'alpha'",
+    );
+    expect(events).toContain("policy: attaching provider 'second' to sandbox 'alpha'");
+    expect(events).not.toContain("sandbox provider attach -g nemoclaw alpha second");
+  });
+});
 
 describe("policy authority backfill", () => {
   it("does not assign managed authority before completed sandbox registration (#9833)", () => {
@@ -371,21 +449,21 @@ describe("sandbox create policy authority checks", () => {
     const revalidateCreatedSandboxIdentity = vi.fn();
 
     const error = await runSandboxCreateWithPolicyAuthorityChecks({
-        sandboxName: "alpha",
-        revalidate,
-        create: async (verifyCreatedSandbox) => {
-          await verifyCreatedSandbox("created");
-          return "created";
-        },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        revalidateCreatedSandboxIdentity,
-        ...verifiedPolicyBoundary(),
-        revalidateVerifiedPolicy: () => {
-          sandboxIdentity = "replacement";
-          throw new Error("sandbox identity changed");
-        },
-        cleanupTemporarySources: vi.fn(),
-      }).catch((caught: unknown) => caught);
+      sandboxName: "alpha",
+      revalidate,
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      captureCreatedSandboxIdentity: () => exactIdentity,
+      revalidateCreatedSandboxIdentity,
+      ...verifiedPolicyBoundary(),
+      revalidateVerifiedPolicy: () => {
+        sandboxIdentity = "replacement";
+        throw new Error("sandbox identity changed");
+      },
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual(
