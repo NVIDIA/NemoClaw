@@ -214,7 +214,10 @@ case "$*" in
 esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
-PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+PATH="$FAKE_OPENSHELL_BIN:$PATH" \
+  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
+  OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"
