@@ -7,13 +7,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { SandboxQuarantineFence } from "./registry/types";
+import type { SandboxQuarantineFence } from "./types";
 import {
   readSandboxQuarantineReceipt,
   sandboxQuarantineReceiptPath,
   type SandboxQuarantineReceipt,
   writeSandboxQuarantineReceipt,
-} from "./registry/quarantine-receipt";
+} from "./quarantine-receipt";
 
 const roots: string[] = [];
 

@@ -3,11 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { SandboxEntry, SandboxQuarantineFence } from "../../state/registry/types";
-import {
-  assertSandboxActivationAllowed,
-  assertSandboxCommandAllowedByQuarantine,
-} from "./quarantine/guard";
+import type { SandboxEntry, SandboxQuarantineFence } from "../../../state/registry/types";
+import { assertSandboxActivationAllowed, assertSandboxCommandAllowedByQuarantine } from "./guard";
 
 const fence: SandboxQuarantineFence = {
   schemaVersion: 1,
