@@ -151,18 +151,6 @@ function listNetworkPolicyCredentialProviders(
   return liveProviders;
 }
 
-function networkPoliciesUseExactCredentialProviders(
-  policy: Record<string, unknown> | null,
-  policyNames: readonly string[],
-  providerNames: readonly string[],
-): boolean {
-  const liveProviders = listNetworkPolicyCredentialProviders(policy, policyNames);
-  return (
-    liveProviders.size === providerNames.length &&
-    providerNames.every((providerName) => liveProviders.has(providerName))
-  );
-}
-
 function credentialProviderOmissionReason(
   livePolicy: Record<string, unknown> | null,
   policy: CredentialBoundMessagingPolicy,
@@ -224,13 +212,7 @@ function loadCredentialBoundPermissiveEndpoints(
     sandboxName,
   });
   const boundPolicy = content ? parsePolicyMapping(content) : null;
-  if (
-    !networkPoliciesUseExactCredentialProviders(
-      boundPolicy,
-      policy.livePolicyKeys,
-      policy.providerNames,
-    )
-  ) {
+  if (credentialProviderOmissionReason(boundPolicy, policy) !== null) {
     return null;
   }
   const networkPolicies = boundPolicy?.network_policies;
@@ -270,9 +252,10 @@ function loadCredentialBoundPermissiveEndpoints(
 
 /**
  * Keep credential-bound messaging routes only when the live policy proves the
- * complete provider set for an enabled channel. Disabled channels and missing,
- * partial, or mismatched provider state omit the route instead of submitting
- * unresolved bindings.
+ * complete provider set for an enabled channel. A missing plan rejects the
+ * transition when the live policy still carries a messaging provider. Disabled
+ * channels and missing, partial, or mismatched provider state omit the route
+ * instead of submitting unresolved bindings.
  */
 export function composeCredentialBoundMessagingPolicies(
   targetPolicyYaml: string,
@@ -289,7 +272,7 @@ export function composeCredentialBoundMessagingPolicies(
   const target = materializedTarget ? parsePolicyMapping(materializedTarget) : null;
   if (!target) throw new Error("Credential-bound messaging target policy must be a YAML mapping");
   const live = parsePolicyMapping(livePolicyYaml);
-  const enabledChannels = enabledPlanChannelIds(messagingPlan ?? { channels: [] });
+  const enabledChannels = messagingPlan ? enabledPlanChannelIds(messagingPlan) : null;
   const messagingPolicies = listCredentialBoundMessagingPolicies(sandboxName, agent);
   const targetPolicies = target.network_policies;
   const networkPolicies =
@@ -298,6 +281,22 @@ export function composeCredentialBoundMessagingPolicies(
       : null;
   for (const policy of messagingPolicies) {
     const channelId = normalizeMessagingChannelId(policy.channelId);
+    if (enabledChannels === null) {
+      const liveProviderCount = listNetworkPolicyCredentialProviders(
+        live,
+        policy.livePolicyKeys,
+      ).size;
+      if (liveProviderCount > 0) {
+        throw new Error(
+          `Cannot compose the credential-bound messaging route for sandbox '${sandboxName}', ` +
+            `channel '${channelId}' because the channel plan is unavailable. Recovery: run ` +
+            `\`nemoclaw ${sandboxName} channels add ${channelId}\` to replace the channel credentials, ` +
+            "then rebuild the sandbox before retrying.",
+        );
+      }
+      if (networkPolicies) delete networkPolicies[policy.permissivePolicyKey];
+      continue;
+    }
     const channelEnabled = enabledChannels.has(channelId);
     if (!channelEnabled) {
       if (networkPolicies) delete networkPolicies[policy.permissivePolicyKey];

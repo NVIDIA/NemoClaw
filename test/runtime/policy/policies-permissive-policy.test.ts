@@ -26,6 +26,7 @@ function runPermissivePolicy(options: {
   enabledChannels?: string[];
   livePolicy?: string;
   livePolicyStatus?: number;
+  expectPolicySet?: boolean;
   policySetStatus: number;
   sandboxName: string;
 }): {
@@ -143,13 +144,16 @@ exit 1
       NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
     },
   });
+  const expectPolicySet = options.expectPolicySet ?? true;
   expect(fs.existsSync(stagedRecord), `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(
-    true,
+    expectPolicySet,
   );
-  const [stagedPath, stagedMode] = fs.readFileSync(stagedRecord, "utf-8").trim().split("\n");
+  const [stagedPath, stagedMode] = expectPolicySet
+    ? fs.readFileSync(stagedRecord, "utf-8").trim().split("\n")
+    : ["", ""];
   return {
     result,
-    policy: fs.readFileSync(policyOut, "utf-8"),
+    policy: expectPolicySet ? fs.readFileSync(policyOut, "utf-8") : "",
     stagedPath,
     stagedMode,
     cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
@@ -252,6 +256,33 @@ describe("applyPermissivePolicy", () => {
       const policy = YAML.parse(observed.policy);
       expect(policy.network_policies.telegram).toBeUndefined();
       expect(policy.network_policies.slack).toBeUndefined();
+    } finally {
+      observed.cleanup();
+    }
+  });
+
+  it("rejects live messaging providers when the channel plan is unavailable (#10153)", () => {
+    const sandboxName = "missing-plan";
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      expectPolicySet: false,
+      livePolicy: YAML.stringify({
+        network_policies: {
+          telegram_bot: {
+            endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
+          },
+        },
+      }),
+      policySetStatus: 0,
+      sandboxName,
+    });
+    try {
+      expect(observed.result.status).not.toBe(0);
+      expect(observed.result.stderr).toContain(
+        `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
+          `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\` to replace the channel ` +
+          "credentials, then rebuild the sandbox before retrying.",
+      );
     } finally {
       observed.cleanup();
     }

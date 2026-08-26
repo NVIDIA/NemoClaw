@@ -1459,4 +1459,36 @@ describe("shields command flow", () => {
       );
     },
   );
+
+  it("rejects Shields down when live messaging providers have no channel plan (#10153)", () => {
+    const sandboxName = "missing-plan";
+    const harness = createHarness({
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: {
+          telegram_bot: {
+            endpoints: [
+              { credential_binding: { provider: `${sandboxName}-telegram-bridge` } },
+            ],
+          },
+        },
+      }),
+      processStartIdentity: "issue-10153-missing-plan-owner",
+      sandboxEntry: { name: sandboxName, agent: "openclaw", openshellDriver: "docker" },
+      sandboxName,
+    });
+
+    expect(() =>
+      harness.shieldsDown(sandboxName, {
+        timeout: "5m",
+        reason: "missing messaging channel plan",
+        throwOnError: true,
+      }),
+    ).toThrow(
+      `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
+        `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\` to replace the channel ` +
+        "credentials, then rebuild the sandbox before retrying.",
+    );
+    expect(harness.policySetBodies).toEqual([]);
+  });
 });
