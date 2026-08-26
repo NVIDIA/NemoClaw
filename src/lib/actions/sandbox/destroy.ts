@@ -116,6 +116,7 @@ export type CleanupSandboxServicesDeps = {
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
+  stopCuaServiceRelay?: (sandboxName: string) => void;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -156,7 +157,10 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
 
 export function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    stopCuaRelay = true,
+  }: { stopHostServices?: boolean; stopCuaRelay?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): void {
   // Source boundary: this exported helper can be called independently of CLI
@@ -229,6 +233,12 @@ export function cleanupSandboxServices(
       "Refusing to finish sandbox cleanup while its public Google Chat webhook endpoint may still be running. Retry destroy after fixing the tunnel-stop failure.",
       { cause: error },
     );
+  }
+
+  const sandbox = getSandbox(validatedSandboxName);
+  if (stopCuaRelay && sandbox?.agent === "nemocua") {
+    const stopRelay = deps.stopCuaServiceRelay ?? (() => undefined);
+    stopRelay(validatedSandboxName);
   }
 
   if (stopHostServices) {
@@ -788,6 +798,7 @@ async function destroySandboxUnlocked(
     });
     cleanupSandboxServices(sandboxName, {
       stopHostServices: shouldStopHostServices,
+      stopCuaRelay: deleteSucceededOrAlreadyGone,
     });
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {

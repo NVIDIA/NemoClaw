@@ -26,6 +26,7 @@ export const HOST_LOCAL_INFERENCE_APPLICATIONS = [
   "openclaw",
   "hermes",
   "langchain-deepagents-code",
+  "nemocua",
 ] as const;
 
 export type HostLocalInferenceApplication = (typeof HOST_LOCAL_INFERENCE_APPLICATIONS)[number];

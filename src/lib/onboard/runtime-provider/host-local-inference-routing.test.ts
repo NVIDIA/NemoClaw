@@ -287,11 +287,7 @@ describe("provider-neutral host-local inference startup routing", () => {
       HOST_LOCAL_INFERENCE_APPLICATIONS.map((application) =>
         hostLocalInferenceApplicationBaseUrl(application, route),
       ),
-    ).toEqual([
-      "https://inference.local/v1",
-      "https://inference.local/v1",
-      "https://inference.local/v1",
-    ]);
+    ).toEqual(HOST_LOCAL_INFERENCE_APPLICATIONS.map(() => "https://inference.local/v1"));
   });
 
   it("rejects an application outside the all-agent route boundary", () => {

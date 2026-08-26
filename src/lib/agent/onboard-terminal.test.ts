@@ -67,6 +67,10 @@ async function expectSetupExit(action: () => Promise<void>): Promise<void> {
 
 describe("NemoCUA terminal onboard acceptance", () => {
   it("uses the repository manifest and ordinary terminal smoke path (#9649)", async () => {
+    vi.stubEnv("NEMOCLAW_CUA_BROWSER_ENDPOINT", "http://127.0.0.1:18001/");
+    vi.stubEnv("NEMOCLAW_CUA_COMPUTER_ENDPOINT", "http://127.0.0.1:18002/");
+    vi.stubEnv("NEMOCLAW_CUA_TERMINAL_ENDPOINT", "http://127.0.0.1:18003/");
+    vi.stubEnv("NEMOCLAW_CUA_FIXTURE_ENDPOINT", "http://127.0.0.1:18004/fixture");
     const calls: string[][] = [];
     const runCaptureOpenshell = vi
       .fn((args: string[]) => {
@@ -74,7 +78,10 @@ describe("NemoCUA terminal onboard acceptance", () => {
         return "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
       })
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
-    const context = createAgentSetupContext(runCaptureOpenshell);
+    const context = {
+      ...createAgentSetupContext(runCaptureOpenshell),
+      ensureCuaServiceRelay: vi.fn(),
+    };
 
     await handleAgentSetup(
       "nemocua-sandbox",

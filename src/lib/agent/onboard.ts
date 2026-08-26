@@ -11,6 +11,7 @@ import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
+import { ensureCuaServiceRelay } from "../cua/service-relay";
 import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import {
@@ -64,6 +65,7 @@ export interface OnboardContext {
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
+  ensureCuaServiceRelay?: (sandboxName: string) => void;
 }
 
 // Keep these compatibility exports as ordinary writable functions. Focused
@@ -317,6 +319,8 @@ export async function handleAgentSetup(
     recordStepFailed,
     skippedStepMessage,
   } = ctx;
+
+  if (agent.name === "nemocua") (ctx.ensureCuaServiceRelay ?? ensureCuaServiceRelay)(sandboxName);
 
   const runSmokeCapture =
     agent.name === "langchain-deepagents-code" && captureOpenshell

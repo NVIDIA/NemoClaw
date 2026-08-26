@@ -96,6 +96,8 @@ export interface SandboxStartDeps {
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
+  ensureCuaServiceRelay?: (sandboxName: string, env: NodeJS.ProcessEnv) => void;
+  stopCuaServiceRelay?: (sandboxName: string) => void;
 }
 
 function isMissingManagedSupervisorStartupFailure(
@@ -204,8 +206,20 @@ async function startSandboxWithinLifecycleFence(
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
   if (preflight) return preflight;
+  let cuaRelayPrepared = false;
+  if (resolved.sandbox.agent === "nemocua") {
+    const relay = require("../../cua/service-relay") as typeof import("../../cua/service-relay");
+    (deps.ensureCuaServiceRelay ?? relay.ensureCuaServiceRelay)(sandboxName, input.environment);
+    cuaRelayPrepared = true;
+  }
   const result = resolved.lifecycle.start(input);
-  if (result.exitCode !== 0) return result;
+  if (result.exitCode !== 0) {
+    if (cuaRelayPrepared) {
+      const relay = require("../../cua/service-relay") as typeof import("../../cua/service-relay");
+      (deps.stopCuaServiceRelay ?? relay.stopCuaServiceRelay)(sandboxName);
+    }
+    return result;
+  }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     return { exitCode: 0 };
   }

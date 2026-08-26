@@ -235,7 +235,7 @@ function llamaCppLifecycleSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "nemocua"] as const)(
     "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
     async (application) => {
       const model = "llama-cpp-model";

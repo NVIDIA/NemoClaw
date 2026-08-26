@@ -299,6 +299,10 @@ function stopSandboxWithinLifecycleFence(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+  if (resolved.sandbox.agent === "nemocua") {
+    const { stopCuaServiceRelay } = require("../../cua/service-relay") as typeof import("../../cua/service-relay");
+    stopCuaServiceRelay(sandboxName);
+  }
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);

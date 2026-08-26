@@ -18,6 +18,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { ensureCuaServiceRelay } from "../../cua/service-relay";
 import { retryUntil } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
@@ -1132,6 +1133,7 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
 }
 
 export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
+  if (registry.getSandbox(sandboxName)?.agent === "nemocua") ensureCuaServiceRelay(sandboxName);
   let reportedRecoveryFailureDetail: string | null = null;
   let reportedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
