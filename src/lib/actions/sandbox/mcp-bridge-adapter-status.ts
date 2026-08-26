@@ -4,6 +4,10 @@
 import type { McpBridgeEntry } from "../../state/registry";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import {
+  DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+  DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
+} from "./mcp-bridge/deepagents-legacy-config";
+import {
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-projection";
@@ -28,8 +32,7 @@ function authPlaceholder(
 ): string | null {
   const envName = entry.env[0];
   if (!envName) return null;
-  const revision =
-    credentialRevision && credentialRevision !== "canonical" ? `${credentialRevision}_` : "";
+  const revision = credentialRevision ? `${credentialRevision}_` : "";
   return `openshell:resolve:env:${revision}${envName}`;
 }
 
@@ -109,8 +112,11 @@ export function mcporterHeaderMatcherSource(): string {
   return `const mcporterHeadersMatchExpected = ${mcporterHeadersMatchExpected.toString()};`;
 }
 
-export function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
-  const headers = entryHeaders(entry);
+export function hermesManagedServerConfig(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): Record<string, unknown> {
+  const headers = entryHeaders(entry, credentialRevision);
   return {
     url: entry.url,
     enabled: true,
@@ -130,18 +136,25 @@ export interface HermesMcpIntentPayload {
 export function buildHermesMcpIntentPayload(
   entries: readonly McpBridgeEntry[],
   managedServerNames: readonly string[],
+  credentialRevisions: ReadonlyMap<string, McpAttachedCredentialRevision> = new Map(),
 ): HermesMcpIntentPayload {
   const sortedEntries = [...entries].sort((left, right) => left.server.localeCompare(right.server));
   const present = Object.fromEntries(
-    sortedEntries.map((entry) => [entry.server, hermesManagedServerConfig(entry)]),
+    sortedEntries.map((entry) => [
+      entry.server,
+      hermesManagedServerConfig(entry, credentialRevisions.get(entry.server)),
+    ]),
   );
   const presentNames = new Set(Object.keys(present));
   const absent = [...new Set(managedServerNames)].filter((name) => !presentNames.has(name)).sort();
   return { present, absent };
 }
 
-export function deepAgentsManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
-  const headers = entryHeaders(entry);
+export function deepAgentsManagedServerConfig(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): Record<string, unknown> {
+  const headers = entryHeaders(entry, credentialRevision);
   return {
     type: "http",
     url: entry.url,
@@ -149,46 +162,111 @@ export function deepAgentsManagedServerConfig(entry: McpBridgeEntry): Record<str
   };
 }
 
-export function buildHermesMcpStatusCommand(entry: McpBridgeEntry): string {
+export function buildHermesMcpStatusCommand(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string {
   const payload = {
     server: entry.server,
-    expected: hermesManagedServerConfig(entry),
+    expected: hermesManagedServerConfig(entry, credentialRevision),
+    allowRevisioned: credentialRevision === undefined,
   };
   return [
     "/opt/hermes/.venv/bin/python - <<'PY'",
     "import json, pathlib, yaml",
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
+    ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     'config_path = pathlib.Path("/sandbox/.hermes/config.yaml")',
     "data = yaml.safe_load(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}",
     "servers = data.get('mcp_servers') if isinstance(data, dict) else None",
     "present = isinstance(servers, dict) and payload['server'] in servers",
     "server = servers.get(payload['server']) if present else None",
-    "ok = server == payload['expected']",
+    "ok = managed_http_server_matches(server, payload['expected'], payload['allowRevisioned'])",
     "print('registered' if ok else ('mismatch' if present else 'absent'))",
     "PY",
   ].join("\n");
 }
 
-export function buildDeepAgentsMcpStatusCommand(entry: McpBridgeEntry): string {
+export const MANAGED_HTTP_SERVER_MATCH_HELPERS = [
+  "def managed_http_server_matches(actual, expected, allow_revisioned):",
+  "    if actual == expected:",
+  "        return True",
+  "    if not allow_revisioned or not isinstance(actual, dict) or not isinstance(expected, dict):",
+  "        return False",
+  "    if set(actual) != set(expected):",
+  "        return False",
+  "    for name, value in expected.items():",
+  "        if name != 'headers' and actual.get(name) != value:",
+  "            return False",
+  "    actual_headers = actual.get('headers')",
+  "    expected_headers = expected.get('headers')",
+  "    if not isinstance(actual_headers, dict) or not isinstance(expected_headers, dict):",
+  "        return False",
+  "    if set(actual_headers) != set(expected_headers):",
+  "        return False",
+  "    for name, value in expected_headers.items():",
+  "        actual_value = actual_headers.get(name)",
+  "        if actual_value == value:",
+  "            continue",
+  "        canonical_prefix = 'Bearer openshell:resolve:env:'",
+  "        env_name = value[len(canonical_prefix):] if name.lower() == 'authorization' and isinstance(value, str) and value.startswith(canonical_prefix) else ''",
+  "        revision_prefix = canonical_prefix + 'v'",
+  "        suffix = '_' + env_name",
+  "        if not env_name or not isinstance(actual_value, str) or not actual_value.startswith(revision_prefix) or not actual_value.endswith(suffix):",
+  "            return False",
+  "        revision = actual_value[len(revision_prefix):-len(suffix)]",
+  "        if not revision.isdigit() or not (1 <= len(revision) <= 20):",
+  "            return False",
+  "    return True",
+];
+
+export function buildDeepAgentsMcpStatusCommand(
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string {
   const payload = {
     server: entry.server,
-    expected: deepAgentsManagedServerConfig(entry),
+    expected: deepAgentsManagedServerConfig(entry, credentialRevision),
+    allowRevisioned: credentialRevision === undefined,
   };
   return [
     "/opt/venv/bin/python3 -I - <<'PY'",
-    "import json, os, pathlib, stat",
+    "import json, os, pathlib, stat, sys",
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
-    `config_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
+    ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+    ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
+    `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    "if runtime_kind == 'auto':",
+    "    runtime_kind = 'unknown'",
+    "    try:",
+    "        from deepagents_code import _nemoclaw_managed as managed",
+    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
+    "        if runtime_path == str(managed_path):",
+    "            runtime_kind = 'v2'",
+    "        elif runtime_path == str(legacy_path):",
+    "            runtime_kind = 'legacy'",
+    "    except Exception:",
+    "        pass",
+    "if runtime_kind not in ('v2', 'legacy'):",
+    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
+    "    raise SystemExit(2)",
+    "is_v2 = runtime_kind == 'v2'",
+    "config_path = managed_path if is_v2 else legacy_path",
     "try:",
-    "    data = read_managed_projection(config_path)[0]",
-    "except Exception:",
+    "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except FileNotFoundError:",
     "    data = {}",
+    "except (OSError, UnicodeDecodeError, ValueError) as exc:",
+    "    print(f'Could not inspect managed Deep Agents MCP state at {config_path}: {exc}', file=sys.stderr)",
+    "    raise SystemExit(2)",
     "servers = data.get('mcpServers') if isinstance(data, dict) else None",
     "present = isinstance(servers, dict) and payload['server'] in servers",
     "server = servers.get(payload['server']) if present else None",
-    "ok = server == payload['expected']",
+    "ok = managed_http_server_matches(server, payload['expected'], payload['allowRevisioned'])",
     "print('registered' if ok else ('mismatch' if present else 'absent'))",
     "PY",
   ].join("\n");

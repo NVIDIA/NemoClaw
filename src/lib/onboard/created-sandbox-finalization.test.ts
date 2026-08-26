@@ -16,6 +16,7 @@ import {
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
@@ -470,53 +471,71 @@ describe("created DCode sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
-  it("warns but verifies and registers after a partial workspace restore (#6311)", () => {
+  it("rejects registration after a partial workspace restore (#6311)", () => {
     const fixture = makeRestoreFixture();
-    const registeredConfigs: string[] = [];
+    const register = vi.fn();
+    const getDcodeSelectionDrift = vi.fn();
     const error = vi.fn();
     try {
-      finalizeCreatedSandbox(
-        {
-          sandboxName: "dcode",
-          restoreBackupPath: fixture.backupPath,
-          preUpgradeBackup: false,
-          targetAgentType: "langchain-deepagents-code",
-          validateManagedDcode: true,
-          provider: "nvidia-prod",
-          model: "new-model",
-          preferredInferenceApi: null,
-        },
-        {
-          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-          restoreRecreatedSandboxState: (name, backup, options) => {
-            const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
-            return { ...restored, success: false, failedDirs: ["skills"] };
+      expect(() =>
+        finalizeCreatedSandbox(
+          {
+            sandboxName: "dcode",
+            gatewayName: "nemoclaw",
+            restoreBackupPath: fixture.backupPath,
+            preUpgradeBackup: false,
+            targetAgentType: "langchain-deepagents-code",
+            validateManagedDcode: true,
+            provider: "nvidia-prod",
+            model: "new-model",
+            preferredInferenceApi: null,
           },
-          getDcodeSelectionDrift: (name, provider, model, api) =>
-            getDcodeSelectionDrift(name, provider, model, api, {
-              getGatewayName: () => "nemoclaw-18081",
-              runCaptureOpenshell: () =>
-                identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
-            }),
-          register: () => {
-            registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+          {
+            discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+            restoreRecreatedSandboxState: (name, backup, options) => {
+              const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
+              return {
+                ...restored,
+                success: false,
+                failedDirs: ["skills"],
+                failedFiles: ["settings.json"],
+                error: "copy failed",
+              };
+            },
+            getDcodeSelectionDrift,
+            register,
+            note: vi.fn(),
+            error,
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
           },
-          note: vi.fn(),
-          error,
-          exitProcess: (code): never => {
-            throw new Error(`exit ${code}`);
-          },
-        },
-      );
+        ),
+      ).toThrow("exit 1");
 
       expect(error).toHaveBeenCalledWith(
-        `  Warning: partial restore. Manual recovery: ${fixture.backupPath}`,
+        "  Warning: workspace state restore was incomplete for sandbox 'dcode'.",
       );
-      expect(registeredConfigs).toHaveLength(1);
-      expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
-      expect(registeredConfigs[0]).not.toContain("old-model");
-      expect(registeredConfigs[0]).toContain("[ui]\nshow_scrollbar = true");
-      expect(registeredConfigs[0]).not.toContain('theme = "dark"');
+      expect(error).toHaveBeenCalledWith("  Failed directories: skills");
+      expect(error).toHaveBeenCalledWith("  Failed files: settings.json");
+      expect(error).toHaveBeenCalledWith("  Restore reason: copy failed");
+      expect(error).toHaveBeenCalledWith(
+        "  Workspace state restoration did not complete. Registry metadata was not updated.",
+      );
+      expect(error).toHaveBeenCalledWith(
+        "  Remove the unregistered sandbox from its owning gateway before retrying:",
+      );
+      expect(error).toHaveBeenCalledWith(
+        '    openshell sandbox delete -g "nemoclaw" "dcode"',
+      );
+      expect(error).toHaveBeenCalledWith(
+        "  Rerun the original onboarding command after the deletion succeeds.",
+      );
+      expect(error).toHaveBeenCalledWith(
+        `  Keep the snapshot for manual recovery: ${fixture.backupPath}`,
+      );
+      expect(register).not.toHaveBeenCalled();
+      expect(getDcodeSelectionDrift).not.toHaveBeenCalled();
     } finally {
       process.env.PATH = fixture.oldPath;
     }
@@ -851,11 +870,11 @@ describe("created OpenClaw sandbox finalization", () => {
 
 describe("created sandbox completion actions", () => {
   it.each([
-    ["ordinary", true],
-    ["schema-5", false],
+    ["ordinary", true, false],
+    ["schema-5", false, true],
   ] as const)(
     "keeps %s dashboard completion ordered and bounded (#9203)",
-    async (_route, manageDashboard) => {
+    async (_route, manageDashboard, schema5) => {
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,
@@ -916,6 +935,7 @@ describe("created sandbox completion actions", () => {
             hermesToolGateways: [],
             gatewayName: "nemoclaw",
             gatewayPort: 8080,
+            reservationSessionId: "session-owner",
           },
           gpu: {
             config: gpuConfig,
@@ -1001,10 +1021,17 @@ describe("created sandbox completion actions", () => {
           return registration;
         },
       };
+      const configuredReceipt = schema5
+        ? ({
+            lifecycleGeneration: "generation-1",
+            openshellExecutableAuthority: { version: "0.0.106" },
+            container: { imageId: "hermes:test" },
+          } as unknown as HermesPortableConfiguredReceipt)
+        : null;
 
       await completion.complete(
-        created,
-        null,
+        schema5 ? null : created,
+        configuredReceipt,
         "hermes",
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
@@ -1014,7 +1041,7 @@ describe("created sandbox completion actions", () => {
       expect(order).toEqual([
         "gpu",
         ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
-        "workload",
+        ...(schema5 ? [] : ["workload"]),
         "lifecycle-capture",
         "lifecycle-revalidate",
         "registry",
@@ -1023,6 +1050,8 @@ describe("created sandbox completion actions", () => {
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
+          hermesPortableLifecycle: schema5,
+          reservationSessionId: "session-owner",
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",

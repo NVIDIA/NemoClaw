@@ -12,6 +12,7 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAuthority,
 } from "./registry-normalization";
 
 const originalHome = process.env.HOME;
@@ -66,6 +67,29 @@ describe("sandbox registry normalization", () => {
     estimatedImageDownloadBytes: null,
     estimatedModelDownloadBytes: null,
   } as const;
+
+  const createPolicyAttribution = () => {
+    const exclusion = {
+      version: 1 as const,
+      agent: "hermes",
+      key: "nous_research",
+      digest: "a".repeat(64),
+      acknowledgedAt: "2026-08-20T00:00:00.000Z",
+    };
+    return {
+      policies: ["weather"],
+      customPolicies: [{ name: "private-api", content: "network_policies: {}" }],
+      baselineExclusions: [exclusion],
+      baselineExclusionTransition: {
+        id: "123e4567-e89b-42d3-a456-426614174983",
+        operation: "exclude" as const,
+        exclusion,
+        targetLiveDigest: null,
+        startedAt: "2026-08-20T00:00:01.000Z",
+      },
+      policyPresetsFinalized: true,
+    };
+  };
 
   it.each([null, [], 42, "invalid"])(
     "treats a non-object top-level registry document as empty: %j",
@@ -272,6 +296,154 @@ describe("sandbox registry normalization", () => {
       },
     });
     expect(() => registry.getSandbox("profile")).toThrow("invalid serving profile provenance");
+  });
+
+  function expectExternalAttributionCleared(entry: unknown, name: string): void {
+    expect(entry).toMatchObject({
+      name,
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
+    expect(entry).not.toHaveProperty("customPolicies");
+    expect(entry).not.toHaveProperty("baselineExclusions");
+    expect(entry).not.toHaveProperty("baselineExclusionTransition");
+    expect(entry).not.toHaveProperty("policyPresetsFinalized");
+    expect(entry).not.toHaveProperty("policyTier");
+  }
+
+  it("round-trips known policy authority while leaving legacy authority unknown (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy" },
+      managed: { name: "managed", policyAuthority: "nemoclaw-managed" },
+      external: { name: "external", policyAuthority: "externally-managed" },
+    });
+    registry.save(registry.load());
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
+    ) as { sandboxes: Record<string, Record<string, unknown>> };
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBeUndefined();
+    expect(registry.getSandbox("managed")?.policyAuthority).toBe("nemoclaw-managed");
+    expect(registry.getSandbox("external")?.policyAuthority).toBe("externally-managed");
+    expect(persisted.sandboxes.legacy).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.managed?.policyAuthority).toBe("nemoclaw-managed");
+    expect(persisted.sandboxes.external?.policyAuthority).toBe("externally-managed");
+  });
+
+  it("clears NemoClaw policy attribution from externally managed rows (#9833)", async () => {
+    const attribution = createPolicyAttribution();
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy", ...attribution, policyTier: "strict" },
+      managed: {
+        name: "managed",
+        ...attribution,
+        policyAuthority: "nemoclaw-managed",
+        policyTier: "strict",
+      },
+      external: {
+        name: "external",
+        ...attribution,
+        policyAuthority: "externally-managed",
+        policyTier: "strict",
+      },
+    });
+
+    expect(registry.getSandbox("legacy")).toMatchObject(attribution);
+    expect(registry.getSandbox("managed")).toMatchObject(attribution);
+    expectExternalAttributionCleared(registry.getSandbox("external"), "external");
+  });
+
+  it.each([null, "sandbox", {}])(
+    "fails closed on malformed persisted policy authority %j (#9833)",
+    async (policyAuthority) => {
+      const registry = await loadRegistryWith({
+        alpha: { name: "alpha", policyAuthority },
+      });
+
+      expect(() => registry.getSandbox("alpha")).toThrow(/invalid policy authority/i);
+    },
+  );
+
+  it("backfills policy authority once without allowing later changes or removal (#9833)", async () => {
+    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: "global" as never })).toThrow(
+      /invalid policy authority/i,
+    );
+    expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
+    expect(() =>
+      registry.updateSandbox("legacy", { policyAuthority: "externally-managed" }),
+    ).toThrow(/policy authority changed/u);
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: undefined })).toThrow(
+      /policy authority changed/u,
+    );
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
+
+    expect(() =>
+      registry.registerSandbox({ name: "legacy", policyAuthority: "externally-managed" }),
+    ).toThrow(/policy authority changed/u);
+  });
+
+  it("canonicalizes external attribution across registry mutations and recovery (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      updated: { name: "updated", ...createPolicyAttribution(), policyTier: "strict" },
+    });
+    const externalEntry = (name: string) => ({
+      name,
+      ...createPolicyAttribution(),
+      policyAuthority: "externally-managed" as const,
+      policyTier: "strict",
+    });
+
+    expectExternalAttributionCleared(
+      registry.registerSandbox(externalEntry("registered")),
+      "registered",
+    );
+    expect(registry.updateSandbox("updated", { policyAuthority: "externally-managed" })).toBe(true);
+    expectExternalAttributionCleared(registry.getSandbox("updated"), "updated");
+
+    registry.restoreSandboxEntry(externalEntry("recovered"));
+    expectExternalAttributionCleared(registry.getSandbox("recovered"), "recovered");
+    const receipt = registry.removeSandboxWithReceipt("recovered")!;
+    expect(
+      registry.restoreSandboxEntryIfMissing({ ...receipt, entry: externalEntry("recovered") }),
+    ).toBe(true);
+    expectExternalAttributionCleared(registry.getSandbox("recovered"), "recovered");
+  });
+
+  it("preserves a replacement row when recovery has a different policy authority (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        model: "current",
+        policyAuthority: "externally-managed",
+      },
+    });
+
+    expect(() =>
+      registry.restoreSandboxEntry({
+        name: "alpha",
+        model: "recovered",
+        policyAuthority: "nemoclaw-managed",
+      }),
+    ).toThrow(/policy authority changed during recovery/u);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      model: "current",
+      policyAuthority: "externally-managed",
+    });
+  });
+});
+
+describe("sandbox policy authority normalization", () => {
+  it.each([
+    [undefined, undefined],
+    ["nemoclaw-managed", "nemoclaw-managed"],
+    ["externally-managed", "externally-managed"],
+  ])("normalizes known policy authority %j (#9833)", (input, expected) => {
+    expect(normalizeSandboxPolicyAuthority(input)).toBe(expected);
+  });
+
+  it.each(["sandbox", null, {}])("rejects invalid policy authority %j (#9833)", (input) => {
+    expect(() => normalizeSandboxPolicyAuthority(input)).toThrow(/invalid policy authority/i);
   });
 });
 

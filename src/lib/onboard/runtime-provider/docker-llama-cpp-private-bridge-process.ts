@@ -9,6 +9,7 @@ import net from "node:net";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const API_KEY_FILE_DESCRIPTOR = 3;
 const AUTH_MODE = "api-key-fd3";
+const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
   error: {
     code: "unauthorized",
@@ -153,7 +154,10 @@ function writeUnauthorized(response: http.ServerResponse): void {
   response.end(UNAUTHORIZED_BODY);
 }
 
-function writeUpstreamUnavailable(response: http.ServerResponse): void {
+function writeUpstreamUnavailable(
+  response: http.ServerResponse,
+  options: { closeConnection?: boolean } = {},
+): void {
   if (response.destroyed || response.writableEnded) return;
   if (response.headersSent) {
     response.destroy();
@@ -168,6 +172,7 @@ function writeUpstreamUnavailable(response: http.ServerResponse): void {
   })}\n`;
   response.writeHead(502, {
     "Cache-Control": "no-store",
+    ...(options.closeConnection ? { Connection: "close" } : {}),
     "Content-Length": Buffer.byteLength(body),
     "Content-Type": "application/json",
     "X-Content-Type-Options": "nosniff",
@@ -175,7 +180,7 @@ function writeUpstreamUnavailable(response: http.ServerResponse): void {
   response.end(body);
 }
 
-export function createLlamaCppPrivateBridgeRequestHandler(
+function createLlamaCppPrivateBridgeRequestHandler(
   authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
   apiKey: string,
 ): http.RequestListener {
@@ -204,6 +209,15 @@ export function createLlamaCppPrivateBridgeRequestHandler(
     delete headers["x-forwarded-host"];
     delete headers["x-forwarded-proto"];
 
+    const expectsContinue = request.headers.expect?.toLowerCase() === "100-continue";
+    let upstreamResponded = false;
+    let forwardingRequestBody = false;
+    let continueTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearContinueTimer = () => {
+      if (continueTimer === undefined) return;
+      clearTimeout(continueTimer);
+      continueTimer = undefined;
+    };
     const upstream = http.request(
       {
         headers,
@@ -213,29 +227,85 @@ export function createLlamaCppPrivateBridgeRequestHandler(
         port: targetPort,
       },
       (upstreamResponse) => {
+        clearContinueTimer();
+        upstreamResponded = true;
+        request.unpipe(upstream);
+        request.resume();
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
         upstreamResponse.once("error", () => response.destroy());
         upstreamResponse.pipe(response);
+        upstreamResponse.once("end", () => {
+          if (!upstream.writableEnded) upstream.destroy();
+        });
       },
     );
-    upstream.once("error", () => writeUpstreamUnavailable(response));
+    const forwardRequestBody = () => {
+      if (forwardingRequestBody || upstreamResponded) return;
+      forwardingRequestBody = true;
+      request.pipe(upstream);
+    };
+    upstream.once("continue", () => {
+      clearContinueTimer();
+      if (!response.destroyed && !response.writableEnded) response.writeContinue();
+      forwardRequestBody();
+    });
+    upstream.once("error", () => {
+      clearContinueTimer();
+      if (!upstreamResponded) writeUpstreamUnavailable(response);
+    });
     request.once("close", () => {
-      if (!request.complete) upstream.destroy();
+      if (!request.complete && !upstreamResponded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
     });
-    request.once("error", () => upstream.destroy());
+    request.once("error", () => {
+      if (!upstreamResponded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
+    });
     response.once("close", () => {
-      if (!response.writableEnded) upstream.destroy();
+      if (!response.writableEnded) {
+        clearContinueTimer();
+        upstream.destroy();
+      }
     });
-    request.pipe(upstream);
+    if (expectsContinue) {
+      continueTimer = setTimeout(() => {
+        continueTimer = undefined;
+        request.unpipe(upstream);
+        request.pause();
+        upstream.destroy();
+        response.once("finish", () => request.destroy());
+        writeUpstreamUnavailable(response, { closeConnection: true });
+      }, UPSTREAM_CONTINUE_TIMEOUT_MS);
+      continueTimer.unref();
+      upstream.flushHeaders();
+    } else {
+      forwardRequestBody();
+    }
   };
+}
+
+export function createLlamaCppPrivateBridgeServer(
+  authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
+  apiKey: string,
+): http.Server {
+  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
+  const server = http.createServer();
+  server.on("checkContinue", handler);
+  server.on("request", handler);
+  return server;
 }
 
 export async function runLlamaCppPrivateBridge(
   authority: LlamaCppPrivateBridgeArguments,
   apiKey: string,
 ): Promise<void> {
-  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
-  const servers = authority.bindAddresses.map(() => http.createServer(handler));
+  const servers = authority.bindAddresses.map(() =>
+    createLlamaCppPrivateBridgeServer(authority, apiKey),
+  );
 
   const close = () => {
     for (const server of servers) {

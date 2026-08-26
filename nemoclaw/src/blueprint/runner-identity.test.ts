@@ -19,6 +19,7 @@ import {
   MATCHING_INFERENCE_ROUTE_LISTING,
   MATCHING_RUNTIME_PROVIDER_LISTING,
   providersV2EnabledResult,
+  resultWithBlueprintPolicyAuthority,
   successResult,
 } from "./runner-test-fixtures.js";
 
@@ -36,8 +37,10 @@ vi.mock("node:fs", async (importOriginal) => {
   const memory = inMemoryFsMethods(store, { realpaths, spy: vi.fn });
   return {
     ...original,
+    existsSync: memory.existsSync,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
     realpathSync: memory.realpathSync,
@@ -53,9 +56,8 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   };
 });
 
-const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } = await import(
-  "./runner.js"
-);
+const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
+  await import("./runner.js");
 
 const matchingProvider = MATCHING_RUNTIME_PROVIDER_LISTING;
 const matchingInferenceProvider = MATCHING_INFERENCE_PROVIDER_LISTING;
@@ -82,8 +84,25 @@ function responseQueue(
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
-    return responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    const fallback = responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    return fallback.exitCode === undefined
+      ? fallback
+      : resultWithBlueprintPolicyAuthority(args, {
+          ...fallback,
+          exitCode: fallback.exitCode ?? 1,
+        });
   });
+}
+
+function nonAuthorityCommandLines(): string[] {
+  const authorityCommands = new Set([
+    "openshell status",
+    "openshell policy list -g test-gateway --global --limit 1",
+    "openshell policy get -g test-gateway --full --output json test-sandbox",
+  ]);
+  return mockExeca.mock.calls
+    .map(([command, args]) => [command, ...(args ?? [])].join(" "))
+    .filter((command) => !authorityCommands.has(command));
 }
 
 function blueprint(overrides: Record<string, unknown> = {}): Parameters<typeof actionApply>[1] {
@@ -123,7 +142,10 @@ describe("blueprint identity wrapper", () => {
     realpaths.clear();
     vi.clearAllMocks();
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-      args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+      resultWithBlueprintPolicyAuthority(
+        args,
+        args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+      ),
     );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
     store.set("/blueprint", { type: "dir" });
@@ -294,9 +316,7 @@ describe("blueprint identity wrapper", () => {
         "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
       ),
     ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
-    expect(
-      commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"),
-    ).toBeLessThan(
+    expect(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime")).toBeLessThan(
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
@@ -337,9 +357,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect sandbox 'test-sandbox'.*gateway configuration not found/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
@@ -358,9 +376,7 @@ describe("blueprint identity wrapper", () => {
       /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
@@ -375,38 +391,41 @@ describe("blueprint identity wrapper", () => {
       { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" },
       /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
     ],
-  ])("fails closed when a concurrently created sandbox %s", async (_label, racedSandbox, expectedError) => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    responseQueue([
-      ["sandbox get test-sandbox", [failureResult("sandbox not found"), racedSandbox]],
-      [
-        "provider get acme-okta-runtime",
+  ])(
+    "fails closed when a concurrently created sandbox %s",
+    async (_label, racedSandbox, expectedError) => {
+      process.env.OKTA_CLIENT_ID = "client-id";
+      process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+      process.env.OKTA_CLIENT_SECRET = "client-secret";
+      responseQueue([
+        ["sandbox get test-sandbox", [failureResult("sandbox not found"), racedSandbox]],
         [
-          failureResult("provider not found"),
-          ...Array.from({ length: 4 }, () => ({
-            exitCode: 0,
-            stdout: matchingProvider,
-            stderr: "",
-          })),
+          "provider get acme-okta-runtime",
+          [
+            failureResult("provider not found"),
+            ...Array.from({ length: 4 }, () => ({
+              exitCode: 0,
+              stdout: matchingProvider,
+              stderr: "",
+            })),
+          ],
         ],
-      ],
-      [
-        "sandbox create --from openclaw --name test-sandbox --forward 18789",
-        [failureResult("sandbox already exists")],
-      ],
-    ]);
+        [
+          "sandbox create --from openclaw --name test-sandbox --forward 18789",
+          [failureResult("sandbox already exists")],
+        ],
+      ]);
 
-    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      expectedError,
-    );
+      await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+        expectedError,
+      );
 
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
-    expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
-    expect(commands).toContain("provider delete acme-okta-runtime");
-  });
+      const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+      expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
+      expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
+      expect(commands).toContain("provider delete acme-okta-runtime");
+    },
+  );
 
   it("fails before identity mutation when a reused sandbox's inference provider cannot be inspected", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
@@ -424,9 +443,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect inference provider 'test-provider'.*gateway configuration not found/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -454,9 +471,7 @@ describe("blueprint identity wrapper", () => {
       /Inference provider 'test-provider' does not match the requested non-secret binding/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -483,9 +498,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect the active inference route.*gateway route inspection unavailable/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -786,7 +799,7 @@ describe("blueprint identity wrapper", () => {
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
         ],
       ],
-      ["policy get --base test-sandbox", [failureResult("policy read rejected")]],
+      ["policy get -g test-gateway --base test-sandbox", [failureResult("policy read rejected")]],
     ]);
 
     await expect(

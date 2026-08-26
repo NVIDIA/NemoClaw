@@ -161,8 +161,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
   },
   {
-    pattern: /(?:^|\/)agents\/hermes\/(?:mcp-config-transaction|runtime-config-guard)\.py$/,
+    pattern: /(?:^|\/)agents\/hermes\/runtime-config-guard\.py$/,
     testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/mcp-config-transaction\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,
@@ -206,6 +213,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/actions\/publish-base-image-manifest\//,
+    testsToRun: runTests(
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/platform/images/publish-base-image-manifest.test.ts",
     ),
   },
   {

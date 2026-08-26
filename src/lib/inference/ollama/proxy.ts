@@ -29,13 +29,13 @@ const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
   require("./model-discovery");
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
-  getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeOllamaModelCapabilities,
+  selectDefaultOllamaModel,
   validateOllamaModel,
 } = require("../local");
 const {
@@ -857,12 +857,16 @@ function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
 
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
-  promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
+  promptOptions: {
+    defaultModel?: string | null;
+    excludeModels?: ReadonlySet<string>;
+    installedModels?: readonly string[];
+  } = {},
 ) {
   const excludeModels = promptOptions.excludeModels;
   const isExcluded = (tag: string): boolean =>
     excludeModels !== undefined && excludeModels.has(tag);
-  const installed = getOllamaModelOptions();
+  const installed = promptOptions.installedModels ?? getOllamaModelOptions();
   // Filter installed entries by registry-known memory fit so a host that
   // currently cannot load the only installed model still gets a usable
   // default — without the filter, pressing Enter would re-select the
@@ -881,7 +885,7 @@ async function promptOllamaModel(
   const requestedDefaultOption = requestedDefaultModel
     ? options.find((option: string) => ollamaModelRefsMatch(option, requestedDefaultModel))
     : undefined;
-  const defaultModelCandidate = getDefaultOllamaModel(gpu);
+  const defaultModelCandidate = selectDefaultOllamaModel(installed, gpu);
   const defaultModel =
     requestedDefaultOption ??
     (isExcluded(defaultModelCandidate)
@@ -962,6 +966,27 @@ function pullTimeoutErrorHint(timeoutMs: number): string {
   ].join("\n");
 }
 
+function formatPullDuration(durationMs: number): string {
+  const seconds = Math.max(1, Math.round(durationMs / 1_000));
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  const minuteText = `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  if (remainingSeconds === 0) return minuteText;
+  return `${minuteText} ${remainingSeconds} ${remainingSeconds === 1 ? "second" : "seconds"}`;
+}
+
+function httpPullTimeoutErrorHint(elapsedMs: number, timeoutMs: number, host: string): string {
+  if (elapsedMs >= Math.max(0, timeoutMs - 1_000)) {
+    return pullTimeoutErrorHint(timeoutMs);
+  }
+  return [
+    `  Model pull connection timed out after ${formatPullDuration(elapsedMs)}.`,
+    `  The wall-clock limit of ${formatPullDuration(timeoutMs)} was not reached.`,
+    `  Verify that Ollama is reachable at http://${host}:${OLLAMA_PORT}, then retry.`,
+  ].join("\n");
+}
+
 function normalizeOllamaPullModel(model: string): string {
   const value = String(model || "").trim();
   if (!value || /[\0\r\n]/.test(value)) {
@@ -1009,8 +1034,10 @@ function pullOllamaModelViaCli(model: string): boolean {
 function pullOllamaModelViaHttp(model: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const url = buildLocalOllamaPullUrl();
+    const host = getResolvedOllamaHost();
     const body = JSON.stringify({ model: normalizeOllamaPullModel(model), stream: true });
     const TIMEOUT_MS = getOllamaPullTimeoutMs();
+    const startedAtMs = performance.now();
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
 
@@ -1134,9 +1161,10 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
         return;
       }
       if (code !== 0) {
-        // curl exit 28 = CURLE_OPERATION_TIMEDOUT (--max-time hit).
+        // curl exit 28 covers both the connection timeout and the complete
+        // request limit. Elapsed time distinguishes the operator actions.
         if (code === 28) {
-          console.error(pullTimeoutErrorHint(TIMEOUT_MS));
+          console.error(httpPullTimeoutErrorHint(performance.now() - startedAtMs, TIMEOUT_MS, host));
         } else {
           console.error(`  Model pull exited with code ${String(code)} (network error).`);
           console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
