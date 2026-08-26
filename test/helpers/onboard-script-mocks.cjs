@@ -257,6 +257,7 @@ const ONBOARD_SANDBOX_INSPECT = {
     Labels: {
       "openshell.ai/managed-by": "openshell",
       "openshell.ai/sandbox-name": "my-assistant",
+      "openshell.ai/sandbox-namespace": "test-gateway",
     },
     Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     Cmd: [],
@@ -636,13 +637,19 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
     const normalized = normalizeCommand(command);
     if (
       finalCommitReleased &&
-      normalized.startsWith("docker ps -a --no-trunc ") &&
-      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
-      normalized.endsWith("--format {{.ID}}")
+      ((normalized.startsWith("docker ps -a --no-trunc ") &&
+        normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+        normalized.endsWith("--format {{.ID}}")) ||
+        normalized ===
+          `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`)
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stdout: Buffer.from(
+          normalized.startsWith("docker inspect ")
+            ? "test-gateway\n"
+            : `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`,
+        ),
         stderr: Buffer.alloc(0),
       };
     }

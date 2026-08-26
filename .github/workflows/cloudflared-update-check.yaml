@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / cloudflared Pin
+name: Automation / Check cloudflared Release Pin
 
 on:
   schedule:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   check-cloudflared:
-    name: Check release
+    name: Check cloudflared release pin
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

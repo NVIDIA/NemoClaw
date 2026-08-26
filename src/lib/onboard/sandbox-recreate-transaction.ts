@@ -198,10 +198,21 @@ const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
   "gatewayName",
   "gatewayPort",
 ];
+// Rebuild may update these independently receipt-bound projections before delete.
+// The source fingerprint still binds policyAuthority and every sandbox, gateway,
+// lifecycle, agent, and workload ownership field.
+const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = [
+  "policyCreationReceipt",
+  "policies",
+  "customPolicies",
+  "mcp",
+];
 
 export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
   const durable: Record<string, unknown> = { ...entry };
-  for (const field of ROUTE_RESERVATION_FIELDS) delete durable[field];
+  for (const field of [...ROUTE_RESERVATION_FIELDS, ...RECEIPT_BOUND_PROJECTION_FIELDS]) {
+    delete durable[field];
+  }
   return fingerprintSandboxRecreateValue(durable);
 }
 
