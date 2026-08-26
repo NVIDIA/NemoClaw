@@ -18,6 +18,8 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
+export { classifyManagedGatewayEndpointBinding } from "./client";
+export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */
@@ -94,7 +96,6 @@ export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions 
   const openshell = opts.openshellBinary ?? resolveOpenshellBinaryOrNull();
   if (!openshell) throw new Error("OpenShell is unavailable");
   if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
-  const keepCaptureNonfatal = opts.ignoreError === true;
   return captureOpenshellCommand(openshell, args, {
     cwd: ROOT,
     env: opts.env,
@@ -106,12 +107,8 @@ export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions 
     killSignal: opts.killSignal,
     killProcessTreeOnTimeout: opts.killProcessTreeOnTimeout,
     maxBuffer: opts.maxBuffer,
-    errorLine: keepCaptureNonfatal ? () => undefined : console.error,
-    exit: keepCaptureNonfatal
-      ? () => {
-          throw new Error("OpenShell capture could not run");
-        }
-      : (code: number) => process.exit(code),
+    errorLine: console.error,
+    exit: (code: number) => process.exit(code),
   });
 }
 

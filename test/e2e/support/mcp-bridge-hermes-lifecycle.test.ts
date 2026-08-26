@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { type CommandRunner, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
@@ -55,6 +60,54 @@ class RecordingRunner implements CommandRunner {
   }
 }
 
+class HermesConfigAssertionRunner implements CommandRunner {
+  constructor(private readonly configPath: string) {}
+
+  async run(command: TrustedShellCommand): Promise<ShellProbeResult> {
+    const shellScript = command.args.at(-1) ?? "";
+    const marker = "/opt/hermes/.venv/bin/python - <<'PY'\n";
+    const scriptStart = shellScript.indexOf(marker) + marker.length;
+    const scriptEnd = shellScript.lastIndexOf("\nPY");
+    expect(scriptStart, "Hermes config assertion Python start").toBeGreaterThanOrEqual(
+      marker.length,
+    );
+    expect(scriptEnd, "Hermes config assertion Python end").toBeGreaterThanOrEqual(scriptStart);
+    const pythonScript = shellScript
+      .slice(scriptStart, scriptEnd)
+      .replace("import pathlib, re, yaml", "import pathlib, re, sys, yaml")
+      .replace(
+        "path = pathlib.Path('/sandbox/.hermes/config.yaml')",
+        "path = pathlib.Path(sys.argv[1])",
+      );
+    const result = spawnSync("python3", ["-", this.configPath], {
+      encoding: "utf8",
+      input: pythonScript,
+      killSignal: "SIGKILL",
+      timeout: 10_000,
+    });
+    const error = result.error?.message ?? "";
+    return shellResult(
+      result.status ?? 1,
+      result.stdout,
+      [result.stderr, error].filter(Boolean).join("\n"),
+    );
+  }
+}
+
+function writeHermesConfig(configPath: string, authorization: string): void {
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      mcp_servers: {
+        fake: {
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: authorization },
+        },
+      },
+    }),
+  );
+}
+
 function sandboxWithInspectionState(state: string): SandboxClient {
   return new SandboxClient({
     run: async () => ({
@@ -99,15 +152,40 @@ describe("Hermes MCP live rollback inspection", () => {
 });
 
 describe("Hermes MCP managed configuration assertion", () => {
-  it("requires the revision-scoped OpenShell credential placeholder (#10155)", async () => {
-    const runner = new RecordingRunner();
-    const sandbox = new SandboxClient(runner);
+  it("accepts a revision-scoped credential placeholder through the sandbox boundary (#10155)", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-assertion-"));
+    const configPath = path.join(temp, "config.yaml");
+    writeHermesConfig(configPath, "Bearer openshell:resolve:env:v12_FAKE_MCP_SECRET");
 
-    await assertHermesConfig(sandbox, "hermes-e2e", "https://mcp.example.test/mcp");
+    try {
+      await expect(
+        assertHermesConfig(
+          new SandboxClient(new HermesConfigAssertionRunner(configPath)),
+          "hermes-e2e",
+          "https://mcp.example.test/mcp",
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      fs.rmSync(temp, { force: true, recursive: true });
+    }
+  });
 
-    const command = runner.calls[0]?.args.at(-1) ?? "";
-    expect(command).toContain("Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET");
-    expect(command).not.toContain("== 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'");
+  it("rejects an unscoped credential placeholder through the sandbox boundary (#10155)", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-assertion-"));
+    const configPath = path.join(temp, "config.yaml");
+    writeHermesConfig(configPath, "Bearer openshell:resolve:env:FAKE_MCP_SECRET");
+
+    try {
+      await expect(
+        assertHermesConfig(
+          new SandboxClient(new HermesConfigAssertionRunner(configPath)),
+          "hermes-e2e",
+          "https://mcp.example.test/mcp",
+        ),
+      ).rejects.toThrow("Hermes MCP config contains placeholder and no raw host secret failed");
+    } finally {
+      fs.rmSync(temp, { force: true, recursive: true });
+    }
   });
 });
 

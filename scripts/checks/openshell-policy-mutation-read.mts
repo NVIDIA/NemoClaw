@@ -7,9 +7,8 @@
  *
  * invalidState: a refactor introduces an unclassified policy read or changes a
  * mutation to consume provider-composed `--full` output.
- * sourceBoundary: typed command builders and the OpenShell authority adapter
- * own argv construction; this audit owns exhaustive discovery and
- * classification of their production call sites.
+ * sourceBoundary: typed command builders own argv construction; this audit owns
+ * exhaustive discovery and classification of their production call sites.
  * whyNotSourceFix: TypeScript cannot distinguish a command array after it
  * crosses the process runner, so this defense-in-depth check intentionally uses
  * deterministic AST classifications plus repository-wide read-site discovery.
@@ -100,8 +99,8 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/adapters/openshell/policy-authority.ts",
     expectedReads: [
+      unclassifiedBase("captureSandboxBasePolicy"),
       unclassifiedFull("inspectSandboxPolicyAuthority"),
-      unclassifiedFull("inspectGlobalPolicyAuthority"),
     ],
   },
   {
@@ -118,8 +117,9 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
+      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
       {
-        site: "buildPolicyGetCommand",
+        site: "buildPolicyGetArgs",
         view: "base",
         failureHandling: "unclassified",
       },
@@ -128,6 +128,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "full",
         failureHandling: "unclassified",
       },
+      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;
@@ -140,10 +141,10 @@ export interface DiscoveredPolicyReadSite {
 
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
+  ["buildPolicyGetArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
-  ["buildPolicyGetFullJsonArgs", "full"],
   ["buildPolicyGetFullJsonCommand", "full"],
-  ["buildGlobalPolicyGetFullJsonCommand", "full"],
+  ["buildPolicyGetFullJsonArgs", "full"],
 ]);
 
 interface PolicyBuilderBindings {

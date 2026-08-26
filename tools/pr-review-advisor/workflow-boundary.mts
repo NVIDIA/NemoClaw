@@ -142,7 +142,7 @@ function checkSandboxNames(errors: string[], jobs: Array<[string, Value]>): void
     });
   }
   if (new Set(names).size !== names.length)
-    errors.push("advisor, specialist, and synthesis sandbox_name values must be unique");
+    errors.push("specialist sandbox_name values must be unique");
 }
 
 export function validatePrReviewAdvisorWorkflowBoundary(
@@ -169,12 +169,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const jobs = object(workflow.jobs);
   const discovery = object(jobs["discover-specialists"]);
   const specialists = object(jobs["review-specialists"]);
-  const review = object(jobs.review);
   const publish = object(jobs.publish);
   checkPermissions(errors, "discover-specialists", discovery, { contents: "read" });
   checkPermissions(errors, "review-specialists", specialists, READ_PERMISSIONS);
-  checkPermissions(errors, "review", review, READ_PERMISSIONS);
   checkPermissions(errors, "publish", publish, { contents: "read", "pull-requests": "write" });
+  if (jobs.review !== undefined) errors.push("workflow must not declare a synthesis job");
   for (const [name, job] of Object.entries(jobs)) {
     if (name !== "publish" && object(object(job).permissions)["pull-requests"] === "write")
       errors.push("publish must be the only job with pull-requests: write");
@@ -183,20 +182,16 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("publish job must not receive the advisor model credential");
   if (JSON.stringify(publish).includes("ADVISOR_WORKDIR"))
     errors.push("publish job must not receive the untrusted analysis worktree");
-  checkSandboxNames(errors, [
-    ["specialist", specialists],
-    ["synthesis", review],
-  ]);
+  checkSandboxNames(errors, [["specialist", specialists]]);
   const rows = object(object(specialists.strategy).matrix).advisor;
   if (rows !== SPECIALIST_MATRIX_EXPRESSION)
     errors.push("specialist matrix must use the discovered specialist prompts");
   if (specialists.needs !== "discover-specialists")
     errors.push("specialist matrix must depend on prompt discovery");
   if (specialists["continue-on-error"] !== undefined)
-    errors.push("specialist failures must block synthesis");
-  if (review.needs !== "review-specialists")
-    errors.push("review synthesis must depend on the specialist matrix");
-  if (publish.needs !== "review") errors.push("publisher must depend on review synthesis");
+    errors.push("specialist failures must block publication");
+  if (publish.needs !== "review-specialists")
+    errors.push("publisher must depend on the specialist matrix");
   if (object(specialists.env).PR_REVIEW_ADVISOR_INTEREST !== "${{ matrix.advisor.interest }}")
     errors.push(
       "specialist job env.PR_REVIEW_ADVISOR_INTEREST must be ${{ matrix.advisor.interest }}",
@@ -207,34 +202,27 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("Prepare advisor sandbox inputs must receive the selected base ref");
   if (prepareEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
     errors.push("Prepare advisor sandbox inputs must receive the selected head ref");
+  const specialistUpload = namedStep(specialists, "Upload specialist review");
+  if (!String(specialistUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
+    errors.push("specialist review step must use actions/upload-artifact");
+  requireWith(errors, specialistUpload, "if-no-files-found", "error");
   requireWith(
     errors,
-    namedStep(specialists, "Upload native specialist session"),
-    "if-no-files-found",
-    "error",
-  );
-  requireWith(
-    errors,
-    namedStep(review, "Download specialist session artifacts"),
+    specialistUpload,
     "path",
-    "pr-workdir/.pr-review-advisor-sessions",
+    "artifacts/${{ matrix.advisor.artifact_dir }}/",
   );
   requireWith(
     errors,
-    namedStep(review, "Checkout trusted advisor code (workflow revision)"),
+    namedStep(publish, "Checkout trusted comment publisher (workflow revision)"),
     "ref",
     "${{ github.workflow_sha }}",
   );
-  const artifact = namedStep(publish, "Download primary advisor artifact");
-  requireWith(errors, artifact, "name", "pr-review-advisor");
-  requireWith(errors, artifact, "path", "publish-artifacts/pr-review-advisor");
-  for (const key of ["run-id", "github-token", "repository", "pattern", "merge-multiple"]) {
-    if (key in object(artifact?.with))
-      errors.push("Download primary advisor artifact must not set with." + key);
-  }
+  const publishCommand = String(namedStep(publish, "Post PR review advisor link")?.run ?? "");
+  if (!publishCommand.includes("tools/pr-review-advisor/completion-comment.mts"))
+    errors.push("publisher must post the workflow-run advisory link");
   checkActionPins(errors, "discover-specialists", discovery);
   checkActionPins(errors, "review-specialists", specialists);
-  checkActionPins(errors, "review", review);
   checkActionPins(errors, "publish", publish);
   return errors;
 }

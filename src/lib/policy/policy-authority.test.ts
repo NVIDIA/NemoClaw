@@ -75,6 +75,7 @@ describe("externally managed policy requirements", () => {
     };
     const inspection: SandboxPolicyAuthorityInspection = {
       authority: "externally-managed",
+      policyIdentity: { hash: "policy-alpha", activeVersion: 7 },
       effectivePolicy: {
         version: 9,
         filesystem_policy: { read_only: ["/observed-secret"] },
@@ -105,7 +106,11 @@ describe("externally managed policy requirements", () => {
   it("leaves NemoClaw-managed requirements to the mutation path (#9833)", () => {
     expect(() =>
       assertExternalPolicyRequirements({
-        inspection: { authority: "nemoclaw-managed", effectivePolicy: {} },
+        inspection: {
+          authority: "nemoclaw-managed",
+          policyIdentity: { hash: "policy-alpha", activeVersion: 7 },
+          effectivePolicy: {},
+        },
         requiredPolicy: { network_policies: { required: { endpoints: ["api.test"] } } },
         operation: "apply a preset",
       }),

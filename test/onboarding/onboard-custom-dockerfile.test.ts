@@ -191,6 +191,7 @@ describe("onboard custom Dockerfile", () => {
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -230,28 +231,36 @@ fs.statSync = (target, ...rest) => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const normalized = _n(command);
+  if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
+  if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
+    sandboxName: "my-assistant",
+  });
+  if (createdIdentity !== null) return createdIdentity;
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
+  if (normalized.includes("sandbox list")) return "my-assistant Ready";
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "openai-api",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
@@ -297,7 +306,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath}, null, null, null, null, []],
+    createFixture,
+  ));
   console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
 })().catch((error) => {
   console.error(error);
