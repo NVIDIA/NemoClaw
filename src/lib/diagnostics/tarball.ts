@@ -15,19 +15,20 @@ import {
 } from "node:fs";
 import { basename, dirname } from "node:path";
 
-// A directory another local account can write to without the sticky bit
-// set lets that account rename or delete entries it does not own — which
-// defeats every in-process identity check below, including ones that run
+// Ownership is checked unconditionally, not only when the directory's mode
+// bits show group/other write access: a POSIX ACL can grant another
+// account write authority over a directory whose traditional mode bits
+// show none, and Node's fs.Stats does not expose ACL entries at all — mode
+// bits alone are not proof of who can actually write here. Any owner other
+// than the current user or root retains full authority to rename or
+// replace our entries no matter what wrote them, at any point, including
 // after createTarball() has already returned and the caller has moved on.
-// The sticky bit (mode 1777, as on a standard /tmp) is what makes a shared
-// directory safe for this, but only when a trusted party owns it: sticky
-// semantics stop everyone *except* the directory's own owner from touching
-// entries they don't own, so an attacker-owned sticky-and-world-writable
-// directory offers no protection at all — its owner can still remove or
-// replace our file regardless of the bit. A directory only the current
-// user can write to needs neither the sticky bit nor an ownership check
-// for the same reason. Refusing to stage into anything else is the one
-// check here that closes the race for good instead of narrowing it.
+// A directory whose mode bits additionally show group/other write access
+// also needs the sticky bit (mode 1777, as on a standard /tmp): sticky
+// semantics are what stop accounts OTHER than the trusted owner just
+// established above from touching entries they don't own. Refusing to
+// stage into anything else is the one check here that closes the race for
+// good instead of narrowing it.
 const MODE_GROUP_OR_OTHER_WRITABLE = 0o022;
 const MODE_STICKY = 0o1000;
 const ROOT_UID = 0;
@@ -41,13 +42,13 @@ function outputDirectoryTrustworthy(outputPath: string): boolean {
     // fail with its own, more specific error instead of a generic refusal.
     return true;
   }
+  if (typeof process.getuid === "function") {
+    const currentUid = process.getuid();
+    if (dirStat.uid !== currentUid && dirStat.uid !== ROOT_UID) return false;
+  }
   const writableByOthers = (dirStat.mode & MODE_GROUP_OR_OTHER_WRITABLE) !== 0;
   if (!writableByOthers) return true;
-  const stickyProtected = (dirStat.mode & MODE_STICKY) !== 0;
-  if (!stickyProtected) return false;
-  if (typeof process.getuid !== "function") return true;
-  const currentUid = process.getuid();
-  return dirStat.uid === currentUid || dirStat.uid === ROOT_UID;
+  return (dirStat.mode & MODE_STICKY) !== 0;
 }
 
 export interface CreateTarballOptions {
@@ -79,11 +80,12 @@ export function createTarball(
   // detect or prevent (#10195).
   if (!outputDirectoryTrustworthy(output)) {
     error(
-      `Refusing to stage a tarball under ${dirname(output)}: this directory is writable by ` +
-        "other local accounts and does not have the sticky bit set, so a file placed here can " +
-        "be renamed or replaced by another local user at any point, including after this " +
-        "command reports success. Choose a directory only this account can write to, or one " +
-        "with the sticky bit set (mode 1777, as on a standard /tmp).",
+      `Refusing to stage a tarball under ${dirname(output)}: another local account may be able ` +
+        "to rename or replace a file placed here, at any point, including after this command " +
+        "reports success — either because it owns the directory, or because it can write to " +
+        "it without the sticky bit set to protect entries it doesn't own. Choose a directory " +
+        "owned by this account (or root) that either isn't writable by other accounts, or has " +
+        "the sticky bit set (mode 1777, as on a standard /tmp).",
     );
     process.exitCode = 1;
     return false;

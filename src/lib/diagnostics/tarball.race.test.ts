@@ -194,4 +194,27 @@ describe("createTarball staging-descriptor race (#10195)", () => {
     expect(mockedSpawnSync).not.toHaveBeenCalled();
     expect(() => statSync(output)).toThrow();
   });
+
+  it("refuses a private-mode output directory owned by a different local account", async () => {
+    const output = join(outputDir, "output.tar.gz");
+    const { statSync: realStatSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const otherUid = (process.getuid?.() ?? 0) + 1;
+    // Traditional mode bits are not proof of who can write here: a POSIX
+    // ACL can grant this account write access to a directory owned by
+    // someone else while its mode bits show no group/other write access at
+    // all (0700), which is exactly the shape that made the earlier
+    // writable-by-others gate on the ownership check a blind spot — this
+    // directory would have sailed through unchecked before requiring
+    // ownership unconditionally. The owner still keeps full authority over
+    // entries in their own directory regardless of any ACL grant.
+    mockedStatSync.mockImplementationOnce((path, opts) => {
+      const real = realStatSync(path as string, opts as never);
+      return { ...real, mode: (real.mode & ~0o777) | 0o700, uid: otherUid };
+    });
+    const ok = createTarball(tempDir, output, { info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(mockedSpawnSync).not.toHaveBeenCalled();
+    expect(() => statSync(output)).toThrow();
+  });
 });
