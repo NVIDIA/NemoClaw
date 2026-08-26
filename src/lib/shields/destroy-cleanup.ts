@@ -8,7 +8,7 @@ import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { killTimer, type KillTimerResult } from "./timer-control";
 
-export type RemoveShieldsStateDeps = {
+type RemoveShieldsStateDeps = {
   rmSync?: typeof fs.rmSync;
   warn?: (message: string) => void;
 };
@@ -94,7 +94,7 @@ function removeShieldsRecoveryStatePair(
  *
  * See: https://github.com/NVIDIA/NemoClaw/issues/3114
  */
-export function removeShieldsState(
+function removeShieldsState(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
   deps: RemoveShieldsStateDeps = {},

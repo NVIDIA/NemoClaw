@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { resolveNemoclawStateDir } from "../state/paths";
-import { cleanupShieldsDestroyArtifacts, removeShieldsState } from "./destroy-cleanup";
+import { cleanupShieldsDestroyArtifacts } from "./destroy-cleanup";
 
 describe("Shields destroy cleanup", () => {
   it("destroy neutralizes active shields timer and only deletes target sandbox files", () => {
@@ -27,19 +27,28 @@ describe("Shields destroy cleanup", () => {
     fs.writeFileSync(betaState, '{"shieldsDown":true}');
     fs.writeFileSync(betaTimer, '{"pid":9999}');
 
-    const killCalls: string[] = [];
+    const cleanupCalls: string[] = [];
     cleanupShieldsDestroyArtifacts("alpha", {
       stateDir,
       killShieldsTimer: (sandboxName) => {
-        killCalls.push(sandboxName);
+        cleanupCalls.push(`revoke:${sandboxName}`);
         return {
           authorityRevoked: true,
           warnings: [],
         };
       },
+      rmSync: ((...args: Parameters<typeof fs.rmSync>) => {
+        cleanupCalls.push(`remove:${path.basename(String(args[0]))}`);
+        fs.rmSync(...args);
+      }) as typeof fs.rmSync,
     });
 
-    expect(killCalls).toEqual(["alpha"]);
+    expect(cleanupCalls).toEqual([
+      "revoke:alpha",
+      "remove:shields-external-policy-alpha.yaml",
+      "remove:shields-alpha.json",
+      "remove:shields-timer-alpha.json",
+    ]);
     expect(fs.existsSync(alphaRecovery)).toBe(false);
     expect(fs.existsSync(alphaState)).toBe(false);
     expect(fs.existsSync(alphaTimer)).toBe(false);
@@ -165,7 +174,10 @@ describe("shields state cleanup on destroy (#3114)", () => {
       fs.writeFileSync(timerFile, JSON.stringify({ pid: 12345 }));
       fs.writeFileSync(recoveryFile, "version: 1\nnetwork_policies: {}\n");
 
-      removeShieldsState("alpha", tmpDir);
+      cleanupShieldsDestroyArtifacts("alpha", {
+        stateDir: tmpDir,
+        killShieldsTimer: () => ({ authorityRevoked: true, warnings: [] }),
+      });
 
       expect(fs.existsSync(shieldsFile)).toBe(false);
       expect(fs.existsSync(timerFile)).toBe(false);
@@ -175,11 +187,19 @@ describe("shields state cleanup on destroy (#3114)", () => {
     }
   });
 
-  it("is a no-op when no shields state files exist", () => {
+  it("tolerates missing Shields artifacts after revoking timer authority", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
     try {
-      // Must not throw
-      removeShieldsState("nonexistent", tmpDir);
+      const killShieldsTimer = vi.fn(() => ({ authorityRevoked: true, warnings: [] }));
+
+      expect(() =>
+        cleanupShieldsDestroyArtifacts("nonexistent", {
+          stateDir: tmpDir,
+          killShieldsTimer,
+        }),
+      ).not.toThrow();
+
+      expect(killShieldsTimer).toHaveBeenCalledWith("nonexistent");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -193,7 +213,10 @@ describe("shields state cleanup on destroy (#3114)", () => {
       fs.writeFileSync(otherFile, JSON.stringify({ shieldsDown: false }));
       fs.writeFileSync(otherRecoveryFile, "version: 1\nnetwork_policies: {}\n");
 
-      removeShieldsState("alpha", tmpDir);
+      cleanupShieldsDestroyArtifacts("alpha", {
+        stateDir: tmpDir,
+        killShieldsTimer: () => ({ authorityRevoked: true, warnings: [] }),
+      });
 
       expect(fs.existsSync(otherFile)).toBe(true);
       expect(fs.existsSync(otherRecoveryFile)).toBe(true);
@@ -205,12 +228,20 @@ describe("shields state cleanup on destroy (#3114)", () => {
   it("rejects path traversal in sandbox name", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
     const escapedFile = path.join(tmpDir, "..", "shields-traversal.json");
+    const killShieldsTimer = vi.fn(() => ({ authorityRevoked: true, warnings: [] }));
+    const rmSync = vi.fn();
     try {
       fs.writeFileSync(escapedFile, "should survive");
 
       // A name containing ../ should not delete files outside stateDir
-      removeShieldsState("../../../../shields-traversal", tmpDir);
+      cleanupShieldsDestroyArtifacts("../../../../shields-traversal", {
+        stateDir: tmpDir,
+        killShieldsTimer,
+        rmSync: rmSync as unknown as typeof fs.rmSync,
+      });
 
+      expect(killShieldsTimer).toHaveBeenCalledWith("../../../../shields-traversal");
+      expect(rmSync).not.toHaveBeenCalled();
       expect(fs.existsSync(escapedFile)).toBe(true);
     } finally {
       fs.rmSync(escapedFile, { force: true });
