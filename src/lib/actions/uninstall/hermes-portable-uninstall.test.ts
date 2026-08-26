@@ -8,6 +8,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
+import { writeConfigFile } from "../../state/config-io";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
+import type { SandboxEntry } from "../../state/registry/types";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { readHermesPortableLifecycleReceipt } from "../../onboard/experimental/hermes-portable-receipt";
@@ -80,6 +83,39 @@ describe("Hermes Portable schema-5 uninstall", () => {
     expect(fixture.gatewayProvider.calls()).toHaveLength(providerCallCount);
     expect(fixture.sandboxDeleteCount()).toBe(1);
   });
+
+  it.each([
+    ["credential field", (row: SandboxEntry) => ({ ...row, credentialEnv: "FOREIGN_TOKEN" })],
+    [
+      "llama.cpp provenance",
+      (row: SandboxEntry) => ({
+        ...row,
+        hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+          row.name,
+          row.hostLocalInferenceReceipt!,
+        ),
+      }),
+    ],
+  ] as const)(
+    "rejects a managed Ollama row with a %s before mutation (#9211)",
+    async (_case, alter) => {
+      fixture = await createHermesPortableUninstallFixture(homeDir);
+      const registry = readGatewayRegistryFile(homeDir, fixture.registryFile)!;
+      writeConfigFile(fixture.registryFile, {
+        ...registry,
+        sandboxes: {
+          ...registry.sandboxes,
+          [fixture.targetRow.name]: alter(registry.sandboxes[fixture.targetRow.name]!),
+        },
+      });
+
+      expect(() => runCleanup(fixture!)).toThrow("registry row 'portable-hermes' is incomplete");
+      expect(fixture.sandboxDeleteCount()).toBe(0);
+      expect(fixture.gatewayProvider.isPresent()).toBe(true);
+      expect(fixture.harness.container()).not.toBeNull();
+      expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
+    },
+  );
 
   it("replaces completed journal authority after a later install (#9608)", async () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);

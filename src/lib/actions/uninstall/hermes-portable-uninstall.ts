@@ -206,7 +206,9 @@ function requireSandboxRow(row: SandboxEntry, receipt: HermesPortableConfiguredR
     row.lifecycleGeneration !== receipt.lifecycleGeneration ||
     row.provider !== "ollama-local" ||
     typeof row.model !== "string" ||
-    typeof row.hostLocalInferenceReceipt !== "string"
+    row.credentialEnv !== null ||
+    typeof row.hostLocalInferenceReceipt !== "string" ||
+    row.hostLocalInferenceProvenance !== undefined
   ) {
     throw new Error(
       `Hermes Portable uninstall registry row '${receipt.sandboxName}' is incomplete`,
