@@ -158,7 +158,12 @@ The collector reads only milestone aliases from the checked-in file passed with
 `--presentation-map`.
 It retains each candidate's complete body, native subissue, `## Work Tracking`, and progress
 evidence so the owner can select a presentation grouping after collection.
-Checked-in Epic entries do not control collection, visible wording, classification, or grouping.
+Checked-in Epic entries are optional seeds only.
+Never pass them directly to model construction.
+After collection, the owner creates and reviews an owner-only runtime `presentation-map.json`.
+The model builder validates `epicNodeId`, `issueNumber`, and `boundBodySha256`.
+It uses `displayTitle` and `shortenedOutcome` for visible wording, `roadmapArea` for classification,
+`displayOrder` for order, and optional `presentationMilestoneNodeId` for grouping.
 
 For `net_change`, also pass both approved baseline files:
 
