@@ -16,6 +16,7 @@ import {
   listMessagingProviderNamesForChannel,
 } from "../../../src/lib/messaging/channels/metadata.js";
 import type { MessagingAgentId } from "../../../src/lib/messaging/manifest";
+import { loadMessagingChannelPolicyPreset } from "../../../src/lib/messaging/channels/policy.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -26,6 +27,8 @@ const BASE_PERMISSIVE = YAML.stringify({
   landlock: { compatibility: "best_effort" },
 });
 
+const EMPTY_NETWORK_PERMISSIVE = YAML.stringify({ network_policies: {} });
+
 const MANAGED_POLICY: ExactManagedMcpPolicy = {
   key: "mcp_bridge_alpha",
   networkPolicy: {
@@ -35,31 +38,6 @@ const MANAGED_POLICY: ExactManagedMcpPolicy = {
   policyName: "mcp-bridge-alpha",
   server: "alpha",
 };
-
-const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
-  network_policies: {
-    discord: {
-      endpoints: [
-        {
-          host: "discord.com",
-          port: 443,
-          credential_binding: { provider: "{sandboxName}-discord-bridge" },
-        },
-        {
-          host: "gateway.discord.gg",
-          port: 443,
-          credential_binding: { provider: "{sandboxName}-discord-bridge" },
-        },
-        {
-          host: "*.discord.gg",
-          port: 443,
-          credential_binding: { provider: "{sandboxName}-discord-bridge" },
-        },
-        { host: "cdn.discordapp.com", port: 443 },
-      ],
-    },
-  },
-});
 
 const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
   path.resolve(import.meta.dirname, "../../../agents/hermes/policy-permissive.yaml"),
@@ -136,25 +114,25 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
       routes: ["POST /api/apps.connections.open"],
     },
     {
-      access: "full",
+      access: undefined,
       host: "slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: [],
+      routes: ["GET /**", "POST /**"],
     },
     {
-      access: "full",
+      access: undefined,
       host: "api.slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: [],
+      routes: ["GET /**", "POST /**"],
     },
     {
-      access: "full",
+      access: undefined,
       host: "hooks.slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: [],
+      routes: ["GET /**", "POST /**"],
     },
     {
       access: undefined,
@@ -236,9 +214,23 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const policies = YAML.parse(stagedPolicy).network_policies;
+    const telegramPolicy = YAML.parse(
+      loadMessagingChannelPolicyPreset("telegram", {
+        agent: "openclaw",
+        sandboxName: "openclaw-box",
+      })!,
+    );
+    const slackPolicy = YAML.parse(
+      loadMessagingChannelPolicyPreset("slack", {
+        agent: "openclaw",
+        sandboxName: "openclaw-box",
+      })!,
+    );
+    expect(policies.telegram_bot).toEqual(telegramPolicy.network_policies.telegram_bot);
+    expect(policies.slack).toEqual(slackPolicy.network_policies.slack);
     expect(
       new Set(
-        policies.telegram.endpoints.map(
+        policies.telegram_bot.endpoints.map(
           (endpoint: SlackEndpoint) => endpoint.credential_binding?.provider,
         ),
       ),
@@ -276,7 +268,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
 
-    expect(YAML.parse(stagedPolicy).network_policies.telegram).toBeUndefined();
+    expect(YAML.parse(stagedPolicy).network_policies.telegram_bot).toBeUndefined();
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
@@ -297,7 +289,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       }),
       messagingAgent: "hermes",
       messagingPlan: enabledMessagingSelection("discord"),
-      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -336,7 +328,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: "",
       messagingAgent: "hermes",
       messagingPlan: enabledMessagingSelection("discord"),
-      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -471,7 +463,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         }),
         messagingAgent: "hermes",
         messagingPlan: enabledMessagingSelection("slack"),
-        readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,
       });
@@ -501,7 +493,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         }),
         messagingAgent: "hermes",
         messagingPlan: enabledMessagingSelection("discord"),
-        readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,
       }),

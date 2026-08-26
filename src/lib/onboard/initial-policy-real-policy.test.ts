@@ -425,6 +425,7 @@ describe("initial sandbox policy real preset merge", () => {
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(policyCase.path, ["slack"], {
         agentName: policyCase.agent,
+        sandboxName: `${policyCase.agent}-slack`,
       }),
     );
     const slackEndpoints = effective.network_policies?.slack?.endpoints ?? [];

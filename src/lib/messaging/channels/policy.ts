@@ -87,8 +87,8 @@ export function materializeMessagingPolicySandboxName(
 
 interface CredentialBoundMessagingPolicy {
   readonly channelId: string;
-  readonly livePolicyKeys: readonly string[];
-  readonly permissivePolicyKey: string;
+  readonly policyKeys: readonly string[];
+  readonly presetName: string;
   readonly providerNames: readonly string[];
 }
 
@@ -116,8 +116,8 @@ function listCredentialBoundMessagingPolicies(
     return [
       {
         channelId: policy.channelId,
-        livePolicyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
-        permissivePolicyKey: policy.presetName,
+        policyKeys: policy.agentPolicyKeys[agent] ?? policy.policyKeys,
+        presetName: policy.presetName,
         providerNames,
       },
     ];
@@ -155,7 +155,7 @@ function credentialProviderOmissionReason(
   livePolicy: Record<string, unknown> | null,
   policy: CredentialBoundMessagingPolicy,
 ): string | null {
-  const liveProviders = listNetworkPolicyCredentialProviders(livePolicy, policy.livePolicyKeys);
+  const liveProviders = listNetworkPolicyCredentialProviders(livePolicy, policy.policyKeys);
   if (
     liveProviders.size === policy.providerNames.length &&
     policy.providerNames.every((providerName) => liveProviders.has(providerName))
@@ -171,43 +171,18 @@ function credentialProviderOmissionReason(
   );
 }
 
-function endpointRecord(value: unknown): Record<string, unknown> | null {
+function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
 
-function endpointProvider(endpoint: Record<string, unknown>): string | null {
-  const binding = endpointRecord(endpoint.credential_binding);
-  return typeof binding?.provider === "string" ? binding.provider : null;
-}
-
-function sameEndpointIdentity(
-  target: Record<string, unknown>,
-  source: Record<string, unknown>,
-): boolean {
-  if (
-    target.host !== source.host ||
-    target.port !== source.port ||
-    (target.protocol !== undefined &&
-      source.protocol !== undefined &&
-      target.protocol !== source.protocol)
-  ) {
-    return false;
-  }
-  const targetProvider = endpointProvider(target);
-  const sourceProvider = endpointProvider(source);
-  if (targetProvider && sourceProvider) return targetProvider === sourceProvider;
-  return target.path === source.path;
-}
-
-function loadCredentialBoundPermissiveEndpoints(
+function loadCredentialBoundPermissivePolicies(
   policy: CredentialBoundMessagingPolicy,
   sandboxName: string,
   agent: MessagingAgentId,
-  targetEndpoints: readonly unknown[],
-): unknown[] | null {
-  const content = loadMessagingChannelPolicyPreset(policy.permissivePolicyKey, {
+): Record<string, unknown> | null {
+  const content = loadMessagingChannelPolicyPreset(policy.presetName, {
     agent,
     sandboxName,
   });
@@ -219,35 +194,20 @@ function loadCredentialBoundPermissiveEndpoints(
   if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
     return null;
   }
-  const sourceEndpoints = policy.livePolicyKeys.flatMap((policyName) => {
-    const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
-    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
-      return [];
-    }
-    const value = (networkPolicy as Record<string, unknown>).endpoints;
-    return Array.isArray(value) ? value : [];
+  const entries = policy.policyKeys.flatMap((policyName) => {
+    const networkPolicy = objectRecord((networkPolicies as Record<string, unknown>)[policyName]);
+    return networkPolicy ? [[policyName, networkPolicy] as const] : [];
   });
-  if (sourceEndpoints.length === 0) return null;
+  return entries.length === policy.policyKeys.length ? Object.fromEntries(entries) : null;
+}
 
-  const unmatchedTargets = [...targetEndpoints];
-  const merged = sourceEndpoints.map((sourceValue) => {
-    const source = endpointRecord(sourceValue);
-    if (!source) return sourceValue;
-    const targetIndex = unmatchedTargets.findIndex((targetValue) => {
-      const target = endpointRecord(targetValue);
-      return target ? sameEndpointIdentity(target, source) : false;
-    });
-    if (targetIndex < 0) return source;
-    const target = endpointRecord(unmatchedTargets.splice(targetIndex, 1)[0]);
-    if (!target) return source;
-    const result: Record<string, unknown> = { ...target };
-    const binding = endpointRecord(source.credential_binding);
-    if (binding) result.credential_binding = binding;
-    else delete result.credential_binding;
-    if (typeof source.path === "string") result.path = source.path;
-    return result;
-  });
-  return [...merged, ...unmatchedTargets];
+function removeCredentialBoundMessagingPolicy(
+  networkPolicies: Record<string, unknown>,
+  policy: CredentialBoundMessagingPolicy,
+): void {
+  for (const policyName of new Set([policy.presetName, ...policy.policyKeys])) {
+    delete networkPolicies[policyName];
+  }
 }
 
 /**
@@ -255,7 +215,8 @@ function loadCredentialBoundPermissiveEndpoints(
  * complete provider set for an enabled channel. A missing plan rejects the
  * transition when the live policy still carries a messaging provider. Disabled
  * channels and missing, partial, or mismatched provider state omit the route
- * instead of submitting unresolved bindings.
+ * instead of submitting unresolved bindings. Retained route definitions come
+ * only from the materialized channel policy file.
  */
 export function composeCredentialBoundMessagingPolicies(
   targetPolicyYaml: string,
@@ -275,16 +236,16 @@ export function composeCredentialBoundMessagingPolicies(
   const enabledChannels = messagingPlan ? enabledPlanChannelIds(messagingPlan) : null;
   const messagingPolicies = listCredentialBoundMessagingPolicies(sandboxName, agent);
   const targetPolicies = target.network_policies;
-  const networkPolicies =
-    targetPolicies && typeof targetPolicies === "object" && !Array.isArray(targetPolicies)
-      ? (targetPolicies as Record<string, unknown>)
-      : null;
+  if (!targetPolicies || typeof targetPolicies !== "object" || Array.isArray(targetPolicies)) {
+    throw new Error("Credential-bound messaging target policy must contain network_policies");
+  }
+  const networkPolicies = targetPolicies as Record<string, unknown>;
   for (const policy of messagingPolicies) {
     const channelId = normalizeMessagingChannelId(policy.channelId);
     if (enabledChannels === null) {
       const liveProviderCount = listNetworkPolicyCredentialProviders(
         live,
-        policy.livePolicyKeys,
+        policy.policyKeys,
       ).size;
       if (liveProviderCount > 0) {
         throw new Error(
@@ -293,36 +254,29 @@ export function composeCredentialBoundMessagingPolicies(
             `\`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance.`,
         );
       }
-      if (networkPolicies) delete networkPolicies[policy.permissivePolicyKey];
+      removeCredentialBoundMessagingPolicy(networkPolicies, policy);
       continue;
     }
     const channelEnabled = enabledChannels.has(channelId);
     if (!channelEnabled) {
-      if (networkPolicies) delete networkPolicies[policy.permissivePolicyKey];
+      removeCredentialBoundMessagingPolicy(networkPolicies, policy);
       continue;
     }
 
     const providerReason = credentialProviderOmissionReason(live, policy);
-    const targetPolicyRecord = networkPolicies
-      ? endpointRecord(networkPolicies[policy.permissivePolicyKey])
-      : null;
-    const targetEndpoints = targetPolicyRecord?.endpoints;
-    const boundEndpoints =
-      providerReason === null && Array.isArray(targetEndpoints)
-        ? loadCredentialBoundPermissiveEndpoints(policy, sandboxName, agent, targetEndpoints)
+    const boundPolicies =
+      providerReason === null
+        ? loadCredentialBoundPermissivePolicies(policy, sandboxName, agent)
         : null;
-    if (!boundEndpoints || !targetPolicyRecord) {
-      if (networkPolicies) delete networkPolicies[policy.permissivePolicyKey];
+    removeCredentialBoundMessagingPolicy(networkPolicies, policy);
+    if (!boundPolicies) {
       reportOmission?.({
         channelId,
         reason: providerReason ?? "the credential-bound channel policy could not be materialized",
         recoveryAction: `run \`nemoclaw ${sandboxName} channels status\` and follow its reported repair guidance`,
       });
-    } else if (networkPolicies) {
-      networkPolicies[policy.permissivePolicyKey] = {
-        ...targetPolicyRecord,
-        endpoints: boundEndpoints,
-      };
+    } else {
+      Object.assign(networkPolicies, boundPolicies);
     }
   }
   return YAML.stringify(target);

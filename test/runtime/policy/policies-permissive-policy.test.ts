@@ -224,7 +224,7 @@ describe("applyPermissivePolicy", () => {
       expect(observed.stagedMode).toBe("600");
       expect(fs.existsSync(observed.stagedPath)).toBe(false);
       const policy = YAML.parse(observed.policy);
-      expect(policy.network_policies.telegram).toBeUndefined();
+      expect(policy.network_policies.telegram_bot).toBeUndefined();
       expect(policy.network_policies.slack).toBeUndefined();
       expect(observed.policy).not.toContain("{sandboxName}");
       expect(observed.result.stderr).toContain(
@@ -253,7 +253,7 @@ describe("applyPermissivePolicy", () => {
           "'nemoclaw'; credential-bound messaging routes will be omitted.",
       );
       const policy = YAML.parse(observed.policy);
-      expect(policy.network_policies.telegram).toBeUndefined();
+      expect(policy.network_policies.telegram_bot).toBeUndefined();
       expect(policy.network_policies.slack).toBeUndefined();
     } finally {
       observed.cleanup();
@@ -313,7 +313,7 @@ describe("applyPermissivePolicy", () => {
       const policy = YAML.parse(observed.policy);
       expect(
         new Set(
-          policy.network_policies.telegram.endpoints.map(
+          policy.network_policies.telegram_bot.endpoints.map(
             (endpoint: { credential_binding?: { provider?: string } }) =>
               endpoint.credential_binding?.provider,
           ),
