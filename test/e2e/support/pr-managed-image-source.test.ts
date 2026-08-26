@@ -87,9 +87,18 @@ function selectorInput() {
 }
 
 describe("PR managed-image source selection", () => {
-  it("selects a local Dockerfile when a reviewed image input changes", async () => {
+  it.each([
+    "Dockerfile",
+    "Dockerfile.base",
+    "agents/hermes/Dockerfile.base",
+    "agents/langchain-deepagents-code/Dockerfile.base",
+    "agents/pi/Dockerfile.base",
+    "src/lib/hermes-managed-route.ts",
+    "src/lib/inference/managed-dcode/identity.ts",
+    "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  ])("selects a local Dockerfile when reviewed image input %s changes", async (filename) => {
     await expect(
-      resolvePrManagedImageSource(selectorInput(), requestFor([{ filename: "Dockerfile.base" }])),
+      resolvePrManagedImageSource(selectorInput(), requestFor([{ filename }])),
     ).resolves.toBe("local-dockerfile");
   });
 
@@ -108,6 +117,30 @@ describe("PR managed-image source selection", () => {
     await expect(
       resolvePrManagedImageSource(selectorInput(), requestFor([{ filename: "docs/guide.mdx" }])),
     ).resolves.toBe("managed-image");
+  });
+
+  it("selects a local Dockerfile when a reviewed image input appears on page two", async () => {
+    const metadataPath = `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`;
+    const pageOnePath = `${metadataPath}/files?per_page=100&page=1`;
+    const pageTwoPath = `${metadataPath}/files?per_page=100&page=2`;
+    const requests: string[] = [];
+    const responses = new Map<string, unknown>([
+      [metadataPath, pull(101)],
+      [
+        pageOnePath,
+        Array.from({ length: 100 }, (_, index) => ({ filename: `docs/guide-${index}.mdx` })),
+      ],
+      [pageTwoPath, [{ filename: "Dockerfile.base" }]],
+    ]);
+    const request = async (requestPath: string): Promise<unknown> => {
+      requests.push(requestPath);
+      return responses.get(requestPath) ?? unexpectedRequest(requestPath);
+    };
+
+    await expect(resolvePrManagedImageSource(selectorInput(), request)).resolves.toBe(
+      "local-dockerfile",
+    );
+    expect(requests).toContain(pageTwoPath);
   });
 
   it.each([

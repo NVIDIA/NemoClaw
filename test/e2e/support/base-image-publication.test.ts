@@ -194,6 +194,8 @@ describe("base-image publication evidence", () => {
         "nemoclaw-blueprint/**",
         "scripts/**",
         "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
+        "src/lib/hermes-managed-route.ts",
+        "src/lib/inference/managed-dcode/identity.ts",
         "src/lib/messaging/**",
         "src/lib/tool-disclosure.ts",
         "tools/mcp-tool-discovery-runtime/**",
