@@ -109,7 +109,7 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
-  it("verifies the exact created sandbox before runtime and readiness effects (#9833)", async () => {
+  it("settles the exact created sandbox before post-create effects (#9211)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
@@ -141,6 +141,7 @@ describe("created sandbox identity gate", () => {
       expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
       expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
       expect(nonce.length).toBeLessThanOrEqual(63);
+      expect(options.readyCheck?.()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
@@ -148,18 +149,47 @@ describe("created sandbox identity gate", () => {
       return { ready: true, reason: "ready", failurePhase: null };
     });
     const deps = createGpuFlowDeps();
+    vi.mocked(deps.sleep).mockImplementation(() => {
+      events.push("identity-settle");
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+      expect(patch.ensureApplied).not.toHaveBeenCalled();
+    });
     deps.installPortableDemoLifecycle = vi.fn(() => {
       events.push("portable-lifecycle");
       return "generation-1";
     });
-    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
-    );
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        events.push("ready-visible");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-pending");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return "[]";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-matched");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
 
     expect(events).toEqual([
       "create",
+      "ready-visible",
+      "identity-pending",
+      "identity-settle",
+      "identity-matched",
       "verify-created",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
@@ -173,7 +203,8 @@ describe("created sandbox identity gate", () => {
       "revalidate:record portable lifecycle for sandbox 'alpha'",
       "portable-lifecycle",
     ]);
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+    expect(deps.runCaptureOpenshell).toHaveBeenNthCalledWith(
+      2,
       [
         "sandbox",
         "list",
@@ -188,11 +219,19 @@ describe("created sandbox identity gate", () => {
       ],
       {
         ignoreError: false,
-        timeout: 30_000,
+        timeout: expect.any(Number),
         maxBuffer: 1024 * 1024,
         killSignal: "SIGKILL",
         killProcessTreeOnTimeout: true,
       },
+    );
+    const firstIdentityTimeout = vi.mocked(deps.runCaptureOpenshell).mock.calls[1]?.[1]?.timeout;
+    expect(firstIdentityTimeout).toEqual(expect.any(Number));
+    expect(firstIdentityTimeout as number).toBeGreaterThan(0);
+    expect(firstIdentityTimeout as number).toBeLessThanOrEqual(30_000);
+    expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "get", "alpha"],
+      expect.anything(),
     );
   });
 

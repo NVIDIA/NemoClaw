@@ -9,6 +9,7 @@ import {
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   resolveOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate } from "../sandbox/create-stream";
@@ -542,11 +543,12 @@ export function createSandboxGpuCreateAttemptRunner(
             let sandboxId: string;
             try {
               sandboxId = createAttemptNonce
-                ? resolveCreatedOpenShellSandboxId({
+                ? settleCreatedOpenShellSandboxId({
                     sandboxName: input.sandboxName,
                     gatewayName: input.gatewayName,
                     createAttemptNonce,
                     runCaptureOpenshell: deps.runCaptureOpenshell,
+                    sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
                   })
                 : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
             } catch (error) {
@@ -670,11 +672,12 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       let sandboxId: string;
       try {
-        sandboxId = resolveCreatedOpenShellSandboxId({
+        sandboxId = settleCreatedOpenShellSandboxId({
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           createAttemptNonce,
           runCaptureOpenshell: deps.runCaptureOpenshell,
+          sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
         });
       } catch (error) {
         throw new Error(
