@@ -37,9 +37,12 @@ function fixtureDiff(
 describe("codebase growth guardrails", () => {
   let diff: GrowthGuardrailDiff;
 
-  beforeAll(async () => {
-    diff = await loadGrowthGuardrailDiff();
-  });
+  beforeAll(
+    async () => {
+      diff = await loadGrowthGuardrailDiff();
+    },
+    13 * 60_000,
+  );
 
   it("requires TypeScript for new Node.js files", () => {
     const violations = addedJavaScriptViolations(diff.files);

@@ -54,7 +54,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
         "runs-on": "ubuntu-latest",
-        "timeout-minutes": 5,
+        "timeout-minutes": 15,
         steps: [
           {
             name: "Check out the trusted base revision",

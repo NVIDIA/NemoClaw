@@ -19,7 +19,9 @@ export const RETRY_ATTEMPTS = 4;
 export const RETRY_BASE_MS = 250;
 export const RETRY_MAX_MS = 4000;
 export const RATE_LIMIT_DEFAULT_DELAY_MS = 60_000;
-export const RETRY_WAIT_BUDGET_MS = 180_000;
+export const RATE_LIMIT_RESET_BUFFER_MS = 1_000;
+export const RATE_LIMIT_JITTER_MAX_MS = 5_000;
+export const RETRY_WAIT_BUDGET_MS = 12 * 60_000;
 
 export type FetchLike = (url: string, init?: Parameters<typeof fetch>[1]) => Promise<Response>;
 
@@ -41,6 +43,8 @@ export type PrBlobClientOptions = {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Injectable clock for deterministic rate-limit reset tests. */
   readonly now?: () => number;
+  /** Injectable random source for deterministic retry-jitter tests. */
+  readonly random?: () => number;
 };
 
 export type PrBlobClient = {
@@ -59,32 +63,43 @@ export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
 }
 
-function retryAfterMs(response: Response, nowMs: number): number | undefined {
+function retryAfterMs(response: Response, nowMs: number, random: () => number): number | undefined {
+  const bufferedDelay = (delayMs: number): number =>
+    delayMs +
+    RATE_LIMIT_RESET_BUFFER_MS +
+    Math.min(RATE_LIMIT_JITTER_MAX_MS, Math.floor(random() * (RATE_LIMIT_JITTER_MAX_MS + 1)));
   const retryAfter = response.headers.get("retry-after")?.trim();
   if (retryAfter) {
     const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, seconds * 1000);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return bufferedDelay(Math.max(1000, seconds * 1000));
+    }
     const retryAt = Date.parse(retryAfter);
-    if (Number.isFinite(retryAt)) return Math.max(1000, retryAt - nowMs);
+    if (Number.isFinite(retryAt)) return bufferedDelay(Math.max(1000, retryAt - nowMs));
   }
 
   const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
   if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
-    return Math.max(1000, resetSeconds * 1000 - nowMs);
+    return bufferedDelay(Math.max(1000, resetSeconds * 1000 - nowMs));
   }
 
   if (
     response.status === 429 ||
     (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0")
   ) {
-    return RATE_LIMIT_DEFAULT_DELAY_MS;
+    return bufferedDelay(RATE_LIMIT_DEFAULT_DELAY_MS);
   }
   return undefined;
 }
 
-function responseError(url: string, response: Response, nowMs: number): RetriableError {
+function responseError(
+  url: string,
+  response: Response,
+  nowMs: number,
+  random: () => number,
+): RetriableError {
   const error: RetriableError = new Error(`${url}: HTTP ${response.status}`);
-  const rateLimitDelayMs = retryAfterMs(response, nowMs);
+  const rateLimitDelayMs = retryAfterMs(response, nowMs, random);
   error.transient = isTransientStatus(response.status) || rateLimitDelayMs !== undefined;
   if (rateLimitDelayMs !== undefined) error.retryAfterMs = rateLimitDelayMs;
   return error;
@@ -111,6 +126,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
+  const random = options.random ?? Math.random;
   const headers = {
     Authorization: `Bearer ${options.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
@@ -165,7 +181,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
       wrapped.transient = true;
       throw wrapped;
     }
-    if (!response.ok) throw responseError(url, response, now());
+    if (!response.ok) throw responseError(url, response, now(), random);
     return response.json();
   }
 
@@ -227,7 +243,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
         throw wrapped;
       }
       if (response.status === 404) return null;
-      if (!response.ok) throw responseError(url, response, now());
+      if (!response.ok) throw responseError(url, response, now(), random);
       return response.text();
     });
   }

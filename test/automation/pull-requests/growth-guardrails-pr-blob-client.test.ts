@@ -10,9 +10,12 @@ import {
   GRAPHQL_BATCH_SIZE,
   isTransientStatus,
   RATE_LIMIT_DEFAULT_DELAY_MS,
+  RATE_LIMIT_JITTER_MAX_MS,
+  RATE_LIMIT_RESET_BUFFER_MS,
+  RETRY_WAIT_BUDGET_MS,
 } from "../../helpers/pr-blob-client";
 
-const DETERMINISTIC = { sleep: async () => {} } as const;
+const DETERMINISTIC = { random: () => 0, sleep: async () => {} } as const;
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -143,6 +146,7 @@ describe("growth-guardrails pr-blob-client", () => {
       token: "t",
       fetchImpl,
       now: () => 1_000_000,
+      random: () => 0,
       sleep: async (ms) => {
         sleeps.push(ms);
       },
@@ -152,7 +156,7 @@ describe("growth-guardrails pr-blob-client", () => {
       { filename: "ok.ts" },
     ]);
     expect(urls).toHaveLength(2);
-    expect(sleeps).toEqual([60_000]);
+    expect(sleeps).toEqual([60_000 + RATE_LIMIT_RESET_BUFFER_MS]);
   });
 
   it("uses retry-after for a secondary rate limit", async () => {
@@ -164,13 +168,14 @@ describe("growth-guardrails pr-blob-client", () => {
     const client = createPrBlobClient({
       token: "t",
       fetchImpl,
+      random: () => 0,
       sleep: async (ms) => {
         sleeps.push(ms);
       },
     });
 
     await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toHaveLength(1);
-    expect(sleeps).toEqual([7000]);
+    expect(sleeps).toEqual([7000 + RATE_LIMIT_RESET_BUFFER_MS]);
   });
 
   it("does not retry before a reset outside the workflow wait budget", async () => {
@@ -179,13 +184,14 @@ describe("growth-guardrails pr-blob-client", () => {
       async () =>
         jsonResponse({ message: "API rate limit exceeded" }, 403, {
           "x-ratelimit-remaining": "0",
-          "x-ratelimit-reset": "1300",
+          "x-ratelimit-reset": String(1000 + RETRY_WAIT_BUDGET_MS / 1000 + 60),
         }),
     ]);
     const client = createPrBlobClient({
       token: "t",
       fetchImpl,
       now: () => 1_000_000,
+      random: () => 0,
       sleep: async (ms) => {
         sleeps.push(ms);
       },
@@ -208,13 +214,35 @@ describe("growth-guardrails pr-blob-client", () => {
     const client = createPrBlobClient({
       token: "t",
       fetchImpl,
+      random: () => 0,
       sleep: async (ms) => {
         sleeps.push(ms);
       },
     });
 
     await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toHaveLength(1);
-    expect(sleeps).toEqual([RATE_LIMIT_DEFAULT_DELAY_MS]);
+    expect(sleeps).toEqual([RATE_LIMIT_DEFAULT_DELAY_MS + RATE_LIMIT_RESET_BUFFER_MS]);
+  });
+
+  it("adds bounded jitter after the rate-limit reset", async () => {
+    const sleeps: number[] = [];
+    const { fetchImpl } = scriptedFetch([
+      async () => jsonResponse({ message: "slow down" }, 429, { "retry-after": "7" }),
+      async () => jsonResponse([{ filename: "ok.ts" }]),
+    ]);
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      random: () => 1,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toHaveLength(1);
+    expect(sleeps).toEqual([
+      7000 + RATE_LIMIT_RESET_BUFFER_MS + RATE_LIMIT_JITTER_MAX_MS,
+    ]);
   });
 
   it("does not retry a permission-denied 403", async () => {
