@@ -68,6 +68,18 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
+function prepareDiscordInitialSandboxPolicy(
+  _basePolicyPath: string,
+  activeMessagingChannels: string[],
+) {
+  const discordEnabled = activeMessagingChannels.includes("discord");
+  return {
+    policyPath: "/tmp/policy.yaml",
+    appliedPresets: discordEnabled ? ["discord"] : [],
+    credentialBindingProviders: discordEnabled ? [discordProviderName] : [],
+  };
+}
+
 function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
@@ -122,6 +134,7 @@ function materializeDiscordCreatePlan(
     runProviderPreDeleteCleanup: vi.fn(),
     upsertMessagingProviders: vi.fn(() => [discordProviderName]),
     getHermesToolGatewayProviderName: vi.fn(),
+    prepareInitialSandboxCreatePolicy: prepareDiscordInitialSandboxPolicy,
     ...overrides,
   });
 }
